@@ -1,10 +1,8 @@
-"""3-layer preference cascade resolver (Git Config pattern).
+"""Preference cascade resolver (Git Config pattern).
 
-MVP layers: temporary → course → global → default.
-Full 7-layer (+ course_scene, global_scene, template) deferred to Phase 1.
-
-Reference: Git Config 5-layer model (system→global→local→worktree→CLI),
-more specific scope overrides more general.
+Phase 0 persists preferences at global/course/template/temporary scopes.
+Scene scopes (course_scene/global_scene) are accepted for forward compatibility
+but skipped unless explicit scene metadata support is added.
 """
 
 import uuid
@@ -18,7 +16,7 @@ from schemas.preference import ResolvedPreferences
 # System defaults — baseline preferences when nothing is configured
 SYSTEM_DEFAULTS: dict[str, str] = {
     "note_format": "bullet_point",
-    "detail_level": "moderate",
+    "detail_level": "balanced",
     "language": "en",
     "layout_preset": "balanced",
     "explanation_style": "step_by_step",
@@ -27,24 +25,32 @@ SYSTEM_DEFAULTS: dict[str, str] = {
 }
 
 # Priority order: later scopes override earlier ones (Git Config pattern)
-SCOPE_PRIORITY = ["global", "course", "temporary"]
+# Applied in order: system_default → template → global → global_scene → course → course_scene → temporary
+# So 'temporary' has highest priority (last applied wins)
+SCOPE_PRIORITY = [
+    "template",
+    "global",
+    "global_scene",
+    "course",
+    "course_scene",
+    "temporary",
+]
 
 
 async def resolve_preferences(
     db: AsyncSession,
     user_id: uuid.UUID,
     course_id: uuid.UUID | None = None,
+    scene: str | None = None,
 ) -> ResolvedPreferences:
-    """Resolve all preferences using the cascade.
+    """Resolve all preferences using the 7-layer cascade.
 
-    For each dimension, check scopes in priority order (temporary → course → global).
-    First match wins (highest priority first).
-
-    ~30 lines of core logic, following Git Config pattern.
+    For each dimension, apply scopes in priority order.
+    Last match wins (highest priority last).
     """
-    # Start with system defaults
+    # Layer 7: Start with system defaults
     resolved: dict[str, str] = dict(SYSTEM_DEFAULTS)
-    sources: dict[str, str] = {k: "default" for k in SYSTEM_DEFAULTS}
+    sources: dict[str, str] = {k: "system_default" for k in SYSTEM_DEFAULTS}
 
     # Load all user preferences in one query
     query = select(UserPreference).where(UserPreference.user_id == user_id)
@@ -57,13 +63,68 @@ async def resolve_preferences(
         if pref.scope in by_scope:
             by_scope[pref.scope].append(pref)
 
-    # Apply in priority order (global first, then course overrides, then temporary overrides)
+    # Apply in priority order (template first → temporary last = highest priority)
     for scope in SCOPE_PRIORITY:
         for pref in by_scope[scope]:
-            # Course-scoped prefs only apply if course matches
-            if scope == "course" and course_id and pref.course_id != course_id:
+            # Course-scoped prefs apply only when a matching course context exists.
+            if scope in ("course", "course_scene"):
+                if not course_id:
+                    continue
+                if pref.course_id != course_id:
+                    continue
+
+            # Scene-scoped prefs only apply if scene matches
+            if scope in ("course_scene", "global_scene"):
+                # UserPreference has no scene/context field in Phase 0 schema.
+                # Keep this guard so scene scopes never leak accidentally.
                 continue
+
             resolved[pref.dimension] = pref.value
             sources[pref.dimension] = scope
 
     return ResolvedPreferences(preferences=resolved, sources=sources)
+
+
+async def save_preference(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    dimension: str,
+    value: str,
+    scope: str = "global",
+    course_id: uuid.UUID | None = None,
+    source: str = "behavior",
+    confidence: float = 0.5,
+    scene: str | None = None,
+) -> UserPreference:
+    """Save or update a preference at a specific scope level."""
+    # Check for existing preference at same scope + dimension + course
+    query = select(UserPreference).where(
+        UserPreference.user_id == user_id,
+        UserPreference.dimension == dimension,
+        UserPreference.scope == scope,
+    )
+    if course_id:
+        query = query.where(UserPreference.course_id == course_id)
+    else:
+        query = query.where(UserPreference.course_id.is_(None))
+
+    result = await db.execute(query)
+    existing = result.scalar_one_or_none()
+
+    if existing:
+        existing.value = value
+        existing.source = source
+        existing.confidence = confidence
+        return existing
+
+    pref = UserPreference(
+        user_id=user_id,
+        course_id=course_id,
+        scope=scope,
+        dimension=dimension,
+        value=value,
+        source=source,
+        confidence=confidence,
+    )
+    db.add(pref)
+    return pref

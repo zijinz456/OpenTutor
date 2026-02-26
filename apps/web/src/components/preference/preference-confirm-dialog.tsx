@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Check, X } from "lucide-react";
 import {
   Dialog,
@@ -152,7 +152,7 @@ export function PreferenceConfirmDialog({
             className="w-full"
           >
             <X className="h-4 w-4 mr-1" />
-            Don't Change
+            Don&apos;t Change
           </Button>
         </div>
       </DialogContent>

@@ -26,6 +26,15 @@ DIMENSIONS = [
     "visual_preference", # auto | text_heavy | diagram_heavy | mixed
 ]
 
+VALUE_NORMALIZATION = {
+    "zh-cn": "zh",
+    "zh-tw": "zh",
+    "zh-hans": "zh",
+    "zh-hant": "zh",
+    "analogy": "example_heavy",
+    "example_first": "example_heavy",
+}
+
 EXTRACTION_PROMPT = """You are a preference signal extractor for a learning platform.
 Analyze the following conversation between a student and an AI tutor.
 Extract any implicit or explicit preference signals about the student's learning style.
@@ -103,10 +112,13 @@ async def extract_preference_signal(
             logger.warning(f"Unknown dimension: {signal['dimension']}")
             return None
 
+        raw_value = str(signal["value"]).strip()
+        normalized_value = VALUE_NORMALIZATION.get(raw_value.lower(), raw_value)
+
         return {
             "signal_type": signal["signal_type"],
             "dimension": signal["dimension"],
-            "value": signal["value"],
+            "value": normalized_value,
             "context": {
                 "evidence": signal.get("evidence", ""),
                 "user_message": user_message[:200],

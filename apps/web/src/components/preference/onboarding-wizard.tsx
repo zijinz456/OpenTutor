@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -53,7 +53,7 @@ const STEPS = [
     dimension: "detail_level",
     options: [
       { value: "concise", label: "Concise", description: "Just the essentials, no fluff" },
-      { value: "moderate", label: "Moderate", description: "Balanced detail with examples" },
+      { value: "balanced", label: "Balanced", description: "Balanced detail with examples" },
       { value: "detailed", label: "Detailed", description: "Thorough explanations with examples and context" },
     ] as StepOption[],
   },
@@ -62,8 +62,7 @@ const STEPS = [
     dimension: "language",
     options: [
       { value: "en", label: "English", description: "Responses in English" },
-      { value: "zh-CN", label: "Chinese (Simplified)", description: "Responses in Simplified Chinese" },
-      { value: "zh-TW", label: "Chinese (Traditional)", description: "Responses in Traditional Chinese" },
+      { value: "zh", label: "Chinese", description: "Responses in Chinese" },
       { value: "auto", label: "Match Input", description: "Reply in the same language you use" },
     ] as StepOption[],
   },
@@ -81,8 +80,8 @@ const STEPS = [
     dimension: "explanation_style",
     options: [
       { value: "step_by_step", label: "Step by Step", description: "Walk through each step logically" },
-      { value: "analogy", label: "With Analogies", description: "Use relatable comparisons" },
-      { value: "example_first", label: "Example First", description: "Show examples before theory" },
+      { value: "example_heavy", label: "Example Heavy", description: "Use many concrete examples" },
+      { value: "socratic", label: "Socratic", description: "Guide with questions and prompts" },
       { value: "formal", label: "Formal/Academic", description: "Precise academic language" },
     ] as StepOption[],
   },
@@ -111,7 +110,7 @@ export function OnboardingWizard({ open, onComplete }: OnboardingWizardProps) {
         }
         toast.success("Preferences saved! Your experience is now personalized.");
         onComplete();
-      } catch (err) {
+      } catch {
         toast.error("Failed to save preferences");
       } finally {
         setSaving(false);

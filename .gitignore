@@ -33,3 +33,13 @@ uploads/
 *.egg
 *.whl
 pip-log.txt
+
+# Claude Code
+.claude/
+
+# Personal planning docs (Chinese)
+OpenTutor代码分析.md
+项目规划文档.md
+
+# Lock files (regenerated on install)
+package-lock.json

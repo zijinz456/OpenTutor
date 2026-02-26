@@ -79,7 +79,7 @@ async def calculate_confidence(
         value_counts[signal.value] += 1
 
     # Most likely value = highest weighted score
-    best_value = max(value_scores, key=value_scores.get)  # type: ignore
+    best_value = max(value_scores, key=value_scores.get)
 
     # Frequency factor: min(count / 5, 1.0)
     total_signals = len(signals)

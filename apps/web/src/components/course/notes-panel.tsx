@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useCallback } from "react";
-import { ChevronRight, ChevronDown, List, RefreshCw } from "lucide-react";
+import { ChevronRight, ChevronDown, List } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { MarkdownRenderer } from "@/components/course/markdown-renderer";
@@ -18,7 +18,6 @@ import type { ContentNode } from "@/lib/api";
 
 interface NotesPanelProps {
   contentTree: ContentNode[];
-  courseId?: string;
 }
 
 // ── Chapter Navigation (TOC) ──
@@ -126,7 +125,7 @@ function ContentNodeItem({
 
 // ── Main Panel ──
 
-export function NotesPanel({ contentTree, courseId }: NotesPanelProps) {
+export function NotesPanel({ contentTree }: NotesPanelProps) {
   const [showToc, setShowToc] = useState(true);
   const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
   const scrollAreaRef = useRef<HTMLDivElement>(null);

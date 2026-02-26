@@ -1,11 +1,11 @@
-"""LLM provider router with env-var switching.
+"""LLM Provider Registry with circuit breaker pattern.
+
+Phase 1: Full Provider Registry + circuit breaker (spec requirements).
 
 Borrows from:
-- openakita Brain pattern: thin wrapper, dual endpoints (main + compiler)
-- nanobot Provider Registry: keyword-based provider matching
-- openakita LLMProvider base: progressive cooldown, health management
-
-Phase 0: Simple env-var switching. Phase 1: Full Provider Registry + LiteLLM.
+- nanobot Provider Registry: keyword-based provider matching, easy addition
+- openakita Brain: thin wrapper, progressive cooldown, health management
+- circuitbreaker pattern: automatic fallback on provider failure
 """
 
 import time
@@ -20,35 +20,65 @@ logger = logging.getLogger(__name__)
 # Progressive cooldown steps (borrowed from openakita)
 COOLDOWN_STEPS = [5, 10, 20, 60]
 
+# Circuit breaker thresholds
+CIRCUIT_OPEN_THRESHOLD = 3  # failures before opening circuit
+CIRCUIT_RESET_TIMEOUT = 120  # seconds before trying again
+
 
 class LLMClient(ABC):
     """Base LLM client (openakita LLMProvider pattern)."""
+
+    provider_name: str = "base"
 
     def __init__(self):
         self._healthy = True
         self._cooldown_until: float = 0
         self._consecutive_failures: int = 0
+        self._circuit_open: bool = False
+        self._circuit_open_time: float = 0
 
     @property
     def is_healthy(self) -> bool:
+        # Circuit breaker: auto-reset after timeout
+        if self._circuit_open:
+            if time.time() - self._circuit_open_time >= CIRCUIT_RESET_TIMEOUT:
+                self._circuit_open = False
+                self._healthy = True
+                self._consecutive_failures = 0
+                logger.info(f"Circuit breaker reset for {self.provider_name}")
+            else:
+                return False
+
         if self._cooldown_until > 0 and time.time() >= self._cooldown_until:
             self._healthy = True
             self._cooldown_until = 0
         return self._healthy
 
     def mark_unhealthy(self, error: str):
-        """Progressive cooldown (borrowed from openakita)."""
+        """Progressive cooldown + circuit breaker (openakita + circuitbreaker pattern)."""
         self._healthy = False
         self._consecutive_failures += 1
+
+        # Circuit breaker: open after threshold
+        if self._consecutive_failures >= CIRCUIT_OPEN_THRESHOLD:
+            self._circuit_open = True
+            self._circuit_open_time = time.time()
+            logger.error(
+                f"Circuit OPEN for {self.provider_name} after "
+                f"{self._consecutive_failures} failures: {error}"
+            )
+            return
+
         idx = min(self._consecutive_failures - 1, len(COOLDOWN_STEPS) - 1)
         cooldown = COOLDOWN_STEPS[idx]
         self._cooldown_until = time.time() + cooldown
-        logger.warning(f"LLM unhealthy: {error}, cooldown {cooldown}s")
+        logger.warning(f"LLM {self.provider_name} unhealthy: {error}, cooldown {cooldown}s")
 
     def mark_healthy(self):
         self._healthy = True
         self._consecutive_failures = 0
         self._cooldown_until = 0
+        self._circuit_open = False
 
     @abstractmethod
     async def stream_chat(self, system_prompt: str, user_message: str) -> AsyncIterator[str]:
@@ -69,10 +99,13 @@ class LLMClient(ABC):
 class OpenAIClient(LLMClient):
     """OpenAI-compatible LLM client."""
 
-    def __init__(self, api_key: str, model: str, base_url: str | None = None):
+    provider_name = "openai"
+
+    def __init__(self, api_key: str, model: str, base_url: str | None = None, name: str = "openai"):
         super().__init__()
         from openai import AsyncOpenAI
 
+        self.provider_name = name
         kwargs = {"api_key": api_key}
         if base_url:
             kwargs["base_url"] = base_url
@@ -114,13 +147,14 @@ class OpenAIClient(LLMClient):
             raise
 
     async def extract(self, system_prompt: str, user_message: str) -> str:
-        """Lightweight extraction (openakita's think_lightweight pattern).
-        Uses smaller model for cost efficiency."""
+        """Lightweight extraction (openakita's think_lightweight pattern)."""
         return await self.chat(system_prompt, user_message)
 
 
 class AnthropicClient(LLMClient):
     """Anthropic Claude client."""
+
+    provider_name = "anthropic"
 
     def __init__(self, api_key: str, model: str):
         super().__init__()
@@ -162,44 +196,154 @@ class AnthropicClient(LLMClient):
         return await self.chat(system_prompt, user_message)
 
 
-# Singleton client (nanobot pattern: create once, reuse)
-_client: LLMClient | None = None
+class MockLLMClient(LLMClient):
+    """Fallback local client when no external API key is configured."""
+
+    provider_name = "mock"
+
+    async def stream_chat(self, system_prompt: str, user_message: str) -> AsyncIterator[str]:
+        del system_prompt
+        self.mark_healthy()
+        yield (
+            "No LLM API key configured. This is a local fallback response. "
+            f"Your message was: {user_message}"
+        )
+
+    async def chat(self, system_prompt: str, user_message: str) -> str:
+        del system_prompt
+        self.mark_healthy()
+        return (
+            "No LLM API key configured. This is a local fallback response. "
+            f"Your message was: {user_message}"
+        )
+
+    async def extract(self, system_prompt: str, user_message: str) -> str:
+        del system_prompt, user_message
+        self.mark_healthy()
+        return "NONE"
 
 
-def get_llm_client() -> LLMClient:
-    """Get or create LLM client based on env vars.
+# ──────────────────────────────────────────────────────────────
+# Provider Registry (nanobot pattern)
+# ──────────────────────────────────────────────────────────────
 
-    Provider matching borrowed from nanobot's keyword-based registry:
-    - LLM_PROVIDER env var → direct match
-    - Falls back to first available API key
+class ProviderRegistry:
+    """Registry of LLM providers with automatic fallback.
+
+    Borrowed from nanobot: keyword-based registration + easy extension.
+    Added: circuit breaker fallback chain.
     """
-    global _client
-    if _client and _client.is_healthy:
-        return _client
+
+    def __init__(self):
+        self._providers: dict[str, LLMClient] = {}
+        self._primary: str | None = None
+        self._fallback_order: list[str] = []
+
+    def register(self, name: str, client: LLMClient, primary: bool = False):
+        """Register a provider."""
+        self._providers[name] = client
+        if primary:
+            self._primary = name
+        if name not in self._fallback_order:
+            self._fallback_order.append(name)
+
+    def get(self, name: str | None = None) -> LLMClient:
+        """Get a healthy provider, with automatic fallback.
+
+        Fallback chain: primary → fallback_order (circuit breaker pattern).
+        """
+        # Try requested provider first
+        if name and name in self._providers:
+            client = self._providers[name]
+            if client.is_healthy:
+                return client
+
+        # Try primary
+        if self._primary and self._primary in self._providers:
+            client = self._providers[self._primary]
+            if client.is_healthy:
+                return client
+
+        # Fallback chain
+        for provider_name in self._fallback_order:
+            client = self._providers[provider_name]
+            if client.is_healthy:
+                logger.info(f"Falling back to {provider_name}")
+                return client
+
+        raise RuntimeError("All LLM providers are unhealthy. Please check API keys and network.")
+
+    @property
+    def available_providers(self) -> list[str]:
+        return list(self._providers.keys())
+
+
+# ──────────────────────────────────────────────────────────────
+# Global singleton (nanobot pattern: create once, reuse)
+# ──────────────────────────────────────────────────────────────
+
+_registry: ProviderRegistry | None = None
+
+
+def _build_registry() -> ProviderRegistry:
+    """Build the provider registry from env vars."""
+    registry = ProviderRegistry()
 
     provider = settings.llm_provider.lower()
     model = settings.llm_model
 
-    if provider == "anthropic" and settings.anthropic_api_key:
-        _client = AnthropicClient(settings.anthropic_api_key, model)
-    elif provider == "deepseek" and settings.deepseek_api_key:
-        _client = OpenAIClient(
+    # Register all available providers
+    if settings.openai_api_key:
+        client = OpenAIClient(settings.openai_api_key, model)
+        registry.register("openai", client, primary=(provider == "openai"))
+
+    if settings.anthropic_api_key:
+        client = AnthropicClient(settings.anthropic_api_key, model)
+        registry.register("anthropic", client, primary=(provider == "anthropic"))
+
+    if settings.deepseek_api_key:
+        client = OpenAIClient(
             settings.deepseek_api_key,
             model,
             base_url="https://api.deepseek.com/v1",
+            name="deepseek",
         )
-    elif provider == "ollama":
-        _client = OpenAIClient(
+        registry.register("deepseek", client, primary=(provider == "deepseek"))
+
+    if provider == "ollama":
+        client = OpenAIClient(
             "ollama",
             model,
             base_url=f"{settings.ollama_base_url}/v1",
+            name="ollama",
         )
-    elif settings.openai_api_key:
-        _client = OpenAIClient(settings.openai_api_key, model)
-    else:
-        raise RuntimeError(
-            "No LLM API key configured. Set OPENAI_API_KEY, ANTHROPIC_API_KEY, "
-            "or DEEPSEEK_API_KEY in your .env file."
-        )
+        registry.register("ollama", client, primary=True)
 
-    return _client
+    if not registry.available_providers:
+        logger.warning(
+            "No LLM API key configured; using mock fallback provider. "
+            "Set OPENAI_API_KEY / ANTHROPIC_API_KEY / DEEPSEEK_API_KEY for real outputs."
+        )
+        registry.register("mock", MockLLMClient(), primary=True)
+
+    return registry
+
+
+def get_llm_client(provider: str | None = None) -> LLMClient:
+    """Get or create LLM client from the Provider Registry.
+
+    With circuit breaker fallback: if primary is down, automatically
+    tries the next available provider.
+    """
+    global _registry
+    if _registry is None:
+        _registry = _build_registry()
+    return _registry.get(provider)
+
+
+def get_registry() -> ProviderRegistry:
+    """Get the global provider registry."""
+    global _registry
+    if _registry is None:
+        _registry = _build_registry()
+    return _registry
