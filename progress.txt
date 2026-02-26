@@ -1,0 +1,15 @@
+=== Session 1 (2026-02-26) ===
+Completed: Project initialization, spec analysis, build-state.md created
+In progress: Phase 1 Task 1 - Docker Compose + directory structure
+Discovered patterns:
+- Spec has detailed directory structure in Section 7
+- 6 core tables for Phase 0: users, courses, course_content_tree, user_preferences, preference_signals, practice_problems
+- Reference projects at /Users/zijinzhang/Desktop/agent项目克隆代码/
+Gotchas:
+- Marker-pdf requires torch, heavy dependency — consider optional install
+- PageIndex is a reference project to borrow patterns from, not a pip package
+Next steps:
+- Create Docker Compose (PostgreSQL + Redis + FastAPI)
+- Create FastAPI project structure under apps/api/
+- Create Next.js project under apps/web/
+- Implement 6 core database tables
