@@ -1,10 +1,12 @@
 /**
  * Chat store using Zustand.
- * Manages conversation messages and streaming state.
+ * Manages conversation messages, streaming state, and NL action dispatching.
+ *
+ * Phase 0-B: Handles [ACTION:...] markers from LLM responses (CopilotKit pattern).
  */
 
 import { create } from "zustand";
-import { streamChat } from "@/lib/api";
+import { streamChat, type ChatAction } from "@/lib/api";
 
 export interface ChatMessage {
   id: string;
@@ -18,6 +20,10 @@ interface ChatState {
   isStreaming: boolean;
   error: string | null;
 
+  /** Callback for NL actions (layout changes, preference updates). Set by CoursePage. */
+  onAction: ((action: ChatAction) => void) | null;
+  setOnAction: (cb: (action: ChatAction) => void) => void;
+
   sendMessage: (courseId: string, content: string) => Promise<void>;
   clearMessages: () => void;
 }
@@ -28,6 +34,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
   messages: [],
   isStreaming: false,
   error: null,
+  onAction: null,
+
+  setOnAction: (cb) => set({ onAction: cb }),
 
   sendMessage: async (courseId, content) => {
     const userMsg: ChatMessage = {
@@ -51,12 +60,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }));
 
     try {
-      for await (const chunk of streamChat(courseId, content)) {
-        set((s) => ({
-          messages: s.messages.map((m) =>
-            m.id === assistantMsg.id ? { ...m, content: m.content + chunk } : m,
-          ),
-        }));
+      for await (const event of streamChat(courseId, content)) {
+        if (event.type === "content") {
+          set((s) => ({
+            messages: s.messages.map((m) =>
+              m.id === assistantMsg.id ? { ...m, content: m.content + event.content } : m,
+            ),
+          }));
+        } else if (event.type === "action") {
+          const { onAction } = get();
+          if (onAction) {
+            onAction(event.action);
+          }
+        }
       }
     } catch (e) {
       set({ error: (e as Error).message });

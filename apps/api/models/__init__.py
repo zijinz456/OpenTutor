@@ -5,6 +5,7 @@ from models.course import Course
 from models.content import CourseContentTree
 from models.preference import UserPreference, PreferenceSignal
 from models.practice import PracticeProblem, PracticeResult
+from models.memory import ConversationMemory
 
 __all__ = [
     "User",
@@ -14,4 +15,5 @@ __all__ = [
     "PreferenceSignal",
     "PracticeProblem",
     "PracticeResult",
+    "ConversationMemory",
 ]

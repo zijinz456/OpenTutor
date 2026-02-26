@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, Upload, FileText, MessageSquare, BookOpen } from "lucide-react";
 import {
@@ -10,11 +10,13 @@ import {
 } from "@/components/ui/resizable";
 import { Button } from "@/components/ui/button";
 import { useCourseStore } from "@/store/course";
+import { useChatStore } from "@/store/chat";
 import { NotesPanel } from "@/components/course/notes-panel";
 import { QuizPanel } from "@/components/course/quiz-panel";
 import { ChatPanel } from "@/components/chat/chat-panel";
 import { UploadDialog } from "@/components/course/upload-dialog";
 import { useGroupRef } from "react-resizable-panels";
+import { setPreference, type ChatAction } from "@/lib/api";
 
 /**
  * Layout presets for three-panel system.
@@ -39,6 +41,7 @@ export default function CoursePage() {
 
   const { activeCourse, setActiveCourse, courses, fetchCourses, contentTree } =
     useCourseStore();
+  const { setOnAction } = useChatStore();
 
   const [currentPreset, setCurrentPreset] = useState<LayoutPreset>("balanced");
   const [uploadOpen, setUploadOpen] = useState(false);
@@ -56,10 +59,59 @@ export default function CoursePage() {
     }
   }, [courseId, courses, setActiveCourse]);
 
-  const applyPreset = (preset: LayoutPreset) => {
+  const applyPreset = useCallback((preset: LayoutPreset) => {
     setCurrentPreset(preset);
     panelGroupRef.current?.setLayout(LAYOUT_PRESETS[preset]);
-  };
+  }, [panelGroupRef]);
+
+  /**
+   * Handle NL actions from chat (CopilotKit pattern).
+   * LLM outputs [ACTION:set_layout_preset:notesFocused] → parsed by backend →
+   * sent as SSE action event → dispatched here.
+   */
+  const handleAction = useCallback((action: ChatAction) => {
+    if (action.action === "set_layout_preset" && action.value) {
+      const preset = action.value as LayoutPreset;
+      if (preset in LAYOUT_PRESETS) {
+        applyPreset(preset);
+      }
+    } else if (action.action === "set_preference" && action.value && action.extra) {
+      // Fire-and-forget preference update via API
+      setPreference(action.value, action.extra, "global", courseId, "nl_tuning");
+    }
+  }, [applyPreset, courseId]);
+
+  // Register action handler with chat store
+  useEffect(() => {
+    setOnAction(handleAction);
+  }, [handleAction, setOnAction]);
+
+  // Keyboard shortcuts: Cmd+1 = Notes, Cmd+2 = Quiz, Cmd+3 = Chat
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      switch (e.key) {
+        case "1":
+          e.preventDefault();
+          applyPreset("notesFocused");
+          break;
+        case "2":
+          e.preventDefault();
+          applyPreset("quizFocused");
+          break;
+        case "3":
+          e.preventDefault();
+          applyPreset("chatFocused");
+          break;
+        case "0":
+          e.preventDefault();
+          applyPreset("balanced");
+          break;
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [applyPreset]);
 
   return (
     <div className="h-screen flex flex-col bg-background">
@@ -114,7 +166,7 @@ export default function CoursePage() {
               <FileText className="h-4 w-4" />
               <span className="text-sm font-medium">Notes</span>
             </div>
-            <NotesPanel contentTree={contentTree} />
+            <NotesPanel contentTree={contentTree} courseId={courseId} />
           </div>
         </ResizablePanel>
 

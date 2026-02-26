@@ -1,15 +1,54 @@
 === Session 1 (2026-02-26) ===
-Completed: Project initialization, spec analysis, build-state.md created
-In progress: Phase 1 Task 1 - Docker Compose + directory structure
-Discovered patterns:
-- Spec has detailed directory structure in Section 7
-- 6 core tables for Phase 0: users, courses, course_content_tree, user_preferences, preference_signals, practice_problems
-- Reference projects at /Users/zijinzhang/Desktop/agent项目克隆代码/
-Gotchas:
-- Marker-pdf requires torch, heavy dependency — consider optional install
-- PageIndex is a reference project to borrow patterns from, not a pip package
-Next steps:
-- Create Docker Compose (PostgreSQL + Redis + FastAPI)
-- Create FastAPI project structure under apps/api/
-- Create Next.js project under apps/web/
-- Implement 6 core database tables
+Completed: Phase 0-A (Backend + Frontend skeleton)
+- Docker Compose (pgvector/pg16 + Redis + FastAPI)
+- 7 SQLAlchemy models (users, courses, content_tree, preferences, signals, problems, results)
+- 6 routers (upload, chat, courses, preferences, quiz, notes)
+- LLM router with openakita Brain pattern (OpenAI/Anthropic/DeepSeek/Ollama)
+- Preference cascade resolver (Git Config 3-layer pattern)
+- PDF parser with Marker + PageIndex md_to_tree pattern
+- Next.js 16 + shadcn/ui + Tailwind frontend
+- Three-panel layout with react-resizable-panels v4 imperative API
+- Chat panel with SSE streaming
+- File upload dialog (PDF + URL)
+- Zustand stores (course, chat)
+
+Gotchas discovered:
+- react-resizable-panels v4 renamed ImperativePanelGroupHandle → GroupImperativeHandle + useGroupRef()
+- v4 renamed direction → orientation, ref → groupRef
+- v4 setLayout takes {panelId: size} not number[]
+- react-markdown v9+ removed className prop → wrap in <div>
+- React 19/Next 16 removed global JSX namespace → use explicit heading elements
+
+=== Session 2 (2026-02-26, continued) ===
+Completed: Phase 0-B + Phase 0-C
+
+Phase 0-B additions:
+- MarkdownRenderer with Mermaid.js diagrams + KaTeX math
+- Quiz extraction service (7 question types, structured output)
+- Interactive quiz panel (spaceforge pattern: one-at-a-time, color feedback)
+- Onboarding wizard (5-step preference setup)
+- NL layout control via [ACTION:...] markers in LLM response (CopilotKit pattern)
+- Chapter navigation sidebar (TOC with expand/collapse)
+- NL preference tuning via chat
+
+Phase 0-C additions:
+- Preference signal extractor (openakita Compiler pattern, "默认不提取")
+- Confidence calculator (base × frequency × recency × consistency, 90-day decay)
+- EverMemOS 3-stage memory pipeline (encode → consolidate → retrieve)
+- ConversationMemory model with pgvector embeddings (1536-dim)
+- WF-4 study session workflow (load_context → search_content → generate → extract_signals)
+- Preference confirmation dialog (global / course / dismiss)
+- Keyboard shortcuts (Cmd+0/1/2/3 for layout presets)
+- Async post-chat processing (signal extraction + memory encoding via asyncio.create_task)
+
+Patterns borrowed from reference projects:
+- openakita Brain: thin LLM wrapper, progressive cooldown [5,10,20,60]s
+- openakita Compiler: think_lightweight for cheap extraction, "useful in a month?" filter
+- openakita extractor: entity-attribute structure
+- PageIndex: stack-based heading parser for md_to_tree
+- EverMemOS: MaxSim scoring, word-overlap deduplication, importance × recency decay
+- spaceforge: consolidated-mcq-modal quiz UI pattern
+- nanobot: keyword-based provider registry
+- CopilotKit: imperative panel control via LLM tool calls
+
+Build status: Next.js compiles clean (TypeScript + production build pass)

@@ -14,12 +14,22 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { useCourseStore } from "@/store/course";
+import { OnboardingWizard } from "@/components/preference/onboarding-wizard";
 
 export default function DashboardPage() {
   const router = useRouter();
   const { courses, loading, fetchCourses, addCourse, removeCourse } = useCourseStore();
   const [newName, setNewName] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+
+  // Show onboarding on first visit
+  useEffect(() => {
+    const onboarded = localStorage.getItem("opentutor_onboarded");
+    if (!onboarded) {
+      setShowOnboarding(true);
+    }
+  }, []);
 
   useEffect(() => {
     fetchCourses();
@@ -116,6 +126,14 @@ export default function DashboardPage() {
           ))}
         </div>
       </main>
+
+      <OnboardingWizard
+        open={showOnboarding}
+        onComplete={() => {
+          setShowOnboarding(false);
+          localStorage.setItem("opentutor_onboarded", "true");
+        }}
+      />
     </div>
   );
 }
