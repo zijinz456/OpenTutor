@@ -92,10 +92,20 @@ export async function scrapeUrl(courseId: string, url: string): Promise<{ nodes_
 
 // ── Chat (SSE streaming) ──
 
+export interface ChatAction {
+  action: string;
+  value?: string;
+  extra?: string;
+}
+
+export type StreamEvent =
+  | { type: "content"; content: string }
+  | { type: "action"; action: ChatAction };
+
 export async function* streamChat(
   courseId: string,
   message: string,
-): AsyncGenerator<string, void, unknown> {
+): AsyncGenerator<StreamEvent, void, unknown> {
   const res = await fetch(`${API_BASE}/chat/`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -119,11 +129,14 @@ export async function* streamChat(
     buffer = lines.pop() || "";
 
     for (const line of lines) {
+      if (line.startsWith("event: ")) continue;
       if (line.startsWith("data: ")) {
         try {
           const data = JSON.parse(line.slice(6));
           if (data.content) {
-            yield data.content;
+            yield { type: "content", content: data.content };
+          } else if (data.action) {
+            yield { type: "action", action: data as ChatAction };
           }
         } catch {
           // skip non-JSON lines

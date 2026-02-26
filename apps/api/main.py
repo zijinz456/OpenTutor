@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
 from database import engine, Base
-from routers import upload, chat, courses, preferences
+from routers import upload, chat, courses, preferences, quiz, notes
 
 
 @asynccontextmanager
@@ -41,6 +41,8 @@ app.include_router(upload.router, prefix="/api/content", tags=["content"])
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 app.include_router(courses.router, prefix="/api/courses", tags=["courses"])
 app.include_router(preferences.router, prefix="/api/preferences", tags=["preferences"])
+app.include_router(quiz.router, prefix="/api/quiz", tags=["quiz"])
+app.include_router(notes.router, prefix="/api/notes", tags=["notes"])
 
 
 @app.get("/api/health")
