@@ -86,12 +86,12 @@ export function UploadDialog({ open, onOpenChange, courseId }: UploadDialogProps
             <div className="border-2 border-dashed rounded-lg p-8 text-center">
               <Upload className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
               <p className="text-sm text-muted-foreground mb-3">
-                Drag & drop a PDF here, or click to browse
+                Drag & drop a file here, or click to browse
               </p>
               <label>
                 <input
                   type="file"
-                  accept=".pdf"
+                  accept=".pdf,.pptx,.ppt,.docx,.doc,.html,.htm,.txt,.md"
                   className="hidden"
                   onChange={handleFileUpload}
                   disabled={uploading}
@@ -104,7 +104,7 @@ export function UploadDialog({ open, onOpenChange, courseId }: UploadDialogProps
                         Parsing...
                       </>
                     ) : (
-                      "Choose PDF"
+                      "Choose File"
                     )}
                   </span>
                 </Button>

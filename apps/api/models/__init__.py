@@ -6,6 +6,8 @@ from models.content import CourseContentTree
 from models.preference import UserPreference, PreferenceSignal
 from models.practice import PracticeProblem, PracticeResult
 from models.memory import ConversationMemory
+from models.ingestion import IngestionJob, StudySession, Assignment, WrongAnswer
+from models.progress import LearningProgress, LearningTemplate
 
 __all__ = [
     "User",
@@ -16,4 +18,10 @@ __all__ = [
     "PracticeProblem",
     "PracticeResult",
     "ConversationMemory",
+    "IngestionJob",
+    "StudySession",
+    "Assignment",
+    "WrongAnswer",
+    "LearningProgress",
+    "LearningTemplate",
 ]

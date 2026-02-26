@@ -1,6 +1,7 @@
 """Preference models — 3-layer cascade for MVP (temporary → course → global → default)."""
 
 import uuid
+from typing import Optional
 from datetime import datetime
 
 from sqlalchemy import String, DateTime, ForeignKey, Text, Float, func
@@ -21,7 +22,7 @@ class UserPreference(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
-    course_id: Mapped[uuid.UUID | None] = mapped_column(
+    course_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("courses.id"), nullable=True
     )
 
@@ -56,7 +57,7 @@ class PreferenceSignal(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
-    course_id: Mapped[uuid.UUID | None] = mapped_column(
+    course_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("courses.id"), nullable=True
     )
 
@@ -64,6 +65,6 @@ class PreferenceSignal(Base):
     signal_type: Mapped[str] = mapped_column(String(20))  # explicit | modification | behavior | negative
     dimension: Mapped[str] = mapped_column(String(50))
     value: Mapped[str] = mapped_column(Text)
-    context: Mapped[dict | None] = mapped_column(JSONB, nullable=True)  # Source conversation/action context
+    context: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)  # Source conversation/action context
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

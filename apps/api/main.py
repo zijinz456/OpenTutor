@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
 from database import engine, Base
-from routers import upload, chat, courses, preferences, quiz, notes
+from routers import upload, chat, courses, preferences, quiz, notes, workflows, progress, flashcards, canvas, notifications
 
 
 @asynccontextmanager
@@ -18,7 +18,18 @@ async def lifespan(app: FastAPI):
     # Create tables (dev only — use Alembic in production)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    # Seed built-in learning templates
+    from database import async_session
+    from services.templates.system import seed_builtin_templates
+
+    async with async_session() as db:
+        await seed_builtin_templates(db)
+        await db.commit()
+    # Start APScheduler for proactive reminders + FSRS review push
+    from services.scheduler.engine import start_scheduler, stop_scheduler
+    start_scheduler()
     yield
+    stop_scheduler()
     await engine.dispose()
 
 
@@ -43,6 +54,11 @@ app.include_router(courses.router, prefix="/api/courses", tags=["courses"])
 app.include_router(preferences.router, prefix="/api/preferences", tags=["preferences"])
 app.include_router(quiz.router, prefix="/api/quiz", tags=["quiz"])
 app.include_router(notes.router, prefix="/api/notes", tags=["notes"])
+app.include_router(workflows.router, prefix="/api/workflows", tags=["workflows"])
+app.include_router(progress.router, prefix="/api/progress", tags=["progress"])
+app.include_router(flashcards.router, prefix="/api/flashcards", tags=["flashcards"])
+app.include_router(canvas.router, prefix="/api/canvas", tags=["canvas"])
+app.include_router(notifications.router, prefix="/api/notifications", tags=["notifications"])
 
 
 @app.get("/api/health")

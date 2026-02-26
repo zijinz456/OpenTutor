@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, Upload, FileText, MessageSquare, BookOpen } from "lucide-react";
+import { useParams } from "next/navigation";
+import { FileText, MessageSquare, BookOpen, Layers, BarChart3, Network, Upload, X } from "lucide-react";
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -15,27 +15,29 @@ import { NotesPanel } from "@/components/course/notes-panel";
 import { QuizPanel } from "@/components/course/quiz-panel";
 import { ChatPanel } from "@/components/chat/chat-panel";
 import { UploadDialog } from "@/components/course/upload-dialog";
+import { FlashcardPanel } from "@/components/course/flashcard-panel";
+import { ProgressPanel } from "@/components/course/progress-panel";
+import { KnowledgeGraph } from "@/components/course/knowledge-graph";
+import { PdfViewer } from "@/components/course/pdf-viewer";
+import { NLTuningFAB } from "@/components/course/nl-tuning-fab";
+import { ActivityBar } from "@/components/workspace/activity-bar";
+import { StatusBar } from "@/components/workspace/status-bar";
+import { BreadcrumbsBar } from "@/components/workspace/breadcrumbs";
 import { useGroupRef } from "react-resizable-panels";
 import { setPreference, type ChatAction } from "@/lib/api";
 
-/**
- * Layout presets for three-panel system.
- * Reference: CopilotKit "Controlled Generative UI" pattern.
- * react-resizable-panels v4 imperative API: groupRef.current.setLayout({ panelId: size })
- */
 const LAYOUT_PRESETS = {
-  balanced: { notes: 33, quiz: 34, chat: 33 },
-  notesFocused: { notes: 50, quiz: 25, chat: 25 },
-  quizFocused: { notes: 20, quiz: 55, chat: 25 },
-  chatFocused: { notes: 20, quiz: 20, chat: 60 },
-  fullNotes: { notes: 80, quiz: 10, chat: 10 },
+  balanced: { pdf: 25, notes: 25, quiz: 25, chat: 25 },
+  notesFocused: { pdf: 15, notes: 45, quiz: 20, chat: 20 },
+  quizFocused: { pdf: 15, notes: 15, quiz: 50, chat: 20 },
+  chatFocused: { pdf: 15, notes: 15, quiz: 15, chat: 55 },
+  fullNotes: { pdf: 10, notes: 70, quiz: 10, chat: 10 },
 } as const;
 
 type LayoutPreset = keyof typeof LAYOUT_PRESETS;
 
 export default function CoursePage() {
   const params = useParams();
-  const router = useRouter();
   const courseId = params.id as string;
   const panelGroupRef = useGroupRef();
 
@@ -43,8 +45,10 @@ export default function CoursePage() {
     useCourseStore();
   const { setOnAction } = useChatStore();
 
-  const [currentPreset, setCurrentPreset] = useState<LayoutPreset>("balanced");
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [rightTab, setRightTab] = useState<"quiz" | "flashcards" | "progress" | "graph">("quiz");
+  const [activityItem, setActivityItem] = useState("notes");
+  const [hiddenPanels, setHiddenPanels] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (courses.length === 0) {
@@ -60,15 +64,21 @@ export default function CoursePage() {
   }, [courseId, courses, setActiveCourse]);
 
   const applyPreset = useCallback((preset: LayoutPreset) => {
-    setCurrentPreset(preset);
     panelGroupRef.current?.setLayout(LAYOUT_PRESETS[preset]);
   }, [panelGroupRef]);
 
-  /**
-   * Handle NL actions from chat (CopilotKit pattern).
-   * LLM outputs [ACTION:set_layout_preset:notesFocused] → parsed by backend →
-   * sent as SSE action event → dispatched here.
-   */
+  const togglePanel = useCallback((panelId: string) => {
+    setHiddenPanels((prev) => {
+      const next = new Set(prev);
+      if (next.has(panelId)) {
+        next.delete(panelId);
+      } else {
+        next.add(panelId);
+      }
+      return next;
+    });
+  }, []);
+
   const handleAction = useCallback((action: ChatAction) => {
     if (action.action === "set_layout_preset" && action.value) {
       const preset = action.value as LayoutPreset;
@@ -76,126 +86,221 @@ export default function CoursePage() {
         applyPreset(preset);
       }
     } else if (action.action === "set_preference" && action.value && action.extra) {
-      // Fire-and-forget preference update via API
-      setPreference(action.value, action.extra, "global", courseId, "nl_tuning");
+      setPreference(action.value, action.extra, "course", courseId, "nl_tuning");
     }
   }, [applyPreset, courseId]);
 
-  // Register action handler with chat store
   useEffect(() => {
     setOnAction(handleAction);
   }, [handleAction, setOnAction]);
 
-  // Keyboard shortcuts: Cmd+1 = Notes, Cmd+2 = Quiz, Cmd+3 = Chat
+  // Activity bar navigation
+  const handleActivityClick = useCallback((item: string) => {
+    setActivityItem(item);
+    if (item === "notes") {
+      setHiddenPanels(new Set());
+      applyPreset("notesFocused");
+    } else if (item === "practice") {
+      setRightTab("quiz");
+      applyPreset("quizFocused");
+    } else if (item === "chat") {
+      applyPreset("chatFocused");
+    } else if (item === "progress") {
+      setRightTab("progress");
+      applyPreset("quizFocused");
+    }
+  }, [applyPreset]);
+
+  // Keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey)) return;
       switch (e.key) {
-        case "1":
-          e.preventDefault();
-          applyPreset("notesFocused");
-          break;
-        case "2":
-          e.preventDefault();
-          applyPreset("quizFocused");
-          break;
-        case "3":
-          e.preventDefault();
-          applyPreset("chatFocused");
-          break;
-        case "0":
-          e.preventDefault();
-          applyPreset("balanced");
-          break;
+        case "1": e.preventDefault(); applyPreset("notesFocused"); break;
+        case "2": e.preventDefault(); applyPreset("quizFocused"); break;
+        case "3": e.preventDefault(); applyPreset("chatFocused"); break;
+        case "0": e.preventDefault(); applyPreset("balanced"); break;
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [applyPreset]);
 
+  // Build breadcrumb items from content tree
+  const breadcrumbs = [
+    { label: activeCourse?.name || "Course", href: "/" },
+    ...(contentTree.length > 0
+      ? [{ label: contentTree[0]?.title || "Chapter" }]
+      : []),
+  ];
+
   return (
-    <div className="h-screen flex flex-col bg-background">
-      {/* Header */}
-      <header className="border-b px-4 py-2 flex items-center justify-between shrink-0">
-        <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" onClick={() => router.push("/")}>
-            <ArrowLeft className="h-4 w-4" />
-          </Button>
-          <h1 className="font-semibold truncate">
-            {activeCourse?.name || "Loading..."}
-          </h1>
+    <div className="h-screen flex flex-col bg-white">
+      <div className="flex flex-1 overflow-hidden">
+        {/* Activity Bar */}
+        <ActivityBar activeItem={activityItem} onItemClick={handleActivityClick} />
+
+        {/* Main Content */}
+        <div className="flex flex-col flex-1 overflow-hidden">
+          {/* Breadcrumbs */}
+          <BreadcrumbsBar items={breadcrumbs} />
+
+          {/* Panels Area */}
+          <div className="flex flex-1 overflow-hidden relative">
+            <button
+              onClick={() => setUploadOpen(true)}
+              className="absolute top-3 right-3 z-20 h-9 px-3 rounded-md bg-white border border-gray-200 shadow-sm flex items-center gap-1.5 text-xs font-medium text-gray-700 hover:border-indigo-600 hover:text-indigo-600"
+              title="Upload materials"
+            >
+              <Upload className="w-3.5 h-3.5" />
+              Upload
+            </button>
+
+            <ResizablePanelGroup
+              groupRef={panelGroupRef}
+              orientation="horizontal"
+              className="flex-1"
+            >
+              {/* Panel 1: PDF Viewer */}
+              {!hiddenPanels.has("pdf") && (
+                <>
+                  <ResizablePanel id="pdf" defaultSize={25} minSize={8}>
+                    <div className="h-full flex flex-col">
+                      <div className="border-b px-3 py-2 flex items-center gap-2 shrink-0 bg-gray-50">
+                        <FileText className="h-3.5 w-3.5 text-red-500" />
+                        <span className="text-xs font-medium text-gray-900 flex-1 truncate">PDF Viewer</span>
+                        <button onClick={() => togglePanel("pdf")} className="text-gray-400 hover:text-gray-700">
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                      <PdfViewer />
+                    </div>
+                  </ResizablePanel>
+                  <ResizableHandle withHandle />
+                </>
+              )}
+
+              {/* Panel 2: AI Notes */}
+              {!hiddenPanels.has("notes") && (
+                <>
+                  <ResizablePanel id="notes" defaultSize={25} minSize={8}>
+                    <div className="h-full flex flex-col">
+                      <div className="border-b px-3 py-2 flex items-center gap-2 shrink-0 bg-gray-50">
+                        <FileText className="h-3.5 w-3.5 text-indigo-600" />
+                        <span className="text-xs font-medium text-gray-900 flex-1">Agent Notes</span>
+                        <button onClick={() => togglePanel("notes")} className="text-gray-400 hover:text-gray-700">
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                      <NotesPanel contentTree={contentTree} />
+                    </div>
+                  </ResizablePanel>
+                  <ResizableHandle withHandle />
+                </>
+              )}
+
+              {/* Panel 3: Quiz / Flashcards / Progress / Graph (tabbed) */}
+              {!hiddenPanels.has("quiz") && (
+                <>
+                  <ResizablePanel id="quiz" defaultSize={25} minSize={8}>
+                    <div className="h-full flex flex-col">
+                      <div className="border-b px-1 py-1 flex items-center gap-0.5 shrink-0 bg-gray-50">
+                        <Button
+                          variant={rightTab === "quiz" ? "secondary" : "ghost"}
+                          size="sm"
+                          className="text-xs h-7 px-2"
+                          onClick={() => setRightTab("quiz")}
+                        >
+                          <BookOpen className="h-3 w-3 mr-1" />
+                          Quiz
+                        </Button>
+                        <Button
+                          variant={rightTab === "flashcards" ? "secondary" : "ghost"}
+                          size="sm"
+                          className="text-xs h-7 px-2"
+                          onClick={() => setRightTab("flashcards")}
+                        >
+                          <Layers className="h-3 w-3 mr-1" />
+                          Cards
+                        </Button>
+                        <Button
+                          variant={rightTab === "progress" ? "secondary" : "ghost"}
+                          size="sm"
+                          className="text-xs h-7 px-2"
+                          onClick={() => setRightTab("progress")}
+                        >
+                          <BarChart3 className="h-3 w-3 mr-1" />
+                          Stats
+                        </Button>
+                        <Button
+                          variant={rightTab === "graph" ? "secondary" : "ghost"}
+                          size="sm"
+                          className="text-xs h-7 px-2"
+                          onClick={() => setRightTab("graph")}
+                        >
+                          <Network className="h-3 w-3 mr-1" />
+                          Graph
+                        </Button>
+                        <div className="flex-1" />
+                        <button onClick={() => togglePanel("quiz")} className="text-gray-400 hover:text-gray-700 px-1">
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                      {rightTab === "quiz" && <QuizPanel courseId={courseId} />}
+                      {rightTab === "flashcards" && <FlashcardPanel courseId={courseId} />}
+                      {rightTab === "progress" && <ProgressPanel courseId={courseId} />}
+                      {rightTab === "graph" && <KnowledgeGraph courseId={courseId} />}
+                    </div>
+                  </ResizablePanel>
+                  <ResizableHandle withHandle />
+                </>
+              )}
+
+              {/* Panel 4: Chat */}
+              {!hiddenPanels.has("chat") && (
+                <ResizablePanel id="chat" defaultSize={25} minSize={8}>
+                  <div className="h-full flex flex-col">
+                    <div className="border-b px-3 py-2 flex items-center gap-2 shrink-0 bg-gray-50">
+                      <MessageSquare className="h-3.5 w-3.5 text-indigo-600" />
+                      <span className="text-xs font-medium text-gray-900 flex-1">Q&A</span>
+                      <button onClick={() => togglePanel("chat")} className="text-gray-400 hover:text-gray-700">
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                    <ChatPanel courseId={courseId} />
+                  </div>
+                </ResizablePanel>
+              )}
+            </ResizablePanelGroup>
+
+            {/* NL Tuning FAB */}
+            <NLTuningFAB courseId={courseId} />
+          </div>
+
+          {/* Restore hidden panels bar */}
+          {hiddenPanels.size > 0 && (
+            <div className="h-8 px-3 bg-gray-50 border-t flex items-center gap-2 shrink-0">
+              <span className="text-[11px] text-gray-400">Hidden:</span>
+              {Array.from(hiddenPanels).map((p) => (
+                <button
+                  key={p}
+                  onClick={() => togglePanel(p)}
+                  className="px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] text-gray-600 hover:border-indigo-600 hover:text-indigo-600"
+                >
+                  {p === "pdf" ? "PDF" : p === "notes" ? "Notes" : p === "quiz" ? "Quiz/Cards" : "Chat"} +
+                </button>
+              ))}
+            </div>
+          )}
         </div>
+      </div>
 
-        <div className="flex items-center gap-2">
-          {/* Layout preset buttons */}
-          <div className="flex gap-1 mr-2">
-            {(Object.keys(LAYOUT_PRESETS) as LayoutPreset[]).map((preset) => (
-              <Button
-                key={preset}
-                variant={currentPreset === preset ? "secondary" : "ghost"}
-                size="sm"
-                className="text-xs"
-                onClick={() => applyPreset(preset)}
-              >
-                {preset === "balanced" && "Balanced"}
-                {preset === "notesFocused" && "Notes"}
-                {preset === "quizFocused" && "Quiz"}
-                {preset === "chatFocused" && "Chat"}
-                {preset === "fullNotes" && "Full"}
-              </Button>
-            ))}
-          </div>
-
-          <Button variant="outline" size="sm" onClick={() => setUploadOpen(true)}>
-            <Upload className="h-4 w-4 mr-1" />
-            Upload
-          </Button>
-        </div>
-      </header>
-
-      {/* Three-panel layout using react-resizable-panels (via shadcn Resizable) */}
-      <ResizablePanelGroup
-        groupRef={panelGroupRef}
-        orientation="horizontal"
-        className="flex-1"
-      >
-        {/* Panel 1: AI Notes */}
-        <ResizablePanel id="notes" defaultSize={33} minSize={10}>
-          <div className="h-full flex flex-col">
-            <div className="border-b px-3 py-2 flex items-center gap-2 shrink-0">
-              <FileText className="h-4 w-4" />
-              <span className="text-sm font-medium">Notes</span>
-            </div>
-            <NotesPanel contentTree={contentTree} courseId={courseId} />
-          </div>
-        </ResizablePanel>
-
-        <ResizableHandle withHandle />
-
-        {/* Panel 2: Quiz */}
-        <ResizablePanel id="quiz" defaultSize={34} minSize={10}>
-          <div className="h-full flex flex-col">
-            <div className="border-b px-3 py-2 flex items-center gap-2 shrink-0">
-              <BookOpen className="h-4 w-4" />
-              <span className="text-sm font-medium">Quiz</span>
-            </div>
-            <QuizPanel courseId={courseId} />
-          </div>
-        </ResizablePanel>
-
-        <ResizableHandle withHandle />
-
-        {/* Panel 3: AI Chat */}
-        <ResizablePanel id="chat" defaultSize={33} minSize={10}>
-          <div className="h-full flex flex-col">
-            <div className="border-b px-3 py-2 flex items-center gap-2 shrink-0">
-              <MessageSquare className="h-4 w-4" />
-              <span className="text-sm font-medium">AI Chat</span>
-            </div>
-            <ChatPanel courseId={courseId} />
-          </div>
-        </ResizablePanel>
-      </ResizablePanelGroup>
+      {/* Status Bar */}
+      <StatusBar
+        courseName={activeCourse?.name || "Loading..."}
+        chapterName={contentTree.length > 0 ? contentTree[0]?.title : undefined}
+        studyTime="0m"
+      />
 
       <UploadDialog
         open={uploadOpen}

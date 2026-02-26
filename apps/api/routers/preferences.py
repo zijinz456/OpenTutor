@@ -15,6 +15,20 @@ from services.preference.engine import resolve_preferences
 router = APIRouter()
 
 
+def _normalize_preference_value(dimension: str, value: str) -> str:
+    """Normalize legacy/frontend values into canonical Phase 0 values."""
+    lowered = value.strip().lower()
+    if dimension == "detail_level" and lowered == "moderate":
+        return "balanced"
+    if dimension == "language":
+        if lowered in {"zh-cn", "zh-tw", "zh-hans", "zh-hant"}:
+            return "zh"
+    if dimension == "explanation_style":
+        if lowered in {"analogy", "example_first"}:
+            return "example_heavy"
+    return value
+
+
 @router.get("/", response_model=list[PreferenceResponse])
 async def list_preferences(
     scope: str | None = None,
@@ -34,6 +48,7 @@ async def list_preferences(
 @router.post("/", response_model=PreferenceResponse, status_code=201)
 async def set_preference(body: PreferenceCreate, db: AsyncSession = Depends(get_db)):
     user = await get_or_create_user(db)
+    normalized_value = _normalize_preference_value(body.dimension, body.value)
 
     # Upsert: check if same dimension+scope+course exists
     query = select(UserPreference).where(
@@ -50,7 +65,7 @@ async def set_preference(body: PreferenceCreate, db: AsyncSession = Depends(get_
     existing = result.scalar_one_or_none()
 
     if existing:
-        existing.value = body.value
+        existing.value = normalized_value
         existing.source = body.source
         existing.confidence = 0.7 if body.source == "onboarding" else 0.5
     else:
@@ -58,7 +73,7 @@ async def set_preference(body: PreferenceCreate, db: AsyncSession = Depends(get_
             user_id=user.id,
             course_id=body.course_id,
             dimension=body.dimension,
-            value=body.value,
+            value=normalized_value,
             scope=body.scope,
             source=body.source,
             confidence=0.7 if body.source == "onboarding" else 0.5,

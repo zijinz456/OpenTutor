@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { Loader2, ChevronLeft, ChevronRight, CheckCircle, XCircle, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -37,11 +37,7 @@ export function QuizPanel({ courseId }: QuizPanelProps) {
   const [extracting, setExtracting] = useState(false);
   const [score, setScore] = useState({ correct: 0, total: 0 });
 
-  useEffect(() => {
-    loadProblems();
-  }, [courseId]);
-
-  const loadProblems = async () => {
+  const loadProblems = useCallback(async () => {
     setLoading(true);
     try {
       const data = await listProblems(courseId);
@@ -51,7 +47,11 @@ export function QuizPanel({ courseId }: QuizPanelProps) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [courseId]);
+
+  useEffect(() => {
+    loadProblems();
+  }, [loadProblems]);
 
   const handleExtract = async () => {
     setExtracting(true);
@@ -77,7 +77,7 @@ export function QuizPanel({ courseId }: QuizPanelProps) {
         correct: s.correct + (res.is_correct ? 1 : 0),
         total: s.total + 1,
       }));
-    } catch (err) {
+    } catch {
       toast.error("Failed to submit answer");
     }
   };

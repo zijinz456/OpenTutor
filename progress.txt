@@ -52,3 +52,54 @@ Patterns borrowed from reference projects:
 - CopilotKit: imperative panel control via LLM tool calls
 
 Build status: Next.js compiles clean (TypeScript + production build pass)
+
+=== Session 3 (2026-02-26, continued) ===
+Completed: Phase 1-3 (Full backend + frontend features)
+
+Phase 1 additions:
+- 7-layer preference cascade (temporary → course_scene → course → global_scene → global → template → system_default)
+- Scene detection (regex-based, 6 scene types + default)
+- RRF hybrid search (keyword + tree + vector, score = 1/(60+rank))
+- Provider Registry + circuit breaker (3 failures → open → 120s reset)
+- 6 workflow pipelines (WF-1 semester init, WF-2 weekly prep, WF-3 assignment analysis, WF-5 wrong answer review, WF-6 exam prep)
+- Learning progress tracker (course → chapter → knowledge point, mastery formula)
+- 5 built-in learning templates (STEM, Humanities, Language, Visual, Quick Review)
+
+Phase 2 additions:
+- FSRS-4.5 algorithm (from scratch, no py-fsrs dependency)
+- Flashcard generation + review endpoints
+- Knowledge graph builder (content tree → D3-compatible format, mastery coloring)
+
+Phase 3 additions:
+- 3-layer browser cascade (httpx → Scrapling → Playwright with session persistence)
+- Canvas LMS integration (API + browser mode)
+- i18n system (en/zh, ~80 keys per locale)
+
+=== Session 4 (2026-02-27) ===
+Completed: Frontend restructure (reference HTML parity)
+
+Major frontend changes:
+- Full-screen onboarding page (/onboarding) with left sidebar + 5 step navigation
+  Steps: Language → Learning Mode → Output Format → Layout Template → Example Upload
+- Multi-step project creation flow (/new) with 4 steps:
+  Mode Selection → Upload Form → Parsing Progress → Feature Selection
+- Enhanced projects page with big "Create New Project" button, rich cards (initials, badges), Auto-Scrape Status section
+- Workspace with Activity Bar (left dark sidebar: Home/Notes/Practice/Chat/Progress/Settings)
+- Breadcrumbs bar (course > chapter > section navigation)
+- PDF Viewer panel (4-panel layout: PDF + Notes + Quiz/Cards + Chat)
+- NL Tuning FAB (floating action button → popup with clarification options)
+- Status Bar (bottom: course name | chapter | study time)
+- Panel hide/show with restore bar
+- Parsing progress page with browser preview + sidebar progress + real-time logs
+
+New files created:
+- apps/web/src/app/onboarding/page.tsx
+- apps/web/src/app/new/page.tsx
+- apps/web/src/components/workspace/activity-bar.tsx
+- apps/web/src/components/workspace/status-bar.tsx
+- apps/web/src/components/workspace/breadcrumbs.tsx
+- apps/web/src/components/course/pdf-viewer.tsx
+- apps/web/src/components/course/nl-tuning-fab.tsx
+
+Build status: Next.js 16 compiles clean (6 routes: /, /onboarding, /new, /course/[id], /settings, /_not-found)
+Backend: All Python files compile OK

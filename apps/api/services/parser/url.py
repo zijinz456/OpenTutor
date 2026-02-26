@@ -12,6 +12,33 @@ from models.content import CourseContentTree
 from services.parser.pdf import _markdown_to_tree
 
 
+def extract_text_from_html(html: str) -> str:
+    """Extract readable text from raw HTML.
+
+    Used by Canvas browser-sync fallback.
+    """
+    try:
+        import trafilatura
+
+        text = trafilatura.extract(
+            html,
+            include_links=False,
+            include_formatting=False,
+            include_tables=True,
+            output_format="txt",
+        )
+        return text or ""
+    except Exception:
+        # Best-effort fallback without extra deps.
+        import re
+
+        clean = re.sub(r"<script[\s\S]*?</script>", " ", html, flags=re.IGNORECASE)
+        clean = re.sub(r"<style[\s\S]*?</style>", " ", clean, flags=re.IGNORECASE)
+        clean = re.sub(r"<[^>]+>", " ", clean)
+        clean = re.sub(r"\s+", " ", clean).strip()
+        return clean
+
+
 def _scrape_url(url: str) -> tuple[str, str]:
     """Scrape URL using trafilatura, return (title, markdown_content)."""
     try:
@@ -52,8 +79,9 @@ async def scrape_url_to_tree(
     """Scrape URL → extract content → build content tree."""
     loop = asyncio.get_event_loop()
 
-    title, content = await loop.run_in_executor(
-        None, partial(_scrape_url, url)
+    title, content = await asyncio.wait_for(
+        loop.run_in_executor(None, partial(_scrape_url, url)),
+        timeout=20,
     )
 
     # Build tree from the extracted content

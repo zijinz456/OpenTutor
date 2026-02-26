@@ -12,7 +12,6 @@ from sse_starlette.sse import EventSourceResponse
 
 from database import get_db
 from models.course import Course
-from models.content import CourseContentTree
 from models.preference import PreferenceSignal
 from schemas.chat import ChatRequest
 from services.llm.router import get_llm_client
@@ -28,23 +27,13 @@ router = APIRouter()
 
 
 async def search_content_tree(db: AsyncSession, course_id: uuid.UUID, query: str) -> list[dict]:
-    """Simple keyword search over content tree nodes for RAG context.
+    """Hybrid search over content tree using RRF fusion ranking.
 
-    Phase 0: basic LIKE search. Phase 1: PageIndex tree reasoning search.
+    Phase 1: combines keyword + tree + vector search via RRF.
     """
-    result = await db.execute(
-        select(CourseContentTree)
-        .where(
-            CourseContentTree.course_id == course_id,
-            CourseContentTree.content.ilike(f"%{query[:100]}%"),
-        )
-        .limit(5)
-    )
-    nodes = result.scalars().all()
-    return [
-        {"title": n.title, "content": (n.content or "")[:1000], "level": n.level}
-        for n in nodes
-    ]
+    from services.search.hybrid import hybrid_search
+
+    return await hybrid_search(db, course_id, query, limit=5)
 
 
 """
@@ -135,8 +124,13 @@ async def chat_stream(body: ChatRequest, db: AsyncSession = Depends(get_db)):
 
     user = await get_or_create_user(db)
 
-    # Resolve preferences
-    resolved = await resolve_preferences(db, user.id, body.course_id)
+    # Detect scene for preference cascade
+    from services.preference.scene import detect_scene
+
+    scene = detect_scene(body.message, course.name if course else None)
+
+    # Resolve preferences (7-layer cascade with scene)
+    resolved = await resolve_preferences(db, user.id, body.course_id, scene=scene)
 
     # Search content tree for RAG
     context_docs = await search_content_tree(db, body.course_id, body.message)
@@ -243,9 +237,15 @@ async def _extract_and_store_signal(
             )
             await db.commit()
 
-        logger.info(f"Preference signal extracted: {signal['dimension']}={signal['value']}")
+        logger.info(
+            "Preference signal extracted: user_id=%s course_id=%s dimension=%s value=%s",
+            signal["user_id"],
+            signal.get("course_id"),
+            signal["dimension"],
+            signal["value"],
+        )
     except Exception as e:
-        logger.warning(f"Signal extraction/storage failed: {e}")
+        logger.warning("Signal extraction/storage failed: %s", e, exc_info=True)
 
 
 async def _encode_memory(
@@ -262,4 +262,10 @@ async def _encode_memory(
             await encode_memory(db, user_id, course_id, user_message, assistant_response)
             await db.commit()
     except Exception as e:
-        logger.warning(f"Memory encoding failed: {e}")
+        logger.warning(
+            "Memory encoding failed: user_id=%s course_id=%s error=%s",
+            user_id,
+            course_id,
+            e,
+            exc_info=True,
+        )
