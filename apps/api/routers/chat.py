@@ -19,7 +19,8 @@ from services.preference.engine import resolve_preferences
 from services.preference.extractor import extract_preference_signal
 from services.preference.confidence import process_signal_to_preference
 from services.memory.pipeline import encode_memory, retrieve_memories
-from routers.courses import get_or_create_user
+from services.auth.dependency import get_current_user
+from models.user import User
 
 logger = logging.getLogger(__name__)
 
@@ -114,15 +115,13 @@ def build_system_prompt(
 
 
 @router.post("/")
-async def chat_stream(body: ChatRequest, db: AsyncSession = Depends(get_db)):
+async def chat_stream(body: ChatRequest, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """Stream chat response using SSE."""
     # Verify course exists
     result = await db.execute(select(Course).where(Course.id == body.course_id))
     course = result.scalar_one_or_none()
     if not course:
         raise HTTPException(status_code=404, detail="Course not found")
-
-    user = await get_or_create_user(db)
 
     # Detect scene for preference cascade
     from services.preference.scene import detect_scene

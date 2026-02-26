@@ -8,7 +8,6 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
-from routers.courses import get_or_create_user
 
 router = APIRouter()
 

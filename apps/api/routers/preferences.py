@@ -8,8 +8,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
 from models.preference import UserPreference
-from routers.courses import get_or_create_user
+from models.user import User
 from schemas.preference import PreferenceCreate, PreferenceResponse, ResolvedPreferences
+from services.auth.dependency import get_current_user
 from services.preference.engine import resolve_preferences
 
 router = APIRouter()
@@ -33,9 +34,9 @@ def _normalize_preference_value(dimension: str, value: str) -> str:
 async def list_preferences(
     scope: str | None = None,
     course_id: uuid.UUID | None = None,
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    user = await get_or_create_user(db)
     query = select(UserPreference).where(UserPreference.user_id == user.id)
     if scope:
         query = query.where(UserPreference.scope == scope)
@@ -46,8 +47,7 @@ async def list_preferences(
 
 
 @router.post("/", response_model=PreferenceResponse, status_code=201)
-async def set_preference(body: PreferenceCreate, db: AsyncSession = Depends(get_db)):
-    user = await get_or_create_user(db)
+async def set_preference(body: PreferenceCreate, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     normalized_value = _normalize_preference_value(body.dimension, body.value)
 
     # Upsert: check if same dimension+scope+course exists
@@ -89,8 +89,8 @@ async def set_preference(body: PreferenceCreate, db: AsyncSession = Depends(get_
 @router.get("/resolve", response_model=ResolvedPreferences)
 async def resolve(
     course_id: uuid.UUID | None = None,
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Resolve all preferences using the 3-layer cascade."""
-    user = await get_or_create_user(db)
     return await resolve_preferences(db, user.id, course_id)

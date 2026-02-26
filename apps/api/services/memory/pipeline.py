@@ -94,27 +94,14 @@ async def encode_memory(
 
 
 async def _generate_embedding(text: str) -> list[float] | None:
-    """Generate embedding vector for text.
-
-    Phase 0-C: Uses OpenAI embeddings API if available.
-    Falls back to None (skips vector search).
-    """
+    """Generate embedding vector for text using the embedding service registry."""
     try:
-        from config import settings
-
-        if settings.openai_api_key:
-            from openai import AsyncOpenAI
-
-            client = AsyncOpenAI(api_key=settings.openai_api_key)
-            response = await client.embeddings.create(
-                model="text-embedding-3-small",
-                input=text[:8000],
-            )
-            return response.data[0].embedding
+        from services.embedding.registry import get_embedding_provider
+        provider = get_embedding_provider()
+        return await provider.embed(text)
     except Exception as e:
         logger.debug(f"Embedding generation failed: {e}")
-
-    return None
+        return None
 
 
 # ── Stage 2: CONSOLIDATE ──

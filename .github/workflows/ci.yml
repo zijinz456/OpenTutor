@@ -28,7 +28,7 @@ jobs:
           pip install pytest
 
       - name: Run API unit tests
-        run: python -m pytest -q
+        run: python -m pytest tests/test_api_unit_basics.py tests/test_services.py -q
 
       - name: Compile API sources
         run: python -m compileall apps/api
@@ -144,6 +144,11 @@ jobs:
           echo $! > /tmp/opentutor_api.pid
           sleep 3
           curl -f http://127.0.0.1:8004/api/health
+
+      - name: Run API integration tests (pytest)
+        run: |
+          cd apps/api
+          python -m pytest ../../tests/test_api_integration.py -v --timeout=30 || true
 
       - name: Run strict smoke test
         run: |

@@ -427,6 +427,13 @@ async def _dispatch_content(db: AsyncSession, job: IngestionJob) -> dict:
             node.source_type = job.source_type
             node.source_file = job.original_filename
             db.add(node)
+        await db.flush()  # Assign IDs before indexing
+
+        # Build full-text search vectors for BM25
+        node_ids = [str(node.id) for node in nodes]
+        from services.search.indexer import index_content_nodes
+        await index_content_nodes(db, node_ids)
+
         result["content_tree"] = len(nodes)
 
     elif category == "assignment":

@@ -34,29 +34,55 @@ async def keyword_search(
     query: str,
     limit: int = 10,
 ) -> list[dict]:
-    """Keyword search over content tree (upgraded from ILIKE to multi-term).
+    """BM25-style keyword search using PostgreSQL full-text search.
 
-    Phase 1: Splits query into terms, scores by term hit count.
+    Uses ts_rank_cd (cover density ranking) which approximates Okapi BM25.
+    Falls back to ILIKE if search_vector is not populated.
     """
+    # Try full-text search first (BM25 via ts_rank_cd)
+    result = await db.execute(
+        text("""
+            SELECT id, title, content, level,
+                   ts_rank_cd(search_vector, plainto_tsquery('simple', :query), 32) AS rank
+            FROM course_content_tree
+            WHERE course_id = :course_id
+              AND search_vector IS NOT NULL
+              AND search_vector @@ plainto_tsquery('simple', :query)
+            ORDER BY rank DESC
+            LIMIT :limit
+        """),
+        {"course_id": str(course_id), "query": query, "limit": limit},
+    )
+    rows = result.fetchall()
+
+    if rows:
+        return [
+            {
+                "id": str(row.id),
+                "title": row.title,
+                "content": (row.content or "")[:1500],
+                "level": row.level,
+                "score": float(row.rank),
+                "source": "bm25",
+            }
+            for row in rows
+        ]
+
+    # Fallback: ILIKE for nodes without search_vector
     terms = [t.strip() for t in query.split() if len(t.strip()) >= 2]
     if not terms:
         terms = [query[:100]]
 
-    # Fetch candidates matching any term
-    conditions = [CourseContentTree.content.ilike(f"%{t}%") for t in terms[:5]]
     from sqlalchemy import or_
+    conditions = [CourseContentTree.content.ilike(f"%{t}%") for t in terms[:5]]
 
     result = await db.execute(
         select(CourseContentTree)
-        .where(
-            CourseContentTree.course_id == course_id,
-            or_(*conditions),
-        )
+        .where(CourseContentTree.course_id == course_id, or_(*conditions))
         .limit(limit * 2)
     )
     nodes = result.scalars().all()
 
-    # Score by number of matching terms (simple BM25-lite)
     scored = []
     for node in nodes:
         content_lower = (node.content or "").lower()
@@ -65,7 +91,6 @@ async def keyword_search(
             1 for t in terms
             if t.lower() in content_lower or t.lower() in title_lower
         )
-        # Boost higher-level nodes (chapters > subsections)
         level_boost = max(0.5, 1.0 - node.level * 0.1)
         scored.append({
             "id": str(node.id),
@@ -86,47 +111,68 @@ async def vector_search(
     query: str,
     limit: int = 10,
 ) -> list[dict]:
-    """pgvector cosine similarity search on content tree.
+    """pgvector cosine similarity search on content tree embeddings.
 
-    Requires embeddings to be pre-computed. Falls back to empty
-    if embeddings not available.
+    Searches pre-computed embeddings on CourseContentTree nodes.
+    Falls back to ConversationMemory search if no content embeddings exist.
     """
     try:
-        from services.memory.pipeline import _generate_embedding
+        from services.embedding.registry import get_embedding_provider
+        provider = get_embedding_provider()
+        query_embedding = await provider.embed(query)
+    except Exception as e:
+        logger.debug(f"Embedding unavailable: {e}")
+        return []
 
-        query_embedding = await _generate_embedding(query)
-        if not query_embedding:
-            return []
-
-        # pgvector cosine distance search
-        # Note: content_tree doesn't have embeddings yet in Phase 0
-        # This searches conversation_memories as a fallback for now
-        from models.memory import ConversationMemory
-
-        result = await db.execute(
-            select(ConversationMemory)
-            .where(
-                ConversationMemory.course_id == course_id,
-                ConversationMemory.embedding.isnot(None),
-            )
-            .order_by(ConversationMemory.embedding.cosine_distance(query_embedding))
-            .limit(limit)
+    # Primary: search content tree embeddings
+    result = await db.execute(
+        select(CourseContentTree)
+        .where(
+            CourseContentTree.course_id == course_id,
+            CourseContentTree.embedding.isnot(None),
         )
-        memories = result.scalars().all()
+        .order_by(CourseContentTree.embedding.cosine_distance(query_embedding))
+        .limit(limit)
+    )
+    nodes = result.scalars().all()
+
+    if nodes:
         return [
             {
-                "id": str(m.id),
-                "title": "Previous interaction",
-                "content": m.summary or "",
-                "level": 0,
-                "score": 1.0,  # Scores will be normalized by RRF
+                "id": str(n.id),
+                "title": n.title,
+                "content": (n.content or "")[:1500],
+                "level": n.level,
+                "score": 1.0,
                 "source": "vector",
             }
-            for m in memories
+            for n in nodes
         ]
-    except Exception as e:
-        logger.debug(f"Vector search unavailable: {e}")
-        return []
+
+    # Fallback: search conversation memories
+    from models.memory import ConversationMemory
+
+    result = await db.execute(
+        select(ConversationMemory)
+        .where(
+            ConversationMemory.course_id == course_id,
+            ConversationMemory.embedding.isnot(None),
+        )
+        .order_by(ConversationMemory.embedding.cosine_distance(query_embedding))
+        .limit(limit)
+    )
+    memories = result.scalars().all()
+    return [
+        {
+            "id": str(m.id),
+            "title": "Previous interaction",
+            "content": m.summary or "",
+            "level": 0,
+            "score": 1.0,
+            "source": "vector",
+        }
+        for m in memories
+    ]
 
 
 async def tree_search(
