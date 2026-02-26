@@ -17,7 +17,8 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
-from routers.courses import get_or_create_user
+from models.user import User
+from services.auth.dependency import get_current_user
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -59,11 +60,10 @@ def _raise_if_service_error(result: dict) -> None:
 
 
 @router.post("/semester-init")
-async def semester_init(body: SemesterInitRequest, db: AsyncSession = Depends(get_db)):
+async def semester_init(body: SemesterInitRequest, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """WF-1: Initialize a new semester with courses and study plan."""
     from services.workflow.semester_init import run_semester_init
 
-    user = await get_or_create_user(db)
     try:
         result = await run_semester_init(db, user.id, body.semester_name, body.courses)
         await db.commit()
@@ -76,11 +76,10 @@ async def semester_init(body: SemesterInitRequest, db: AsyncSession = Depends(ge
 
 
 @router.get("/weekly-prep")
-async def weekly_prep(db: AsyncSession = Depends(get_db)):
+async def weekly_prep(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """WF-2: Generate weekly study plan based on deadlines and progress."""
     from services.workflow.weekly_prep import run_weekly_prep
 
-    user = await get_or_create_user(db)
     try:
         return await run_weekly_prep(db, user.id)
     except Exception as e:
@@ -89,11 +88,10 @@ async def weekly_prep(db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/assignment-analysis")
-async def assignment_analysis(body: AssignmentAnalysisRequest, db: AsyncSession = Depends(get_db)):
+async def assignment_analysis(body: AssignmentAnalysisRequest, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """WF-3: Analyze an assignment and generate approach guide."""
     from services.workflow.assignment_analysis import run_assignment_analysis
 
-    user = await get_or_create_user(db)
     try:
         result = await run_assignment_analysis(db, user.id, body.assignment_id)
         _raise_if_service_error(result)
@@ -112,12 +110,12 @@ async def assignment_analysis(body: AssignmentAnalysisRequest, db: AsyncSession 
 @router.get("/wrong-answer-review")
 async def wrong_answer_review(
     course_id: uuid.UUID | None = None,
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """WF-5: Generate review material based on wrong answers."""
     from services.workflow.wrong_answer_review import run_wrong_answer_review
 
-    user = await get_or_create_user(db)
     try:
         return await run_wrong_answer_review(db, user.id, course_id)
     except Exception as e:
@@ -146,11 +144,10 @@ async def mark_wrong_answers_reviewed(
 
 
 @router.post("/exam-prep")
-async def exam_prep(body: ExamPrepRequest, db: AsyncSession = Depends(get_db)):
+async def exam_prep(body: ExamPrepRequest, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """WF-6: Generate exam preparation plan."""
     from services.workflow.exam_prep import run_exam_prep
 
-    user = await get_or_create_user(db)
     try:
         return await run_exam_prep(
             db, user.id, body.course_id, body.exam_topic, body.days_until_exam

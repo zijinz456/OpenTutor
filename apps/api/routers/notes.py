@@ -9,9 +9,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
 from models.content import CourseContentTree
+from models.user import User
+from services.auth.dependency import get_current_user
 from services.parser.notes import restructure_notes
 from services.preference.engine import resolve_preferences
-from routers.courses import get_or_create_user
 
 router = APIRouter()
 
@@ -28,7 +29,7 @@ class RestructureResponse(BaseModel):
 
 
 @router.post("/restructure", response_model=RestructureResponse)
-async def restructure_content(body: RestructureRequest, db: AsyncSession = Depends(get_db)):
+async def restructure_content(body: RestructureRequest, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """Restructure a content node based on user preferences."""
     result = await db.execute(
         select(CourseContentTree).where(CourseContentTree.id == body.content_node_id)
@@ -38,7 +39,6 @@ async def restructure_content(body: RestructureRequest, db: AsyncSession = Depen
         raise HTTPException(status_code=404, detail="Content node not found or empty")
 
     # Get user preferences
-    user = await get_or_create_user(db)
     resolved = await resolve_preferences(db, user.id, node.course_id)
 
     note_format = body.format_override or resolved.preferences.get("note_format", "bullet_point")

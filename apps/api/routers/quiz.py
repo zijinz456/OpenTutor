@@ -10,7 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
 from models.content import CourseContentTree
 from models.practice import PracticeProblem, PracticeResult
-from routers.courses import get_or_create_user
+from models.user import User
+from services.auth.dependency import get_current_user
 from services.parser.quiz import extract_questions
 
 router = APIRouter()
@@ -91,7 +92,7 @@ async def list_problems(course_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 
 
 @router.post("/submit", response_model=AnswerResponse)
-async def submit_answer(body: SubmitAnswerRequest, db: AsyncSession = Depends(get_db)):
+async def submit_answer(body: SubmitAnswerRequest, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """Submit an answer to a practice problem."""
     result = await db.execute(
         select(PracticeProblem).where(PracticeProblem.id == body.problem_id)
@@ -99,8 +100,6 @@ async def submit_answer(body: SubmitAnswerRequest, db: AsyncSession = Depends(ge
     problem = result.scalar_one_or_none()
     if not problem:
         raise HTTPException(status_code=404, detail="Problem not found")
-
-    user = await get_or_create_user(db)
 
     # Check correctness
     is_correct = False

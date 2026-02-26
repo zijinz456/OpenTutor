@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
 from database import engine, Base
-from routers import upload, chat, courses, preferences, quiz, notes, workflows, progress, flashcards, canvas, notifications
+from routers import auth, upload, chat, courses, preferences, quiz, notes, workflows, progress, flashcards, canvas, notifications
 
 
 @asynccontextmanager
@@ -42,12 +42,13 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=settings.cors_origin_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(upload.router, prefix="/api/content", tags=["content"])
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 app.include_router(courses.router, prefix="/api/courses", tags=["courses"])

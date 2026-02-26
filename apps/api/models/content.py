@@ -4,9 +4,10 @@ import uuid
 from typing import Optional
 from datetime import datetime
 
-from sqlalchemy import String, DateTime, ForeignKey, Text, Integer, func
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy import String, DateTime, ForeignKey, Text, Integer, Index, func
+from sqlalchemy.dialects.postgresql import UUID, JSONB, TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from pgvector.sqlalchemy import Vector
 
 from database import Base
 
@@ -36,6 +37,10 @@ class CourseContentTree(Base):
     source_file: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     source_type: Mapped[str] = mapped_column(String(20), default="pdf")  # pdf, url, manual
 
+    # Search & embedding
+    search_vector: Mapped[Optional[str]] = mapped_column(TSVECTOR, nullable=True)
+    embedding: Mapped[Optional[list]] = mapped_column(Vector(1536), nullable=True)
+
     # Metadata
     metadata_: Mapped[Optional[dict]] = mapped_column("metadata", JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -44,3 +49,7 @@ class CourseContentTree(Base):
     course = relationship("Course", back_populates="content_tree")
     children = relationship("CourseContentTree", back_populates="parent", cascade="all, delete-orphan")
     parent = relationship("CourseContentTree", back_populates="children", remote_side=[id])
+
+
+# GIN index for fast full-text search
+Index("ix_content_tree_search_vector", CourseContentTree.search_vector, postgresql_using="gin")

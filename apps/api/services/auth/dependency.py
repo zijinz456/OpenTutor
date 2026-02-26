@@ -1,0 +1,60 @@
+"""FastAPI dependency for user authentication.
+
+When AUTH_ENABLED=false (default), falls back to single-user local mode.
+When AUTH_ENABLED=true, requires a valid JWT bearer token.
+"""
+
+import uuid
+
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from config import settings
+from database import get_db
+from models.user import User
+
+security = HTTPBearer(auto_error=False)
+
+
+async def get_current_user(
+    db: AsyncSession = Depends(get_db),
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
+) -> User:
+    """Resolve the current user from JWT or fall back to local user."""
+    if not settings.auth_enabled:
+        # Backward-compatible: return local user
+        result = await db.execute(select(User).limit(1))
+        user = result.scalar_one_or_none()
+        if not user:
+            user = User(name="Local User")
+            db.add(user)
+            await db.flush()
+        return user
+
+    if not credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    from services.auth.jwt import decode_token
+    try:
+        payload = decode_token(credentials.credentials)
+        if payload.get("type") != "access":
+            raise HTTPException(status_code=401, detail="Invalid token type")
+        user_id = uuid.UUID(payload["sub"])
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user or not user.is_active:
+        raise HTTPException(status_code=401, detail="User not found or inactive")
+    return user

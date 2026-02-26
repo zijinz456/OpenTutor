@@ -12,6 +12,7 @@ from models.course import Course
 from models.content import CourseContentTree
 from models.user import User
 from schemas.course import CourseCreate, CourseResponse, ContentNodeResponse
+from services.auth.dependency import get_current_user
 
 router = APIRouter()
 
@@ -31,8 +32,7 @@ async def get_or_create_user(db: AsyncSession) -> User:
 
 
 @router.get("/", response_model=list[CourseResponse])
-async def list_courses(db: AsyncSession = Depends(get_db)):
-    user = await get_or_create_user(db)
+async def list_courses(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(Course).where(Course.user_id == user.id).order_by(Course.created_at.desc())
     )
@@ -40,8 +40,7 @@ async def list_courses(db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/", response_model=CourseResponse, status_code=201)
-async def create_course(body: CourseCreate, db: AsyncSession = Depends(get_db)):
-    user = await get_or_create_user(db)
+async def create_course(body: CourseCreate, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     course = Course(user_id=user.id, name=body.name, description=body.description)
     db.add(course)
     await db.commit()

@@ -4,6 +4,8 @@ Phase 0-A: Basic PDF upload + URL scrape → content tree.
 Phase 1: Full 7-step ingestion pipeline with classification + multi-format.
 """
 
+import asyncio
+import logging
 import os
 import uuid
 
@@ -12,19 +14,34 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
-from database import get_db
+from database import get_db, async_session
 from models.course import Course
 from models.ingestion import IngestionJob
+from models.user import User
 from services.ingestion.pipeline import run_ingestion_pipeline
-from routers.courses import get_or_create_user
+from services.auth.dependency import get_current_user
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+async def _background_embed(course_id: uuid.UUID):
+    """Fire-and-forget: compute embeddings for newly ingested content."""
+    try:
+        from services.embedding.content import embed_course_content
+        async with async_session() as db:
+            await embed_course_content(db, course_id)
+            await db.commit()
+    except Exception as e:
+        logger.debug(f"Background embedding failed: {e}")
 
 
 @router.post("/upload")
 async def upload_file(
     file: UploadFile = File(...),
     course_id: str = Form(...),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Upload any file → 7-step ingestion pipeline → content tree.
@@ -41,8 +58,6 @@ async def upload_file(
     course = result.scalar_one_or_none()
     if not course:
         raise HTTPException(status_code=404, detail="Course not found")
-
-    user = await get_or_create_user(db)
 
     # Validate file
     if not file.filename:
@@ -81,6 +96,10 @@ async def upload_file(
     if job.status == "failed":
         raise HTTPException(status_code=500, detail=job.error_message or "Ingestion failed")
 
+    # Fire background embedding computation
+    if (job.dispatched_to or {}).get("content_tree", 0) > 0:
+        asyncio.create_task(_background_embed(cid))
+
     return {
         "status": "ok",
         "file": file.filename,
@@ -96,6 +115,7 @@ async def upload_file(
 async def scrape_url(
     url: str = Form(...),
     course_id: str = Form(...),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Scrape a URL → ingestion pipeline → content tree."""
@@ -109,8 +129,6 @@ async def scrape_url(
     if not course:
         raise HTTPException(status_code=404, detail="Course not found")
 
-    user = await get_or_create_user(db)
-
     job = await run_ingestion_pipeline(
         db=db,
         user_id=user.id,
@@ -122,6 +140,10 @@ async def scrape_url(
 
     if job.status == "failed":
         raise HTTPException(status_code=500, detail=job.error_message or "Scrape failed")
+
+    # Fire background embedding computation
+    if (job.dispatched_to or {}).get("content_tree", 0) > 0:
+        asyncio.create_task(_background_embed(cid))
 
     return {
         "status": "ok",

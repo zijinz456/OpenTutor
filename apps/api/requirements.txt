@@ -42,8 +42,18 @@ langgraph>=0.2.0
 # Scheduler
 apscheduler>=3.10.0
 
+# Authentication
+bcrypt>=4.0.0
+python-jose[cryptography]>=3.3.0
+
 # Utilities
 tenacity==9.0.0
 httpx==0.28.1
 python-dotenv==1.0.1
 sse-starlette==2.2.1
+
+# Testing (dev)
+pytest-asyncio>=0.23.0
+
+# Embeddings (optional: for local embeddings without OpenAI)
+# sentence-transformers>=2.2.0

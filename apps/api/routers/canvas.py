@@ -17,7 +17,8 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
-from routers.courses import get_or_create_user
+from models.user import User
+from services.auth.dependency import get_current_user
 
 router = APIRouter()
 
@@ -52,13 +53,12 @@ async def canvas_login(body: CanvasLoginRequest):
 
 
 @router.post("/sync")
-async def canvas_sync(body: CanvasSyncRequest, db: AsyncSession = Depends(get_db)):
+async def canvas_sync(body: CanvasSyncRequest, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """Sync courses and assignments from Canvas.
 
     Uses canvasapi for API token mode, browser for session mode.
     Syncs: courses, assignments, announcements, files.
     """
-    user = await get_or_create_user(db)
 
     if body.api_token:
         return await _sync_with_api(db, user.id, body.canvas_url, body.api_token, body.course_ids)
