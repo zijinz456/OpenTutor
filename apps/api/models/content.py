@@ -1,0 +1,45 @@
+"""Course content tree model — stores parsed document structure (PageIndex pattern)."""
+
+import uuid
+from datetime import datetime
+
+from sqlalchemy import String, DateTime, ForeignKey, Text, Integer, func
+from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from database import Base
+
+
+class CourseContentTree(Base):
+    """Hierarchical content tree node.
+
+    Follows PageIndex pattern: PDF → Markdown → tree structure.
+    Each node represents a section/subsection of the document.
+    """
+
+    __tablename__ = "course_content_tree"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    course_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("courses.id"))
+    parent_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("course_content_tree.id"), nullable=True
+    )
+
+    # Tree structure
+    title: Mapped[str] = mapped_column(String(500))
+    content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    level: Mapped[int] = mapped_column(Integer, default=0)  # 0=root, 1=chapter, 2=section, etc.
+    order_index: Mapped[int] = mapped_column(Integer, default=0)  # Sibling ordering
+
+    # Source info
+    source_file: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    source_type: Mapped[str] = mapped_column(String(20), default="pdf")  # pdf, url, manual
+
+    # Metadata
+    metadata_: Mapped[dict | None] = mapped_column("metadata", JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships
+    course = relationship("Course", back_populates="content_tree")
+    children = relationship("CourseContentTree", back_populates="parent", cascade="all, delete-orphan")
+    parent = relationship("CourseContentTree", back_populates="children", remote_side=[id])

@@ -1,0 +1,69 @@
+"""Preference models — 3-layer cascade for MVP (temporary → course → global → default)."""
+
+import uuid
+from datetime import datetime
+
+from sqlalchemy import String, DateTime, ForeignKey, Text, Float, func
+from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from database import Base
+
+
+class UserPreference(Base):
+    """Confirmed user preferences.
+
+    MVP uses 3-layer cascade: temporary → course → global → default.
+    Full 7-layer (+ course_scene, global_scene, template) deferred to Phase 1.
+    """
+
+    __tablename__ = "user_preferences"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
+    course_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("courses.id"), nullable=True
+    )
+
+    # Preference scope: temporary | course | global
+    scope: Mapped[str] = mapped_column(String(20), default="global")
+
+    # Preference data
+    dimension: Mapped[str] = mapped_column(String(50))  # e.g. "note_format", "detail_level", "language"
+    value: Mapped[str] = mapped_column(Text)  # e.g. "bullet_point", "concise", "zh-CN"
+    source: Mapped[str] = mapped_column(String(20), default="onboarding")  # onboarding | nl_command | behavior
+
+    # Confidence
+    confidence: Mapped[float] = mapped_column(Float, default=0.5)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    # Relationships
+    user = relationship("User", back_populates="preferences")
+
+
+class PreferenceSignal(Base):
+    """Raw preference signals extracted from user behavior.
+
+    Collected by the Compiler (openakita pattern) and processed into
+    UserPreference entries after confidence threshold is reached.
+    """
+
+    __tablename__ = "preference_signals"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
+    course_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("courses.id"), nullable=True
+    )
+
+    # Signal data
+    signal_type: Mapped[str] = mapped_column(String(20))  # explicit | modification | behavior | negative
+    dimension: Mapped[str] = mapped_column(String(50))
+    value: Mapped[str] = mapped_column(Text)
+    context: Mapped[dict | None] = mapped_column(JSONB, nullable=True)  # Source conversation/action context
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
