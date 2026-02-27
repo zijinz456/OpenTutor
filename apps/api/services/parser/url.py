@@ -1,21 +1,23 @@
-"""URL scraping service using trafilatura.
+"""URL scraping service — thin wrapper around unified document_loader.
 
-Reference: trafilatura for high-quality web content extraction.
+Uses Crawl4AI as primary engine with multi-layer fallback cascade.
 Reuses _markdown_to_tree from pdf.py for tree building.
 """
 
+import re
 import uuid
-import asyncio
-from functools import partial
+import logging
 
 from models.content import CourseContentTree
 from services.parser.pdf import _markdown_to_tree
+
+logger = logging.getLogger(__name__)
 
 
 def extract_text_from_html(html: str) -> str:
     """Extract readable text from raw HTML.
 
-    Used by Canvas browser-sync fallback.
+    Used by Canvas browser-sync fallback and document_loader fallback layers.
     """
     try:
         import trafilatura
@@ -29,9 +31,7 @@ def extract_text_from_html(html: str) -> str:
         )
         return text or ""
     except Exception:
-        # Best-effort fallback without extra deps.
-        import re
-
+        # Best-effort regex fallback
         clean = re.sub(r"<script[\s\S]*?</script>", " ", html, flags=re.IGNORECASE)
         clean = re.sub(r"<style[\s\S]*?</style>", " ", clean, flags=re.IGNORECASE)
         clean = re.sub(r"<[^>]+>", " ", clean)
@@ -39,53 +39,28 @@ def extract_text_from_html(html: str) -> str:
         return clean
 
 
-def _scrape_url(url: str) -> tuple[str, str]:
-    """Scrape URL using trafilatura, return (title, markdown_content)."""
-    try:
-        import trafilatura
-
-        downloaded = trafilatura.fetch_url(url)
-        if not downloaded:
-            raise ValueError(f"Failed to fetch URL: {url}")
-
-        # Extract main content as text
-        content = trafilatura.extract(
-            downloaded,
-            include_links=True,
-            include_formatting=True,
-            include_tables=True,
-            output_format="txt",
-        )
-        if not content:
-            raise ValueError(f"No content extracted from URL: {url}")
-
-        # Try to get the title
-        metadata = trafilatura.extract_metadata(downloaded)
-        title = metadata.title if metadata and metadata.title else url
-
-        return title, content
-
-    except ImportError:
-        raise ImportError(
-            "trafilatura is required for URL scraping. "
-            "Install with: pip install trafilatura"
-        )
-
-
 async def scrape_url_to_tree(
     url: str,
     course_id: uuid.UUID,
 ) -> list[CourseContentTree]:
-    """Scrape URL → extract content → build content tree."""
-    loop = asyncio.get_event_loop()
+    """Scrape URL → extract content → build content tree.
 
-    title, content = await asyncio.wait_for(
-        loop.run_in_executor(None, partial(_scrape_url, url)),
-        timeout=20,
-    )
+    Delegates to document_loader.extract_content() which uses
+    Crawl4AI → httpx+clean_soup → trafilatura → Playwright cascade.
+    """
+    from services.ingestion.document_loader import extract_content
+
+    try:
+        title, content = await extract_content(url=url)
+    except Exception as e:
+        logger.warning("URL extraction failed for %s: %s", url, e)
+        return []
+
+    if not content:
+        return []
 
     # Build tree from the extracted content
-    nodes = _markdown_to_tree(content, course_id, source_file=title)
+    nodes = _markdown_to_tree(content, course_id, source_file=title or url)
 
     # Update source_type for URL-sourced nodes
     for node in nodes:

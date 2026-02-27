@@ -8,6 +8,7 @@ from models.practice import PracticeProblem, PracticeResult
 from models.memory import ConversationMemory
 from models.ingestion import IngestionJob, StudySession, Assignment, WrongAnswer
 from models.progress import LearningProgress, LearningTemplate
+from models.scrape import ScrapeSource, AuthSession
 
 __all__ = [
     "User",
@@ -24,4 +25,6 @@ __all__ = [
     "WrongAnswer",
     "LearningProgress",
     "LearningTemplate",
+    "ScrapeSource",
+    "AuthSession",
 ]
