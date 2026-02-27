@@ -153,6 +153,14 @@ def upgrade() -> None:
         if "source" not in cols:
             op.add_column("practice_problems", sa.Column("source", sa.String(20), nullable=True))
 
+    # wrong_answers: performance indexes
+    if "wrong_answers" in existing_tables:
+        existing_indexes = {idx["name"] for idx in inspector.get_indexes("wrong_answers")}
+        if "ix_wrong_answers_user_course" not in existing_indexes:
+            op.create_index("ix_wrong_answers_user_course", "wrong_answers", ["user_id", "course_id"])
+        if "ix_wrong_answers_course_mastered" not in existing_indexes:
+            op.create_index("ix_wrong_answers_course_mastered", "wrong_answers", ["course_id", "mastered"])
+
 
 def downgrade() -> None:
     # Drop new tables
@@ -164,6 +172,10 @@ def downgrade() -> None:
     op.drop_table("scene_switch_log")
     op.drop_table("scene_snapshots")
     op.drop_table("scenes")
+
+    # Drop wrong_answers indexes
+    op.drop_index("ix_wrong_answers_course_mastered", table_name="wrong_answers")
+    op.drop_index("ix_wrong_answers_user_course", table_name="wrong_answers")
 
     # Drop added columns
     op.drop_column("courses", "active_scene")

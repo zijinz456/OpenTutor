@@ -69,7 +69,10 @@ class CreateSceneRequest(BaseModel):
 # ── Endpoints ──
 
 @router.get("/", response_model=list[SceneResponse])
-async def list_scenes(db: AsyncSession = Depends(get_db)):
+async def list_scenes(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     """List all available scenes (preset + user-created)."""
     result = await db.execute(select(Scene).order_by(Scene.is_preset.desc(), Scene.scene_id))
     scenes = result.scalars().all()
@@ -93,7 +96,11 @@ async def list_scenes(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/{course_id}/active", response_model=ActiveSceneResponse)
-async def get_active_scene(course_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def get_active_scene(
+    course_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     """Get the active scene and its snapshot for a course."""
     result = await db.execute(select(Course).where(Course.id == course_id))
     course = result.scalar_one_or_none()
@@ -115,15 +122,18 @@ async def switch_scene_endpoint(
     db: AsyncSession = Depends(get_db),
 ):
     """Switch the active scene for a course (6-step process)."""
-    result = await switch_scene(
-        db=db,
-        course_id=course_id,
-        user_id=user.id,
-        new_scene_id=body.scene_id,
-        trigger_type=body.trigger_type,
-        trigger_context=body.trigger_context,
-        current_ui_state=body.current_ui_state,
-    )
+    try:
+        result = await switch_scene(
+            db=db,
+            course_id=course_id,
+            user_id=user.id,
+            new_scene_id=body.scene_id,
+            trigger_type=body.trigger_type,
+            trigger_context=body.trigger_context,
+            current_ui_state=body.current_ui_state,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     await db.commit()
     return SwitchSceneResponse(**result)
 
