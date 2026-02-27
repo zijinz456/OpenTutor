@@ -1,18 +1,20 @@
 """Unified classification pipeline — 7-step ingestion.
 
-Step 0: Preprocessing (SHA-256 dedup, filename regex, user preset)
-Step 1: MIME detection (python-magic / filetype)
-Step 2: Content extraction (Marker / python-pptx / trafilatura)
-Step 3: LLM classification (content category)
+Step 0: Preprocessing (xxhash dedup, expanded filename regex, content heuristics)
+Step 1: MIME detection (filetype → python-magic → extension)
+Step 2: Content extraction (Crawl4AI → loader_dict → legacy fallbacks)
+Step 3: 3-tier classification (filename regex → content heuristics → LLM)
 Step 4: Course fuzzy matching (thefuzz)
 Step 5: Store to ingestion_jobs table
 Step 6: Dispatch to business tables (content_tree, assignments)
 
 References:
-- Papra: hash-during-stream + DB unique constraint for dedup
-- Unstructured: partition() auto-routing
-- Apache Tika: 5-layer MIME detection fallback
-- thefuzz: fuzzy string matching for course names
+- Crawl4AI: unified content extraction (web + PDF + HTML)
+- GPT-Researcher: loader_dict for Office formats, clean_soup for HTML
+- Deep-Research: token-aware content trimming (trimPrompt pattern)
+- PageIndex: code-block-aware tree building, tree thinning
+- Marker: filetype MIME detection pattern
+- Crawl4AI: xxhash for fast content dedup
 """
 
 import hashlib
@@ -20,8 +22,6 @@ import logging
 import mimetypes
 import re
 import uuid
-import asyncio
-from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,16 +32,25 @@ from services.llm.router import get_llm_client
 
 logger = logging.getLogger(__name__)
 
-# ── Step 0: Filename regex patterns ──
+# ── Step 0: Filename regex patterns (expanded) ──
 
 FILENAME_PATTERNS = {
-    r"(?i)lecture|slides|ppt|lec\d": "lecture_slides",
-    r"(?i)chapter|textbook|reading|book": "textbook",
-    r"(?i)hw|homework|assignment|problem.?set|ps\d": "assignment",
-    r"(?i)exam|midterm|final|test|quiz": "exam_schedule",
-    r"(?i)syllabus|schedule|outline": "syllabus",
-    r"(?i)notes?|summary|review": "notes",
+    r"(?i)lecture|slides|ppt|lec\d|class.?note|presentation": "lecture_slides",
+    r"(?i)chapter|textbook|reading|book|reference|manual|guide": "textbook",
+    r"(?i)hw|homework|assignment|problem.?set|ps\d|worksheet|exercise|lab\b|project\b": "assignment",
+    r"(?i)exam|midterm|final|test|quiz|assessment": "exam_schedule",
+    r"(?i)syllabus|schedule|outline|grading|course.?info|catalog": "syllabus",
+    r"(?i)notes?|summary|review|cheat.?sheet|study.?guide|recap": "notes",
 }
+
+# Content heuristics — patterns matched against extracted text (zero LLM cost)
+CONTENT_HEURISTICS = [
+    (r"(?i)(due\s+date|submit\s+by|deadline|turn\s+in|submission)", "assignment"),
+    (r"(?i)(grading\s+policy|office\s+hours|prerequisites|course\s+description|learning\s+objectives)", "syllabus"),
+    (r"(?i)(slide\s+\d+|next\s+slide|previous\s+slide)", "lecture_slides"),
+    (r"(?i)(exam\s+\d|midterm\s+exam|final\s+exam|quiz\s+\d).*\d{1,2}[/\-]\d{1,2}", "exam_schedule"),
+    (r"(?i)(chapter\s+\d+|section\s+\d+\.\d+|theorem\s+\d+|definition\s+\d+)", "textbook"),
+]
 
 
 def classify_by_filename(filename: str) -> str | None:
@@ -52,19 +61,58 @@ def classify_by_filename(filename: str) -> str | None:
     return None
 
 
-# ── Step 1: MIME detection ──
+def classify_by_content_heuristics(content: str) -> str | None:
+    """Step 0.5: Try to classify by content patterns (zero LLM cost).
+
+    Scans the first 3000 characters for telltale phrases.
+    """
+    sample = content[:3000]
+    scores: dict[str, int] = {}
+
+    for pattern, category in CONTENT_HEURISTICS:
+        matches = re.findall(pattern, sample)
+        if matches:
+            scores[category] = scores.get(category, 0) + len(matches)
+
+    if scores:
+        # Return category with highest match count
+        return max(scores, key=scores.get)
+    return None
+
+
+# ── Step 1: MIME detection (3-tier: filetype → python-magic → extension) ──
 
 def detect_mime_type(filename: str, content_bytes: bytes | None = None) -> str:
-    """Step 1: Detect MIME type. Falls back to extension-based detection."""
-    # Try python-magic if available
-    try:
-        import magic
-        if content_bytes:
-            return magic.from_buffer(content_bytes[:8192], mime=True)
-    except ImportError:
-        pass
+    """Step 1: Detect MIME type with 3-tier fallback.
 
-    # Fallback: extension-based
+    Tier 1: filetype (pure Python magic-number detection, ported from Marker registry.py)
+    Tier 2: python-magic (libmagic binding)
+    Tier 3: Extension-based (mimetypes stdlib)
+    """
+    if content_bytes:
+        # Tier 1: filetype library (fast, pure Python)
+        try:
+            import filetype
+
+            kind = filetype.guess(content_bytes[:8192])
+            if kind:
+                return kind.mime
+        except ImportError:
+            pass
+        except Exception:
+            pass
+
+        # Tier 2: python-magic
+        try:
+            import magic
+
+            return magic.from_buffer(content_bytes[:8192], mime=True)
+        except ImportError:
+            pass
+        except Exception:
+            pass
+
+    # Tier 3: extension-based
     mime, _ = mimetypes.guess_type(filename)
     return mime or "application/octet-stream"
 
@@ -76,129 +124,17 @@ async def extract_content(
     url: str | None,
     mime_type: str,
 ) -> str:
-    """Step 2: Extract text content based on file type.
+    """Step 2: Extract text content via unified document_loader.
 
-    Routes to appropriate extractor:
-    - PDF → Marker
-    - HTML/URL → trafilatura
-    - PPTX → python-pptx
-    - Images → multimodal LLM base64 (Phase 1+)
-    - Plain text → direct read
+    Routes through Crawl4AI (web/PDF/HTML) + loader_dict (Office formats).
     """
-    if url and not file_path:
-        # URL extraction (offload blocking I/O and enforce timeout)
-        def _extract_url_text(target_url: str) -> str:
-            import trafilatura
-            from services.parser.url import extract_text_from_html
+    from services.ingestion.document_loader import extract_content as unified_extract
 
-            downloaded = trafilatura.fetch_url(target_url)
-            if not downloaded:
-                return ""
-            extracted = trafilatura.extract(downloaded, include_tables=True) or ""
-            if extracted.strip():
-                return extracted
-            # Fallback for non-HTML or minimal pages (JSON/plain text).
-            cleaned = extract_text_from_html(downloaded)
-            return cleaned or (downloaded if isinstance(downloaded, str) else "")
-
-        try:
-            return await asyncio.wait_for(
-                asyncio.to_thread(_extract_url_text, url),
-                timeout=15,
-            )
-        except Exception as e:
-            logger.warning(f"URL extraction failed: {e}")
-            return ""
-
-    if not file_path:
-        return ""
-
-    ext = Path(file_path).suffix.lower()
-
-    if ext == ".pdf" or "pdf" in mime_type:
-        return await _extract_pdf(file_path)
-    elif ext in (".pptx", ".ppt"):
-        return _extract_pptx(file_path)
-    elif ext in (".html", ".htm"):
-        return _extract_html(file_path)
-    elif ext in (".txt", ".md", ".rst"):
-        return Path(file_path).read_text(errors="ignore")
-    elif ext in (".docx",):
-        return _extract_docx(file_path)
-    else:
-        # Try reading as text
-        try:
-            return Path(file_path).read_text(errors="ignore")
-        except Exception:
-            return ""
-
-
-async def _extract_pdf(file_path: str) -> str:
-    """Extract text from PDF using Marker."""
     try:
-        from marker.converters.pdf import PdfConverter
-        from marker.models import create_model_dict
-
-        models = create_model_dict()
-        converter = PdfConverter(artifact_dict=models)
-        rendered = converter(file_path)
-        return rendered.markdown
-    except ImportError:
-        # Fallback: PyPDF2
-        try:
-            import pypdf
-            reader = pypdf.PdfReader(file_path)
-            return "\n".join(page.extract_text() or "" for page in reader.pages)
-        except Exception:
-            return ""
+        _title, content = await unified_extract(file_path=file_path, url=url)
+        return content
     except Exception as e:
-        logger.warning(f"PDF extraction failed: {e}")
-        return ""
-
-
-def _extract_pptx(file_path: str) -> str:
-    """Extract text from PPTX using python-pptx."""
-    try:
-        from pptx import Presentation
-        prs = Presentation(file_path)
-        texts = []
-        for slide_num, slide in enumerate(prs.slides, 1):
-            texts.append(f"## Slide {slide_num}")
-            for shape in slide.shapes:
-                if shape.has_text_frame:
-                    texts.append(shape.text_frame.text)
-        return "\n\n".join(texts)
-    except ImportError:
-        logger.warning("python-pptx not installed, skipping PPTX extraction")
-        return ""
-    except Exception as e:
-        logger.warning(f"PPTX extraction failed: {e}")
-        return ""
-
-
-def _extract_html(file_path: str) -> str:
-    """Extract text from HTML using trafilatura."""
-    try:
-        import trafilatura
-        with open(file_path) as f:
-            html = f.read()
-        return trafilatura.extract(html, include_tables=True) or ""
-    except Exception as e:
-        logger.warning(f"HTML extraction failed: {e}")
-        return Path(file_path).read_text(errors="ignore")
-
-
-def _extract_docx(file_path: str) -> str:
-    """Extract text from DOCX."""
-    try:
-        from docx import Document
-        doc = Document(file_path)
-        return "\n\n".join(p.text for p in doc.paragraphs if p.text)
-    except ImportError:
-        logger.warning("python-docx not installed, skipping DOCX extraction")
-        return ""
-    except Exception as e:
-        logger.warning(f"DOCX extraction failed: {e}")
+        logger.warning(f"Content extraction failed: {e}")
         return ""
 
 
@@ -221,23 +157,14 @@ Document (first 2000 chars):
 {content}"""
 
 
-async def classify_content(content: str, filename: str) -> str:
-    """Step 3: LLM-based content classification.
-
-    Only called when filename regex fails.
-    Uses extract (lightweight) endpoint for cost efficiency.
-    """
-    # Try filename first (zero cost)
-    category = classify_by_filename(filename)
-    if category:
-        return category
-
-    if not content or len(content) < 50:
-        return "other"
-
+async def classify_content(content: str) -> str:
+    """LLM-only fallback classification for non-trivial content."""
     try:
+        from services.ingestion.content_trimmer import trim_for_llm
+
         client = get_llm_client()
-        prompt = CLASSIFICATION_PROMPT.format(content=content[:2000])
+        trimmed = trim_for_llm(content, max_tokens=2000)
+        prompt = CLASSIFICATION_PROMPT.format(content=trimmed)
         result = await client.extract(
             "You are a document classifier. Output only the category name.",
             prompt,
@@ -258,6 +185,22 @@ async def classify_content(content: str, filename: str) -> str:
     except Exception as e:
         logger.warning(f"LLM classification failed: {e}")
         return "other"
+
+
+async def classify_document(content: str, filename: str) -> tuple[str, str]:
+    """3-tier classification with explicit method reporting."""
+    category = classify_by_filename(filename)
+    if category:
+        return category, "filename_regex"
+
+    if not content or len(content) < 50:
+        return "other", "llm_classification"
+
+    category = classify_by_content_heuristics(content)
+    if category:
+        return category, "content_heuristics"
+
+    return await classify_content(content), "llm_classification"
 
 
 # ── Step 4: Course fuzzy matching ──
@@ -320,15 +263,25 @@ async def run_ingestion_pipeline(
     filename: str = "",
     course_id: uuid.UUID | None = None,
     file_bytes: bytes | None = None,
+    pre_fetched_html: str | None = None,
 ) -> IngestionJob:
     """Run the full 7-step ingestion pipeline.
 
+    Args:
+        pre_fetched_html: When provided (e.g. from authenticated scraping),
+            Step 2 uses this content directly instead of re-fetching the URL.
+
     Returns the IngestionJob with results.
     """
-    # Step 0: SHA-256 dedup
+    # Step 0: Content hash dedup (xxhash ~10x faster than SHA-256, ported from Crawl4AI)
     content_hash = None
     if file_bytes:
-        content_hash = hashlib.sha256(file_bytes).hexdigest()
+        try:
+            import xxhash
+
+            content_hash = xxhash.xxh64(file_bytes).hexdigest()
+        except ImportError:
+            content_hash = hashlib.sha256(file_bytes).hexdigest()
         # Check for duplicates
         existing = await db.execute(
             select(IngestionJob).where(
@@ -363,7 +316,16 @@ async def run_ingestion_pipeline(
 
         # Step 2: Content extraction
         job.status = "extracting"
-        extracted = await extract_content(file_path, url, job.mime_type or "")
+        if pre_fetched_html:
+            # Authenticated scraping: content already fetched, parse HTML to text
+            from services.ingestion.document_loader import clean_soup, get_text_from_soup
+            from bs4 import BeautifulSoup
+
+            soup = BeautifulSoup(pre_fetched_html, "lxml")
+            soup = clean_soup(soup)
+            extracted = get_text_from_soup(soup)
+        else:
+            extracted = await extract_content(file_path, url, job.mime_type or "")
         job.extracted_markdown = extracted
 
         if not extracted:
@@ -371,15 +333,12 @@ async def run_ingestion_pipeline(
             job.error_message = "No content could be extracted"
             return job
 
-        # Step 3: Classification
+        # Step 3: 3-tier classification
         job.status = "classifying"
-        filename_category = classify_by_filename(filename)
-        if filename_category:
-            job.content_category = filename_category
-            job.classification_method = "filename_regex"
-        else:
-            job.content_category = await classify_content(extracted, filename)
-            job.classification_method = "llm_classification"
+        job.content_category, job.classification_method = await classify_document(
+            extracted,
+            filename,
+        )
 
         # Step 4: Course matching (if not preset)
         if not course_id:
@@ -417,15 +376,16 @@ async def _dispatch_content(db: AsyncSession, job: IngestionJob) -> dict:
     if category in ("lecture_slides", "textbook", "notes", "syllabus"):
         # Build content tree using PageIndex pattern
         from services.parser.pdf import _markdown_to_tree
+        source_label = job.original_filename or job.url or "Untitled"
         nodes = _markdown_to_tree(
             markdown=job.extracted_markdown,
             course_id=job.course_id,
-            source_file=job.original_filename or "Untitled",
+            source_file=source_label,
         )
         for node in nodes:
             # Normalize source metadata to the ingestion source (file/url).
             node.source_type = job.source_type
-            node.source_file = job.original_filename
+            node.source_file = source_label
             db.add(node)
         await db.flush()  # Assign IDs before indexing
 
@@ -438,10 +398,12 @@ async def _dispatch_content(db: AsyncSession, job: IngestionJob) -> dict:
 
     elif category == "assignment":
         # Extract assignment info
+        from services.ingestion.content_trimmer import trim_for_llm
+
         assignment = Assignment(
             course_id=job.course_id,
             title=job.original_filename or "Assignment",
-            description=job.extracted_markdown[:2000] if job.extracted_markdown else None,
+            description=trim_for_llm(job.extracted_markdown, max_tokens=2000) if job.extracted_markdown else None,
             assignment_type="homework",
             source_ingestion_id=job.id,
         )
@@ -449,11 +411,12 @@ async def _dispatch_content(db: AsyncSession, job: IngestionJob) -> dict:
         result["assignments"] = 1
 
     elif category == "exam_schedule":
-        # Extract exam dates using LLM
+        from services.ingestion.content_trimmer import trim_for_llm
+
         assignment = Assignment(
             course_id=job.course_id,
             title=job.original_filename or "Exam",
-            description=job.extracted_markdown[:2000] if job.extracted_markdown else None,
+            description=trim_for_llm(job.extracted_markdown, max_tokens=2000) if job.extracted_markdown else None,
             assignment_type="exam",
             source_ingestion_id=job.id,
         )

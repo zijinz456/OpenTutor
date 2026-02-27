@@ -22,7 +22,6 @@ from sqlalchemy import select, func
 from database import async_session
 from models.user import User
 from models.progress import LearningProgress
-from models.course import Course
 
 logger = logging.getLogger(__name__)
 
@@ -121,14 +120,20 @@ async def fsrs_review_job():
 
 
 async def scrape_refresh_job():
-    """Auto-scrape refresh job — placeholder for re-scraping URLs."""
+    """Auto-scrape refresh job — re-scrape enabled URLs with change detection."""
     logger.info("Running auto-scrape refresh job...")
-    # TODO: iterate courses with auto-scrape enabled, re-trigger URL scraping
-    # For now just log
-    async with async_session() as db:
-        result = await db.execute(select(func.count(Course.id)))
-        count = result.scalar()
-        logger.info("Auto-scrape check: %d courses in system", count)
+    try:
+        from services.scraper.runner import run_scrape_refresh
+
+        async with async_session() as db:
+            result = await run_scrape_refresh(db)
+            await db.commit()
+            logger.info(
+                "Scrape refresh: scraped=%d skipped=%d failed=%d",
+                result["scraped"], result["skipped"], result["failed"],
+            )
+    except Exception as e:
+        logger.error("Scrape refresh job failed: %s", e)
 
 
 def start_scheduler():

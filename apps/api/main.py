@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
 from database import engine, Base
-from routers import auth, upload, chat, courses, preferences, quiz, notes, workflows, progress, flashcards, canvas, notifications
+from routers import auth, upload, chat, courses, preferences, quiz, notes, workflows, progress, flashcards, canvas, notifications, scrape
 
 
 @asynccontextmanager
@@ -60,6 +60,7 @@ app.include_router(progress.router, prefix="/api/progress", tags=["progress"])
 app.include_router(flashcards.router, prefix="/api/flashcards", tags=["flashcards"])
 app.include_router(canvas.router, prefix="/api/canvas", tags=["canvas"])
 app.include_router(notifications.router, prefix="/api/notifications", tags=["notifications"])
+app.include_router(scrape.router, prefix="/api/scrape", tags=["scrape"])
 
 
 @app.get("/api/health")

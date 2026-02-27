@@ -18,13 +18,30 @@ redis==5.2.1
 openai==1.65.2
 anthropic==0.46.0
 
-# File Parsing
-# Optional heavy dependency for high-quality PDF parsing:
-# marker-pdf==1.6.2
+# File Parsing — Unified content extraction
+# Primary: Crawl4AI (web + PDF + HTML)
+crawl4ai==0.4.0
+# Office formats: GPT-Researcher loader_dict pattern
+unstructured==0.13.0
+langchain-community==0.2.0
+# HTML fallback
+lxml==6.0.2
+beautifulsoup4==4.12.3
+# Legacy extractors (kept for fallback)
 trafilatura==2.0.0
 python-pptx==1.0.2
 python-docx==1.1.2
+# MIME detection (3-tier: filetype → python-magic → extension)
+filetype==1.2.0
 python-magic==0.4.27
+# Optional heavy dependency for high-quality PDF parsing:
+# marker-pdf==1.6.2
+
+# Token counting & content trimming
+tiktoken==0.7.0
+
+# Content dedup (xxhash ~10x faster than SHA-256)
+xxhash==3.6.0
 
 # Content Classification
 thefuzz==0.22.1
