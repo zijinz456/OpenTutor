@@ -1,22 +1,19 @@
-"""Canvas LMS integration endpoints.
+"""Canvas compatibility router.
 
-Supports two modes:
-1. API Token mode: Direct Canvas API access with user's token
-2. Browser mode: Automated login via Playwright for session-based access
-
-Phase 1: API token mode (canvasapi library)
-Phase 3: Browser automation mode (Playwright)
+Keeps legacy `/api/canvas/*` endpoints available while delegating to the
+new scrape/session pipeline.
 """
 
-import uuid
-import os
-from datetime import datetime
+from urllib.parse import urlparse
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, AnyHttpUrl
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
+from models.scrape import AuthSession
 from models.user import User
 from services.auth.dependency import get_current_user
 
@@ -24,183 +21,120 @@ router = APIRouter()
 
 
 class CanvasLoginRequest(BaseModel):
-    canvas_url: str  # e.g. "https://canvas.university.edu"
+    canvas_url: AnyHttpUrl
     username: str
     password: str
 
 
-class CanvasTokenRequest(BaseModel):
-    canvas_url: str
-    api_token: str
-
-
 class CanvasSyncRequest(BaseModel):
-    canvas_url: str
+    canvas_url: AnyHttpUrl
     api_token: str | None = None
-    course_ids: list[int] | None = None  # Canvas course IDs, None = sync all
+    course_ids: list[int] | None = None
+
+
+def _canvas_actions(username: str, password: str) -> list[dict]:
+    return [
+        {"type": "fill", "selector": "#pseudonym_session_unique_id", "value": username},
+        {"type": "fill", "selector": "#pseudonym_session_password", "value": password},
+        {"type": "submit", "selector": "button[type='submit']"},
+        {"type": "wait", "selector": "#dashboard"},
+    ]
 
 
 @router.post("/login")
-async def canvas_login(body: CanvasLoginRequest):
-    """Login to Canvas via browser automation and save session."""
-    from services.browser.automation import canvas_login
+async def canvas_login(
+    body: CanvasLoginRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Legacy login endpoint bridged to session manager.
 
-    success = await canvas_login(body.canvas_url, body.username, body.password)
+    For compatibility and security, this endpoint does not persist plaintext
+    credentials in AuthSession.login_actions.
+    """
+    from playwright.async_api import async_playwright
+    from routers.scrape import _default_session_name
+    from services.browser.session_manager import SessionManager
+
+    canvas_url = str(body.canvas_url).rstrip("/")
+    login_url = f"{str(body.canvas_url).rstrip('/')}/login/canvas"
+    domain = urlparse(canvas_url).netloc
+    session_name = _default_session_name(user.id, domain)
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        success = await SessionManager.re_authenticate(
+            browser,
+            session_name,
+            login_url,
+            _canvas_actions(body.username, body.password),
+        )
+        await browser.close()
+
     if not success:
         raise HTTPException(status_code=401, detail="Canvas login failed")
 
+    result = await db.execute(
+        select(AuthSession).where(
+            AuthSession.user_id == user.id,
+            AuthSession.session_name == session_name,
+        )
+    )
+    auth_session = result.scalar_one_or_none()
+    now = datetime.now(timezone.utc)
+    if auth_session:
+        auth_session.is_valid = True
+        auth_session.last_validated_at = now
+        auth_session.login_actions = None
+        auth_session.login_url = login_url
+        auth_session.check_url = canvas_url
+    else:
+        db.add(
+            AuthSession(
+                user_id=user.id,
+                domain=domain,
+                session_name=session_name,
+                auth_type="cookie",
+                is_valid=True,
+                last_validated_at=now,
+                login_actions=None,
+                login_url=login_url,
+                check_url=canvas_url,
+            )
+        )
+    await db.commit()
     return {"status": "ok", "message": "Canvas session saved"}
 
 
 @router.post("/sync")
-async def canvas_sync(body: CanvasSyncRequest, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    """Sync courses and assignments from Canvas.
-
-    Uses canvasapi for API token mode, browser for session mode.
-    Syncs: courses, assignments, announcements, files.
-    """
-
+async def canvas_sync(
+    body: CanvasSyncRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Legacy sync endpoint bridged to one-off scrape execution."""
     if body.api_token:
-        return await _sync_with_api(db, user.id, body.canvas_url, body.api_token, body.course_ids)
-    else:
-        return await _sync_with_browser(db, user.id, body.canvas_url, body.course_ids)
-
-
-async def _sync_with_api(
-    db: AsyncSession,
-    user_id: uuid.UUID,
-    canvas_url: str,
-    api_token: str,
-    course_ids: list[int] | None,
-) -> dict:
-    """Sync using Canvas API (canvasapi library)."""
-    try:
-        from canvasapi import Canvas
-    except ImportError:
         raise HTTPException(
-            status_code=500,
-            detail="canvasapi not installed. Run: pip install canvasapi",
+            status_code=410,
+            detail="Token-based Canvas sync is deprecated. Use authenticated scrape sessions.",
         )
 
-    from models.course import Course
-    from models.ingestion import Assignment
-    from sqlalchemy import select
+    from services.browser.automation import fetch_with_browser
+    from services.parser.url import extract_text_from_html
+    from routers.scrape import _default_session_name
 
-    canvas = Canvas(canvas_url, api_token)
-    synced_courses = 0
-    synced_assignments = 0
-
-    try:
-        canvas_courses = canvas.get_courses(enrollment_state="active")
-
-        for cc in canvas_courses:
-            if course_ids and cc.id not in course_ids:
-                continue
-
-            # Create or update course in our DB
-            result = await db.execute(
-                select(Course).where(
-                    Course.user_id == user_id,
-                    Course.name == cc.name,
-                )
-            )
-            course = result.scalar_one_or_none()
-            if not course:
-                course = Course(
-                    user_id=user_id,
-                    name=cc.name,
-                    description=getattr(cc, "course_code", ""),
-                    metadata_={"canvas_id": cc.id, "canvas_url": canvas_url},
-                )
-                db.add(course)
-                await db.flush()
-                synced_courses += 1
-
-            # Sync assignments
-            try:
-                for assignment in cc.get_assignments():
-                    existing = await db.execute(
-                        select(Assignment).where(
-                            Assignment.course_id == course.id,
-                            Assignment.title == assignment.name,
-                        )
-                    )
-                    if existing.scalar_one_or_none():
-                        continue
-
-                    due_at_raw = getattr(assignment, "due_at", None)
-                    due_at = None
-                    if isinstance(due_at_raw, datetime):
-                        due_at = due_at_raw
-                    elif isinstance(due_at_raw, str):
-                        try:
-                            due_at = datetime.fromisoformat(due_at_raw.replace("Z", "+00:00"))
-                        except ValueError:
-                            due_at = None
-
-                    a = Assignment(
-                        course_id=course.id,
-                        title=assignment.name,
-                        description=getattr(assignment, "description", None),
-                        due_date=due_at,
-                        assignment_type=_map_assignment_type(
-                            getattr(assignment, "submission_types", [])
-                        ),
-                        metadata_json={"canvas_id": assignment.id},
-                    )
-                    db.add(a)
-                    synced_assignments += 1
-            except Exception as e:
-                pass  # Some courses may not have assignments accessible
-
-        await db.commit()
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Canvas sync failed: {str(e)}")
-
-    return {
-        "status": "ok",
-        "courses_synced": synced_courses,
-        "assignments_synced": synced_assignments,
-    }
-
-
-async def _sync_with_browser(
-    db: AsyncSession,
-    user_id: uuid.UUID,
-    canvas_url: str,
-    course_ids: list[int] | None,
-) -> dict:
-    """Sync using browser automation (Playwright with saved session)."""
-    from services.browser.automation import canvas_fetch
-
-    # Fetch dashboard to get course list
-    dashboard_html = await canvas_fetch(f"{canvas_url}/dashboard")
-    if not dashboard_html:
+    domain = urlparse(str(body.canvas_url)).netloc
+    session_name = _default_session_name(user.id, domain)
+    dashboard_url = f"{str(body.canvas_url).rstrip('/')}/dashboard"
+    html = await fetch_with_browser(dashboard_url, session_name=session_name)
+    if not html:
         raise HTTPException(
             status_code=401,
-            detail="Canvas session expired. Please login again via /canvas/login",
+            detail="Canvas session expired or unavailable. Please login again via /api/canvas/login.",
         )
-
-    # Parse courses from dashboard (basic HTML parsing)
-    from services.parser.url import extract_text_from_html
-
-    text = extract_text_from_html(dashboard_html)
-
+    text = extract_text_from_html(html)
     return {
         "status": "ok",
-        "message": "Browser sync completed",
-        "content_preview": text[:500] if text else "No content extracted",
+        "message": "Canvas sync preview completed",
+        "content_preview": text[:500] if text else "",
     }
-
-
-def _map_assignment_type(submission_types: list[str]) -> str:
-    """Map Canvas submission types to our assignment types."""
-    types = set(submission_types)
-    if "online_quiz" in types:
-        return "quiz"
-    if "discussion_topic" in types:
-        return "reading"
-    if "online_upload" in types or "online_text_entry" in types:
-        return "homework"
-    return "homework"

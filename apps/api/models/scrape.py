@@ -10,7 +10,7 @@ import uuid
 from typing import Optional
 from datetime import datetime
 
-from sqlalchemy import String, DateTime, ForeignKey, Text, Boolean, Integer, func
+from sqlalchemy import String, DateTime, ForeignKey, Text, Boolean, Integer, func, CheckConstraint
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -21,6 +21,12 @@ class ScrapeSource(Base):
     """A URL that should be periodically re-scraped."""
 
     __tablename__ = "scrape_sources"
+    __table_args__ = (
+        CheckConstraint(
+            "source_type IN ('generic', 'canvas')",
+            name="ck_scrape_sources_source_type",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
@@ -29,6 +35,9 @@ class ScrapeSource(Base):
     # URL to scrape
     url: Mapped[str] = mapped_column(Text)
     label: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+
+    # Source type label for analytics/routing metadata (runtime scraping stays generic)
+    source_type: Mapped[str] = mapped_column(String(30), default="generic")
 
     # Authentication
     requires_auth: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -80,7 +89,7 @@ class AuthSession(Base):
 
     # Auth provider type
     auth_type: Mapped[str] = mapped_column(String(30), default="cookie")
-    # Types: cookie | canvas_oauth | custom
+    # Types: cookie | custom
 
     # Health
     is_valid: Mapped[bool] = mapped_column(Boolean, default=True)

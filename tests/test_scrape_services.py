@@ -95,3 +95,35 @@ async def test_scrape_single_preserves_auth_expired_status(monkeypatch):
     assert changed is False
     assert source.last_status == "auth_expired"
     assert source.consecutive_failures == 1
+
+
+@pytest.mark.asyncio
+async def test_scrape_single_uses_generic_pipeline_even_for_canvas_source_type(monkeypatch):
+    source = ScrapeSource(
+        user_id=uuid.uuid4(),
+        course_id=uuid.uuid4(),
+        url="https://canvas.example.edu/courses/1/assignments",
+        source_type="canvas",
+        requires_auth=False,
+        enabled=True,
+    )
+    now = runner.datetime.now(runner.timezone.utc)
+    called = {"generic": False}
+
+    async def _fake_cascade_fetch(_url):
+        return "<html><body>new content</body></html>"
+
+    async def _fake_generic(_db, _source, _content, _content_hash, _now):
+        called["generic"] = True
+        return True
+
+    monkeypatch.setattr("services.browser.automation.cascade_fetch", _fake_cascade_fetch)
+    monkeypatch.setattr(runner, "_process_generic_content", _fake_generic)
+
+    class _FakeDB:
+        async def flush(self):
+            return None
+
+    changed = await runner._scrape_single(_FakeDB(), source, now)
+    assert changed is True
+    assert called["generic"] is True

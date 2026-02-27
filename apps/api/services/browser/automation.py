@@ -5,12 +5,8 @@ Layer 2: Scrapling (smart scraping with anti-bot, JS rendering)
 Layer 3: Playwright + SessionManager (full browser automation with storageState persistence)
 
 Reference: spec Phase 3 — 3-layer browser cascade.
-
-For Canvas LMS: uses SessionManager to handle OAuth login,
-persist session via storageState, and extract authenticated content.
 """
 
-import json
 import logging
 
 logger = logging.getLogger(__name__)
@@ -134,79 +130,3 @@ async def cascade_fetch(
 
     # Layer 3: Browser
     return await fetch_with_browser(url, session_name)
-
-
-async def canvas_login(
-    canvas_url: str,
-    username: str,
-    password: str,
-) -> bool:
-    """Login to Canvas LMS and save session via SessionManager.
-
-    Uses Playwright + SessionManager for OAuth login flow.
-    Session is persisted as storageState for future API calls.
-    """
-    try:
-        from playwright.async_api import async_playwright
-        from services.browser.session_manager import SessionManager
-
-        login_url = f"{canvas_url}/login/canvas"
-        actions = [
-            {"type": "fill", "selector": "#pseudonym_session_unique_id", "value": username},
-            {"type": "fill", "selector": "#pseudonym_session_password", "value": password},
-            {"type": "submit", "selector": "button[type='submit']"},
-            {"type": "wait", "selector": "#dashboard"},
-        ]
-
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            success = await SessionManager.re_authenticate(
-                browser, "canvas", login_url, actions,
-            )
-            await browser.close()
-            return success
-
-    except ImportError:
-        logger.warning("Playwright not installed. Run: pip install playwright && playwright install")
-        return False
-    except Exception as e:
-        logger.warning(f"Canvas login failed: {e}")
-        return False
-
-
-async def canvas_fetch(url: str) -> str | None:
-    """Fetch a Canvas page using saved session via SessionManager.
-
-    Tries httpx with exported cookies first (fast path),
-    falls back to full browser with storageState.
-    """
-    from services.browser.session_manager import SessionManager
-
-    # Fast path: try httpx with cookies extracted from storageState
-    state_path = SessionManager.state_file("canvas")
-    if state_path.exists():
-        try:
-            state = json.loads(state_path.read_text())
-            cookies_dict = {c["name"]: c["value"] for c in state.get("cookies", [])}
-            if cookies_dict:
-                result = await fetch_with_httpx(url, cookies_dict)
-                if result:
-                    return result
-        except Exception:
-            pass
-
-    # Fallback: full browser with session
-    try:
-        from playwright.async_api import async_playwright
-
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            content = await SessionManager.fetch_with_session(browser, "canvas", url)
-            await browser.close()
-            return content
-    except ImportError:
-        logger.warning("Playwright not installed")
-        return None
-    except Exception as e:
-        logger.warning(f"Canvas fetch failed: {e}")
-        return None

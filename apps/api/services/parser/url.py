@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 def extract_text_from_html(html: str) -> str:
     """Extract readable text from raw HTML.
 
-    Used by Canvas browser-sync fallback and document_loader fallback layers.
+    Used by scrape runner and document_loader fallback layers.
     """
     try:
         import trafilatura
