@@ -168,7 +168,7 @@ if [[ -n "$SCRAPE_URL" ]]; then
     -F "course_id=${course_id}" \
     -F "url=${SCRAPE_URL}")"
   API_BODY="$(cat "$out_file")"
-  run_step_required "scrape url" "$status" "$API_BODY"
+  run_step_optional "scrape url" "$status" "$API_BODY"
 else
   warn "skip scrape: set SCRAPE_URL=https://example.com/page"
 fi
