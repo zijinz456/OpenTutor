@@ -155,7 +155,6 @@ jobs:
           API_BASE=http://127.0.0.1:8004 \
           STRICT_LLM=1 \
           UPLOAD_FILE=/tmp/opentutor_upload_test.md \
-          SCRAPE_URL=http://127.0.0.1:8004/api/health \
           bash scripts/smoke_test.sh
 
       - name: Dump API log on failure
