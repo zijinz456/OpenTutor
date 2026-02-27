@@ -49,6 +49,34 @@ class RetryResponse(BaseModel):
     explanation: str | None
 
 
+_DERIVE_FALLBACK = {"question": "", "options": None, "correct_answer": None, "explanation": None}
+
+
+def _extract_json_object(text: str) -> dict:
+    """Extract the first balanced JSON object from mixed LLM output.
+
+    Uses brace-depth counting instead of a greedy regex to handle nested objects.
+    """
+    start = text.find("{")
+    if start == -1:
+        return {**_DERIVE_FALLBACK, "question": text}
+    depth = 0
+    for i in range(start, len(text)):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    obj = json.loads(text[start : i + 1])
+                    if "question" in obj:
+                        return obj
+                except json.JSONDecodeError:
+                    pass
+                # Keep looking for the next object
+    return {**_DERIVE_FALLBACK, "question": text}
+
+
 # ── Endpoints ──
 
 @router.get("/{course_id}", response_model=list[WrongAnswerResponse])
@@ -179,20 +207,8 @@ Return JSON: {{"question": "...", "options": {{"A": "...", "B": "...", "C": "...
     try:
         derived = json.loads(response)
     except json.JSONDecodeError:
-        # Try to extract the outermost JSON object from a mixed response.
-        json_match = re.search(r"\{[\s\S]*\}", response)
-        if json_match:
-            try:
-                derived = json.loads(json_match.group())
-            except json.JSONDecodeError:
-                derived = {
-                    "question": response,
-                    "options": None,
-                    "correct_answer": None,
-                    "explanation": None,
-                }
-        else:
-            derived = {"question": response, "options": None, "correct_answer": None, "explanation": None}
+        # Try to extract a balanced JSON object (handles nested braces)
+        derived = _extract_json_object(response)
 
     # Save as a new practice problem
     new_problem = PracticeProblem(

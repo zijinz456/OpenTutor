@@ -13,6 +13,7 @@ import uuid
 from typing import Optional
 from datetime import datetime
 
+import sqlalchemy as sa
 from sqlalchemy import String, DateTime, ForeignKey, Text, Boolean, Integer, func
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -129,6 +130,10 @@ class WrongAnswer(Base):
     """Wrong answers for review system (Phase 1 WF-5)."""
 
     __tablename__ = "wrong_answers"
+    __table_args__ = (
+        sa.Index("ix_wrong_answers_user_course", "user_id", "course_id"),
+        sa.Index("ix_wrong_answers_course_mastered", "course_id", "mastered"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))

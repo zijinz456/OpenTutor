@@ -41,6 +41,11 @@ from services.agent.motivation import MotivationAgent
 
 logger = logging.getLogger(__name__)
 
+# ── Background Task Tracking ──
+# Keep weak references to post-processing tasks so they don't get GC'd
+# and we can await them during graceful shutdown.
+_background_tasks: set[asyncio.Task] = set()
+
 
 # ── Agent Registry ──
 
@@ -444,6 +449,8 @@ async def orchestrate_stream(
         }),
     }
 
-    # 7. Fire-and-forget post-processing with retry
+    # 7. Post-processing with retry (tracked to prevent GC and enable graceful shutdown)
     if ctx.response:
-        asyncio.create_task(post_process(ctx, db_factory))
+        task = asyncio.create_task(post_process(ctx, db_factory))
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)

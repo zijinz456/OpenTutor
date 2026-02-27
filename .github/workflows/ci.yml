@@ -221,8 +221,12 @@ jobs:
                   database="postgres",
                   timeout=10,
               )
-              await conn.execute("CREATE ROLE opentutor WITH LOGIN PASSWORD 'REDACTED_DEV_PASSWORD'")
-              await conn.execute("CREATE DATABASE opentutor OWNER opentutor")
+              role_exists = await conn.fetchval("SELECT 1 FROM pg_roles WHERE rolname='opentutor'")
+              if not role_exists:
+                  await conn.execute("CREATE ROLE opentutor WITH LOGIN PASSWORD 'REDACTED_DEV_PASSWORD'")
+              db_exists = await conn.fetchval("SELECT 1 FROM pg_database WHERE datname='opentutor'")
+              if not db_exists:
+                  await conn.execute("CREATE DATABASE opentutor OWNER opentutor")
               await conn.close()
 
               conn2 = await asyncpg.connect(

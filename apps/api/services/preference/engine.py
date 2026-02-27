@@ -96,7 +96,11 @@ async def save_preference(
     confidence: float = 0.5,
     scene: str | None = None,
 ) -> UserPreference:
-    """Save or update a preference at a specific scope level."""
+    """Save or update a preference at a specific scope level.
+
+    Uses SELECT ... FOR UPDATE to prevent race conditions when concurrent
+    requests try to save the same preference simultaneously.
+    """
     # Check for existing preference at same scope + dimension + course + scene
     query = select(UserPreference).where(
         UserPreference.user_id == user_id,
@@ -111,6 +115,9 @@ async def save_preference(
         query = query.where(UserPreference.scene_type == scene)
     else:
         query = query.where(UserPreference.scene_type.is_(None))
+
+    # Use FOR UPDATE to prevent TOCTOU race condition
+    query = query.with_for_update()
 
     result = await db.execute(query)
     existing = result.scalar_one_or_none()
