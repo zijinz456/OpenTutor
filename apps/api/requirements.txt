@@ -21,11 +21,11 @@ anthropic==0.46.0
 # File Parsing — Unified content extraction
 # Primary: Crawl4AI (web + PDF + HTML)
 crawl4ai==0.4.0
-# Office formats: GPT-Researcher loader_dict pattern
-unstructured==0.13.0
-langchain-community==0.2.0
-# HTML fallback
+# HTML fallback (pinned to crawl4ai compat range)
 lxml>=5.3,<6.0
+
+# Office formats — optional; code falls back to python-docx/pptx if missing
+# Install separately: pip install unstructured langchain-community
 beautifulsoup4==4.12.3
 # Legacy extractors (kept for fallback)
 trafilatura==2.0.0
