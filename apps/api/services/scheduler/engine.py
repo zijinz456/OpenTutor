@@ -156,10 +156,10 @@ def start_scheduler():
         replace_existing=True,
     )
 
-    # Auto-scrape refresh: every 24 hours
+    # Auto-scrape refresh: check every hour, each source controls its own interval
     scheduler.add_job(
         scrape_refresh_job,
-        trigger=IntervalTrigger(hours=24),
+        trigger=IntervalTrigger(hours=1),
         id="scrape_refresh",
         name="Auto-Scrape Refresh",
         replace_existing=True,

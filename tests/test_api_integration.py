@@ -4,27 +4,59 @@ These tests require a PostgreSQL database (auto-created in conftest).
 Run with: pytest tests/test_api_integration.py -v
 """
 
+import uuid
+
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from main import app
-from database import get_db, engine, Base
+from config import settings
+from database import get_db, Base
 
-# Use a separate test schema or ensure clean state
-TEST_COURSE_IDS = []
+TEST_EMAIL = f"test-{uuid.uuid4().hex[:8]}@opentutor.dev"
 
 
-@pytest_asyncio.fixture(scope="module")
+@pytest_asyncio.fixture
 async def client():
-    """Create test client with real database tables."""
-    # Ensure tables exist
-    async with engine.begin() as conn:
+    """Create per-test client with an isolated PostgreSQL schema."""
+    schema = f"test_{uuid.uuid4().hex[:10]}"
+    test_engine = create_async_engine(
+        settings.database_url,
+        echo=False,
+        connect_args={"server_settings": {"search_path": f"{schema},public"}},
+    )
+    test_session_factory = async_sessionmaker(
+        test_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
+
+    async with test_engine.begin() as conn:
+        await conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{schema}"'))
+        try:
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        except Exception as exc:
+            pytest.skip(f"pgvector extension unavailable for integration tests: {exc}")
         await conn.run_sync(Base.metadata.create_all)
+
+    async def _override_get_db():
+        async with test_session_factory() as session:
+            yield session
+
+    app.dependency_overrides[get_db] = _override_get_db
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
+
+    app.dependency_overrides.pop(get_db, None)
+    async with test_engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+        await conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+    await test_engine.dispose()
 
 
 # ── Health ──
@@ -47,11 +79,12 @@ async def test_create_course(client):
     data = resp.json()
     assert data["name"] == "Test Course"
     assert "id" in data
-    TEST_COURSE_IDS.append(data["id"])
 
 
 @pytest.mark.asyncio
 async def test_list_courses(client):
+    create_resp = await client.post("/api/courses/", json={"name": "List Course", "description": "for list"})
+    assert create_resp.status_code == 201
     resp = await client.get("/api/courses/")
     assert resp.status_code == 200
     courses = resp.json()
@@ -61,11 +94,12 @@ async def test_list_courses(client):
 
 @pytest.mark.asyncio
 async def test_get_course(client):
-    if not TEST_COURSE_IDS:
-        pytest.skip("No course created")
-    resp = await client.get(f"/api/courses/{TEST_COURSE_IDS[0]}")
+    create_resp = await client.post("/api/courses/", json={"name": "Get Course", "description": "for get"})
+    assert create_resp.status_code == 201
+    cid = create_resp.json()["id"]
+    resp = await client.get(f"/api/courses/{cid}")
     assert resp.status_code == 200
-    assert resp.json()["id"] == TEST_COURSE_IDS[0]
+    assert resp.json()["id"] == cid
 
 
 @pytest.mark.asyncio
@@ -76,9 +110,10 @@ async def test_get_course_not_found(client):
 
 @pytest.mark.asyncio
 async def test_content_tree_empty(client):
-    if not TEST_COURSE_IDS:
-        pytest.skip("No course created")
-    resp = await client.get(f"/api/courses/{TEST_COURSE_IDS[0]}/content-tree")
+    create_resp = await client.post("/api/courses/", json={"name": "Tree Course", "description": "for tree"})
+    assert create_resp.status_code == 201
+    cid = create_resp.json()["id"]
+    resp = await client.get(f"/api/courses/{cid}/content-tree")
     assert resp.status_code == 200
     assert resp.json() == []
 
@@ -131,17 +166,17 @@ async def test_auth_register_and_login(client):
     """Test full auth flow: register → login → access protected endpoint."""
     # Register
     resp = await client.post("/api/auth/register", json={
-        "email": "test@opentutor.dev",
+        "email": TEST_EMAIL,
         "password": "securepass123",
         "name": "Test User",
     })
     assert resp.status_code == 201
     data = resp.json()
-    assert data["email"] == "test@opentutor.dev"
+    assert data["email"] == TEST_EMAIL
 
     # Login
     resp = await client.post("/api/auth/login", json={
-        "email": "test@opentutor.dev",
+        "email": TEST_EMAIL,
         "password": "securepass123",
     })
     assert resp.status_code == 200
@@ -160,8 +195,15 @@ async def test_auth_register_and_login(client):
 
 @pytest.mark.asyncio
 async def test_auth_duplicate_email(client):
+    dup_email = f"dup-{uuid.uuid4().hex[:8]}@opentutor.dev"
+    first = await client.post("/api/auth/register", json={
+        "email": dup_email,
+        "password": "securepass123",
+    })
+    assert first.status_code == 201
+
     resp = await client.post("/api/auth/register", json={
-        "email": "test@opentutor.dev",
+        "email": dup_email,
         "password": "anotherpass123",
     })
     assert resp.status_code == 409
@@ -170,7 +212,7 @@ async def test_auth_duplicate_email(client):
 @pytest.mark.asyncio
 async def test_auth_wrong_password(client):
     resp = await client.post("/api/auth/login", json={
-        "email": "test@opentutor.dev",
+        "email": TEST_EMAIL,
         "password": "wrongpassword",
     })
     assert resp.status_code == 401
@@ -180,7 +222,8 @@ async def test_auth_wrong_password(client):
 
 @pytest.mark.asyncio
 async def test_delete_course(client):
-    if not TEST_COURSE_IDS:
-        pytest.skip("No course created")
-    resp = await client.delete(f"/api/courses/{TEST_COURSE_IDS[0]}")
+    create_resp = await client.post("/api/courses/", json={"name": "Delete Course", "description": "for delete"})
+    assert create_resp.status_code == 201
+    cid = create_resp.json()["id"]
+    resp = await client.delete(f"/api/courses/{cid}")
     assert resp.status_code == 204

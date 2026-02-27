@@ -2,6 +2,7 @@
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field, AnyHttpUrl
 
@@ -10,6 +11,7 @@ class ScrapeSourceCreate(BaseModel):
     url: AnyHttpUrl
     course_id: uuid.UUID
     label: str | None = None
+    source_type: Literal["generic", "canvas"] = "generic"
     requires_auth: bool = False
     auth_domain: str | None = None
     session_name: str | None = None
@@ -30,6 +32,7 @@ class ScrapeSourceResponse(BaseModel):
     url: str
     label: str | None
     course_id: uuid.UUID
+    source_type: str
     requires_auth: bool
     auth_domain: str | None
     session_name: str | None

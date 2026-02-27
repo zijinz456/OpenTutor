@@ -55,20 +55,24 @@ async def create_scrape_source(
     db: AsyncSession = Depends(get_db),
 ):
     """Add a URL to the auto-scrape watch list."""
+    url_str = str(body.url)
+    parsed = urlparse(url_str)
+    source_type = body.source_type
+    requires_auth = body.requires_auth
+
     # Auto-detect auth_domain from URL if not provided
     auth_domain = body.auth_domain
-    if body.requires_auth and not auth_domain:
-        parsed = urlparse(str(body.url))
+    if requires_auth and not auth_domain:
         auth_domain = parsed.netloc
 
     # Auto-generate session_name if not provided
     from services.browser.session_manager import SessionManager
 
     session_name = SessionManager.normalize_session_name(body.session_name) if body.session_name else None
-    if body.requires_auth and not session_name:
+    if requires_auth and not session_name:
         session_name = _default_session_name(user.id, auth_domain or "default")
 
-    if not body.requires_auth:
+    if not requires_auth:
         auth_domain = None
         session_name = None
 
@@ -81,9 +85,10 @@ async def create_scrape_source(
     source = ScrapeSource(
         user_id=user.id,
         course_id=body.course_id,
-        url=str(body.url),
+        url=url_str,
         label=body.label,
-        requires_auth=body.requires_auth,
+        source_type=source_type,
+        requires_auth=requires_auth,
         auth_domain=auth_domain,
         session_name=session_name,
         interval_hours=body.interval_hours,

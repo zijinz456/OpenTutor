@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 
 from models.scrape import ScrapeSource
 from routers.scrape import (
@@ -66,6 +67,15 @@ def _user():
     return SimpleNamespace(id=uuid.uuid4())
 
 
+def test_scrape_source_create_rejects_invalid_source_type():
+    with pytest.raises(ValidationError):
+        ScrapeSourceCreate(
+            url="https://example.com",
+            course_id=uuid.uuid4(),
+            source_type="canavs",  # typo
+        )
+
+
 @pytest.mark.asyncio
 async def test_create_scrape_source_course_not_found_404():
     db = _FakeDB(execute_results=[_FakeResult(scalar=None)])
@@ -117,6 +127,23 @@ async def test_create_scrape_source_requires_auth_derives_domain_and_session_nam
     assert user.id.hex in source.session_name
     assert "." not in source.session_name
     assert "/" not in source.session_name
+
+
+@pytest.mark.asyncio
+async def test_create_scrape_source_canvas_url_stays_user_configured():
+    db = _FakeDB(execute_results=[_FakeResult(scalar=SimpleNamespace(id=uuid.uuid4()))])
+    user = _user()
+    body = ScrapeSourceCreate(
+        url="https://canvas.example.edu/courses/1",
+        course_id=uuid.uuid4(),
+        source_type="generic",
+        requires_auth=False,
+    )
+
+    source = await create_scrape_source(body=body, user=user, db=db)
+
+    assert source.source_type == "generic"
+    assert source.requires_auth is False
 
 
 @pytest.mark.asyncio

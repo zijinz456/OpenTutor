@@ -115,7 +115,14 @@ async def _scrape_single(
         logger.info("Content unchanged for %s", source.url)
         return False
 
-    # Content changed — run ingestion pipeline with pre-fetched HTML
+    return await _process_generic_content(db, source, content, content_hash, now)
+
+
+async def _process_generic_content(
+    db: AsyncSession, source: ScrapeSource, content: str,
+    content_hash: str, now: datetime,
+) -> bool:
+    """Process generic web pages through the ingestion pipeline."""
     from services.ingestion.pipeline import run_ingestion_pipeline
 
     job = await run_ingestion_pipeline(
