@@ -15,16 +15,22 @@ export interface ChatMessage {
   timestamp: Date;
 }
 
+export interface SendMessageOptions {
+  activeTab?: string;
+  tabContext?: Record<string, unknown>;
+  scene?: string;
+}
+
 interface ChatState {
   messages: ChatMessage[];
   isStreaming: boolean;
   error: string | null;
 
-  /** Callback for NL actions (layout changes, preference updates). Set by CoursePage. */
+  /** Callback for NL actions (layout changes, preference updates, scene switch). Set by CoursePage. */
   onAction: ((action: ChatAction) => void) | null;
   setOnAction: (cb: (action: ChatAction) => void) => void;
 
-  sendMessage: (courseId: string, content: string) => Promise<void>;
+  sendMessage: (courseId: string, content: string, options?: SendMessageOptions) => Promise<void>;
   clearMessages: () => void;
 }
 
@@ -38,7 +44,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   setOnAction: (cb) => set({ onAction: cb }),
 
-  sendMessage: async (courseId, content) => {
+  sendMessage: async (courseId, content, options?) => {
     const userMsg: ChatMessage = {
       id: `msg-${++messageCounter}`,
       role: "user",
@@ -60,7 +66,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }));
 
     try {
-      for await (const event of streamChat(courseId, content)) {
+      for await (const event of streamChat({
+        courseId,
+        message: content,
+        activeTab: options?.activeTab,
+        tabContext: options?.tabContext,
+        scene: options?.scene,
+      })) {
         if (event.type === "content") {
           set((s) => ({
             messages: s.messages.map((m) =>

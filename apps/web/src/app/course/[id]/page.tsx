@@ -22,9 +22,10 @@ import { PdfViewer } from "@/components/course/pdf-viewer";
 import { NLTuningFAB } from "@/components/course/nl-tuning-fab";
 import { ActivityBar } from "@/components/workspace/activity-bar";
 import { StatusBar } from "@/components/workspace/status-bar";
-import { BreadcrumbsBar } from "@/components/workspace/breadcrumbs";
 import { useGroupRef } from "react-resizable-panels";
 import { setPreference, type ChatAction } from "@/lib/api";
+import { SceneSelector } from "@/components/scene/scene-selector";
+import { useSceneStore } from "@/store/scene";
 
 const LAYOUT_PRESETS = {
   balanced: { pdf: 25, notes: 25, quiz: 25, chat: 25 },
@@ -44,6 +45,7 @@ export default function CoursePage() {
   const { activeCourse, setActiveCourse, courses, fetchCourses, contentTree } =
     useCourseStore();
   const { setOnAction } = useChatStore();
+  const { activeScene, switchScene: doSwitchScene } = useSceneStore();
 
   const [uploadOpen, setUploadOpen] = useState(false);
   const [rightTab, setRightTab] = useState<"quiz" | "flashcards" | "progress" | "graph">("quiz");
@@ -87,8 +89,11 @@ export default function CoursePage() {
       }
     } else if (action.action === "set_preference" && action.value && action.extra) {
       setPreference(action.value, action.extra, "course", courseId, "nl_tuning");
+    } else if (action.action === "suggest_scene_switch" && action.value) {
+      // AI suggested a scene switch — execute it
+      doSwitchScene(courseId, action.value);
     }
-  }, [applyPreset, courseId]);
+  }, [applyPreset, courseId, doSwitchScene]);
 
   useEffect(() => {
     setOnAction(handleAction);
@@ -142,8 +147,22 @@ export default function CoursePage() {
 
         {/* Main Content */}
         <div className="flex flex-col flex-1 overflow-hidden">
-          {/* Breadcrumbs */}
-          <BreadcrumbsBar items={breadcrumbs} />
+          {/* Breadcrumbs + Scene Selector */}
+          <div className="h-9 px-4 bg-gray-50 border-b flex items-center gap-2 shrink-0">
+            {breadcrumbs.map((item, idx) => (
+              <span key={idx} className="flex items-center gap-2">
+                {idx > 0 && <span className="text-gray-400 text-xs">/</span>}
+                {item.href ? (
+                  <a href={item.href} className="text-xs font-medium text-indigo-600 hover:underline">{item.label}</a>
+                ) : (
+                  <span className="text-xs text-gray-500">{item.label}</span>
+                )}
+              </span>
+            ))}
+            <div className="ml-auto">
+              <SceneSelector courseId={courseId} />
+            </div>
+          </div>
 
           {/* Panels Area */}
           <div className="flex flex-1 overflow-hidden relative">
@@ -267,7 +286,7 @@ export default function CoursePage() {
                         <X className="w-3.5 h-3.5" />
                       </button>
                     </div>
-                    <ChatPanel courseId={courseId} />
+                    <ChatPanel courseId={courseId} activeTab={activityItem} scene={activeScene} />
                   </div>
                 </ResizablePanel>
               )}

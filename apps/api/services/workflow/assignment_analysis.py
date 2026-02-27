@@ -88,7 +88,7 @@ async def run_assignment_analysis(
 
     # Generate analysis
     client = get_llm_client()
-    analysis = await client.chat(
+    analysis, _ = await client.chat(
         "You are a teaching assistant helping students understand assignments.",
         ANALYSIS_PROMPT.format(
             assignment_text=assignment_text,

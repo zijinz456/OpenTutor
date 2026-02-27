@@ -1,8 +1,7 @@
 """Preference cascade resolver (Git Config pattern).
 
-Phase 0 persists preferences at global/course/template/temporary scopes.
-Scene scopes (course_scene/global_scene) are accepted for forward compatibility
-but skipped unless explicit scene metadata support is added.
+7-layer cascade: temporary → course_scene → course → global_scene → global → template → system_default.
+Scene-scoped prefs (course_scene/global_scene) use UserPreference.scene_type to match the active scene.
 """
 
 import uuid
@@ -75,9 +74,10 @@ async def resolve_preferences(
 
             # Scene-scoped prefs only apply if scene matches
             if scope in ("course_scene", "global_scene"):
-                # UserPreference has no scene/context field in Phase 0 schema.
-                # Keep this guard so scene scopes never leak accidentally.
-                continue
+                if not scene:
+                    continue
+                if pref.scene_type != scene:
+                    continue
 
             resolved[pref.dimension] = pref.value
             sources[pref.dimension] = scope
@@ -97,7 +97,7 @@ async def save_preference(
     scene: str | None = None,
 ) -> UserPreference:
     """Save or update a preference at a specific scope level."""
-    # Check for existing preference at same scope + dimension + course
+    # Check for existing preference at same scope + dimension + course + scene
     query = select(UserPreference).where(
         UserPreference.user_id == user_id,
         UserPreference.dimension == dimension,
@@ -107,6 +107,10 @@ async def save_preference(
         query = query.where(UserPreference.course_id == course_id)
     else:
         query = query.where(UserPreference.course_id.is_(None))
+    if scene:
+        query = query.where(UserPreference.scene_type == scene)
+    else:
+        query = query.where(UserPreference.scene_type.is_(None))
 
     result = await db.execute(query)
     existing = result.scalar_one_or_none()
@@ -125,6 +129,7 @@ async def save_preference(
         value=value,
         source=source,
         confidence=confidence,
+        scene_type=scene,
     )
     db.add(pref)
     return pref

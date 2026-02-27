@@ -17,6 +17,8 @@ import { useChatStore, type ChatMessage } from "@/store/chat";
 
 interface ChatPanelProps {
   courseId: string;
+  activeTab?: string;
+  scene?: string;
 }
 
 function MessageBubble({ message }: { message: ChatMessage }) {
@@ -38,7 +40,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
   );
 }
 
-export function ChatPanel({ courseId }: ChatPanelProps) {
+export function ChatPanel({ courseId, activeTab, scene }: ChatPanelProps) {
   const { messages, isStreaming, sendMessage } = useChatStore();
   const [input, setInput] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -54,7 +56,7 @@ export function ChatPanel({ courseId }: ChatPanelProps) {
     const text = input.trim();
     if (!text || isStreaming) return;
     setInput("");
-    await sendMessage(courseId, text);
+    await sendMessage(courseId, text, { activeTab, scene });
   };
 
   return (

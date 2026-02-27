@@ -30,6 +30,11 @@ class PracticeProblem(Base):
     explanation: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     order_index: Mapped[int] = mapped_column(Integer, default=0)
 
+    # v3: Knowledge point tagging + source tracking
+    knowledge_points: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True, default=list)
+    source: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    # Sources: extracted | ai_generated | derived
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     # Relationships

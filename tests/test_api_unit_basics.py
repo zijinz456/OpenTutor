@@ -17,7 +17,7 @@ def test_normalize_preference_value_basic_mappings():
 
 
 def test_detect_scene_supports_cn_and_en_keywords():
-    assert detect_scene("请帮我复习期末考试重点") == "exam_review"
+    assert detect_scene("请帮我复习期末考试重点") == "exam_prep"
     assert detect_scene("homework problem set for chapter 3") == "assignment"
     assert detect_scene("just chatting without task") == DEFAULT_SCENE
 
@@ -42,5 +42,7 @@ def test_llm_router_falls_back_to_mock_without_keys(monkeypatch):
     monkeypatch.setattr(llm_router, "_registry", None, raising=False)
 
     client = llm_router.get_llm_client()
-    response = asyncio.run(client.chat("system", "hello"))
+    response, usage = asyncio.run(client.chat("system", "hello"))
     assert "No LLM API key configured" in response
+    assert usage["input_tokens"] > 0
+    assert usage["output_tokens"] > 0

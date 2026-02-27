@@ -76,6 +76,14 @@ class LearningTemplate(Base):
     preferences: Mapped[dict] = mapped_column(JSONB, default=dict)
     # e.g. {"note_format": "step_by_step", "detail_level": "detailed", ...}
 
+    # v3: Scene binding
+    scene_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    # Scene this template maps to (e.g. "exam_prep", "study_session")
+    tab_preset: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    # Tab layout for this template [{"type": "notes", "position": 0}, ...]
+    workflow: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    # AI workflow identifier
+
     # Template metadata
     target_audience: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     # e.g. "STEM student", "Language learner", "Visual learner"

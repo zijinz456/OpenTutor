@@ -85,7 +85,7 @@ async def extract_preference_signal(
     conversation_text = f"Student: {user_message}\nTutor: {assistant_response}"
 
     try:
-        result = await client.extract(EXTRACTION_PROMPT, conversation_text)
+        result, _ = await client.extract(EXTRACTION_PROMPT, conversation_text)
         result = result.strip()
 
         # "默认不提取" — most responses should be NONE

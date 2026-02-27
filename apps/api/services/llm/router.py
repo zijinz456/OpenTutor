@@ -1,11 +1,13 @@
-"""LLM Provider Registry with circuit breaker pattern.
+"""LLM Provider Registry with circuit breaker pattern + token tracking.
 
 Phase 1: Full Provider Registry + circuit breaker (spec requirements).
+Phase 2: Token tracking (OpenClaw SessionEntry pattern).
 
 Borrows from:
 - nanobot Provider Registry: keyword-based provider matching, easy addition
 - openakita Brain: thin wrapper, progressive cooldown, health management
 - circuitbreaker pattern: automatic fallback on provider failure
+- OpenClaw SessionEntry: token tracking per call
 """
 
 import time
@@ -26,7 +28,12 @@ CIRCUIT_RESET_TIMEOUT = 120  # seconds before trying again
 
 
 class LLMClient(ABC):
-    """Base LLM client (openakita LLMProvider pattern)."""
+    """Base LLM client (openakita LLMProvider pattern).
+
+    Token tracking (OpenClaw SessionEntry pattern):
+    - chat() and extract() return tuple[str, dict] with usage info
+    - stream_chat() stores usage in _last_usage, accessible via get_last_usage()
+    """
 
     provider_name: str = "base"
 
@@ -36,6 +43,11 @@ class LLMClient(ABC):
         self._consecutive_failures: int = 0
         self._circuit_open: bool = False
         self._circuit_open_time: float = 0
+        self._last_usage: dict = {}
+
+    def get_last_usage(self) -> dict:
+        """Get token usage from the last API call (useful after streaming)."""
+        return self._last_usage
 
     @property
     def is_healthy(self) -> bool:
@@ -82,17 +94,17 @@ class LLMClient(ABC):
 
     @abstractmethod
     async def stream_chat(self, system_prompt: str, user_message: str) -> AsyncIterator[str]:
-        """Stream chat response chunks."""
+        """Stream chat response chunks. Token usage stored in _last_usage."""
         ...
 
     @abstractmethod
-    async def chat(self, system_prompt: str, user_message: str) -> str:
-        """Non-streaming chat response."""
+    async def chat(self, system_prompt: str, user_message: str) -> tuple[str, dict]:
+        """Non-streaming chat response. Returns (content, usage_dict)."""
         ...
 
     @abstractmethod
-    async def extract(self, system_prompt: str, user_message: str) -> str:
-        """Lightweight extraction call (compiler endpoint pattern from openakita)."""
+    async def extract(self, system_prompt: str, user_message: str) -> tuple[str, dict]:
+        """Lightweight extraction call. Returns (content, usage_dict)."""
         ...
 
 
@@ -121,17 +133,22 @@ class OpenAIClient(LLMClient):
                     {"role": "user", "content": user_message},
                 ],
                 stream=True,
+                stream_options={"include_usage": True},
             )
             async for chunk in stream:
-                delta = chunk.choices[0].delta
-                if delta.content:
+                if chunk.usage:
+                    self._last_usage = {
+                        "input_tokens": chunk.usage.prompt_tokens or 0,
+                        "output_tokens": chunk.usage.completion_tokens or 0,
+                    }
+                if chunk.choices and chunk.choices[0].delta.content:
                     self.mark_healthy()
-                    yield delta.content
+                    yield chunk.choices[0].delta.content
         except Exception as e:
             self.mark_unhealthy(str(e))
             raise
 
-    async def chat(self, system_prompt: str, user_message: str) -> str:
+    async def chat(self, system_prompt: str, user_message: str) -> tuple[str, dict]:
         try:
             response = await self.client.chat.completions.create(
                 model=self.model,
@@ -141,12 +158,17 @@ class OpenAIClient(LLMClient):
                 ],
             )
             self.mark_healthy()
-            return response.choices[0].message.content or ""
+            usage = {
+                "input_tokens": response.usage.prompt_tokens if response.usage else 0,
+                "output_tokens": response.usage.completion_tokens if response.usage else 0,
+            }
+            self._last_usage = usage
+            return response.choices[0].message.content or "", usage
         except Exception as e:
             self.mark_unhealthy(str(e))
             raise
 
-    async def extract(self, system_prompt: str, user_message: str) -> str:
+    async def extract(self, system_prompt: str, user_message: str) -> tuple[str, dict]:
         """Lightweight extraction (openakita's think_lightweight pattern)."""
         return await self.chat(system_prompt, user_message)
 
@@ -174,11 +196,17 @@ class AnthropicClient(LLMClient):
                 async for text in stream.text_stream:
                     self.mark_healthy()
                     yield text
+                # Capture usage after stream completes
+                final = await stream.get_final_message()
+                self._last_usage = {
+                    "input_tokens": final.usage.input_tokens if final.usage else 0,
+                    "output_tokens": final.usage.output_tokens if final.usage else 0,
+                }
         except Exception as e:
             self.mark_unhealthy(str(e))
             raise
 
-    async def chat(self, system_prompt: str, user_message: str) -> str:
+    async def chat(self, system_prompt: str, user_message: str) -> tuple[str, dict]:
         try:
             response = await self.client.messages.create(
                 model=self.model,
@@ -187,12 +215,17 @@ class AnthropicClient(LLMClient):
                 messages=[{"role": "user", "content": user_message}],
             )
             self.mark_healthy()
-            return response.content[0].text
+            usage = {
+                "input_tokens": response.usage.input_tokens if response.usage else 0,
+                "output_tokens": response.usage.output_tokens if response.usage else 0,
+            }
+            self._last_usage = usage
+            return response.content[0].text, usage
         except Exception as e:
             self.mark_unhealthy(str(e))
             raise
 
-    async def extract(self, system_prompt: str, user_message: str) -> str:
+    async def extract(self, system_prompt: str, user_message: str) -> tuple[str, dict]:
         return await self.chat(system_prompt, user_message)
 
 
@@ -201,26 +234,43 @@ class MockLLMClient(LLMClient):
 
     provider_name = "mock"
 
+    def _estimate_tokens(self, text: str) -> int:
+        """Rough token estimate for mock tracking."""
+        return max(1, len(text) // 4)
+
     async def stream_chat(self, system_prompt: str, user_message: str) -> AsyncIterator[str]:
-        del system_prompt
         self.mark_healthy()
-        yield (
+        content = (
             "No LLM API key configured. This is a local fallback response. "
             f"Your message was: {user_message}"
         )
+        self._last_usage = {
+            "input_tokens": self._estimate_tokens(system_prompt + user_message),
+            "output_tokens": self._estimate_tokens(content),
+        }
+        yield content
 
-    async def chat(self, system_prompt: str, user_message: str) -> str:
-        del system_prompt
+    async def chat(self, system_prompt: str, user_message: str) -> tuple[str, dict]:
         self.mark_healthy()
-        return (
+        content = (
             "No LLM API key configured. This is a local fallback response. "
             f"Your message was: {user_message}"
         )
+        usage = {
+            "input_tokens": self._estimate_tokens(system_prompt + user_message),
+            "output_tokens": self._estimate_tokens(content),
+        }
+        self._last_usage = usage
+        return content, usage
 
-    async def extract(self, system_prompt: str, user_message: str) -> str:
-        del system_prompt, user_message
+    async def extract(self, system_prompt: str, user_message: str) -> tuple[str, dict]:
         self.mark_healthy()
-        return "NONE"
+        usage = {
+            "input_tokens": self._estimate_tokens(system_prompt + user_message),
+            "output_tokens": 1,
+        }
+        self._last_usage = usage
+        return "NONE", usage
 
 
 # ──────────────────────────────────────────────────────────────

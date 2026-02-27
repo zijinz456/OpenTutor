@@ -139,6 +139,12 @@ class WrongAnswer(Base):
     correct_answer: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     explanation: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
+    # v3: Error classification and knowledge point tagging
+    error_category: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    # Categories: conceptual | procedural | computational | reading | careless
+    knowledge_points: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True, default=list)
+    # List of knowledge point IDs related to this wrong answer
+
     # Review tracking
     review_count: Mapped[int] = mapped_column(Integer, default=0)
     last_reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)

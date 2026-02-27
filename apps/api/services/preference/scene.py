@@ -3,42 +3,44 @@
 Detects what the user is doing (reviewing, studying, exam prep, etc.)
 to select scene-specific preferences from the 7-layer cascade.
 
+v3 canonical scene IDs: study_session, exam_prep, assignment, review_drill, note_organize.
+
 Reference: spec Section 3 — Unstructured fallback chain (regex → LLM).
 Phase 1: Simple keyword regex. Phase 2: LLM classification.
 """
 
 import re
 
-# Scene patterns — ordered by specificity (most specific first)
+# v3 Scene patterns — ordered by specificity (most specific first)
+# Maps to canonical v3 scene IDs used by scene_behavior.py and tool_loader.py
 SCENE_PATTERNS: list[tuple[str, re.Pattern]] = [
-    ("exam_review", re.compile(
-        r"(exam|test|midterm|final|quiz\s+prep|复习|考试|期末|期中)", re.IGNORECASE
+    ("exam_prep", re.compile(
+        r"(exam|test|midterm|final|quiz\s+prep|复习|考试|期末|期中|考前|冲刺)", re.IGNORECASE
+    )),
+    ("review_drill", re.compile(
+        r"(错题|wrong\s+answer|mistake|review\s+mistake|错因|error\s+analysis|纠错)", re.IGNORECASE
     )),
     ("assignment", re.compile(
         r"(homework|assignment|problem\s+set|作业|题目|练习)", re.IGNORECASE
     )),
-    ("reading", re.compile(
-        r"(read|chapter|textbook|阅读|课本|教材|章节)", re.IGNORECASE
+    ("note_organize", re.compile(
+        r"(organize\s+notes|整理笔记|笔记整理|note\s+summary|归纳|总结笔记)", re.IGNORECASE
     )),
-    ("lecture_review", re.compile(
-        r"(lecture|slide|presentation|class\s+note|课件|讲义|幻灯片|PPT)", re.IGNORECASE
-    )),
-    ("problem_solving", re.compile(
-        r"(solve|calculate|prove|derive|how\s+to|解题|计算|证明|推导)", re.IGNORECASE
-    )),
-    ("concept_learning", re.compile(
-        r"(what\s+is|explain|define|concept|什么是|解释|概念|定义)", re.IGNORECASE
+    ("study_session", re.compile(
+        r"(read|chapter|textbook|阅读|课本|教材|章节|lecture|slide|课件|讲义|"
+        r"what\s+is|explain|define|concept|什么是|解释|概念|定义|"
+        r"solve|calculate|prove|derive|how\s+to|解题|计算|证明|推导)", re.IGNORECASE
     )),
 ]
 
-DEFAULT_SCENE = "general_study"
+DEFAULT_SCENE = "study_session"
 
 
 def detect_scene(message: str, course_name: str | None = None) -> str:
     """Detect the current study scene from user message.
 
-    Phase 1: regex-based detection (~30 lines, spec estimate).
-    Returns scene name string for preference cascade lookup.
+    Phase 1: regex-based detection.
+    Returns v3 canonical scene ID for preference cascade + scene behavior injection.
     """
     text = f"{message} {course_name or ''}"
 

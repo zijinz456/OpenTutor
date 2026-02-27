@@ -149,7 +149,7 @@ async def run_exam_prep(
     )
 
     client = get_llm_client()
-    plan = await client.chat(
+    plan, _ = await client.chat(
         "You are an exam preparation expert. Create focused, effective study plans.",
         f"""Create an exam preparation plan for {course_name}.
 {f'Exam focus: {exam_topic}' if exam_topic else ''}

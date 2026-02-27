@@ -90,7 +90,7 @@ async def extract_questions(
     """
     client = get_llm_client()
 
-    response = await client.chat(
+    response, _ = await client.chat(
         EXTRACTION_PROMPT,
         f"## {title}\n\n{content}",
     )
