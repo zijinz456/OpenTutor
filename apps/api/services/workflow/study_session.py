@@ -111,7 +111,7 @@ async def generate_response(state: StudySessionState) -> StudySessionState:
     state["system_prompt"] = system_prompt
 
     client = get_llm_client()
-    state["response"] = await client.chat(system_prompt, state["user_message"])
+    state["response"], _ = await client.chat(system_prompt, state["user_message"])
 
     return state
 

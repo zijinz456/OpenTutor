@@ -136,6 +136,41 @@ async def scrape_refresh_job():
         logger.error("Scrape refresh job failed: %s", e)
 
 
+async def memory_consolidation_job():
+    """Memory consolidation job — dedup, decay, and categorize memories.
+
+    Runs the MemoryConsolidationAgent pipeline (OpenClaw cron lane pattern):
+    1. Deduplication (word overlap + same-type matching)
+    2. Recency decay (type-aware half-life)
+    3. Categorization (memU 3-layer pattern via LLM)
+
+    Runs every 6 hours for all users.
+    """
+    logger.info("Running memory consolidation job...")
+    async with async_session() as db:
+        result = await db.execute(select(User))
+        users = result.scalars().all()
+
+        total_deduped = 0
+        total_decayed = 0
+        total_categorized = 0
+
+        for user in users:
+            try:
+                from services.agent.memory_agent import run_full_consolidation
+                result = await run_full_consolidation(db, user.id)
+                total_deduped += result.get("deduped", 0)
+                total_decayed += result.get("decayed", 0)
+                total_categorized += result.get("categorized", 0)
+            except Exception as e:
+                logger.error("Memory consolidation failed for user %s: %s", user.id, e)
+
+        logger.info(
+            "Memory consolidation complete: deduped=%d decayed=%d categorized=%d",
+            total_deduped, total_decayed, total_categorized,
+        )
+
+
 def start_scheduler():
     """Start the APScheduler with all configured jobs."""
     # Weekly prep: every Monday at 8:00 AM
@@ -162,6 +197,15 @@ def start_scheduler():
         trigger=IntervalTrigger(hours=1),
         id="scrape_refresh",
         name="Auto-Scrape Refresh",
+        replace_existing=True,
+    )
+
+    # Memory consolidation: every 6 hours (OpenClaw cron lane pattern)
+    scheduler.add_job(
+        memory_consolidation_job,
+        trigger=IntervalTrigger(hours=6),
+        id="memory_consolidation",
+        name="Memory Consolidation (dedup + decay + categorize)",
         replace_existing=True,
     )
 

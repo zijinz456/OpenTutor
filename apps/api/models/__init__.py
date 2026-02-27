@@ -9,6 +9,10 @@ from models.memory import ConversationMemory
 from models.ingestion import IngestionJob, StudySession, Assignment, WrongAnswer
 from models.progress import LearningProgress, LearningTemplate
 from models.scrape import ScrapeSource, AuthSession
+from models.scene import Scene, SceneSnapshot, SceneSwitchLog
+from models.knowledge_graph import KnowledgePoint
+from models.chat_session import ChatSession
+from models.study_plan import StudyPlan
 
 __all__ = [
     "User",
@@ -27,4 +31,10 @@ __all__ = [
     "LearningTemplate",
     "ScrapeSource",
     "AuthSession",
+    "Scene",
+    "SceneSnapshot",
+    "SceneSwitchLog",
+    "KnowledgePoint",
+    "ChatSession",
+    "StudyPlan",
 ]

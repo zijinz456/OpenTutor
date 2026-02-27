@@ -139,7 +139,7 @@ Requirements:
 
 Keep the plan concise and actionable."""
 
-    plan = await client.chat(
+    plan, _ = await client.chat(
         "You are a study planning assistant. Create practical, realistic study plans.",
         prompt,
     )

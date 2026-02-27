@@ -138,7 +138,7 @@ async def run_weekly_prep(
     )
 
     client = get_llm_client()
-    plan = await client.chat(
+    plan, _ = await client.chat(
         "You are a study planning assistant. Create actionable weekly plans based on deadlines and past performance.",
         f"""Create a study plan for the coming week.
 

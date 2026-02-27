@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
 from database import engine, Base
-from routers import auth, upload, chat, courses, preferences, quiz, notes, workflows, progress, flashcards, canvas, notifications, scrape
+from routers import auth, upload, chat, courses, preferences, quiz, notes, workflows, progress, flashcards, canvas, notifications, scrape, scenes, wrong_answers
 
 
 @asynccontextmanager
@@ -24,6 +24,9 @@ async def lifespan(app: FastAPI):
 
     async with async_session() as db:
         await seed_builtin_templates(db)
+        # Seed preset scenes (v3 scene system)
+        from services.scene.seed import seed_preset_scenes
+        await seed_preset_scenes(db)
         await db.commit()
     # Start APScheduler for proactive reminders + FSRS review push
     from services.scheduler.engine import start_scheduler, stop_scheduler
@@ -61,6 +64,8 @@ app.include_router(flashcards.router, prefix="/api/flashcards", tags=["flashcard
 app.include_router(canvas.router, prefix="/api/canvas", tags=["canvas"])
 app.include_router(notifications.router, prefix="/api/notifications", tags=["notifications"])
 app.include_router(scrape.router, prefix="/api/scrape", tags=["scrape"])
+app.include_router(scenes.router, prefix="/api/scenes", tags=["scenes"])
+app.include_router(wrong_answers.router, prefix="/api/wrong-answers", tags=["wrong-answers"])
 
 
 @app.get("/api/health")

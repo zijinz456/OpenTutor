@@ -115,6 +115,21 @@ async def submit_answer(body: SubmitAnswerRequest, user: User = Depends(get_curr
         ai_explanation=problem.explanation,
     )
     db.add(pr)
+
+    # v3: Auto-archive wrong answers for review system
+    if not is_correct:
+        from models.ingestion import WrongAnswer
+        wa = WrongAnswer(
+            user_id=user.id,
+            problem_id=problem.id,
+            course_id=problem.course_id,
+            user_answer=body.user_answer,
+            correct_answer=problem.correct_answer,
+            explanation=problem.explanation,
+            knowledge_points=problem.knowledge_points,
+        )
+        db.add(wa)
+
     await db.commit()
 
     return AnswerResponse(

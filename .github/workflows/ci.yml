@@ -50,7 +50,7 @@ jobs:
 
       - name: Run Web build
         working-directory: apps/web
-        run: npm run build --webpack
+        run: npm run build
 
   api-smoke:
     name: API Smoke E2E

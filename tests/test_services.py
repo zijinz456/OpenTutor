@@ -59,13 +59,16 @@ from services.preference.scene import detect_scene, DEFAULT_SCENE, SCENE_PATTERN
 def test_detect_scene_all_defined_patterns():
     """Each scene regex should match at least one example."""
     examples = {
-        "exam_review": "期末复习",
+        "exam_prep": "期末复习",
+        "review_drill": "错题复盘",
         "assignment": "homework problem",
-        "weekly_prep": "这周要学什么",
+        "note_organize": "帮我整理笔记",
+        "study_session": "please explain this concept",
     }
+    supported_scenes = {scene_name for scene_name, _ in SCENE_PATTERNS}
     for scene, text in examples.items():
-        if scene in [p[1] for p in SCENE_PATTERNS]:
-            assert detect_scene(text) == scene, f"Failed for scene={scene}, text={text}"
+        assert scene in supported_scenes, f"Example uses unknown scene={scene}"
+        assert detect_scene(text) == scene, f"Failed for scene={scene}, text={text}"
 
 
 def test_detect_scene_default_for_random_text():

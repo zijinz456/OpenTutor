@@ -1,4 +1,4 @@
-"""Preference models — 3-layer cascade for MVP (temporary → course → global → default)."""
+"""Preference models — 7-layer cascade (temporary → course_scene → course → global_scene → global → template → default)."""
 
 import uuid
 from typing import Optional
@@ -12,10 +12,9 @@ from database import Base
 
 
 class UserPreference(Base):
-    """Confirmed user preferences.
+    """Confirmed user preferences with 7-layer cascade.
 
-    MVP uses 3-layer cascade: temporary → course → global → default.
-    Full 7-layer (+ course_scene, global_scene, template) deferred to Phase 1.
+    Priority (highest first): temporary → course_scene → course → global_scene → global → template → system_default.
     """
 
     __tablename__ = "user_preferences"
@@ -26,8 +25,11 @@ class UserPreference(Base):
         UUID(as_uuid=True), ForeignKey("courses.id"), nullable=True
     )
 
-    # Preference scope: temporary | course | global
+    # Preference scope: temporary | course_scene | course | global_scene | global | template
     scope: Mapped[str] = mapped_column(String(20), default="global")
+
+    # Scene type for scene-scoped preferences (e.g. "exam_prep", "study_session")
+    scene_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
 
     # Preference data
     dimension: Mapped[str] = mapped_column(String(50))  # e.g. "note_format", "detail_level", "language"

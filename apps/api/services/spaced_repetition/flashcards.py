@@ -77,7 +77,7 @@ async def generate_flashcards(
     )[:5000]  # Limit context size
 
     client = get_llm_client()
-    response = await client.chat(
+    response, _ = await client.chat(
         "You are an expert at creating educational flashcards. Output only valid JSON.",
         FLASHCARD_PROMPT.format(content=content, count=count),
     )

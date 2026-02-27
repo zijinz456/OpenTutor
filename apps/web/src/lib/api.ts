@@ -102,14 +102,36 @@ export type StreamEvent =
   | { type: "content"; content: string }
   | { type: "action"; action: ChatAction };
 
+export interface ChatStreamOptions {
+  courseId: string;
+  message: string;
+  activeTab?: string;
+  tabContext?: Record<string, unknown>;
+  scene?: string;
+  sessionId?: string;
+}
+
 export async function* streamChat(
-  courseId: string,
-  message: string,
+  courseIdOrOptions: string | ChatStreamOptions,
+  message?: string,
 ): AsyncGenerator<StreamEvent, void, unknown> {
+  // Support both legacy (courseId, message) and new options-based signature
+  const opts: ChatStreamOptions =
+    typeof courseIdOrOptions === "string"
+      ? { courseId: courseIdOrOptions, message: message! }
+      : courseIdOrOptions;
+
   const res = await fetch(`${API_BASE}/chat/`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ course_id: courseId, message }),
+    body: JSON.stringify({
+      course_id: opts.courseId,
+      message: opts.message,
+      active_tab: opts.activeTab,
+      tab_context: opts.tabContext,
+      scene: opts.scene,
+      session_id: opts.sessionId,
+    }),
   });
 
   if (!res.ok || !res.body) {
@@ -190,4 +212,95 @@ export async function setPreference(
 export async function resolvePreferences(courseId?: string): Promise<ResolvedPreferences> {
   const params = courseId ? `?course_id=${courseId}` : "";
   return request(`/preferences/resolve${params}`);
+}
+
+// ── Scenes ──
+
+export interface SceneConfig {
+  scene_id: string;
+  display_name: string;
+  icon: string | null;
+  tab_preset: Array<{ type: string; position: number }>;
+  workflow: string;
+  ai_behavior: Record<string, unknown>;
+  preferences: Record<string, string> | null;
+}
+
+export interface ActiveSceneResult {
+  scene_id: string;
+  config: SceneConfig;
+  snapshot: Record<string, unknown> | null;
+}
+
+export interface SwitchResult {
+  switched: boolean;
+  scene_id: string;
+  from_scene?: string;
+  config: SceneConfig;
+  tab_layout?: Array<{ type: string; position: number }> | Record<string, unknown>;
+  init_actions: Array<{ type: string; action: string; message: string }>;
+  message?: string;
+}
+
+export async function listScenes(): Promise<SceneConfig[]> {
+  return request("/scenes/");
+}
+
+export async function getActiveScene(courseId: string): Promise<ActiveSceneResult> {
+  return request(`/scenes/${courseId}/active`);
+}
+
+export async function switchScene(
+  courseId: string,
+  sceneId: string,
+  currentUiState?: Record<string, unknown>,
+): Promise<SwitchResult> {
+  return request(`/scenes/${courseId}/switch`, {
+    method: "POST",
+    body: JSON.stringify({
+      scene_id: sceneId,
+      current_ui_state: currentUiState,
+    }),
+  });
+}
+
+// ── Wrong Answers ──
+
+export interface WrongAnswer {
+  id: string;
+  problem_id: string;
+  question: string | null;
+  question_type: string | null;
+  user_answer: string;
+  correct_answer: string | null;
+  explanation: string | null;
+  error_category: string | null;
+  knowledge_points: string[] | null;
+  review_count: number;
+  mastered: boolean;
+}
+
+export async function listWrongAnswers(
+  courseId: string,
+  params?: { mastered?: boolean; error_category?: string },
+): Promise<WrongAnswer[]> {
+  const search = new URLSearchParams();
+  if (params?.mastered !== undefined) search.set("mastered", String(params.mastered));
+  if (params?.error_category) search.set("error_category", params.error_category);
+  const qs = search.toString();
+  return request(`/wrong-answers/${courseId}${qs ? `?${qs}` : ""}`);
+}
+
+export async function retryWrongAnswer(id: string, userAnswer: string) {
+  return request<{ is_correct: boolean; correct_answer: string | null; explanation: string | null }>(
+    `/wrong-answers/${id}/retry`,
+    { method: "POST", body: JSON.stringify({ user_answer: userAnswer }) },
+  );
+}
+
+export async function deriveQuestion(id: string) {
+  return request<{ problem_id: string; question: string; question_type: string; options: Record<string, string> | null }>(
+    `/wrong-answers/${id}/derive`,
+    { method: "POST" },
+  );
 }

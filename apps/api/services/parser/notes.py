@@ -101,7 +101,7 @@ Important:
     user_message = f"## {title}\n\n{content}"
 
     client = get_llm_client()
-    result = await client.chat(system_prompt, user_message)
+    result, _ = await client.chat(system_prompt, user_message)
     return result
 
 

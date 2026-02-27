@@ -165,7 +165,7 @@ async def classify_content(content: str) -> str:
         client = get_llm_client()
         trimmed = trim_for_llm(content, max_tokens=2000)
         prompt = CLASSIFICATION_PROMPT.format(content=trimmed)
-        result = await client.extract(
+        result, _ = await client.extract(
             "You are a document classifier. Output only the category name.",
             prompt,
         )

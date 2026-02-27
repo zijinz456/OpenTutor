@@ -73,7 +73,7 @@ async def generate_review_material(
     ) or "No specific materials found."
 
     client = get_llm_client()
-    review = await client.chat(
+    review, _ = await client.chat(
         "You are a patient tutor helping students learn from their mistakes.",
         f"""The student got these questions wrong. Create a focused review session.
 
