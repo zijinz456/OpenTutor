@@ -51,7 +51,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
+# Auth endpoints only available when AUTH_ENABLED=true (production mode)
+if settings.auth_enabled:
+    app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(upload.router, prefix="/api/content", tags=["content"])
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 app.include_router(courses.router, prefix="/api/courses", tags=["courses"])
