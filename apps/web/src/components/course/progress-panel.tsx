@@ -3,36 +3,22 @@
 import { useEffect, useState, useCallback } from "react";
 import { Loader2, BookOpen, CheckCircle, Clock, Target } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
-interface CourseProgress {
-  course_id: string;
-  total_nodes: number;
-  mastered: number;
-  reviewed: number;
-  in_progress: number;
-  not_started: number;
-  total_study_minutes: number;
-  average_mastery: number;
-  completion_percent: number;
-}
+import { getCourseProgress, type CourseProgress } from "@/lib/api";
+import { useT } from "@/lib/i18n-context";
 
 interface ProgressPanelProps {
   courseId: string;
 }
 
 export function ProgressPanel({ courseId }: ProgressPanelProps) {
+  const t = useT();
   const [progress, setProgress] = useState<CourseProgress | null>(null);
   const [loading, setLoading] = useState(true);
 
   const loadProgress = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/api/progress/courses/${courseId}`);
-      if (res.ok) {
-        setProgress(await res.json());
-      }
+      setProgress(await getCourseProgress(courseId));
     } catch {
       // Expected when no progress data exists yet
     } finally {
@@ -67,25 +53,25 @@ export function ProgressPanel({ courseId }: ProgressPanelProps) {
 
   const segments = [
     {
-      label: "Mastered",
+      label: t("progress.mastered"),
       count: progress.mastered,
       color: "bg-green-500",
       percent: (progress.mastered / progress.total_nodes) * 100,
     },
     {
-      label: "Reviewed",
+      label: t("progress.reviewed"),
       count: progress.reviewed,
       color: "bg-blue-500",
       percent: (progress.reviewed / progress.total_nodes) * 100,
     },
     {
-      label: "In Progress",
+      label: t("progress.inProgress"),
       count: progress.in_progress,
       color: "bg-yellow-500",
       percent: (progress.in_progress / progress.total_nodes) * 100,
     },
     {
-      label: "Not Started",
+      label: t("progress.notStarted"),
       count: progress.not_started,
       color: "bg-gray-200 dark:bg-gray-700",
       percent: (progress.not_started / progress.total_nodes) * 100,
@@ -94,9 +80,10 @@ export function ProgressPanel({ courseId }: ProgressPanelProps) {
 
   const hours = Math.floor(progress.total_study_minutes / 60);
   const mins = progress.total_study_minutes % 60;
+  const gapEntries = Object.entries(progress.gap_type_breakdown ?? {}).sort((a, b) => b[1] - a[1]);
 
   return (
-    <div className="flex-1 flex flex-col p-4 gap-4">
+    <div className="flex-1 flex flex-col p-4 gap-4" data-testid="progress-panel">
       {/* Overall completion */}
       <div>
         <div className="flex items-center justify-between mb-2">
@@ -135,12 +122,12 @@ export function ProgressPanel({ courseId }: ProgressPanelProps) {
       <div className="grid grid-cols-2 gap-3">
         <StatCard
           icon={<Clock className="h-4 w-4" />}
-          label="Study Time"
+          label={t("progress.totalTime")}
           value={hours > 0 ? `${hours}h ${mins}m` : `${mins}m`}
         />
         <StatCard
           icon={<Target className="h-4 w-4" />}
-          label="Avg Mastery"
+          label={t("progress.accuracy")}
           value={`${(progress.average_mastery * 100).toFixed(0)}%`}
         />
         <StatCard
@@ -150,10 +137,26 @@ export function ProgressPanel({ courseId }: ProgressPanelProps) {
         />
         <StatCard
           icon={<CheckCircle className="h-4 w-4" />}
-          label="Mastered"
+          label={t("progress.mastered")}
           value={`${progress.mastered}`}
         />
       </div>
+
+      {gapEntries.length > 0 && (
+        <div className="rounded-lg border bg-card p-3" data-testid="progress-gap-breakdown">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm font-medium">Learning Gaps</span>
+            <Badge variant="outline">{gapEntries.length}</Badge>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {gapEntries.map(([gapType, count]) => (
+              <Badge key={gapType} variant="secondary" className="capitalize">
+                {gapType.replaceAll("_", " ")}: {count}
+              </Badge>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

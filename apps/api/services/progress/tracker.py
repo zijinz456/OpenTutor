@@ -2,6 +2,11 @@
 
 Tracks progress at course → chapter → knowledge point granularity.
 Updates mastery scores based on quiz results and study time.
+
+The mastery model uses recent-answer weighting plus layer-based gap inference:
+- Recent answers weighted higher than old ones (0.95^i decay)
+- Wrong answers weighted 1.3x vs correct answers 1.0x (asymmetric)
+- Gap type inferred from difficulty-layer progression
 """
 
 import uuid
@@ -12,9 +17,16 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.progress import LearningProgress
+from models.practice import PracticeResult, PracticeProblem
 from models.content import CourseContentTree
 
 logger = logging.getLogger(__name__)
+
+# Weighted decay constants for generic mastery tracking
+_DECAY_FACTOR = 0.95       # Per-result recency decay
+_WRONG_WEIGHT = 1.3        # Wrong answers count more than correct
+_CORRECT_WEIGHT = 1.0      # Correct answer weight
+_RECENT_RESULTS_LIMIT = 20 # How many recent results to consider
 
 
 async def get_or_create_progress(
@@ -72,18 +84,37 @@ async def update_quiz_result(
     course_id: uuid.UUID,
     content_node_id: uuid.UUID | None,
     is_correct: bool,
+    error_category: str | None = None,
 ) -> LearningProgress:
-    """Update progress based on quiz result."""
+    """Update progress based on quiz result.
+
+    Uses weighted decay:
+    - Recent results weighted higher (0.95^i decay)
+    - Wrong answers weighted 1.3x vs correct 1.0x (asymmetric)
+    - Gap type inferred from difficulty layer performance
+    """
     progress = await get_or_create_progress(db, user_id, course_id, content_node_id)
     progress.quiz_attempts += 1
     if is_correct:
         progress.quiz_correct += 1
 
-    # Update mastery score (simple weighted average)
-    if progress.quiz_attempts > 0:
-        quiz_mastery = progress.quiz_correct / progress.quiz_attempts
-        # Blend with existing mastery (weighted toward quizzes)
+    # Weighted decay mastery from recent results
+    mastery = await _compute_weighted_mastery(db, user_id, course_id, content_node_id)
+    if mastery is not None:
+        # Blend: weighted decay (0.7) + time component (0.3)
+        progress.mastery_score = (
+            mastery * 0.7
+            + min(progress.time_spent_minutes / 60, 1.0) * 0.3
+        )
+    else:
+        # Fallback for first attempt
+        quiz_mastery = progress.quiz_correct / max(progress.quiz_attempts, 1)
         progress.mastery_score = quiz_mastery * 0.7 + min(progress.time_spent_minutes / 60, 1.0) * 0.3
+
+    # Infer gap type from difficulty layer performance
+    gap_type = await _infer_gap_type(db, user_id, course_id, content_node_id)
+    if gap_type:
+        progress.gap_type = gap_type
 
     # Update status
     if progress.mastery_score >= 0.8 and progress.quiz_attempts >= 3:
@@ -92,6 +123,121 @@ async def update_quiz_result(
         progress.status = "reviewed"
 
     return progress
+
+
+async def _compute_weighted_mastery(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    course_id: uuid.UUID,
+    content_node_id: uuid.UUID | None,
+) -> float | None:
+    """Compute mastery using weighted decay over recent results.
+
+    Recent results matter more (decay 0.95^i). Wrong answers are weighted
+    heavier than correct ones (1.3x vs 1.0x) — asymmetric by design:
+    a past mistake is not fully erased by a correct answer.
+    """
+    query = (
+        select(PracticeResult)
+        .join(PracticeProblem, PracticeResult.problem_id == PracticeProblem.id)
+        .where(
+            PracticeResult.user_id == user_id,
+            PracticeProblem.course_id == course_id,
+        )
+        .order_by(PracticeResult.answered_at.desc())
+        .limit(_RECENT_RESULTS_LIMIT)
+    )
+    if content_node_id:
+        query = query.where(PracticeProblem.content_node_id == content_node_id)
+
+    result = await db.execute(query)
+    results = result.scalars().all()
+
+    if not results:
+        return None
+
+    weighted_correct = 0.0
+    total_weight = 0.0
+    for i, pr in enumerate(results):
+        decay = _DECAY_FACTOR ** i
+        if pr.is_correct:
+            w = _CORRECT_WEIGHT * decay
+            weighted_correct += w
+        else:
+            w = _WRONG_WEIGHT * decay
+        total_weight += w
+
+    return weighted_correct / total_weight if total_weight > 0 else None
+
+
+async def _infer_gap_type(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    course_id: uuid.UUID,
+    content_node_id: uuid.UUID | None,
+) -> str | None:
+    """Infer gap type from difficulty layer performance.
+
+    Layer progression diagnosis:
+    - Layer 1 fail -> fundamental_gap
+    - Layer 1 pass, Layer 2 fail -> transfer_gap
+    - Layer 2 pass, Layer 3 fail -> trap_vulnerability
+    - All pass -> mastered
+
+    Returns None if insufficient data (no layered questions attempted).
+    """
+    query = (
+        select(
+            PracticeProblem.difficulty_layer,
+            PracticeResult.is_correct,
+        )
+        .join(PracticeProblem, PracticeResult.problem_id == PracticeProblem.id)
+        .where(
+            PracticeResult.user_id == user_id,
+            PracticeProblem.course_id == course_id,
+            PracticeProblem.difficulty_layer.isnot(None),
+        )
+    )
+    if content_node_id:
+        query = query.where(PracticeProblem.content_node_id == content_node_id)
+
+    result = await db.execute(query)
+    rows = result.all()
+
+    if not rows:
+        return None
+
+    # Aggregate accuracy per layer
+    layer_stats: dict[int, dict] = {}
+    for layer, correct in rows:
+        if layer not in layer_stats:
+            layer_stats[layer] = {"attempts": 0, "correct": 0}
+        layer_stats[layer]["attempts"] += 1
+        if correct:
+            layer_stats[layer]["correct"] += 1
+
+    pass_threshold = 0.7
+
+    def layer_passes(layer: int) -> bool | None:
+        stats = layer_stats.get(layer)
+        if not stats or stats["attempts"] < 2:
+            return None  # Insufficient data
+        return (stats["correct"] / stats["attempts"]) >= pass_threshold
+
+    l1 = layer_passes(1)
+    l2 = layer_passes(2)
+    l3 = layer_passes(3)
+
+    if l1 is False:
+        return "fundamental_gap"
+    if l1 is True and l2 is False:
+        return "transfer_gap"
+    if l2 is True and l3 is False:
+        return "trap_vulnerability"
+    if l1 is True and l2 is True and l3 is True:
+        return "mastered"
+
+    return None
 
 
 async def get_course_progress(
@@ -125,6 +271,10 @@ async def get_course_progress(
         sum(p.mastery_score for p in progress_entries) / len(progress_entries)
         if progress_entries else 0.0
     )
+    gap_type_breakdown: dict[str, int] = {}
+    for entry in progress_entries:
+        if entry.gap_type:
+            gap_type_breakdown[entry.gap_type] = gap_type_breakdown.get(entry.gap_type, 0) + 1
 
     return {
         "course_id": str(course_id),
@@ -136,4 +286,5 @@ async def get_course_progress(
         "total_study_minutes": total_time,
         "average_mastery": avg_mastery,
         "completion_percent": (mastered + reviewed) / max(total_nodes, 1) * 100,
+        "gap_type_breakdown": gap_type_breakdown,
     }

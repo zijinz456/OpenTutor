@@ -12,6 +12,8 @@ from models.scrape import ScrapeSource, AuthSession
 from models.scene import Scene, SceneSnapshot, SceneSwitchLog
 from models.knowledge_graph import KnowledgePoint
 from models.chat_session import ChatSession
+from models.chat_message import ChatMessageLog
+from models.generated_asset import GeneratedAsset
 from models.study_plan import StudyPlan
 
 __all__ = [
@@ -36,5 +38,7 @@ __all__ = [
     "SceneSwitchLog",
     "KnowledgePoint",
     "ChatSession",
+    "ChatMessageLog",
+    "GeneratedAsset",
     "StudyPlan",
 ]

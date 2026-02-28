@@ -54,31 +54,36 @@ async def node_classify_intent(state: StudyState) -> dict:
 
 
 async def node_load_context(state: StudyState) -> dict:
-    from services.preference.engine import resolve_preferences
-    from services.memory.pipeline import retrieve_memories
+    from services.agent.orchestrator import build_agent_context, load_context
 
-    db = state["db"]
-    resolved = await resolve_preferences(db, state["user_id"], state["course_id"])
-    memories = await retrieve_memories(
-        db, state["user_id"], state["user_message"], state["course_id"], limit=3
+    ctx = build_agent_context(
+        user_id=state["user_id"],
+        course_id=state["course_id"],
+        message=state["user_message"],
+        scene="study_session",
     )
-    return {"preferences": resolved.preferences, "memories": memories}
+    intent = state.get("intent", "general")
+    try:
+        ctx.intent = IntentType(intent)
+    except ValueError:
+        ctx.intent = IntentType.GENERAL
+    ctx = await load_context(ctx, state["db"])
+    return {
+        "preferences": ctx.preferences,
+        "memories": ctx.memories,
+        "content_docs": ctx.content_docs,
+    }
 
 
 async def node_search_content(state: StudyState) -> dict:
-    from services.search.hybrid import hybrid_search
-
-    db = state["db"]
-    docs = await hybrid_search(db, state["course_id"], state["user_message"], limit=5)
-    return {"content_docs": docs}
+    return {}
 
 
 async def node_generate_response(state: StudyState) -> dict:
     """Route to appropriate specialist agent based on intent."""
     from services.agent.state import AgentContext, IntentType
-    from services.agent.orchestrator import get_agent
+    from services.agent.orchestrator import apply_reflection, get_agent
 
-    # Build AgentContext from workflow state
     ctx = AgentContext(
         user_id=state["user_id"],
         course_id=state["course_id"],
@@ -95,25 +100,17 @@ async def node_generate_response(state: StudyState) -> dict:
 
     agent = get_agent(intent)
     ctx = await agent.run(ctx, state["db"])
+    ctx = await apply_reflection(ctx)
     return {"response": ctx.response, "system_prompt": ""}
 
 
 async def node_extract_signals(state: StudyState) -> dict:
-    from services.preference.extractor import extract_preference_signal
-
-    signal = await extract_preference_signal(
-        state["user_message"], state["response"], state["user_id"], state["course_id"],
-    )
-    return {"signal": signal}
+    # WF-4 now delegates post-processing to the shared orchestrator path.
+    return {"signal": None}
 
 
 async def node_encode_memory(state: StudyState) -> dict:
-    """Encode conversation with MemCell atomic extraction."""
-    from services.memory.pipeline import encode_memory
-
-    db = state["db"]
-    await encode_memory(db, state["user_id"], state["course_id"],
-                        state["user_message"], state["response"])
+    """No-op: memory encoding now lives in orchestrator post-processing."""
     return {}
 
 
@@ -520,47 +517,10 @@ async def run_study_session_graph(
     course_id: uuid.UUID,
     user_message: str,
 ) -> dict:
-    """Run WF-4 via LangGraph."""
-    graph = get_study_session_graph()
-    initial_state: StudyState = {
-        "user_id": user_id,
-        "course_id": course_id,
-        "user_message": user_message,
-        "intent": "general",
-        "preferences": {},
-        "content_docs": [],
-        "memories": [],
-        "system_prompt": "",
-        "response": "",
-        "signal": None,
-        "db": db,
-    }
-    result = await graph.ainvoke(initial_state)
+    """Run WF-4 via LangGraph using the shared orchestrator path."""
+    from services.workflow.study_session import run_study_session
 
-    if result.get("signal"):
-        from models.preference import PreferenceSignal
-        from services.preference.confidence import process_signal_to_preference
-
-        ps = PreferenceSignal(
-            user_id=result["signal"]["user_id"],
-            course_id=result["signal"].get("course_id"),
-            signal_type=result["signal"]["signal_type"],
-            dimension=result["signal"]["dimension"],
-            value=result["signal"]["value"],
-            context=result["signal"].get("context"),
-        )
-        db.add(ps)
-        await db.flush()
-        await process_signal_to_preference(
-            db, user_id, result["signal"]["dimension"], result["signal"].get("course_id")
-        )
-
-    return {
-        "response": result["response"],
-        "memories_used": len(result.get("memories", [])),
-        "content_docs_used": len(result.get("content_docs", [])),
-        "signal_extracted": result.get("signal") is not None,
-    }
+    return await run_study_session(db, user_id, course_id, user_message)
 
 
 async def run_weekly_prep_graph(db: AsyncSession, user_id: uuid.UUID) -> dict:

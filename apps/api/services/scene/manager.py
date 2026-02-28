@@ -13,13 +13,24 @@ import uuid
 import logging
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.course import Course
 from models.scene import Scene, SceneSnapshot, SceneSwitchLog
+from services.course_access import get_course_or_404
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_tab_layout(scene_config: dict[str, Any], snapshot: dict[str, Any] | None) -> list[dict]:
+    """Restore tab layout from snapshot when possible, otherwise use scene defaults."""
+    if snapshot:
+        open_tabs = snapshot.get("open_tabs")
+        if isinstance(open_tabs, list) and open_tabs:
+            return open_tabs
+
+    tab_preset = scene_config.get("tab_preset", [])
+    return tab_preset if isinstance(tab_preset, list) else []
 
 
 async def switch_scene(
@@ -36,10 +47,7 @@ async def switch_scene(
     Returns dict with new scene config, tab layout, and any initialization actions.
     """
     # Get current course state
-    result = await db.execute(select(Course).where(Course.id == course_id))
-    course = result.scalar_one_or_none()
-    if not course:
-        raise ValueError(f"Course {course_id} not found")
+    course = await get_course_or_404(db, course_id, user_id=user_id)
 
     old_scene_id = course.active_scene or "study_session"
 
@@ -62,12 +70,10 @@ async def switch_scene(
 
     # Step 3: Load historical snapshot or use scene defaults
     snapshot = await load_snapshot(db, course_id, new_scene_id)
-    tab_layout = snapshot or scene_config.get("tab_preset", [])
+    tab_layout = _resolve_tab_layout(scene_config, snapshot)
 
     # Step 4: Update course.active_scene
-    await db.execute(
-        update(Course).where(Course.id == course_id).values(active_scene=new_scene_id)
-    )
+    course.active_scene = new_scene_id
 
     # Step 5: First-time initialization actions
     init_actions = await get_init_actions(db, course_id, user_id, new_scene_id)
@@ -206,7 +212,7 @@ async def get_init_actions(
             select(WrongAnswer).where(
                 WrongAnswer.course_id == course_id,
                 WrongAnswer.user_id == user_id,
-                WrongAnswer.mastered == False,
+                WrongAnswer.mastered.is_(False),
             ).limit(1)
         )
         if result.scalar_one_or_none():

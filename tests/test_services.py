@@ -1,6 +1,7 @@
 """Unit tests for service layer — no database or HTTP required."""
 
 import math
+import uuid
 from datetime import datetime, timezone, timedelta
 from unittest.mock import AsyncMock, patch, MagicMock
 
@@ -79,6 +80,8 @@ def test_detect_scene_default_for_random_text():
 # ── Ingestion: filename classification ──
 
 from services.ingestion.pipeline import classify_by_filename, detect_mime_type
+from services.parser.quiz import _normalize_problem_metadata
+from services.practice.annotation import normalize_problem_annotation, parse_question_array
 
 
 def test_classify_by_filename_lecture():
@@ -104,6 +107,50 @@ def test_detect_mime_type_by_extension():
     assert "pdf" in detect_mime_type("test.pdf")
     # .xyz has a registered MIME; use truly unknown extension
     assert detect_mime_type("unknown.zzzzz") == "application/octet-stream"
+
+
+def test_normalize_problem_metadata_applies_generic_defaults():
+    layer, metadata = _normalize_problem_metadata(
+        {
+            "question_type": "fill_blank",
+            "question": "The ____ is the powerhouse of the cell.",
+        },
+        title="Cell Biology",
+    )
+
+    assert layer == 1
+    assert metadata["core_concept"] == "Cell Biology"
+    assert metadata["bloom_level"] == "remember"
+    assert metadata["skill_focus"] == "recall"
+    assert metadata["source_section"] == "Cell Biology"
+
+
+def test_shared_problem_annotation_pipeline_adds_common_contract():
+    normalized = normalize_problem_annotation(
+        {
+            "question_type": "short_answer",
+            "question": "Explain osmosis.",
+            "problem_metadata": {"core_concept": "osmosis"},
+        },
+        title="Membrane Transport",
+        source="generated",
+    )
+
+    assert normalized["difficulty_layer"] == 2
+    assert normalized["problem_metadata"]["core_concept"] == "osmosis"
+    assert normalized["problem_metadata"]["source_kind"] == "generated"
+    assert normalized["problem_metadata"]["skill_focus"] == "explanation"
+
+
+def test_parse_question_array_handles_markdown_wrapped_json():
+    parsed = parse_question_array(
+        """```json
+        [{"question_type":"mc","question":"Q?","options":{"A":"x","B":"y","C":"z","D":"w"}}]
+        ```"""
+    )
+
+    assert len(parsed) == 1
+    assert parsed[0]["question"] == "Q?"
 
 
 # ── Embedding: registry pattern ──
@@ -157,3 +204,56 @@ def test_jwt_refresh_token_roundtrip():
     payload = decode_token(token)
     assert payload["sub"] == user_id
     assert payload["type"] == "refresh"
+
+
+# ── Scene switching ──
+
+from services.scene import manager as scene_manager
+
+
+@pytest.mark.asyncio
+async def test_switch_scene_uses_snapshot_open_tabs_for_tab_layout(monkeypatch):
+    course_id = uuid.uuid4()
+    user_id = uuid.uuid4()
+    fake_course = MagicMock(active_scene="study_session")
+    fake_result = MagicMock()
+    fake_result.scalar_one_or_none.return_value = fake_course
+    db = MagicMock()
+    db.execute = AsyncMock(return_value=fake_result)
+    db.flush = AsyncMock()
+    db.add = MagicMock()
+
+    async def fake_get_scene_config(_db, _scene_id):
+        return {
+            "scene_id": "exam_prep",
+            "tab_preset": [{"type": "plan", "position": 0}],
+        }
+
+    async def fake_load_snapshot(_db, _course_id, _scene_id):
+        return {
+            "open_tabs": [{"type": "review", "position": 0}],
+            "layout_state": {"panel_sizes": [50, 50]},
+        }
+
+    async def fake_get_init_actions(_db, _course_id, _user_id, _scene_id):
+        return []
+
+    monkeypatch.setattr(scene_manager, "get_scene_config", fake_get_scene_config)
+    monkeypatch.setattr(scene_manager, "load_snapshot", fake_load_snapshot)
+    monkeypatch.setattr(scene_manager, "get_init_actions", fake_get_init_actions)
+
+    result = await scene_manager.switch_scene(
+        db=db,
+        course_id=course_id,
+        user_id=user_id,
+        new_scene_id="exam_prep",
+    )
+
+    assert result["tab_layout"] == [{"type": "review", "position": 0}]
+
+
+def test_resolve_tab_layout_falls_back_to_scene_defaults():
+    scene_config = {"tab_preset": [{"type": "notes", "position": 0}]}
+
+    assert scene_manager._resolve_tab_layout(scene_config, None) == scene_config["tab_preset"]
+    assert scene_manager._resolve_tab_layout(scene_config, {"open_tabs": []}) == scene_config["tab_preset"]

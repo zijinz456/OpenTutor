@@ -1,12 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ArrowLeft, Globe, Palette, RefreshCw } from "lucide-react";
+import { ArrowLeft, Globe, Moon, Palette, RefreshCw, Sun } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { useTheme } from "next-themes";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { setLocale, getLocale, type Locale } from "@/lib/i18n";
+import { useT } from "@/lib/i18n-context";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -22,6 +24,8 @@ interface Template {
 
 export default function SettingsPage() {
   const router = useRouter();
+  const t = useT();
+  const { theme, setTheme } = useTheme();
   const [locale, setLocaleState] = useState<Locale>("en");
   const [templates, setTemplates] = useState<Template[]>([]);
   const [applying, setApplying] = useState<string | null>(null);
@@ -71,7 +75,7 @@ export default function SettingsPage() {
         <Button variant="ghost" size="icon" onClick={() => router.push("/")}>
           <ArrowLeft className="h-4 w-4" />
         </Button>
-        <h1 className="text-lg font-semibold">Settings</h1>
+        <h1 className="text-lg font-semibold">{t("nav.settings")}</h1>
       </header>
 
       <div className="max-w-2xl mx-auto p-6 space-y-8">
@@ -79,7 +83,7 @@ export default function SettingsPage() {
         <section>
           <div className="flex items-center gap-2 mb-3">
             <Globe className="h-4 w-4" />
-            <h2 className="font-medium">Language</h2>
+            <h2 className="font-medium">{t("pref.language")}</h2>
           </div>
           <div className="flex gap-2">
             <Button
@@ -95,6 +99,39 @@ export default function SettingsPage() {
               onClick={() => handleLocaleChange("zh")}
             >
               中文
+            </Button>
+          </div>
+        </section>
+
+        {/* Appearance */}
+        <section>
+          <div className="flex items-center gap-2 mb-3">
+            <Palette className="h-4 w-4" />
+            <h2 className="font-medium">Appearance</h2>
+          </div>
+          <div className="flex gap-2">
+            <Button
+              variant={theme === "light" ? "default" : "outline"}
+              size="sm"
+              onClick={() => setTheme("light")}
+            >
+              <Sun className="h-3.5 w-3.5 mr-1" />
+              Light
+            </Button>
+            <Button
+              variant={theme === "dark" ? "default" : "outline"}
+              size="sm"
+              onClick={() => setTheme("dark")}
+            >
+              <Moon className="h-3.5 w-3.5 mr-1" />
+              Dark
+            </Button>
+            <Button
+              variant={theme === "system" ? "default" : "outline"}
+              size="sm"
+              onClick={() => setTheme("system")}
+            >
+              System
             </Button>
           </div>
         </section>

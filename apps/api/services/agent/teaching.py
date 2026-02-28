@@ -7,18 +7,18 @@ Borrows from:
 """
 
 import logging
-from typing import AsyncIterator
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.agent.base import BaseAgent
-from services.agent.state import AgentContext, TaskPhase
+from services.agent.react_mixin import ReActMixin
+from services.agent.state import AgentContext
 from services.agent.tool_loader import get_tools_for_scene
 
 logger = logging.getLogger(__name__)
 
 
-class TeachingAgent(BaseAgent):
+class TeachingAgent(ReActMixin, BaseAgent):
     """Handles knowledge questions, explanations, and concept learning."""
 
     name = "teaching"
@@ -30,6 +30,7 @@ class TeachingAgent(BaseAgent):
         "Cite specific sections when possible."
     )
     model_preference = "large"  # Teaching needs the best model
+    react_tools = ["search_content", "lookup_progress"]
 
     def build_system_prompt(self, ctx: AgentContext) -> str:
         """Teaching-specific prompt with scene-aware behavior + tools + RAG context."""
@@ -45,19 +46,3 @@ class TeachingAgent(BaseAgent):
         client = self.get_llm_client()
         ctx.response, _ = await client.chat(system_prompt, ctx.user_message)
         return ctx
-
-    async def stream(self, ctx: AgentContext, db: AsyncSession) -> AsyncIterator[str]:
-        """Stream teaching response for SSE."""
-        ctx.delegated_agent = self.name
-        ctx.transition(TaskPhase.REASONING)
-
-        system_prompt = self.build_system_prompt(ctx)
-        client = self.get_llm_client()
-
-        ctx.transition(TaskPhase.STREAMING)
-        full_response = ""
-        async for chunk in client.stream_chat(system_prompt, ctx.user_message):
-            full_response += chunk
-            yield chunk
-
-        ctx.response = full_response

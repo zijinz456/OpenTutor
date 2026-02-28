@@ -2,14 +2,16 @@
 
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
+import { type SwitchResult } from "@/lib/api";
 import { useSceneStore, type Scene } from "@/store/scene";
 
 interface SceneSelectorProps {
   courseId: string;
-  onSwitch?: (sceneId: string) => void;
+  getCurrentUiState?: () => Record<string, unknown>;
+  onSwitch?: (sceneId: string, result: SwitchResult) => void;
 }
 
-export function SceneSelector({ courseId, onSwitch }: SceneSelectorProps) {
+export function SceneSelector({ courseId, getCurrentUiState, onSwitch }: SceneSelectorProps) {
   const { activeScene, scenes, fetchScenes, fetchActiveScene, switchScene, isSwitching } =
     useSceneStore();
   const [open, setOpen] = useState(false);
@@ -39,14 +41,15 @@ export function SceneSelector({ courseId, onSwitch }: SceneSelectorProps) {
     setOpen(false);
     if (scene.scene_id === activeScene) return;
 
-    await switchScene(courseId, scene.scene_id);
-    onSwitch?.(scene.scene_id);
+    const result = await switchScene(courseId, scene.scene_id, getCurrentUiState?.());
+    onSwitch?.(scene.scene_id, result);
   };
 
   return (
     <div ref={ref} className="relative">
       <button
         onClick={() => setOpen(!open)}
+        data-testid="scene-selector-trigger"
         disabled={isSwitching}
         className="flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-gray-200 bg-white text-xs font-medium text-gray-700 hover:border-indigo-400 hover:text-indigo-600 transition-colors disabled:opacity-50"
       >
@@ -61,6 +64,7 @@ export function SceneSelector({ courseId, onSwitch }: SceneSelectorProps) {
             <button
               key={scene.scene_id}
               onClick={() => handleSwitch(scene)}
+              data-testid={`scene-option-${scene.scene_id}`}
               className={`w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-indigo-50 transition-colors ${
                 scene.scene_id === activeScene
                   ? "bg-indigo-50 text-indigo-700 font-medium"

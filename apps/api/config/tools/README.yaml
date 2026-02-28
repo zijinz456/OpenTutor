@@ -1,0 +1,46 @@
+# YAML Declarative Tools — Configuration Guide
+#
+# Drop .yaml files here to define tools without writing Python code.
+# Each file defines one tool. Tools are auto-registered at startup.
+#
+# Example: HTTP tool (web search via Serper API)
+#
+#   name: web_search
+#   description: Search the web for current information
+#   domain: general
+#   parameters:
+#     - name: query
+#       type: string
+#       description: Search query
+#       required: true
+#   endpoint:
+#     type: http
+#     url: https://google.serper.dev/search
+#     method: POST
+#     headers:
+#       X-API-KEY: ${SERPER_API_KEY}
+#       Content-Type: application/json
+#     body_template: '{"q": "{{query}}"}'
+#     result_path: organic[0].snippet
+#
+# Example: Python function tool
+#
+#   name: count_words
+#   description: Count words in a text
+#   domain: general
+#   parameters:
+#     - name: text
+#       type: string
+#       description: Text to count words in
+#       required: true
+#   endpoint:
+#     type: python_function
+#     function: my_module.count_words
+#
+# Notes:
+# - ${VAR_NAME} in URLs/headers resolves to environment variables
+# - {{param_name}} in body_template resolves to tool parameters
+# - result_path uses dot/bracket notation: "data[0].title"
+# - This file (README.yaml) is skipped because it has no 'name' field
+
+_readme: true

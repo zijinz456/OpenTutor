@@ -89,7 +89,8 @@ class BaseAgent(ABC):
 
         # RAG context
         if ctx.content_docs:
-            parts.append("\n## Course Materials (retrieved sections):\n")
+            parts.append("\n## Course Materials (already retrieved for this query):\n")
+            parts.append("Note: These sections were auto-retrieved. Only use search_content tool if you need DIFFERENT content.\n")
             for doc in ctx.content_docs:
                 parts.append(f"### {doc.get('title', '')}\n{doc.get('content', '')[:1500]}\n")
 

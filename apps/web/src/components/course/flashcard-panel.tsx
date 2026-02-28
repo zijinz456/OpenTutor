@@ -1,47 +1,50 @@
 "use client";
 
-import { useState } from "react";
-import { Loader2, RotateCcw, Sparkles } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { Download, Loader2, RotateCcw, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import {
+  generateFlashcards,
+  listGeneratedFlashcardBatches,
+  reviewFlashcard,
+  saveGeneratedFlashcards,
+  type Flashcard,
+  type GeneratedAssetBatchSummary,
+} from "@/lib/api";
 import { toast } from "sonner";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
-interface Flashcard {
-  id: string;
-  front: string;
-  back: string;
-  difficulty: string;
-  fsrs: {
-    difficulty: number;
-    stability: number;
-    reps: number;
-    state: string;
-    due: string | null;
-  };
-}
+import { useT } from "@/lib/i18n-context";
 
 interface FlashcardPanelProps {
   courseId: string;
 }
 
 export function FlashcardPanel({ courseId }: FlashcardPanelProps) {
+  const t = useT();
   const [cards, setCards] = useState<Flashcard[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [flipped, setFlipped] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [reviewing, setReviewing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [batches, setBatches] = useState<GeneratedAssetBatchSummary[]>([]);
+
+  const loadBatches = useCallback(async () => {
+    try {
+      setBatches(await listGeneratedFlashcardBatches(courseId));
+    } catch {
+      setBatches([]);
+    }
+  }, [courseId]);
+
+  useEffect(() => {
+    void loadBatches();
+  }, [loadBatches]);
 
   const handleGenerate = async () => {
     setGenerating(true);
     try {
-      const res = await fetch(`${API_BASE}/api/flashcards/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ course_id: courseId, count: 10 }),
-      });
-      const data = await res.json();
+      const data = await generateFlashcards(courseId, 10);
       setCards(data.cards || []);
       setCurrentIndex(0);
       setFlipped(false);
@@ -53,17 +56,26 @@ export function FlashcardPanel({ courseId }: FlashcardPanelProps) {
     }
   };
 
+  const handleSave = async (replaceBatchId?: string) => {
+    if (cards.length === 0) return;
+    setSaving(true);
+    try {
+      const result = await saveGeneratedFlashcards(courseId, cards, "Flashcard Set", replaceBatchId);
+      toast.success(result.replaced ? `Replaced flashcards with version ${result.version}` : "Saved flashcard set");
+      await loadBatches();
+    } catch (error) {
+      toast.error((error as Error).message || "Failed to save flashcards");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleReview = async (rating: number) => {
     if (!cards[currentIndex]) return;
     setReviewing(true);
 
     try {
-      const res = await fetch(`${API_BASE}/api/flashcards/review`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ card: cards[currentIndex], rating }),
-      });
-      const data = await res.json();
+      const data = await reviewFlashcard(cards[currentIndex], rating);
 
       // Update card in list
       const updated = [...cards];
@@ -89,17 +101,17 @@ export function FlashcardPanel({ courseId }: FlashcardPanelProps) {
     return (
       <div className="flex-1 flex items-center justify-center p-4 text-center">
         <div>
-          <p className="text-muted-foreground text-sm mb-3">No flashcards yet</p>
+          <p className="text-muted-foreground text-sm mb-3">{t("flashcard.empty")}</p>
           <Button onClick={handleGenerate} disabled={generating} size="sm">
             {generating ? (
               <>
                 <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                Generating...
+                {t("quiz.generating")}
               </>
             ) : (
               <>
                 <Sparkles className="h-4 w-4 mr-1" />
-                Generate Flashcards
+                {t("flashcard.generate")}
               </>
             )}
           </Button>
@@ -112,6 +124,7 @@ export function FlashcardPanel({ courseId }: FlashcardPanelProps) {
   const dueCount = cards.filter(
     (c) => !c.fsrs.due || new Date(c.fsrs.due) <= new Date()
   ).length;
+  const latestBatch = batches.find((batch) => batch.is_active) ?? null;
 
   return (
     <div className="flex-1 flex flex-col">
@@ -121,7 +134,17 @@ export function FlashcardPanel({ courseId }: FlashcardPanelProps) {
           Card {currentIndex + 1} of {cards.length}
         </span>
         <div className="flex gap-2">
-          <Badge variant="outline">{dueCount} due</Badge>
+          {latestBatch?.is_active && (
+            <Button size="sm" variant="outline" onClick={() => handleSave(latestBatch.batch_id)} disabled={saving || generating || reviewing}>
+              <Download className="h-4 w-4 mr-1" />
+              Replace Latest
+            </Button>
+          )}
+          <Button size="sm" variant="outline" onClick={() => handleSave()} disabled={saving || generating || reviewing}>
+            <Download className="h-4 w-4 mr-1" />
+            Save New
+          </Button>
+          <Badge variant="outline">{dueCount} {t("flashcard.due")}</Badge>
           <Badge variant="secondary">{card.difficulty}</Badge>
         </div>
       </div>
@@ -140,7 +163,7 @@ export function FlashcardPanel({ courseId }: FlashcardPanelProps) {
             }`}
           >
             <div className="absolute top-2 left-3 text-xs text-muted-foreground">
-              {flipped ? "Answer" : "Question"}
+              {flipped ? t("flashcard.back") : t("flashcard.front")}
             </div>
             <div className="flex items-center justify-center min-h-[150px]">
               <p className="text-center text-sm leading-relaxed">
@@ -149,7 +172,7 @@ export function FlashcardPanel({ courseId }: FlashcardPanelProps) {
             </div>
             <div className="absolute bottom-2 right-3 text-xs text-muted-foreground">
               <RotateCcw className="h-3 w-3 inline mr-1" />
-              Click to flip
+              {t("flashcard.flip")}
             </div>
           </div>
         </div>
@@ -164,7 +187,7 @@ export function FlashcardPanel({ courseId }: FlashcardPanelProps) {
             onClick={() => handleReview(1)}
             disabled={reviewing}
           >
-            Again
+            {t("flashcard.again")}
           </Button>
           <Button
             variant="outline"
@@ -172,7 +195,7 @@ export function FlashcardPanel({ courseId }: FlashcardPanelProps) {
             onClick={() => handleReview(2)}
             disabled={reviewing}
           >
-            Hard
+            {t("flashcard.hard")}
           </Button>
           <Button
             variant="default"
@@ -180,7 +203,7 @@ export function FlashcardPanel({ courseId }: FlashcardPanelProps) {
             onClick={() => handleReview(3)}
             disabled={reviewing}
           >
-            Good
+            {t("flashcard.good")}
           </Button>
           <Button
             variant="secondary"
@@ -188,7 +211,7 @@ export function FlashcardPanel({ courseId }: FlashcardPanelProps) {
             onClick={() => handleReview(4)}
             disabled={reviewing}
           >
-            Easy
+            {t("flashcard.easy")}
           </Button>
         </div>
       )}
@@ -205,7 +228,7 @@ export function FlashcardPanel({ courseId }: FlashcardPanelProps) {
             }}
             disabled={currentIndex === 0}
           >
-            Prev
+            {t("quiz.prev")}
           </Button>
           <Button
             variant="ghost"
@@ -216,7 +239,7 @@ export function FlashcardPanel({ courseId }: FlashcardPanelProps) {
             }}
             disabled={currentIndex >= cards.length - 1}
           >
-            Next
+            {t("quiz.next")}
           </Button>
         </div>
       )}

@@ -20,6 +20,7 @@ Flow:
 import asyncio
 import json
 import logging
+import re
 import uuid
 from typing import AsyncIterator
 
@@ -84,6 +85,33 @@ def get_agent(intent: IntentType) -> BaseAgent:
     return AGENT_REGISTRY[agent_name]
 
 
+def build_agent_context(
+    user_id: uuid.UUID,
+    course_id: uuid.UUID,
+    message: str,
+    conversation_id: uuid.UUID | None = None,
+    session_id: uuid.UUID | None = None,
+    history: list[dict] | None = None,
+    active_tab: str = "",
+    tab_context: dict | None = None,
+    scene: str | None = None,
+) -> AgentContext:
+    """Create a normalized AgentContext for chat or workflow entry points."""
+    ctx = AgentContext(
+        user_id=user_id,
+        course_id=course_id,
+        user_message=message,
+        conversation_id=conversation_id,
+        session_id=session_id or uuid.uuid4(),
+        conversation_history=(history or [])[-10:],
+        active_tab=active_tab,
+        tab_context=tab_context or {},
+    )
+    if scene:
+        ctx.scene = scene
+    return ctx
+
+
 # ── Context Window Management (OpenClaw compaction pattern) ──
 
 # Token budgets for each context category
@@ -128,11 +156,10 @@ def _trim_context(ctx: AgentContext) -> AgentContext:
 # ── Context Loading ──
 
 async def load_context(ctx: AgentContext, db: AsyncSession) -> AgentContext:
-    """Load preferences, memories, and RAG content in parallel.
+    """Load preferences, memories, and RAG content safely on a shared session.
 
-    Uses rag-fusion for enhanced multi-query retrieval when available.
-    Runs three async tasks concurrently for minimal latency.
-    Applies _trim_context() to fit within token budgets.
+    AsyncSession does not permit overlapping DB work on the same connection, so
+    these lookups run sequentially here. This keeps the streaming path stable.
     """
     ctx.transition(TaskPhase.LOADING_CONTEXT)
 
@@ -140,8 +167,9 @@ async def load_context(ctx: AgentContext, db: AsyncSession) -> AgentContext:
     from services.preference.scene import detect_scene
     from services.memory.pipeline import retrieve_memories
 
-    # Detect scene for preference cascade
-    ctx.scene = detect_scene(ctx.user_message)
+    # Detect scene for preference cascade (only if not explicitly set by caller)
+    if ctx.scene == "study_session":
+        ctx.scene = detect_scene(ctx.user_message)
 
     # Use rag-fusion for complex queries, regular hybrid for simple ones
     async def search_content():
@@ -153,35 +181,100 @@ async def load_context(ctx: AgentContext, db: AsyncSession) -> AgentContext:
             from services.search.hybrid import hybrid_search
             return await hybrid_search(db, ctx.course_id, ctx.user_message, limit=5)
 
-    # Parallel context loading
-    pref_task = resolve_preferences(db, ctx.user_id, ctx.course_id, scene=ctx.scene)
-    memory_task = retrieve_memories(db, ctx.user_id, ctx.user_message, ctx.course_id, limit=3)
-    rag_task = search_content()
-
-    resolved, memories, content_docs = await asyncio.gather(
-        pref_task, memory_task, rag_task, return_exceptions=True,
-    )
-
-    # Handle individual failures gracefully
-    if not isinstance(resolved, Exception):
+    try:
+        resolved = await resolve_preferences(db, ctx.user_id, ctx.course_id, scene=ctx.scene)
         ctx.preferences = resolved.preferences
         ctx.preference_sources = resolved.sources
-    else:
-        logger.warning("Preference loading failed: %s", resolved)
+    except Exception as exc:
+        await db.rollback()
+        logger.warning("Preference loading failed: %s", exc)
 
-    if not isinstance(memories, Exception):
+    try:
+        memories = await retrieve_memories(db, ctx.user_id, ctx.user_message, ctx.course_id, limit=3)
         ctx.memories = memories
-    else:
-        logger.warning("Memory retrieval failed: %s", memories)
+    except Exception as exc:
+        await db.rollback()
+        logger.warning("Memory retrieval failed: %s", exc)
 
-    if not isinstance(content_docs, Exception):
+    try:
+        content_docs = await search_content()
         ctx.content_docs = content_docs
-    else:
-        logger.warning("RAG search failed: %s", content_docs)
+    except Exception as exc:
+        await db.rollback()
+        logger.warning("RAG search failed: %s", exc)
 
     # Apply context window budget trimming (OpenClaw compaction)
     ctx = _trim_context(ctx)
 
+    return ctx
+
+
+async def prepare_agent_turn(ctx: AgentContext, db: AsyncSession) -> tuple[AgentContext, BaseAgent]:
+    """Run shared orchestration steps before agent execution."""
+    ctx.transition(TaskPhase.ROUTING)
+    ctx = await classify_intent(ctx)
+    ctx = await load_context(ctx, db)
+
+    fatigue = _detect_fatigue(ctx.user_message)
+    if fatigue > 0.6 and "motivation" in AGENT_REGISTRY:
+        agent = AGENT_REGISTRY["motivation"]
+        ctx.metadata["fatigue_level"] = fatigue
+    else:
+        agent = get_agent(ctx.intent)
+    ctx.delegated_agent = agent.name
+    return ctx, agent
+
+
+async def apply_reflection(ctx: AgentContext) -> AgentContext:
+    """Optionally improve long substantive responses."""
+    if not ctx.response or ctx.intent not in (IntentType.LEARN, IntentType.REVIEW) or len(ctx.response) <= 100:
+        return ctx
+    try:
+        original_response = ctx.response
+        ctx.transition(TaskPhase.VERIFYING)
+        from services.agent.reflection import reflect_and_improve
+
+        ctx = await reflect_and_improve(ctx)
+        ctx.metadata["response_replaced"] = (
+            ctx.response != original_response
+            and ctx.metadata.get("reflection", {}).get("improved")
+        )
+    except Exception as e:
+        logger.warning("Reflection failed (non-critical): %s", e)
+    return ctx
+
+
+async def run_agent_turn(
+    user_id: uuid.UUID,
+    course_id: uuid.UUID,
+    message: str,
+    db: AsyncSession,
+    db_factory,
+    conversation_id: uuid.UUID | None = None,
+    session_id: uuid.UUID | None = None,
+    history: list[dict] | None = None,
+    active_tab: str = "",
+    tab_context: dict | None = None,
+    scene: str | None = None,
+    post_process_inline: bool = False,
+) -> AgentContext:
+    """One-shot orchestration path reused by workflows and non-streaming entry points."""
+    ctx = build_agent_context(
+        user_id=user_id,
+        course_id=course_id,
+        message=message,
+        conversation_id=conversation_id,
+        session_id=session_id,
+        history=history,
+        active_tab=active_tab,
+        tab_context=tab_context,
+        scene=scene,
+    )
+    ctx, agent = await prepare_agent_turn(ctx, db)
+    ctx = await agent.run(ctx, db)
+    ctx = await apply_reflection(ctx)
+    if ctx.response and post_process_inline:
+        await post_process(ctx, db_factory)
     return ctx
 
 
@@ -256,19 +349,36 @@ async def post_process(ctx: AgentContext, db_factory) -> None:
                 if extracted.get("entities") or extracted.get("relationships"):
                     await store_graph_entities(db, ctx.user_id, ctx.course_id, extracted)
 
-            # Execute with retry (NanoClaw exponential backoff)
-            await asyncio.gather(
-                _retry_async(extract_signal, "signal_extraction", max_retries=2),
-                _retry_async(encode_mem, "memory_encoding", max_retries=2),
-                _retry_async(extract_graph, "graph_extraction", max_retries=1),
-                return_exceptions=True,
-            )
+            # Execute sequentially — AsyncSession is NOT safe for concurrent use.
+            # _retry_async handles per-task error isolation (returns None on failure).
+            for coro_fn, name, retries in [
+                (extract_signal, "signal_extraction", 2),
+                (encode_mem, "memory_encoding", 2),
+                (extract_graph, "graph_extraction", 1),
+            ]:
+                await _retry_async(coro_fn, name, max_retries=retries)
+
+            # Commit whatever succeeded — partial results are better than none
             await db.commit()
 
     except Exception as e:
         logger.warning("Post-processing failed: %s", e, exc_info=True)
 
     ctx.mark_completed()
+
+
+async def wait_for_background_tasks(timeout: float = 5.0) -> None:
+    """Wait for in-flight background tasks during graceful shutdown."""
+    if not _background_tasks:
+        return
+    pending = list(_background_tasks)
+    try:
+        await asyncio.wait_for(
+            asyncio.gather(*pending, return_exceptions=True),
+            timeout=timeout,
+        )
+    except asyncio.TimeoutError:
+        logger.warning("Timed out waiting for %d background task(s) during shutdown", len(pending))
 
 
 # ── Fatigue Detection (OpenAkita Persona pattern) ──
@@ -278,7 +388,6 @@ def _detect_fatigue(message: str) -> float:
 
     OpenAkita persona dimension pattern: check signals across multiple categories.
     """
-    import re
     FATIGUE_SIGNALS = [
         r"(不想学|不会|太难|放弃|烦|累|confused|tired|give up|too hard|frustrated)",
         r"(看不懂|学不会|怎么还是错|again wrong|still don't get)",
@@ -300,6 +409,7 @@ async def orchestrate_stream(
     db: AsyncSession,
     db_factory,
     conversation_id: uuid.UUID | None = None,
+    session_id: uuid.UUID | None = None,
     history: list[dict] | None = None,
     active_tab: str = "",
     tab_context: dict | None = None,
@@ -319,24 +429,21 @@ async def orchestrate_stream(
     7. Reflection self-check (optional VERIFYING phase)
     8. Fire-and-forget post-processing with retry
     """
-    # 1. Initialize context with conversation history
-    ctx = AgentContext(
+    ctx = build_agent_context(
         user_id=user_id,
         course_id=course_id,
-        user_message=message,
+        message=message,
         conversation_id=conversation_id,
-        conversation_history=(history or [])[-10:],  # Keep last 10 turns
+        session_id=session_id,
+        history=history,
         active_tab=active_tab,
-        tab_context=tab_context or {},
+        tab_context=tab_context,
+        scene=scene,
     )
-    # Use frontend-provided scene if available (from course.active_scene)
-    if scene:
-        ctx.scene = scene
 
     # Emit agent status
     yield {"event": "status", "data": json.dumps({"phase": "routing"})}
 
-    # 2. Classify intent
     ctx.transition(TaskPhase.ROUTING)
     ctx = await classify_intent(ctx)
 
@@ -352,7 +459,6 @@ async def orchestrate_stream(
     # 3. Load context in parallel
     ctx = await load_context(ctx, db)
 
-    # 4. Route to specialist agent (with fatigue intercept)
     fatigue = _detect_fatigue(ctx.user_message)
     if fatigue > 0.6 and "motivation" in AGENT_REGISTRY:
         agent = AGENT_REGISTRY["motivation"]
@@ -369,72 +475,112 @@ async def orchestrate_stream(
         }),
     }
 
-    # 5. Stream response with action marker parsing + token tracking
+    # 5. Stream response with marker parsing + token tracking
+    # Markers: [ACTION:...] (UI actions), [TOOL_START:...] / [TOOL_DONE:...] (ReAct tools)
     buffer = ""
     async for chunk in agent.stream(ctx, db):
         buffer += chunk
 
-        # Parse [ACTION:...] markers from buffer
-        while "[ACTION:" in buffer:
-            start = buffer.index("[ACTION:")
-            end = buffer.find("]", start)
-            if end == -1:
-                break  # Incomplete marker, wait for more data
+        # Parse markers one at a time until no more complete markers found
+        changed = True
+        while changed:
+            changed = False
 
-            # Yield text before the marker
-            before = buffer[:start]
-            if before:
-                yield {"event": "message", "data": json.dumps({"content": before})}
+            # Parse [TOOL_START:tool_name] markers
+            if "[TOOL_START:" in buffer:
+                start = buffer.index("[TOOL_START:")
+                end = buffer.find("]", start)
+                if end != -1:
+                    before = buffer[:start]
+                    if before:
+                        yield {"event": "message", "data": json.dumps({"content": before})}
+                    tool_name = buffer[start + 12:end]
+                    yield {
+                        "event": "tool_status",
+                        "data": json.dumps({"status": "running", "tool": tool_name}),
+                    }
+                    buffer = buffer[end + 1:]
+                    changed = True
+                    continue
 
-            # Parse and yield the action
-            marker = buffer[start + 8:end]
-            parts = marker.split(":")
-            action_data = {"action": parts[0]}
-            if len(parts) >= 2:
-                action_data["value"] = parts[1]
-            if len(parts) >= 3:
-                action_data["extra"] = parts[2]
-            yield {"event": "action", "data": json.dumps(action_data)}
+            # Parse [TOOL_DONE:tool_name] markers
+            if "[TOOL_DONE:" in buffer:
+                start = buffer.index("[TOOL_DONE:")
+                end = buffer.find("]", start)
+                if end != -1:
+                    before = buffer[:start]
+                    if before:
+                        yield {"event": "message", "data": json.dumps({"content": before})}
+                    tool_name = buffer[start + 11:end]
+                    yield {
+                        "event": "tool_status",
+                        "data": json.dumps({"status": "complete", "tool": tool_name}),
+                    }
+                    buffer = buffer[end + 1:]
+                    changed = True
+                    continue
 
-            buffer = buffer[end + 1:]
+            # Parse [ACTION:...] markers (existing UI action system)
+            if "[ACTION:" in buffer:
+                start = buffer.index("[ACTION:")
+                end = buffer.find("]", start)
+                if end != -1:
+                    before = buffer[:start]
+                    if before:
+                        yield {"event": "message", "data": json.dumps({"content": before})}
+                    marker = buffer[start + 8:end]
+                    parts = marker.split(":")
+                    action_data = {"action": parts[0]}
+                    if len(parts) >= 2:
+                        action_data["value"] = parts[1]
+                    if len(parts) >= 3:
+                        action_data["extra"] = parts[2]
+                    yield {"event": "action", "data": json.dumps(action_data)}
+                    buffer = buffer[end + 1:]
+                    changed = True
+                    continue
 
         # Yield remaining buffer content (no pending markers)
-        if buffer and "[ACTION:" not in buffer:
+        has_pending = any(m in buffer for m in ("[ACTION:", "[TOOL_START:", "[TOOL_DONE:"))
+        if buffer and not has_pending:
+            yield {"event": "message", "data": json.dumps({"content": buffer})}
+            buffer = ""
+        elif has_pending and len(buffer) > 500:
+            # Safety: if buffer grows too large with an incomplete marker,
+            # the marker is likely malformed — flush everything as text
+            logger.warning("Flushing oversized marker buffer (%d chars)", len(buffer))
             yield {"event": "message", "data": json.dumps({"content": buffer})}
             buffer = ""
 
-    # Yield any remaining buffer
+    # Yield any remaining buffer (strip incomplete markers)
     if buffer:
-        yield {"event": "message", "data": json.dumps({"content": buffer})}
+        # Remove stray incomplete markers that never closed
+        buffer = re.sub(r"\[(TOOL_START|TOOL_DONE|ACTION):[^\]]*$", "", buffer)
+        if buffer:
+            yield {"event": "message", "data": json.dumps({"content": buffer})}
 
-    # Token tracking: get usage from the LLM client after streaming (OpenClaw SessionEntry)
+    # Token tracking: add usage from the last LLM call to any tokens already
+    # accumulated by the ReAct loop (which tracks intermediate chat_with_tools calls)
     try:
         client = agent.get_llm_client()
         usage = client.get_last_usage()
         if usage:
-            ctx.input_tokens = usage.get("input_tokens", 0)
-            ctx.output_tokens = usage.get("output_tokens", 0)
+            ctx.input_tokens += usage.get("input_tokens", 0)
+            ctx.output_tokens += usage.get("output_tokens", 0)
             ctx.total_tokens = ctx.input_tokens + ctx.output_tokens
-    except Exception:
-        pass  # Token tracking is best-effort
+    except Exception as e:
+        logger.debug("Token tracking unavailable: %s", e)
 
-    # 6. Reflection self-check (VERIFYING phase, OpenAkita pattern)
-    # Only for substantive responses from teaching/review agents
-    if ctx.response and ctx.intent in (IntentType.LEARN, IntentType.REVIEW) and len(ctx.response) > 100:
-        ctx.transition(TaskPhase.VERIFYING)
+    should_reflect = (
+        bool(ctx.response)
+        and ctx.intent in (IntentType.LEARN, IntentType.REVIEW)
+        and len(ctx.response) > 100
+    )
+    if should_reflect:
         yield {"event": "status", "data": json.dumps({"phase": "verifying"})}
-        try:
-            from services.agent.reflection import reflect_and_improve
-            original_response = ctx.response
-            ctx = await reflect_and_improve(ctx)
-            # If reflection improved the response, send a replacement
-            if ctx.response != original_response and ctx.metadata.get("reflection", {}).get("improved"):
-                yield {
-                    "event": "replace",
-                    "data": json.dumps({"content": ctx.response}),
-                }
-        except Exception as e:
-            logger.warning("Reflection failed (non-critical): %s", e)
+        ctx = await apply_reflection(ctx)
+    if ctx.metadata.get("response_replaced"):
+        yield {"event": "replace", "data": json.dumps({"content": ctx.response})}
 
     # Done streaming
     yield {

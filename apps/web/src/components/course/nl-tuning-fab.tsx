@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Wand2, X, HelpCircle } from "lucide-react";
+import { Wand2, X, HelpCircle, ChevronLeft } from "lucide-react";
 import { setPreference } from "@/lib/api";
 import { toast } from "sonner";
 
@@ -9,17 +9,58 @@ interface NLTuningFABProps {
   courseId: string;
 }
 
-const CLARIFY_OPTIONS = [
-  { label: "Notes panel: change formatting style", dimension: "note_format" },
-  { label: "AI responses: adjust tone and detail", dimension: "explanation_style" },
-  { label: "Layout: rearrange workspace panels", dimension: "layout_preset" },
+interface SubOption {
+  value: string;
+  label: string;
+}
+
+interface ClarifyOption {
+  label: string;
+  dimension: string;
+  subOptions: SubOption[];
+}
+
+const CLARIFY_OPTIONS: ClarifyOption[] = [
+  {
+    label: "Notes panel: change formatting style",
+    dimension: "note_format",
+    subOptions: [
+      { value: "bullet_point", label: "Bullet Points" },
+      { value: "table", label: "Table" },
+      { value: "mind_map", label: "Mind Map" },
+      { value: "step_by_step", label: "Step-by-Step" },
+      { value: "summary", label: "Summary" },
+    ],
+  },
+  {
+    label: "AI responses: adjust detail level",
+    dimension: "detail_level",
+    subOptions: [
+      { value: "concise", label: "Concise" },
+      { value: "balanced", label: "Balanced" },
+      { value: "detailed", label: "Detailed" },
+    ],
+  },
+  {
+    label: "AI responses: adjust tone and style",
+    dimension: "explanation_style",
+    subOptions: [
+      { value: "formal", label: "Formal" },
+      { value: "conversational", label: "Conversational" },
+      { value: "socratic", label: "Socratic" },
+      { value: "example_heavy", label: "Example-Heavy" },
+    ],
+  },
 ];
+
+type ViewState = "input" | "clarify" | "sub_options";
 
 export function NLTuningFAB({ courseId }: NLTuningFABProps) {
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState("");
-  const [showClarify, setShowClarify] = useState(false);
+  const [view, setView] = useState<ViewState>("input");
   const [lastInput, setLastInput] = useState("");
+  const [selectedDimension, setSelectedDimension] = useState<ClarifyOption | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -28,22 +69,38 @@ export function NLTuningFAB({ courseId }: NLTuningFABProps) {
     }
   }, [open]);
 
+  const handleClose = () => {
+    setOpen(false);
+    setView("input");
+    setSelectedDimension(null);
+  };
+
   const handleSubmit = () => {
     if (!input.trim()) return;
     setLastInput(input.trim());
     setInput("");
-    setShowClarify(true);
+    setView("clarify");
   };
 
-  const handleClarify = async (option: typeof CLARIFY_OPTIONS[number]) => {
+  const handleClarifySelect = (option: ClarifyOption) => {
+    setSelectedDimension(option);
+    setView("sub_options");
+  };
+
+  const handleSubOptionSelect = async (subOption: SubOption) => {
+    if (!selectedDimension) return;
     try {
-      await setPreference(option.dimension, lastInput, "course", courseId, "nl_tuning");
-      toast.success(`Applied: ${option.label}`);
+      await setPreference(selectedDimension.dimension, subOption.value, "course", courseId, "nl_tuning");
+      toast.success(`Set ${selectedDimension.dimension} to "${subOption.label}"`);
     } catch {
       toast.error("Failed to apply preference");
     }
-    setShowClarify(false);
-    setOpen(false);
+    handleClose();
+  };
+
+  const handleBackToClarify = () => {
+    setSelectedDimension(null);
+    setView("clarify");
   };
 
   return (
@@ -67,14 +124,14 @@ export function NLTuningFAB({ courseId }: NLTuningFABProps) {
               Fine-tune Agent
             </span>
             <div className="flex-1" />
-            <button onClick={() => { setOpen(false); setShowClarify(false); }} className="text-gray-400 hover:text-gray-900">
+            <button onClick={handleClose} className="text-gray-400 hover:text-gray-900">
               <X className="w-3.5 h-3.5" />
             </button>
           </div>
 
           {/* Body */}
           <div className="p-4 flex flex-col gap-3">
-            {!showClarify ? (
+            {view === "input" && (
               <>
                 <input
                   ref={inputRef}
@@ -88,25 +145,58 @@ export function NLTuningFAB({ courseId }: NLTuningFABProps) {
                   Type a request to adjust layout, note format, or AI style
                 </span>
               </>
-            ) : (
+            )}
+
+            {view === "clarify" && (
               <>
                 <div className="flex items-center gap-1.5 mb-1">
                   <HelpCircle className="w-3.5 h-3.5 text-indigo-600" />
-                  <span className="text-[13px] font-semibold text-gray-900">What do you mean?</span>
+                  <span className="text-[13px] font-semibold text-gray-900">What would you like to adjust?</span>
                 </div>
                 <span className="text-xs text-gray-500 mb-1">
-                  Your request &ldquo;{lastInput}&rdquo; could mean:
+                  Your request &ldquo;{lastInput}&rdquo; could apply to:
                 </span>
                 {CLARIFY_OPTIONS.map((opt) => (
                   <button
                     key={opt.dimension}
-                    onClick={() => handleClarify(opt)}
+                    onClick={() => handleClarifySelect(opt)}
                     className="flex items-center gap-2 p-2.5 px-3.5 border border-gray-200 rounded-lg text-[13px] text-gray-900 hover:border-indigo-600 hover:bg-indigo-50 transition-colors text-left"
                   >
-                    <div className="w-2 h-2 rounded-full border-2 border-gray-200 shrink-0 group-hover:border-indigo-600 group-hover:bg-indigo-600" />
+                    <div className="w-2 h-2 rounded-full border-2 border-gray-200 shrink-0" />
                     {opt.label}
                   </button>
                 ))}
+              </>
+            )}
+
+            {view === "sub_options" && selectedDimension && (
+              <>
+                <button
+                  type="button"
+                  onClick={handleBackToClarify}
+                  className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 transition-colors self-start mb-1"
+                >
+                  <ChevronLeft className="w-3 h-3" />
+                  Back
+                </button>
+                <div className="flex items-center gap-1.5 mb-1">
+                  <Wand2 className="w-3.5 h-3.5 text-indigo-600" />
+                  <span className="text-[13px] font-semibold text-gray-900">
+                    Choose a value for {selectedDimension.dimension.replace(/_/g, " ")}
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {selectedDimension.subOptions.map((sub) => (
+                    <button
+                      type="button"
+                      key={sub.value}
+                      onClick={() => handleSubOptionSelect(sub)}
+                      className="px-3.5 py-2 border border-gray-200 rounded-lg text-[13px] text-gray-900 hover:border-indigo-600 hover:bg-indigo-50 transition-colors"
+                    >
+                      {sub.label}
+                    </button>
+                  ))}
+                </div>
               </>
             )}
           </div>

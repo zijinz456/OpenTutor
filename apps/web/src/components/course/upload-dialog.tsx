@@ -14,6 +14,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { uploadFile, scrapeUrl } from "@/lib/api";
 import { useCourseStore } from "@/store/course";
 import { toast } from "sonner";
+import { useT } from "@/lib/i18n-context";
 
 interface UploadDialogProps {
   open: boolean;
@@ -22,15 +23,14 @@ interface UploadDialogProps {
 }
 
 export function UploadDialog({ open, onOpenChange, courseId }: UploadDialogProps) {
+  const t = useT();
   const [uploading, setUploading] = useState(false);
   const [url, setUrl] = useState("");
+  const [dragging, setDragging] = useState(false);
   const { fetchContentTree } = useCourseStore();
 
-  const handleFileUpload = useCallback(
-    async (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (!file) return;
-
+  const processFile = useCallback(
+    async (file: File) => {
       setUploading(true);
       try {
         const result = await uploadFile(courseId, file);
@@ -44,6 +44,39 @@ export function UploadDialog({ open, onOpenChange, courseId }: UploadDialogProps
       }
     },
     [courseId, fetchContentTree, onOpenChange],
+  );
+
+  const handleFileUpload = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      await processFile(file);
+    },
+    [processFile],
+  );
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragging(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragging(false);
+  }, []);
+
+  const handleDrop = useCallback(
+    async (e: React.DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setDragging(false);
+      const file = e.dataTransfer.files?.[0];
+      if (!file) return;
+      await processFile(file);
+    },
+    [processFile],
   );
 
   const handleUrlScrape = async () => {
@@ -67,7 +100,7 @@ export function UploadDialog({ open, onOpenChange, courseId }: UploadDialogProps
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Add Learning Materials</DialogTitle>
+          <DialogTitle>{t("upload.title")}</DialogTitle>
         </DialogHeader>
 
         <Tabs defaultValue="file" className="mt-2">
@@ -76,20 +109,31 @@ export function UploadDialog({ open, onOpenChange, courseId }: UploadDialogProps
               <FileUp className="h-4 w-4 mr-1" />
               Upload File
             </TabsTrigger>
-            <TabsTrigger value="url" className="flex-1">
+            <TabsTrigger value="url" className="flex-1" data-testid="workspace-upload-url-tab">
               <Link className="h-4 w-4 mr-1" />
               Paste URL
             </TabsTrigger>
           </TabsList>
 
           <TabsContent value="file" className="space-y-4 pt-4">
-            <div className="border-2 border-dashed rounded-lg p-8 text-center">
-              <Upload className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
-              <p className="text-sm text-muted-foreground mb-3">
-                Drag & drop a file here, or click to browse
+            <div
+              className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
+                dragging
+                  ? "border-primary bg-primary/5"
+                  : "border-border"
+              }`}
+              onDragOver={handleDragOver}
+              onDragEnter={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+            >
+              <Upload className={`h-8 w-8 mx-auto mb-2 ${dragging ? "text-primary" : "text-muted-foreground"}`} />
+              <p className={`text-sm mb-3 ${dragging ? "text-primary font-medium" : "text-muted-foreground"}`}>
+                {dragging ? "Drop file here" : t("upload.drag")}
               </p>
               <label>
                 <input
+                  data-testid="workspace-upload-file-input"
                   type="file"
                   accept=".pdf,.pptx,.ppt,.docx,.doc,.html,.htm,.txt,.md"
                   className="hidden"
@@ -101,7 +145,7 @@ export function UploadDialog({ open, onOpenChange, courseId }: UploadDialogProps
                     {uploading ? (
                       <>
                         <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                        Parsing...
+                        {t("upload.uploading")}
                       </>
                     ) : (
                       "Choose File"
@@ -114,6 +158,7 @@ export function UploadDialog({ open, onOpenChange, courseId }: UploadDialogProps
 
           <TabsContent value="url" className="space-y-4 pt-4">
             <Input
+              data-testid="workspace-upload-url-input"
               placeholder="https://example.com/lecture-notes"
               value={url}
               onChange={(e) => setUrl(e.target.value)}
@@ -121,6 +166,7 @@ export function UploadDialog({ open, onOpenChange, courseId }: UploadDialogProps
               disabled={uploading}
             />
             <Button
+              data-testid="workspace-upload-url-submit"
               onClick={handleUrlScrape}
               className="w-full"
               disabled={uploading || !url.trim()}

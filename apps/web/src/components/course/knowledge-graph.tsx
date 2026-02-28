@@ -3,26 +3,11 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { Loader2, Maximize2, ZoomIn, ZoomOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
-interface GraphNode {
-  id: string;
-  label: string;
-  level: number;
-  size: number;
-  color: string;
-  status: string;
-  mastery: number;
-  x?: number;
-  y?: number;
-}
-
-interface GraphEdge {
-  source: string;
-  target: string;
-  type: string;
-}
+import {
+  getKnowledgeGraph,
+  type KnowledgeGraphNode as GraphNode,
+  type KnowledgeGraphEdge as GraphEdge,
+} from "@/lib/api";
 
 interface KnowledgeGraphProps {
   courseId: string;
@@ -42,14 +27,9 @@ export function KnowledgeGraph({ courseId }: KnowledgeGraphProps) {
   const loadGraph = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(
-        `${API_BASE}/api/progress/courses/${courseId}/knowledge-graph`
-      );
-      if (res.ok) {
-        const data = await res.json();
-        setNodes(data.nodes || []);
-        setEdges(data.edges || []);
-      }
+      const data = await getKnowledgeGraph(courseId);
+      setNodes(data.nodes || []);
+      setEdges(data.edges || []);
     } catch {
       // Expected when no content exists
     } finally {

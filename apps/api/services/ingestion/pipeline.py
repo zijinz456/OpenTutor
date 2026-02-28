@@ -283,13 +283,15 @@ async def run_ingestion_pipeline(
         except ImportError:
             content_hash = hashlib.sha256(file_bytes).hexdigest()
         # Check for duplicates
-        existing = await db.execute(
-            select(IngestionJob).where(
-                IngestionJob.content_hash == content_hash,
-                IngestionJob.user_id == user_id,
-                IngestionJob.status == "completed",
-            )
-        )
+        duplicate_filters = [
+            IngestionJob.content_hash == content_hash,
+            IngestionJob.user_id == user_id,
+            IngestionJob.status == "completed",
+        ]
+        if course_id:
+            duplicate_filters.append(IngestionJob.course_id == course_id)
+
+        existing = await db.execute(select(IngestionJob).where(*duplicate_filters))
         dupe = existing.scalar_one_or_none()
         if dupe:
             logger.info(f"Duplicate detected: {filename} (hash: {content_hash[:12]})")
@@ -301,6 +303,7 @@ async def run_ingestion_pipeline(
         source_type="file" if file_path else "url",
         original_filename=filename,
         url=url,
+        file_path=file_path,
         content_hash=content_hash,
         course_id=course_id,
         course_preset=course_id is not None,
@@ -372,8 +375,16 @@ async def _dispatch_content(db: AsyncSession, job: IngestionJob) -> dict:
         return result
 
     category = job.content_category or "other"
+    source_name = (job.original_filename or "").lower()
+    inferred_text_source = (
+        source_name.endswith((".md", ".txt", ".rst", ".html", ".htm"))
+        or (job.mime_type or "").startswith("text/")
+        or job.source_type == "url"
+    )
 
-    if category in ("lecture_slides", "textbook", "notes", "syllabus"):
+    if category in ("lecture_slides", "textbook", "notes", "syllabus") or (
+        category == "other" and inferred_text_source
+    ):
         # Build content tree using PageIndex pattern
         from services.parser.pdf import _markdown_to_tree
         source_label = job.original_filename or job.url or "Untitled"

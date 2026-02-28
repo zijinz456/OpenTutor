@@ -12,9 +12,11 @@ Provides safe execution of student code snippets with:
 - Captured stdout/stderr for explanation
 """
 
+import asyncio
+import concurrent.futures
+import contextlib
 import io
 import json
-import contextlib
 import logging
 import re
 from typing import AsyncIterator
@@ -96,7 +98,7 @@ class CodeExecutionAgent(BaseAgent):
     def _execute_safe(self, code: str) -> dict:
         """Execute code in restricted sandbox (HelloAgents CodeRunner pattern).
 
-        Uses restricted builtins and captured I/O streams.
+        Uses restricted builtins, captured I/O streams, and enforced timeout.
         """
         import builtins
 
@@ -118,13 +120,24 @@ class CodeExecutionAgent(BaseAgent):
             except ImportError:
                 pass
 
-        try:
+        def _run():
             with contextlib.redirect_stdout(stdout_buf), contextlib.redirect_stderr(stderr_buf):
                 exec(code, safe_globals)  # noqa: S102 — sandboxed exec
+
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(_run)
+                future.result(timeout=self.MAX_EXECUTION_TIME)
             return {
                 "success": True,
                 "output": stdout_buf.getvalue()[:2000],
                 "error": stderr_buf.getvalue()[:500],
+            }
+        except concurrent.futures.TimeoutError:
+            return {
+                "success": False,
+                "output": stdout_buf.getvalue()[:2000],
+                "error": f"Execution timed out after {self.MAX_EXECUTION_TIME} seconds",
             }
         except Exception as e:
             return {
@@ -140,7 +153,7 @@ class CodeExecutionAgent(BaseAgent):
         if code:
             safe, reason = self._validate_code(code)
             if safe:
-                result = self._execute_safe(code)
+                result = await asyncio.to_thread(self._execute_safe, code)
                 ctx.metadata["code_result"] = result
                 ctx.metadata["code_snippet"] = code
             else:
@@ -173,7 +186,7 @@ class CodeExecutionAgent(BaseAgent):
         if code:
             safe, reason = self._validate_code(code)
             if safe:
-                result = self._execute_safe(code)
+                result = await asyncio.to_thread(self._execute_safe, code)
                 ctx.metadata["code_result"] = result
                 ctx.metadata["code_snippet"] = code
             else:

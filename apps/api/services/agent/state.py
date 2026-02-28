@@ -88,6 +88,11 @@ class AgentContext:
     actions: list[dict] = field(default_factory=list)
     extracted_signal: dict | None = None
 
+    # ReAct loop tracking
+    tool_calls: list[dict] = field(default_factory=list)
+    # Each entry: {"tool": str, "input": dict, "output": str, "iteration": int}
+    react_iterations: int = 0
+
     # Token tracking (OpenClaw SessionEntry pattern)
     input_tokens: int = 0
     output_tokens: int = 0

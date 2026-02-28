@@ -2,7 +2,7 @@
 
 import uuid
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ChatMessage(BaseModel):
@@ -15,7 +15,7 @@ class ChatRequest(BaseModel):
     course_id: uuid.UUID
     message: str
     conversation_id: uuid.UUID | None = None
-    history: list[ChatMessage] = []  # Recent conversation history for multi-turn context
+    history: list[ChatMessage] = Field(default_factory=list)  # Recent conversation history for multi-turn context
     # v3: Tab context and scene awareness
     active_tab: str | None = None       # "notes" / "quiz" / "plan" / "review" / ...
     tab_context: dict | None = None     # Current tab content summary for context-aware responses

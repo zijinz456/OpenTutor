@@ -12,7 +12,8 @@ import {
   submitAnswer,
   type QuizProblem,
   type AnswerResult,
-} from "@/lib/quiz-api";
+} from "@/lib/api";
+import { useT } from "@/lib/i18n-context";
 
 /**
  * Interactive Quiz Panel.
@@ -29,6 +30,7 @@ interface QuizPanelProps {
 }
 
 export function QuizPanel({ courseId }: QuizPanelProps) {
+  const t = useT();
   const [problems, setProblems] = useState<QuizProblem[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [selectedAnswer, setSelectedAnswer] = useState<string | null>(null);
@@ -112,17 +114,17 @@ export function QuizPanel({ courseId }: QuizPanelProps) {
     return (
       <div className="flex-1 flex items-center justify-center p-4 text-center">
         <div>
-          <p className="text-muted-foreground text-sm mb-3">No quiz questions yet</p>
+          <p className="text-muted-foreground text-sm mb-3">{t("quiz.empty")}</p>
           <Button onClick={handleExtract} disabled={extracting} size="sm">
             {extracting ? (
               <>
                 <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                Generating...
+                {t("quiz.generating")}
               </>
             ) : (
               <>
                 <Sparkles className="h-4 w-4 mr-1" />
-                Generate Quiz from Content
+                {t("quiz.generate")}
               </>
             )}
           </Button>
@@ -135,20 +137,20 @@ export function QuizPanel({ courseId }: QuizPanelProps) {
   const optionKeys = problem.options ? Object.keys(problem.options) : [];
 
   return (
-    <div className="flex-1 flex flex-col">
+    <div className="flex-1 flex flex-col" data-testid="quiz-panel">
       {/* Progress bar */}
       <div className="px-3 py-2 border-b flex items-center justify-between text-xs text-muted-foreground">
         <span>
-          Question {currentIndex + 1} of {problems.length}
+          {t("quiz.question")} {currentIndex + 1} {t("quiz.of")} {problems.length}
         </span>
         <Badge variant="outline">
-          {score.correct}/{score.total} correct
+          {score.correct}/{score.total} {t("quiz.correct")}
         </Badge>
       </div>
 
       {/* Question */}
       <ScrollArea className="flex-1 p-4">
-        <div className="mb-4">
+        <div className="mb-4" data-testid="quiz-question">
           <Badge variant="secondary" className="mb-2 text-xs">
             {problem.question_type.toUpperCase()}
           </Badge>
@@ -178,6 +180,7 @@ export function QuizPanel({ courseId }: QuizPanelProps) {
               return (
                 <button
                   key={key}
+                  data-testid={`quiz-option-${key}`}
                   className={optionClass}
                   onClick={() => handleSelect(key)}
                   disabled={!!result}
@@ -199,7 +202,7 @@ export function QuizPanel({ courseId }: QuizPanelProps) {
         {/* Explanation (after answering) */}
         {result && result.explanation && (
           <div className="mt-4 p-3 bg-muted rounded-md">
-            <p className="text-xs font-medium mb-1">Explanation:</p>
+            <p className="text-xs font-medium mb-1">{t("quiz.explanation")}</p>
             <p className="text-sm text-muted-foreground">{result.explanation}</p>
           </div>
         )}
@@ -209,7 +212,7 @@ export function QuizPanel({ courseId }: QuizPanelProps) {
       <div className="border-t px-3 py-2 flex items-center justify-between">
         <Button variant="ghost" size="sm" onClick={handlePrev} disabled={currentIndex === 0}>
           <ChevronLeft className="h-4 w-4 mr-1" />
-          Prev
+          {t("quiz.prev")}
         </Button>
         <Button
           variant="ghost"
@@ -217,7 +220,7 @@ export function QuizPanel({ courseId }: QuizPanelProps) {
           onClick={handleNext}
           disabled={currentIndex >= problems.length - 1}
         >
-          Next
+          {t("quiz.next")}
           <ChevronRight className="h-4 w-4 ml-1" />
         </Button>
       </div>
