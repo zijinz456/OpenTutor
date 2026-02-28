@@ -102,7 +102,7 @@ async def fsrs_review_job():
             .where(
                 LearningProgress.next_review_at.isnot(None),
                 LearningProgress.next_review_at <= now,
-                LearningProgress.mastery_level < 0.9,
+                LearningProgress.mastery_score < 0.9,
             )
             .group_by(LearningProgress.user_id)
         )

@@ -34,6 +34,7 @@ class IngestionJob(Base):
     original_filename: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     mime_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    file_path: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
     file_size: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     # Dedup (Papra pattern: SHA-256 hash-during-stream)
@@ -41,7 +42,7 @@ class IngestionJob(Base):
 
     # Classification results
     course_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("courses.id"), nullable=True
+        UUID(as_uuid=True), ForeignKey("courses.id", ondelete="CASCADE"), nullable=True
     )
     course_preset: Mapped[bool] = mapped_column(Boolean, default=False)  # User pre-assigned
     content_category: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
@@ -80,8 +81,8 @@ class StudySession(Base):
     __tablename__ = "study_sessions"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
-    course_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("courses.id"))
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    course_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("courses.id", ondelete="CASCADE"))
 
     # Session metrics
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -106,7 +107,7 @@ class Assignment(Base):
     __tablename__ = "assignments"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    course_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("courses.id"))
+    course_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("courses.id", ondelete="CASCADE"))
 
     title: Mapped[str] = mapped_column(String(500))
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -136,9 +137,9 @@ class WrongAnswer(Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
-    problem_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("practice_problems.id"))
-    course_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("courses.id"))
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    problem_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("practice_problems.id", ondelete="CASCADE"))
+    course_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("courses.id", ondelete="CASCADE"))
 
     user_answer: Mapped[str] = mapped_column(Text)
     correct_answer: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -149,6 +150,12 @@ class WrongAnswer(Base):
     # Categories: conceptual | procedural | computational | reading | careless
     knowledge_points: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True, default=list)
     # List of knowledge point IDs related to this wrong answer
+
+    # v4: Diagnostic pair result + structured error detail
+    diagnosis: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    # fundamental_gap | trap_vulnerability | carelessness | mastered (from diagnostic pair)
+    error_detail: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    # Structured classification: {category, confidence, evidence, related_concept}
 
     # Review tracking
     review_count: Mapped[int] = mapped_column(Integer, default=0)

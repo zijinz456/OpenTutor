@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
 from models.user import User
 from services.auth.dependency import get_current_user
+from services.course_access import get_course_or_404
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -44,6 +45,13 @@ class ExamPrepRequest(BaseModel):
 
 class MarkReviewedRequest(BaseModel):
     wrong_answer_ids: list[uuid.UUID]
+
+
+class SaveStudyPlanRequest(BaseModel):
+    course_id: uuid.UUID
+    markdown: str
+    title: str | None = None
+    replace_batch_id: uuid.UUID | None = None
 
 
 def _raise_if_service_error(result: dict) -> None:
@@ -126,6 +134,7 @@ async def wrong_answer_review(
 @router.post("/wrong-answer-review/mark")
 async def mark_wrong_answers_reviewed(
     body: MarkReviewedRequest,
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Mark wrong answers as reviewed (increments review count)."""
@@ -160,3 +169,49 @@ async def exam_prep(body: ExamPrepRequest, user: User = Depends(get_current_user
             body.days_until_exam,
         )
         raise HTTPException(status_code=500, detail="Exam prep failed") from e
+
+
+@router.post("/study-plans/save")
+async def save_study_plan(
+    body: SaveStudyPlanRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from services.generated_assets import save_generated_asset
+
+    course = await get_course_or_404(db, body.course_id, user_id=user.id)
+
+    try:
+        result = await save_generated_asset(
+            db,
+            user_id=user.id,
+            course_id=body.course_id,
+            asset_type="study_plan",
+            title=body.title or course.name,
+            content={"markdown": body.markdown},
+            metadata=None,
+            replace_batch_id=body.replace_batch_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    await db.commit()
+    return result
+
+
+@router.get("/study-plans/{course_id}")
+async def list_study_plans(
+    course_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from services.generated_assets import list_generated_asset_batches
+
+    await get_course_or_404(db, course_id, user_id=user.id)
+
+    return await list_generated_asset_batches(
+        db,
+        user_id=user.id,
+        course_id=course_id,
+        asset_type="study_plan",
+    )

@@ -2,8 +2,9 @@
 
 import { useEffect, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Brain, Settings, FileText, RefreshCw, TriangleAlert } from "lucide-react";
+import { Plus, Brain, Settings, FileText, BarChart3 } from "lucide-react";
 import { useCourseStore } from "@/store/course";
+import { useT } from "@/lib/i18n-context";
 
 /* Color presets for course card icons */
 const CARD_COLORS = [
@@ -24,6 +25,7 @@ function getInitials(name: string) {
 
 export default function DashboardPage() {
   const router = useRouter();
+  const t = useT();
   const { courses, loading, fetchCourses } = useCourseStore();
 
   const shouldShowOnboarding = useSyncExternalStore(
@@ -58,15 +60,20 @@ export default function DashboardPage() {
               OpenTutor
             </span>
           </div>
-          <button onClick={() => router.push("/settings")} className="text-gray-500 hover:text-gray-700">
-            <Settings className="w-[22px] h-[22px]" />
-          </button>
+          <div className="flex items-center gap-3">
+            <button onClick={() => router.push("/analytics")} className="text-gray-500 hover:text-gray-700">
+              <BarChart3 className="w-[22px] h-[22px]" />
+            </button>
+            <button onClick={() => router.push("/settings")} className="text-gray-500 hover:text-gray-700">
+              <Settings className="w-[22px] h-[22px]" />
+            </button>
+          </div>
         </div>
 
         {/* Title */}
         <div className="flex flex-col gap-2">
           <h1 className="text-[32px] font-semibold tracking-tight text-gray-900" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
-            My Learning Spaces
+            {t("dashboard.title")}
           </h1>
           <p className="text-[15px] text-gray-500 leading-snug">
             Upload learning materials and let Agent create your personalized study experience.
@@ -80,11 +87,11 @@ export default function DashboardPage() {
         >
           <Plus className="w-[22px] h-[22px]" />
           <span className="text-lg font-semibold" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
-            Create New Project
+            {t("dashboard.create")}
           </span>
         </button>
 
-        {loading && <p className="text-gray-400 text-sm">Loading courses...</p>}
+        {loading && <p className="text-gray-400 text-sm">{t("general.loading")}</p>}
 
         {/* Existing Projects Label */}
         {courses.length > 0 && (
@@ -115,8 +122,9 @@ export default function DashboardPage() {
                       <span className="font-semibold text-base text-gray-900 truncate" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
                         {course.name}
                       </span>
+                      {/* TODO: Use updated_at once the Course API includes it; created_at is a fallback */}
                       <span className="text-xs text-gray-400">
-                        Last studied: {new Date(course.created_at).toLocaleDateString()}
+                        Created: {new Date(course.created_at).toLocaleDateString()}
                       </span>
                     </div>
                   </div>
@@ -126,40 +134,10 @@ export default function DashboardPage() {
                       <span className="text-xs text-gray-500">{course.description || "0 files"}</span>
                     </div>
                   </div>
-                  <div className="flex gap-1.5">
-                    <span className="px-2 py-1 bg-indigo-50 text-indigo-600 text-[11px] font-medium rounded">Notes</span>
-                    <span className="px-2 py-1 bg-indigo-50 text-indigo-600 text-[11px] font-medium rounded">Quiz</span>
-                    <span className="px-2 py-1 bg-indigo-50 text-indigo-600 text-[11px] font-medium rounded">Chat</span>
-                  </div>
+                  {/* TODO: Derive feature tags from actual course data once the API provides them */}
                 </button>
               );
             })}
-          </div>
-        )}
-
-        {/* Auto-Scrape Status */}
-        {courses.length > 0 && (
-          <div className="p-5 bg-gray-50 border border-gray-200 rounded-xl flex flex-col gap-3">
-            <span className="text-[13px] font-semibold text-gray-400 tracking-wider uppercase" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
-              Auto-Scrape Status
-            </span>
-            <div className="flex items-center gap-2">
-              <RefreshCw className="w-3.5 h-3.5 text-indigo-600" />
-              <span className="text-[13px] text-gray-500">
-                {courses[0]?.name} — Last scraped 1h ago, next in 6h
-              </span>
-            </div>
-            {courses.length > 1 && (
-              <div className="flex items-center gap-2">
-                <TriangleAlert className="w-3.5 h-3.5 text-amber-500" />
-                <span className="text-[13px] text-amber-600">
-                  {courses[1]?.name} — Session expired, please re-login
-                </span>
-                <button className="px-3 py-1 border border-gray-200 bg-white text-xs text-indigo-600 font-medium rounded hover:bg-gray-50">
-                  Re-login
-                </button>
-              </div>
-            )}
           </div>
         )}
 
@@ -167,10 +145,7 @@ export default function DashboardPage() {
         {!loading && courses.length === 0 && (
           <div className="text-center py-16">
             <Brain className="w-12 h-12 mx-auto text-gray-300 mb-4" />
-            <h2 className="text-lg font-medium text-gray-900 mb-2">No courses yet</h2>
-            <p className="text-gray-400 mb-4">
-              Create a project and upload your learning materials to get started.
-            </p>
+            <h2 className="text-lg font-medium text-gray-900 mb-2">{t("dashboard.empty")}</h2>
           </div>
         )}
       </div>

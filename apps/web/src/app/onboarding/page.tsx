@@ -2,9 +2,10 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, ArrowRight, ArrowLeft, Brain, Image as ImageIcon } from "lucide-react";
+import { Check, ArrowRight, ArrowLeft, Brain, SkipForward } from "lucide-react";
 import { setPreference } from "@/lib/api";
 import { toast } from "sonner";
+import { useT } from "@/lib/i18n-context";
 
 const STEPS = [
   {
@@ -49,8 +50,8 @@ const STEPS = [
     ],
   },
   {
-    title: "Got a note style you love?",
-    subtitle: "Upload or paste an example of notes you like. Agent will learn your formatting preferences. You can skip this step.",
+    title: "You're all set!",
+    subtitle: "You can upload example notes or materials later from within any course. Click \"Finish Setup\" to start learning.",
     dimension: "example_style",
     type: "upload" as const,
     options: [],
@@ -59,9 +60,9 @@ const STEPS = [
 
 export default function OnboardingPage() {
   const router = useRouter();
+  const t = useT();
   const [currentStep, setCurrentStep] = useState(0);
   const [selections, setSelections] = useState<Record<string, string>>({});
-  const [exampleText, setExampleText] = useState("");
   const [saving, setSaving] = useState(false);
 
   const step = STEPS[currentStep];
@@ -147,11 +148,11 @@ export default function OnboardingPage() {
                       : "text-[#8886A8]"
                   }`}
                 >
-                  {s.dimension === "language" && "Language"}
+                  {s.dimension === "language" && t("pref.language")}
                   {s.dimension === "learning_mode" && "Learning Mode"}
                   {s.dimension === "detail_level" && "Output Format"}
                   {s.dimension === "layout_preset" && "Layout Template"}
-                  {s.dimension === "example_style" && "I Have Examples"}
+                  {s.dimension === "example_style" && "Finish"}
                 </span>
               </button>
             );
@@ -245,21 +246,23 @@ export default function OnboardingPage() {
             </div>
           )}
 
-          {/* Upload/Example (step 5) */}
+          {/* Completion summary (step 5) */}
           {step.type === "upload" && (
             <div className="flex flex-col gap-4">
-              <div className="w-full min-h-[140px] border-2 border-dashed border-gray-200 rounded-[10px] bg-gray-50 flex flex-col items-center justify-center gap-2.5 cursor-pointer hover:border-indigo-600 hover:bg-indigo-50 transition-colors">
-                <ImageIcon className="w-8 h-8 text-gray-400" />
-                <span className="text-sm text-gray-500">Drop a screenshot or image of notes you like</span>
-                <span className="text-xs text-gray-400">PNG, JPG, or PDF</span>
+              <div className="w-full p-6 border border-gray-200 rounded-[10px] bg-gray-50 flex flex-col gap-3">
+                <span className="text-sm font-medium text-gray-700">Your preferences:</span>
+                {Object.entries(selections).map(([dim, val]) => (
+                  <div key={dim} className="flex items-center gap-2">
+                    <Check className="w-3.5 h-3.5 text-green-500 shrink-0" />
+                    <span className="text-[13px] text-gray-600">
+                      {dim.replace(/_/g, " ")}: <span className="font-medium text-gray-900">{val.replace(/_/g, " ")}</span>
+                    </span>
+                  </div>
+                ))}
               </div>
-              <span className="text-[13px] text-gray-400 text-center">&mdash; or paste text below &mdash;</span>
-              <textarea
-                className="w-full h-[100px] p-3 border border-gray-200 rounded-lg bg-white resize-none text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-600/20 focus:border-indigo-600"
-                placeholder="Paste an example of notes or formatting you prefer..."
-                value={exampleText}
-                onChange={(e) => setExampleText(e.target.value)}
-              />
+              <p className="text-[13px] text-gray-400 text-center">
+                You can upload example notes and materials later from the upload dialog within any course.
+              </p>
             </div>
           )}
 
@@ -276,28 +279,25 @@ export default function OnboardingPage() {
               <div />
             )}
             <div className="flex gap-3">
-              {step.type === "upload" && (
-                <button
-                  onClick={() => { localStorage.setItem("opentutor_onboarded", "true"); router.push("/"); }}
-                  className="h-11 px-6 border border-gray-200 rounded-lg text-gray-500 font-medium text-sm hover:border-gray-300 transition-colors"
-                >
-                  Skip
-                </button>
-              )}
               <button
                 onClick={handleNext}
                 disabled={step.type !== "upload" && !selected}
-                className="h-11 px-7 bg-indigo-600 text-white rounded-lg flex items-center gap-2 font-semibold text-sm hover:bg-indigo-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                className={`h-11 flex items-center gap-2 font-semibold text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed rounded-lg ${
+                  currentStep === STEPS.length - 1
+                    ? "px-8 bg-indigo-600 text-white hover:bg-indigo-700"
+                    : "px-7 bg-indigo-600 text-white hover:bg-indigo-700"
+                }`}
               >
-                {currentStep === STEPS.length - 1
-                  ? saving
-                    ? "Saving..."
-                    : "Finish Setup"
-                  : "Continue"}
                 {currentStep === STEPS.length - 1 ? (
-                  <Check className="w-3.5 h-3.5" />
+                  <>
+                    {saving ? "Saving..." : "Finish Setup"}
+                    <SkipForward className="w-3.5 h-3.5" />
+                  </>
                 ) : (
-                  <ArrowRight className="w-3.5 h-3.5" />
+                  <>
+                    Continue
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </>
                 )}
               </button>
             </div>

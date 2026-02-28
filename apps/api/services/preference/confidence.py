@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from collections import Counter
 
 from sqlalchemy import select, func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.preference import PreferenceSignal, UserPreference
@@ -118,7 +119,7 @@ async def process_signal_to_preference(
     if confidence < PROMOTION_THRESHOLD or value is None:
         return None
 
-    # Upsert preference
+    # Upsert preference (race-condition safe)
     scope = "course" if course_id else "global"
     query = select(UserPreference).where(
         UserPreference.user_id == user_id,
@@ -135,17 +136,33 @@ async def process_signal_to_preference(
         existing.value = value
         existing.confidence = confidence
         existing.source = "behavior"
-    else:
-        existing = UserPreference(
-            user_id=user_id,
-            course_id=course_id,
-            scope=scope,
-            dimension=dimension,
-            value=value,
-            source="behavior",
-            confidence=confidence,
-        )
-        db.add(existing)
+        await db.flush()
+        return existing
 
-    await db.flush()
-    return existing
+    # No existing row — try to insert, handle race where another
+    # request inserts the same row between our SELECT and INSERT.
+    new_pref = UserPreference(
+        user_id=user_id,
+        course_id=course_id,
+        scope=scope,
+        dimension=dimension,
+        value=value,
+        source="behavior",
+        confidence=confidence,
+    )
+    db.add(new_pref)
+    try:
+        await db.flush()
+        return new_pref
+    except IntegrityError:
+        await db.rollback()
+        # Another request inserted first — fetch and update
+        result = await db.execute(query)
+        existing = result.scalar_one_or_none()
+        if existing:
+            existing.value = value
+            existing.confidence = confidence
+            existing.source = "behavior"
+            await db.flush()
+            return existing
+        raise  # Unexpected — re-raise

@@ -78,6 +78,7 @@ class PlanningAgent(BaseAgent):
             return
         try:
             from models.study_plan import StudyPlan
+            from services.generated_assets import save_generated_asset
             plan = StudyPlan(
                 user_id=ctx.user_id,
                 course_id=ctx.course_id,
@@ -86,6 +87,15 @@ class PlanningAgent(BaseAgent):
                 tasks={"markdown": ctx.response, "source_message": ctx.user_message},
             )
             db.add(plan)
+            await save_generated_asset(
+                db,
+                user_id=ctx.user_id,
+                course_id=ctx.course_id,
+                asset_type="study_plan",
+                title=ctx.user_message[:100] or "Study Plan",
+                content={"markdown": ctx.response},
+                metadata={"scene_id": ctx.scene, "source_message": ctx.user_message},
+            )
             await db.flush()
             logger.info("Study plan saved for user=%s course=%s", ctx.user_id, ctx.course_id)
         except Exception as e:

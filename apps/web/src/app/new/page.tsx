@@ -16,7 +16,6 @@ import {
   MessageCircle,
   ChevronDown,
   Check,
-  Copy,
   Lock,
   Loader,
   FolderPlus,
@@ -60,6 +59,7 @@ export default function NewProjectPage() {
   });
   const [nlInput, setNlInput] = useState("");
   const [createdCourseId, setCreatedCourseId] = useState<string | null>(null);
+  const [dragging, setDragging] = useState(false);
 
   // Parsing state
   const [parseSteps, setParseSteps] = useState<ParseStep[]>([
@@ -102,6 +102,32 @@ export default function NewProjectPage() {
     setFeatures((prev) => ({ ...prev, [id]: !prev[id] }));
   };
 
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragging(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragging(false);
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragging(false);
+    const droppedFiles = e.dataTransfer.files;
+    if (!droppedFiles || droppedFiles.length === 0) return;
+    const newFiles = Array.from(droppedFiles).map((f) => ({
+      file: f,
+      name: f.name,
+      size: formatSize(f.size),
+    }));
+    setFiles((prev) => [...prev, ...newFiles]);
+  }, []);
+
   // Start parsing: create course, upload files, scrape URL
   const startParsing = useCallback(async () => {
     setStep("parsing");
@@ -117,8 +143,15 @@ export default function NewProjectPage() {
     try {
       // Create the course
       addLog(`${new Date().toLocaleTimeString()}  Creating project "${projectName || "Untitled"}"...`, "text-gray-400");
-      const course = await addCourse(projectName.trim() || "Untitled Project");
+      const description = nlInput.trim() || undefined;
+      const course = await addCourse(projectName.trim() || "Untitled Project", description);
       setCreatedCourseId(course.id);
+
+      // Persist feature toggles and auto-scrape preference for workspace
+      localStorage.setItem(`course_features_${course.id}`, JSON.stringify(features));
+      if (autoScrape) {
+        localStorage.setItem(`course_autoscrape_${course.id}`, "true");
+      }
       addLog(`${new Date().toLocaleTimeString()}  Project created`, "text-green-500");
 
       // Step 1: Convert files
@@ -164,17 +197,14 @@ export default function NewProjectPage() {
       setParseSteps((s) => s.map((ps, i) => ({ ...ps, status: i <= 2 ? "done" : i === 3 ? "active" : ps.status })));
       setParseProgress(75);
 
-      // Step 4: AI summaries (done server-side during upload, just simulate)
-      addLog(`${new Date().toLocaleTimeString()}  Generating AI summaries...`, "text-gray-400");
-      await new Promise((r) => setTimeout(r, 500));
-      addLog(`${new Date().toLocaleTimeString()}  Summaries generated`, "text-green-500");
+      // Step 4: AI summaries (done server-side during upload)
+      addLog(`${new Date().toLocaleTimeString()}  AI summaries generated (server-side)`, "text-green-500");
 
       setParseSteps((s) => s.map((ps, i) => ({ ...ps, status: i <= 3 ? "done" : i === 4 ? "active" : ps.status })));
       setParseProgress(90);
 
-      // Step 5: Search index
-      addLog(`${new Date().toLocaleTimeString()}  Building search index...`, "text-gray-400");
-      await new Promise((r) => setTimeout(r, 300));
+      // Step 5: Search index (done server-side during upload)
+      addLog(`${new Date().toLocaleTimeString()}  Search index built (server-side)`, "text-green-500");
       addLog(`${new Date().toLocaleTimeString()}  All tasks complete!`, "text-green-500");
 
       setParseSteps((s) => s.map((ps) => ({ ...ps, status: "done" })));
@@ -183,12 +213,20 @@ export default function NewProjectPage() {
     } catch (err) {
       addLog(`${new Date().toLocaleTimeString()}  Error: ${(err as Error).message}`, "text-red-500");
     }
-  }, [addCourse, fetchContentTree, files, mode, projectName, url]);
+  }, [addCourse, autoScrape, features, fetchContentTree, files, mode, nlInput, projectName, url]);
 
   const enterWorkspace = () => {
-    if (createdCourseId) {
-      router.push(`/course/${createdCourseId}`);
+    if (!createdCourseId) return;
+
+    // Store the NL instruction so the workspace can send it as the first chat message
+    if (nlInput.trim()) {
+      localStorage.setItem(`course_init_prompt_${createdCourseId}`, nlInput.trim());
     }
+
+    // Persist latest feature selections (may have changed since parsing)
+    localStorage.setItem(`course_features_${createdCourseId}`, JSON.stringify(features));
+
+    router.push(`/course/${createdCourseId}`);
   };
 
   return (
@@ -218,6 +256,7 @@ export default function NewProjectPage() {
                 <button
                   key={m.key}
                   onClick={() => setMode(m.key)}
+                  data-testid={`mode-option-${m.key}`}
                   className={`flex-1 flex flex-col items-center justify-center gap-3.5 p-7 rounded-[10px] transition-all ${
                     mode === m.key
                       ? "border-2 border-indigo-600 bg-indigo-50"
@@ -244,6 +283,7 @@ export default function NewProjectPage() {
               </button>
               <button
                 onClick={() => setStep("upload")}
+                data-testid="mode-continue"
                 className="h-11 px-7 bg-indigo-600 text-white rounded-lg flex items-center gap-2 font-semibold text-sm hover:bg-indigo-700"
               >
                 Continue <ArrowRight className="w-3.5 h-3.5" />
@@ -273,6 +313,7 @@ export default function NewProjectPage() {
           <div className="flex flex-col gap-2">
             <label className="font-semibold text-sm text-gray-900" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Project Name</label>
             <input
+              data-testid="project-name-input"
               className="w-full h-11 px-4 border border-gray-200 rounded-lg bg-white text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-600/20 focus:border-indigo-600"
               value={projectName}
               onChange={(e) => setProjectName(e.target.value)}
@@ -285,15 +326,26 @@ export default function NewProjectPage() {
             <div className="flex flex-col gap-3">
               <h3 className="text-base font-semibold text-gray-900" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Upload Learning Materials</h3>
               <div
-                className="w-full h-40 border-2 border-dashed border-gray-200 bg-gray-50 rounded-lg flex flex-col items-center justify-center gap-3 cursor-pointer hover:border-indigo-600 hover:bg-indigo-50 transition-colors"
+                className={`w-full h-40 border-2 border-dashed rounded-lg flex flex-col items-center justify-center gap-3 cursor-pointer transition-colors ${
+                  dragging
+                    ? "border-indigo-600 bg-indigo-50"
+                    : "border-gray-200 bg-gray-50 hover:border-indigo-600 hover:bg-indigo-50"
+                }`}
                 onClick={() => fileInputRef.current?.click()}
+                onDragOver={handleDragOver}
+                onDragEnter={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
               >
-                <Upload className="w-8 h-8 text-gray-400" />
-                <span className="text-sm text-gray-500">Drag files here, or click to browse</span>
+                <Upload className={`w-8 h-8 ${dragging ? "text-indigo-600" : "text-gray-400"}`} />
+                <span className={`text-sm ${dragging ? "text-indigo-600 font-medium" : "text-gray-500"}`}>
+                  {dragging ? "Drop files here" : "Drag files here, or click to browse"}
+                </span>
                 <span className="text-xs text-gray-400">Supports PDF, PPT, DOCX</span>
               </div>
               <input
                 ref={fileInputRef}
+                data-testid="project-file-input"
                 type="file"
                 accept=".pdf,.pptx,.ppt,.docx,.doc,.html,.htm,.txt,.md"
                 multiple
@@ -369,7 +421,11 @@ export default function NewProjectPage() {
             <button onClick={() => setStep("mode")} className="h-11 px-6 border border-gray-200 rounded-lg text-gray-500 font-medium text-sm hover:border-gray-300">
               Cancel
             </button>
-            <button onClick={startParsing} className="h-11 px-7 bg-indigo-600 text-white rounded-lg flex items-center gap-2 font-semibold text-sm hover:bg-indigo-700">
+            <button
+              onClick={startParsing}
+              data-testid="start-parsing"
+              className="h-11 px-7 bg-indigo-600 text-white rounded-lg flex items-center gap-2 font-semibold text-sm hover:bg-indigo-700"
+            >
               Start Parsing <ArrowRight className="w-4 h-4" />
             </button>
           </div>
@@ -487,6 +543,7 @@ export default function NewProjectPage() {
               {parseDone && (
                 <button
                   onClick={() => setStep("features")}
+                  data-testid="continue-to-features"
                   className="w-full h-11 bg-indigo-600 text-white rounded-lg flex items-center justify-center gap-2 font-semibold text-sm hover:bg-indigo-700"
                 >
                   Continue to Features <ArrowRight className="w-3.5 h-3.5" />
@@ -555,26 +612,6 @@ export default function NewProjectPage() {
             ))}
           </div>
 
-          {/* Copy Settings */}
-          <div className="p-5 bg-gray-50 border border-gray-200 rounded-xl flex flex-col gap-3">
-            <div className="flex items-center gap-2.5">
-              <Copy className="w-[18px] h-[18px] text-gray-500" />
-              <span className="font-semibold text-[15px] text-gray-900" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
-                Copy Settings from Existing Project
-              </span>
-            </div>
-            <div className="flex items-center gap-3">
-              <div className="flex-1 flex items-center gap-2 px-3.5 h-10 border border-gray-200 bg-white rounded-md">
-                <span className="text-[13px] text-gray-400">Select a project...</span>
-                <div className="flex-1" />
-                <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
-              </div>
-              <button className="h-10 px-4 bg-gray-50 border border-gray-200 rounded-md text-[13px] text-gray-900 font-medium hover:bg-gray-100">
-                Apply
-              </button>
-            </div>
-          </div>
-
           {/* NL Input */}
           <div className="flex flex-col gap-2.5">
             <span className="font-semibold text-[15px] text-gray-900" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
@@ -596,6 +633,7 @@ export default function NewProjectPage() {
             </button>
             <button
               onClick={enterWorkspace}
+              data-testid="enter-workspace"
               className="h-11 px-7 bg-indigo-600 text-white rounded-lg flex items-center gap-2 font-semibold text-sm hover:bg-indigo-700"
             >
               Enter Workspace <ArrowRight className="w-4 h-4" />

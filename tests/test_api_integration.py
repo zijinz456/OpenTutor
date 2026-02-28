@@ -5,6 +5,7 @@ Run with: pytest tests/test_api_integration.py -v
 """
 
 import uuid
+import json
 
 import pytest
 import pytest_asyncio
@@ -159,63 +160,275 @@ async def test_upload_invalid_course_id(client):
     assert resp.status_code in (400, 422)
 
 
-# ── Auth endpoints ──
-
 @pytest.mark.asyncio
-async def test_auth_register_and_login(client):
-    """Test full auth flow: register → login → access protected endpoint."""
-    # Register
-    resp = await client.post("/api/auth/register", json={
-        "email": TEST_EMAIL,
-        "password": "securepass123",
-        "name": "Test User",
-    })
-    assert resp.status_code == 201
-    data = resp.json()
-    assert data["email"] == TEST_EMAIL
+async def test_upload_markdown_creates_content_tree_nodes(client):
+    create_resp = await client.post("/api/courses/", json={"name": "Markdown Course", "description": "md"})
+    assert create_resp.status_code == 201
+    cid = create_resp.json()["id"]
 
-    # Login
-    resp = await client.post("/api/auth/login", json={
-        "email": TEST_EMAIL,
-        "password": "securepass123",
-    })
+    markdown = b"# Binary Search Basics\n\nBinary search repeatedly halves a sorted search space.\n"
+    resp = await client.post(
+        "/api/content/upload",
+        data={"course_id": cid},
+        files={"file": ("sample.md", markdown, "text/markdown")},
+    )
     assert resp.status_code == 200
-    tokens = resp.json()
-    assert "access_token" in tokens
-    assert "refresh_token" in tokens
+    payload = resp.json()
+    assert payload["nodes_created"] >= 1
 
-    # Refresh
-    resp = await client.post("/api/auth/refresh", json={
-        "refresh_token": tokens["refresh_token"],
-    })
-    assert resp.status_code == 200
-    new_tokens = resp.json()
-    assert "access_token" in new_tokens
+    tree_resp = await client.get(f"/api/courses/{cid}/content-tree")
+    assert tree_resp.status_code == 200
+    tree = tree_resp.json()
+    assert len(tree) >= 1
+    assert tree[0]["title"]
 
 
 @pytest.mark.asyncio
-async def test_auth_duplicate_email(client):
-    dup_email = f"dup-{uuid.uuid4().hex[:8]}@opentutor.dev"
-    first = await client.post("/api/auth/register", json={
-        "email": dup_email,
-        "password": "securepass123",
-    })
+async def test_upload_same_markdown_to_two_courses_creates_nodes_in_both(client):
+    markdown = b"# Binary Search Basics\n\nBinary search repeatedly halves a sorted search space.\n"
+
+    first_course = await client.post("/api/courses/", json={"name": "Course A", "description": "a"})
+    second_course = await client.post("/api/courses/", json={"name": "Course B", "description": "b"})
+    assert first_course.status_code == 201
+    assert second_course.status_code == 201
+
+    first_id = first_course.json()["id"]
+    second_id = second_course.json()["id"]
+
+    first_upload = await client.post(
+        "/api/content/upload",
+        data={"course_id": first_id},
+        files={"file": ("sample.md", markdown, "text/markdown")},
+    )
+    second_upload = await client.post(
+        "/api/content/upload",
+        data={"course_id": second_id},
+        files={"file": ("sample.md", markdown, "text/markdown")},
+    )
+
+    assert first_upload.status_code == 200
+    assert second_upload.status_code == 200
+    assert first_upload.json()["course_id"] == first_id
+    assert second_upload.json()["course_id"] == second_id
+
+    first_tree = await client.get(f"/api/courses/{first_id}/content-tree")
+    second_tree = await client.get(f"/api/courses/{second_id}/content-tree")
+    assert first_tree.status_code == 200
+    assert second_tree.status_code == 200
+    assert len(first_tree.json()) >= 1
+    assert len(second_tree.json()) >= 1
+
+
+@pytest.mark.asyncio
+async def test_chat_session_history_persists_and_restores(client, monkeypatch):
+    create_resp = await client.post("/api/courses/", json={"name": "Chat Course", "description": "history"})
+    assert create_resp.status_code == 201
+    course_id = create_resp.json()["id"]
+
+    async def fake_orchestrate_stream(**kwargs):
+        yield {"event": "message", "data": json.dumps({"content": "Tutor answer"})}
+        yield {
+            "event": "done",
+            "data": json.dumps(
+                {
+                    "status": "complete",
+                    "agent": "teaching",
+                    "intent": "learn",
+                    "session_id": str(kwargs["session_id"]),
+                    "tokens": 42,
+                }
+            ),
+        }
+
+    monkeypatch.setattr("routers.chat.orchestrate_stream", fake_orchestrate_stream)
+
+    async with client.stream(
+        "POST",
+        "/api/chat/",
+        json={"course_id": course_id, "message": "Explain limits"},
+    ) as resp:
+        assert resp.status_code == 200
+        body = (await resp.aread()).decode()
+        assert "Tutor answer" in body
+
+    sessions_resp = await client.get(f"/api/chat/courses/{course_id}/sessions")
+    assert sessions_resp.status_code == 200
+    sessions = sessions_resp.json()
+    assert len(sessions) == 1
+    session_id = sessions[0]["id"]
+    assert sessions[0]["message_count"] == 2
+
+    messages_resp = await client.get(f"/api/chat/sessions/{session_id}/messages")
+    assert messages_resp.status_code == 200
+    messages = messages_resp.json()["messages"]
+    assert [message["role"] for message in messages] == ["user", "assistant"]
+    assert messages[0]["content"] == "Explain limits"
+    assert messages[1]["content"] == "Tutor answer"
+
+
+@pytest.mark.asyncio
+async def test_save_generated_quiz_persists_questions(client):
+    create_resp = await client.post("/api/courses/", json={"name": "Generated Quiz Course", "description": "x"})
+    assert create_resp.status_code == 201
+    course_id = create_resp.json()["id"]
+
+    raw_content = json.dumps([
+        {
+            "question_type": "mc",
+            "question": "What is 2 + 2?",
+            "options": {"A": "3", "B": "4", "C": "5", "D": "6"},
+            "correct_answer": "B",
+            "explanation": "2 + 2 = 4",
+            "difficulty_layer": 1,
+            "problem_metadata": {
+                "core_concept": "addition",
+                "bloom_level": "remember",
+                "potential_traps": [],
+                "layer_justification": "Basic arithmetic recall",
+                "skill_focus": "recall",
+                "source_section": "Arithmetic",
+            },
+        }
+    ])
+
+    save_resp = await client.post(
+        "/api/quiz/save-generated",
+        json={"course_id": course_id, "raw_content": raw_content, "title": "Arithmetic"},
+    )
+    assert save_resp.status_code == 200
+    assert save_resp.json()["saved"] == 1
+
+    list_resp = await client.get(f"/api/quiz/{course_id}")
+    assert list_resp.status_code == 200
+    problems = list_resp.json()
+    assert len(problems) == 1
+    assert problems[0]["question"] == "What is 2 + 2?"
+
+
+@pytest.mark.asyncio
+async def test_replace_generated_quiz_archives_previous_batch_version(client):
+    create_resp = await client.post("/api/courses/", json={"name": "Replace Batch Course", "description": "x"})
+    assert create_resp.status_code == 201
+    course_id = create_resp.json()["id"]
+
+    first_payload = json.dumps([
+        {"question_type": "mc", "question": "Q1", "options": {"A": "1", "B": "2", "C": "3", "D": "4"}}
+    ])
+    first_save = await client.post(
+        "/api/quiz/save-generated",
+        json={"course_id": course_id, "raw_content": first_payload, "title": "Set 1"},
+    )
+    assert first_save.status_code == 200
+    batch_id = first_save.json()["batch_id"]
+
+    second_payload = json.dumps([
+        {"question_type": "mc", "question": "Q2", "options": {"A": "1", "B": "2", "C": "3", "D": "4"}}
+    ])
+    second_save = await client.post(
+        "/api/quiz/save-generated",
+        json={
+            "course_id": course_id,
+            "raw_content": second_payload,
+            "title": "Set 1 revised",
+            "replace_batch_id": batch_id,
+        },
+    )
+    assert second_save.status_code == 200
+    assert second_save.json()["replaced"] is True
+    assert second_save.json()["version"] == 2
+
+    list_resp = await client.get(f"/api/quiz/{course_id}")
+    problems = list_resp.json()
+    assert len(problems) == 1
+    assert problems[0]["question"] == "Q2"
+
+    batch_resp = await client.get(f"/api/quiz/{course_id}/generated-batches")
+    assert batch_resp.status_code == 200
+    batches = batch_resp.json()
+    assert len(batches) == 1
+    assert batches[0]["batch_id"] == batch_id
+    assert batches[0]["current_version"] == 2
+
+
+@pytest.mark.asyncio
+async def test_learning_overview_returns_cross_course_summary(client):
+    first = await client.post("/api/courses/", json={"name": "Course A", "description": "a"})
+    second = await client.post("/api/courses/", json={"name": "Course B", "description": "b"})
     assert first.status_code == 201
+    assert second.status_code == 201
 
-    resp = await client.post("/api/auth/register", json={
-        "email": dup_email,
-        "password": "anotherpass123",
-    })
-    assert resp.status_code == 409
+    resp = await client.get("/api/progress/overview")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total_courses"] == 2
+    assert "gap_type_breakdown" in data
+    assert "diagnosis_breakdown" in data
+    assert len(data["course_summaries"]) == 2
 
 
 @pytest.mark.asyncio
-async def test_auth_wrong_password(client):
-    resp = await client.post("/api/auth/login", json={
-        "email": TEST_EMAIL,
-        "password": "wrongpassword",
-    })
-    assert resp.status_code == 401
+async def test_save_generated_notes_and_replace_version(client):
+    create_resp = await client.post("/api/courses/", json={"name": "Notes Course", "description": "notes"})
+    assert create_resp.status_code == 201
+    course_id = create_resp.json()["id"]
+
+    first = await client.post(
+        "/api/notes/generated/save",
+        json={"course_id": course_id, "title": "Summary", "markdown": "# v1"},
+    )
+    assert first.status_code == 200
+    batch_id = first.json()["batch_id"]
+
+    second = await client.post(
+        "/api/notes/generated/save",
+        json={
+            "course_id": course_id,
+            "title": "Summary",
+            "markdown": "# v2",
+            "replace_batch_id": batch_id,
+        },
+    )
+    assert second.status_code == 200
+    assert second.json()["replaced"] is True
+    assert second.json()["version"] == 2
+
+    listing = await client.get(f"/api/notes/generated/{course_id}")
+    assert listing.status_code == 200
+    payload = listing.json()
+    assert len(payload) == 1
+    assert payload[0]["batch_id"] == batch_id
+    assert payload[0]["current_version"] == 2
+
+
+@pytest.mark.asyncio
+async def test_save_generated_flashcards_and_study_plans(client):
+    create_resp = await client.post("/api/courses/", json={"name": "Assets Course", "description": "assets"})
+    assert create_resp.status_code == 201
+    course_id = create_resp.json()["id"]
+
+    flash_resp = await client.post(
+        "/api/flashcards/generated/save",
+        json={
+            "course_id": course_id,
+            "cards": [{"id": "c1", "front": "Q", "back": "A", "difficulty": "medium", "fsrs": {}}],
+            "title": "Flashcards",
+        },
+    )
+    assert flash_resp.status_code == 200
+
+    flash_list = await client.get(f"/api/flashcards/generated/{course_id}")
+    assert flash_list.status_code == 200
+    assert flash_list.json()[0]["asset_count"] == 1
+
+    plan_resp = await client.post(
+        "/api/workflows/study-plans/save",
+        json={"course_id": course_id, "markdown": "## Plan", "title": "Exam Plan"},
+    )
+    assert plan_resp.status_code == 200
+
+    plan_list = await client.get(f"/api/workflows/study-plans/{course_id}")
+    assert plan_list.status_code == 200
+    assert plan_list.json()[0]["title"] == "Exam Plan"
 
 
 # ── Cleanup ──

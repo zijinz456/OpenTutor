@@ -10,10 +10,11 @@ Borrows from:
 - OpenClaw SessionEntry: token tracking per call
 """
 
+import json
 import time
 import logging
 from abc import ABC, abstractmethod
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
 from config import settings
 
@@ -113,11 +114,15 @@ class OpenAIClient(LLMClient):
 
     provider_name = "openai"
 
+    # Local backends that may not support stream_options
+    _NO_STREAM_OPTIONS = {"ollama", "vllm", "lmstudio", "textgenwebui", "custom"}
+
     def __init__(self, api_key: str, model: str, base_url: str | None = None, name: str = "openai"):
         super().__init__()
         from openai import AsyncOpenAI
 
         self.provider_name = name
+        self._supports_stream_options = name not in self._NO_STREAM_OPTIONS
         kwargs = {"api_key": api_key}
         if base_url:
             kwargs["base_url"] = base_url
@@ -126,15 +131,18 @@ class OpenAIClient(LLMClient):
 
     async def stream_chat(self, system_prompt: str, user_message: str) -> AsyncIterator[str]:
         try:
-            stream = await self.client.chat.completions.create(
-                model=self.model,
-                messages=[
+            create_kwargs: dict[str, Any] = {
+                "model": self.model,
+                "messages": [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_message},
                 ],
-                stream=True,
-                stream_options={"include_usage": True},
-            )
+                "stream": True,
+            }
+            if self._supports_stream_options:
+                create_kwargs["stream_options"] = {"include_usage": True}
+            stream = await self.client.chat.completions.create(**create_kwargs)
+            marked_healthy = False
             async for chunk in stream:
                 if chunk.usage:
                     self._last_usage = {
@@ -142,7 +150,9 @@ class OpenAIClient(LLMClient):
                         "output_tokens": chunk.usage.completion_tokens or 0,
                     }
                 if chunk.choices and chunk.choices[0].delta.content:
-                    self.mark_healthy()
+                    if not marked_healthy:
+                        self.mark_healthy()
+                        marked_healthy = True
                     yield chunk.choices[0].delta.content
         except Exception as e:
             self.mark_unhealthy(str(e))
@@ -164,6 +174,53 @@ class OpenAIClient(LLMClient):
             }
             self._last_usage = usage
             return response.choices[0].message.content or "", usage
+        except Exception as e:
+            self.mark_unhealthy(str(e))
+            raise
+
+    async def chat_with_tools(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+    ) -> tuple[str, list[dict], dict]:
+        """Chat with OpenAI native function calling.
+
+        Args:
+            messages: Full conversation history (system, user, assistant, tool).
+            tools: OpenAI function calling schemas.
+
+        Returns:
+            (text_response, tool_calls, usage_dict)
+            tool_calls: [{"id": str, "name": str, "arguments": dict}, ...]
+        """
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                tools=tools,
+                tool_choice="auto",
+            )
+            self.mark_healthy()
+            msg = response.choices[0].message
+            text = msg.content or ""
+            tool_calls: list[dict[str, Any]] = []
+            if msg.tool_calls:
+                for tc in msg.tool_calls:
+                    try:
+                        args = json.loads(tc.function.arguments)
+                    except (json.JSONDecodeError, TypeError):
+                        args = {"raw": tc.function.arguments}
+                    tool_calls.append({
+                        "id": tc.id,
+                        "name": tc.function.name,
+                        "arguments": args,
+                    })
+            usage = {
+                "input_tokens": response.usage.prompt_tokens if response.usage else 0,
+                "output_tokens": response.usage.completion_tokens if response.usage else 0,
+            }
+            self._last_usage = usage
+            return text, tool_calls, usage
         except Exception as e:
             self.mark_unhealthy(str(e))
             raise
@@ -193,8 +250,11 @@ class AnthropicClient(LLMClient):
                 system=system_prompt,
                 messages=[{"role": "user", "content": user_message}],
             ) as stream:
+                marked_healthy = False
                 async for text in stream.text_stream:
-                    self.mark_healthy()
+                    if not marked_healthy:
+                        self.mark_healthy()
+                        marked_healthy = True
                     yield text
                 # Capture usage after stream completes
                 final = await stream.get_final_message()
@@ -221,6 +281,109 @@ class AnthropicClient(LLMClient):
             }
             self._last_usage = usage
             return response.content[0].text, usage
+        except Exception as e:
+            self.mark_unhealthy(str(e))
+            raise
+
+    async def chat_with_tools(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+    ) -> tuple[str, list[dict], dict]:
+        """Chat with Anthropic tool_use support.
+
+        Converts OpenAI-format tool schemas to Anthropic format, calls the API,
+        and normalizes the response back to the common format.
+        """
+        # Convert OpenAI tool schema → Anthropic format
+        anthropic_tools = []
+        for t in tools:
+            func = t.get("function", t)
+            anthropic_tools.append({
+                "name": func["name"],
+                "description": func.get("description", ""),
+                "input_schema": func.get("parameters", {"type": "object", "properties": {}}),
+            })
+
+        # Extract system prompt from messages (Anthropic uses separate system param)
+        system_prompt = ""
+        api_messages = []
+        for msg in messages:
+            if msg["role"] == "system":
+                system_prompt = msg.get("content", "")
+            elif msg["role"] == "tool":
+                # Anthropic expects tool_result blocks
+                api_messages.append({
+                    "role": "user",
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": msg.get("tool_call_id", ""),
+                        "content": msg.get("content", ""),
+                    }],
+                })
+            elif msg["role"] == "assistant" and msg.get("tool_calls"):
+                # Convert assistant tool_calls to Anthropic format
+                content_blocks: list[dict[str, Any]] = []
+                if msg.get("content"):
+                    content_blocks.append({"type": "text", "text": msg["content"]})
+                for tc in msg["tool_calls"]:
+                    func = tc.get("function", tc)
+                    try:
+                        args = json.loads(func["arguments"]) if isinstance(func["arguments"], str) else func["arguments"]
+                    except (json.JSONDecodeError, TypeError):
+                        logger.warning("Malformed tool call arguments for %s, using empty dict", func.get("name", "?"))
+                        args = {}
+                    content_blocks.append({
+                        "type": "tool_use",
+                        "id": tc.get("id", ""),
+                        "name": func["name"],
+                        "input": args,
+                    })
+                api_messages.append({"role": "assistant", "content": content_blocks})
+            else:
+                api_messages.append(msg)
+
+        # Anthropic requires alternating user/assistant roles.
+        # Merge consecutive same-role messages (e.g., multiple tool_results → one user msg)
+        merged_messages: list[dict] = []
+        for msg in api_messages:
+            if merged_messages and merged_messages[-1]["role"] == msg["role"]:
+                prev = merged_messages[-1]
+                # Merge content: ensure both are lists, then concatenate
+                prev_content = prev["content"] if isinstance(prev["content"], list) else [{"type": "text", "text": prev["content"]}]
+                new_content = msg["content"] if isinstance(msg["content"], list) else [{"type": "text", "text": msg["content"]}]
+                prev["content"] = prev_content + new_content
+            else:
+                merged_messages.append({**msg})
+
+        try:
+            response = await self.client.messages.create(
+                model=self.model,
+                max_tokens=4096,
+                system=system_prompt,
+                messages=merged_messages,
+                tools=anthropic_tools,
+            )
+            self.mark_healthy()
+
+            text = ""
+            tool_calls: list[dict[str, Any]] = []
+            for block in response.content:
+                if block.type == "text":
+                    text += block.text
+                elif block.type == "tool_use":
+                    tool_calls.append({
+                        "id": block.id,
+                        "name": block.name,
+                        "arguments": block.input,
+                    })
+
+            usage = {
+                "input_tokens": response.usage.input_tokens if response.usage else 0,
+                "output_tokens": response.usage.output_tokens if response.usage else 0,
+            }
+            self._last_usage = usage
+            return text, tool_calls, usage
         except Exception as e:
             self.mark_unhealthy(str(e))
             raise
@@ -288,6 +451,7 @@ class ProviderRegistry:
         self._providers: dict[str, LLMClient] = {}
         self._primary: str | None = None
         self._fallback_order: list[str] = []
+        self._model_variants: dict[str, LLMClient] = {}
 
     def register(self, name: str, client: LLMClient, primary: bool = False):
         """Register a provider."""
@@ -297,11 +461,30 @@ class ProviderRegistry:
         if name not in self._fallback_order:
             self._fallback_order.append(name)
 
+    def register_variant(self, hint: str, client: LLMClient):
+        """Register a model variant for size hints (large/small/fast)."""
+        self._model_variants[hint] = client
+
     def get(self, name: str | None = None) -> LLMClient:
         """Get a healthy provider, with automatic fallback.
 
-        Fallback chain: primary → fallback_order (circuit breaker pattern).
+        Args:
+            name: Provider name (e.g. "openai"), model preference hint
+                  ("large"/"small"/"fast"), or None for default.
+
+        Fallback chain: model_variants → primary → fallback_order.
         """
+        # Check model_preference hints (large/small/fast) first
+        if name and name in self._model_variants:
+            client = self._model_variants[name]
+            if client.is_healthy:
+                return client
+            # If variant is unhealthy, fall through to primary/fallback
+
+        # Translate unknown names to None for fallback
+        if name and name not in self._providers:
+            name = None  # Fall through to primary/fallback chain
+
         # Try requested provider first
         if name and name in self._providers:
             client = self._providers[name]
@@ -335,6 +518,67 @@ class ProviderRegistry:
 _registry: ProviderRegistry | None = None
 
 
+def _default_model_for_provider(provider_name: str, user_model: str) -> str:
+    """Return the appropriate model name for a provider.
+
+    The user's LLM_MODEL is assumed to be for their primary provider.
+    For non-primary providers, use a sensible default if the user model
+    doesn't match that provider's naming convention.
+    """
+    provider_defaults = {
+        "openai": "gpt-4o-mini",
+        "anthropic": "claude-sonnet-4-20250514",
+        "deepseek": "deepseek-chat",
+        "ollama": "llama3.1",
+        "openrouter": "openai/gpt-4o-mini",
+        "gemini": "gemini-2.0-flash",
+        "groq": "llama-3.3-70b-versatile",
+        "vllm": "default",
+        "lmstudio": "default",
+        "textgenwebui": "default",
+        "custom": "default",
+    }
+    # Heuristic: if the model name looks like it belongs to this provider, use it
+    provider_prefixes = {
+        "openai": ("gpt-", "o1-", "o3-", "o4-"),
+        "anthropic": ("claude-",),
+        "deepseek": ("deepseek-",),
+        "ollama": (),  # Ollama models have no consistent prefix
+        "openrouter": (),  # OpenRouter uses provider/model format
+        "gemini": ("gemini-",),
+        "groq": ("llama-", "mixtral-", "gemma-"),
+        "vllm": (),
+        "lmstudio": (),
+        "textgenwebui": (),
+        "custom": (),
+    }
+    prefixes = provider_prefixes.get(provider_name, ())
+    if not prefixes:
+        # No prefix heuristic (e.g., Ollama) — use provider default
+        return provider_defaults.get(provider_name, user_model)
+    if not any(user_model.lower().startswith(p) for p in prefixes):
+        return provider_defaults.get(provider_name, user_model)
+    return user_model
+
+
+def _register_variant(registry: ProviderRegistry, provider: str, variant_model: str, hint: str):
+    """Create a variant client using the same provider but a different model."""
+    primary_client = registry._providers.get(provider)
+    if primary_client is None:
+        return
+    if isinstance(primary_client, OpenAIClient):
+        variant = OpenAIClient(
+            primary_client.client.api_key,
+            variant_model,
+            base_url=str(primary_client.client.base_url) if primary_client.client.base_url else None,
+            name=f"{provider}-{hint}",
+        )
+        registry.register_variant(hint, variant)
+    elif isinstance(primary_client, AnthropicClient):
+        variant = AnthropicClient(primary_client.client.api_key, variant_model)
+        registry.register_variant(hint, variant)
+
+
 def _build_registry() -> ProviderRegistry:
     """Build the provider registry from env vars."""
     registry = ProviderRegistry()
@@ -342,37 +586,105 @@ def _build_registry() -> ProviderRegistry:
     provider = settings.llm_provider.lower()
     model = settings.llm_model
 
-    # Register all available providers
+    # Register all available providers with appropriate model names
     if settings.openai_api_key:
-        client = OpenAIClient(settings.openai_api_key, model)
+        openai_model = _default_model_for_provider("openai", model) if provider != "openai" else model
+        client = OpenAIClient(settings.openai_api_key, openai_model)
         registry.register("openai", client, primary=(provider == "openai"))
 
     if settings.anthropic_api_key:
-        client = AnthropicClient(settings.anthropic_api_key, model)
+        anthropic_model = _default_model_for_provider("anthropic", model) if provider != "anthropic" else model
+        client = AnthropicClient(settings.anthropic_api_key, anthropic_model)
         registry.register("anthropic", client, primary=(provider == "anthropic"))
 
     if settings.deepseek_api_key:
+        deepseek_model = _default_model_for_provider("deepseek", model) if provider != "deepseek" else model
         client = OpenAIClient(
             settings.deepseek_api_key,
-            model,
+            deepseek_model,
             base_url="https://api.deepseek.com/v1",
             name="deepseek",
         )
         registry.register("deepseek", client, primary=(provider == "deepseek"))
 
+    # --- New cloud providers (OpenAI-compatible) ---
+    if settings.openrouter_api_key:
+        openrouter_model = _default_model_for_provider("openrouter", model) if provider != "openrouter" else model
+        client = OpenAIClient(
+            settings.openrouter_api_key, openrouter_model,
+            base_url="https://openrouter.ai/api/v1", name="openrouter",
+        )
+        registry.register("openrouter", client, primary=(provider == "openrouter"))
+
+    if settings.gemini_api_key:
+        gemini_model = _default_model_for_provider("gemini", model) if provider != "gemini" else model
+        client = OpenAIClient(
+            settings.gemini_api_key, gemini_model,
+            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+            name="gemini",
+        )
+        registry.register("gemini", client, primary=(provider == "gemini"))
+
+    if settings.groq_api_key:
+        groq_model = _default_model_for_provider("groq", model) if provider != "groq" else model
+        client = OpenAIClient(
+            settings.groq_api_key, groq_model,
+            base_url="https://api.groq.com/openai/v1", name="groq",
+        )
+        registry.register("groq", client, primary=(provider == "groq"))
+
+    # --- Local inference backends (activated when llm_provider matches) ---
     if provider == "ollama":
         client = OpenAIClient(
-            "ollama",
-            model,
-            base_url=f"{settings.ollama_base_url}/v1",
-            name="ollama",
+            "ollama", model,
+            base_url=f"{settings.ollama_base_url}/v1", name="ollama",
         )
         registry.register("ollama", client, primary=True)
 
+    if provider == "vllm":
+        client = OpenAIClient(
+            "none", model,
+            base_url=settings.vllm_base_url, name="vllm",
+        )
+        registry.register("vllm", client, primary=True)
+
+    if provider == "lmstudio":
+        client = OpenAIClient(
+            "lm-studio", model,
+            base_url=settings.lmstudio_base_url, name="lmstudio",
+        )
+        registry.register("lmstudio", client, primary=True)
+
+    if provider == "textgenwebui":
+        client = OpenAIClient(
+            "none", model,
+            base_url=settings.textgenwebui_base_url, name="textgenwebui",
+        )
+        registry.register("textgenwebui", client, primary=True)
+
+    # --- Generic OpenAI-compatible endpoint ---
+    if settings.custom_llm_base_url:
+        custom_model = settings.custom_llm_model or model
+        client = OpenAIClient(
+            settings.custom_llm_api_key or "none", custom_model,
+            base_url=settings.custom_llm_base_url, name="custom",
+        )
+        registry.register("custom", client, primary=(provider == "custom"))
+
+    # --- Model size variants (agent preference routing) ---
+    if settings.llm_model_large and settings.llm_model_large != model:
+        _register_variant(registry, provider, settings.llm_model_large, "large")
+    if settings.llm_model_small and settings.llm_model_small != model:
+        _register_variant(registry, provider, settings.llm_model_small, "small")
+    if "small" in registry._model_variants:
+        registry.register_variant("fast", registry._model_variants["small"])
+
+    # --- Mock fallback ---
     if not registry.available_providers:
         logger.warning(
             "No LLM API key configured; using mock fallback provider. "
-            "Set OPENAI_API_KEY / ANTHROPIC_API_KEY / DEEPSEEK_API_KEY for real outputs."
+            "Set OPENAI_API_KEY / ANTHROPIC_API_KEY / DEEPSEEK_API_KEY / "
+            "OPENROUTER_API_KEY / GEMINI_API_KEY / GROQ_API_KEY for real outputs."
         )
         registry.register("mock", MockLLMClient(), primary=True)
 

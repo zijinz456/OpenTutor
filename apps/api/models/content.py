@@ -53,3 +53,5 @@ class CourseContentTree(Base):
 
 # GIN index for fast full-text search
 Index("ix_content_tree_search_vector", CourseContentTree.search_vector, postgresql_using="gin")
+Index("ix_content_tree_course_parent", CourseContentTree.course_id, CourseContentTree.parent_id)
+Index("ix_content_tree_course_order", CourseContentTree.course_id, CourseContentTree.order_index)

@@ -25,10 +25,10 @@ class LearningProgress(Base):
     __tablename__ = "learning_progress"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
-    course_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("courses.id"))
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    course_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("courses.id", ondelete="CASCADE"))
     content_node_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("course_content_tree.id"), nullable=True
+        UUID(as_uuid=True), ForeignKey("course_content_tree.id", ondelete="CASCADE"), nullable=True
     )
 
     # Progress tracking
@@ -42,6 +42,10 @@ class LearningProgress(Base):
     review_count: Mapped[int] = mapped_column(Integer, default=0)
     quiz_attempts: Mapped[int] = mapped_column(Integer, default=0)
     quiz_correct: Mapped[int] = mapped_column(Integer, default=0)
+
+    # v4: Layer progression diagnosis
+    gap_type: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    # fundamental_gap | transfer_gap | trap_vulnerability | mastered
 
     # Spaced repetition (Phase 2: FSRS)
     next_review_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -69,7 +73,7 @@ class LearningTemplate(Base):
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     is_builtin: Mapped[bool] = mapped_column(Boolean, default=False)
     created_by: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=True
     )
 
     # Template preferences (key-value pairs)

@@ -12,9 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
 from models.scene import Scene
-from models.course import Course
 from models.user import User
 from services.auth.dependency import get_current_user
+from services.course_access import get_course_or_404
 from services.scene.manager import switch_scene, get_scene_config, load_snapshot
 
 router = APIRouter()
@@ -51,7 +51,7 @@ class SwitchSceneResponse(BaseModel):
     scene_id: str
     from_scene: str | None = None
     config: dict
-    tab_layout: list[dict] | dict | None = None
+    tab_layout: list[dict] | None = None
     init_actions: list[dict] = []
     message: str | None = None
 
@@ -102,10 +102,7 @@ async def get_active_scene(
     db: AsyncSession = Depends(get_db),
 ):
     """Get the active scene and its snapshot for a course."""
-    result = await db.execute(select(Course).where(Course.id == course_id))
-    course = result.scalar_one_or_none()
-    if not course:
-        raise HTTPException(status_code=404, detail="Course not found")
+    course = await get_course_or_404(db, course_id, user_id=user.id)
 
     scene_id = course.active_scene or "study_session"
     config = await get_scene_config(db, scene_id)

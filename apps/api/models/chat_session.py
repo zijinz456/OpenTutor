@@ -17,8 +17,8 @@ class ChatSession(Base):
     __tablename__ = "chat_sessions"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
-    course_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("courses.id"))
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    course_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("courses.id", ondelete="CASCADE"))
 
     scene_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     title: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -30,4 +30,5 @@ class ChatSession(Base):
 
     __table_args__ = (
         Index("ix_chat_session_user_course", "user_id", "course_id"),
+        Index("ix_chat_session_user_course_updated", "user_id", "course_id", "updated_at"),
     )

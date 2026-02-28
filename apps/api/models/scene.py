@@ -30,7 +30,7 @@ class Scene(Base):
     is_preset: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # Tab layout configuration for this scene
-    tab_preset: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    tab_preset: Mapped[list[dict]] = mapped_column(JSONB, nullable=False)
     # e.g. [{"type": "notes", "position": 0}, {"type": "quiz", "position": 1}]
 
     # AI workflow identifier
@@ -63,7 +63,7 @@ class SceneSnapshot(Base):
     scene_id: Mapped[str] = mapped_column(String(50), nullable=False)
 
     # UI state
-    open_tabs: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    open_tabs: Mapped[list[dict]] = mapped_column(JSONB, nullable=False)
     # [{"type": "notes", "config": {...}, "position": 0}]
     layout_state: Mapped[dict] = mapped_column(JSONB, nullable=False)
     # {"panel_sizes": [25, 25, 25, 25], "hidden_panels": []}

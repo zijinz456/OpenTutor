@@ -399,16 +399,20 @@ async def _vector_memory_search(
     if not query_embedding:
         return []
 
-    type_filter = ""
     params = {
         "embedding": str(query_embedding),
         "user_id": str(user_id),
-        "course_id": str(course_id) if course_id else None,
         "limit": limit,
     }
-
+    filters = [
+        "user_id = :user_id",
+        "embedding IS NOT NULL",
+    ]
+    if course_id:
+        filters.append("course_id = :course_id")
+        params["course_id"] = str(course_id)
     if memory_types:
-        type_filter = "AND memory_type = ANY(:types)"
+        filters.append("memory_type = ANY(:types)")
         params["types"] = memory_types
 
     result = await db.execute(
@@ -416,10 +420,7 @@ async def _vector_memory_search(
             SELECT id, summary, memory_type, importance, access_count, created_at, category,
                    1 - (embedding <=> :embedding::vector) as similarity
             FROM conversation_memories
-            WHERE user_id = :user_id
-              AND embedding IS NOT NULL
-              AND (:course_id IS NULL OR course_id = :course_id)
-              {type_filter}
+            WHERE {" AND ".join(filters)}
             ORDER BY embedding <=> :embedding::vector
             LIMIT :limit
         """),
@@ -452,16 +453,21 @@ async def _bm25_memory_search(
     memory_types: list[str] | None,
 ) -> list[dict]:
     """BM25 keyword search on memory content via PostgreSQL full-text search."""
-    type_filter = ""
     params = {
         "user_id": str(user_id),
         "query": query,
-        "course_id": str(course_id) if course_id else None,
         "limit": limit,
     }
-
+    filters = [
+        "user_id = :user_id",
+        "search_vector IS NOT NULL",
+        "search_vector @@ plainto_tsquery('simple', :query)",
+    ]
+    if course_id:
+        filters.append("course_id = :course_id")
+        params["course_id"] = str(course_id)
     if memory_types:
-        type_filter = "AND memory_type = ANY(:types)"
+        filters.append("memory_type = ANY(:types)")
         params["types"] = memory_types
 
     # Try full-text search
@@ -470,11 +476,7 @@ async def _bm25_memory_search(
             SELECT id, summary, memory_type, importance, access_count, created_at, category,
                    ts_rank_cd(search_vector, plainto_tsquery('simple', :query), 32) AS rank
             FROM conversation_memories
-            WHERE user_id = :user_id
-              AND search_vector IS NOT NULL
-              AND search_vector @@ plainto_tsquery('simple', :query)
-              AND (:course_id IS NULL OR course_id = :course_id)
-              {type_filter}
+            WHERE {" AND ".join(filters)}
             ORDER BY rank DESC
             LIMIT :limit
         """),

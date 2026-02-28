@@ -15,6 +15,7 @@ interface SceneState {
   sceneConfig: SceneConfig | null;
   isLoading: boolean;
   isSwitching: boolean;
+  error: string | null;
 
   fetchScenes: () => Promise<void>;
   fetchActiveScene: (courseId: string) => Promise<void>;
@@ -28,14 +29,15 @@ export const useSceneStore = create<SceneState>((set) => ({
   sceneConfig: null,
   isLoading: false,
   isSwitching: false,
+  error: null,
 
   fetchScenes: async () => {
-    set({ isLoading: true });
+    set({ isLoading: true, error: null });
     try {
       const scenes = await listScenes();
       set({ scenes, isLoading: false });
-    } catch {
-      set({ isLoading: false });
+    } catch (e) {
+      set({ isLoading: false, error: (e as Error).message });
     }
   },
 
@@ -46,8 +48,8 @@ export const useSceneStore = create<SceneState>((set) => ({
         activeScene: result.scene_id,
         sceneConfig: result.config,
       });
-    } catch {
-      // Keep defaults
+    } catch (e) {
+      set({ error: (e as Error).message });
     }
   },
 
@@ -55,15 +57,11 @@ export const useSceneStore = create<SceneState>((set) => ({
     set({ isSwitching: true });
     try {
       const result = await switchScene(courseId, sceneId, uiState);
-      if (result.switched) {
-        set({
-          activeScene: result.scene_id,
-          sceneConfig: result.config,
-          isSwitching: false,
-        });
-      } else {
-        set({ isSwitching: false });
-      }
+      set({
+        activeScene: result.scene_id,
+        sceneConfig: result.config,
+        isSwitching: false,
+      });
       return result;
     } catch (e) {
       set({ isSwitching: false });

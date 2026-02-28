@@ -35,6 +35,20 @@ class PracticeProblem(Base):
     source: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     # Sources: extracted | ai_generated | derived
 
+    # v4: VCE-inspired diagnostic fields
+    difficulty_layer: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # 1=basic concept recall, 2=standard application, 3=trap/edge case
+    problem_metadata: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    # AI-generated structured annotation: {potential_traps, core_concept, bloom_level, ...}
+    parent_problem_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("practice_problems.id"), nullable=True
+    )
+    is_diagnostic: Mapped[bool] = mapped_column(Boolean, default=False)
+    # True for simplified "clean" versions generated for diagnostic pairs
+    source_batch_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
+    source_version: Mapped[int] = mapped_column(Integer, default=1)
+    is_archived: Mapped[bool] = mapped_column(Boolean, default=False)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     # Relationships
@@ -54,6 +68,11 @@ class PracticeResult(Base):
     user_answer: Mapped[str] = mapped_column(Text)
     is_correct: Mapped[bool] = mapped_column(Boolean)
     ai_explanation: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # v4: Error tracking for cross-type triangulation
+    error_category: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    # conceptual | procedural | computational | reading | careless
+    difficulty_layer: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     answered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

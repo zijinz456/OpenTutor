@@ -7,6 +7,7 @@ Layer 3: Playwright + SessionManager (full browser automation with storageState 
 Reference: spec Phase 3 — 3-layer browser cascade.
 """
 
+import asyncio
 import logging
 
 logger = logging.getLogger(__name__)
@@ -38,7 +39,7 @@ async def fetch_with_scrapling(url: str) -> str | None:
         from scrapling import StealthyFetcher
 
         fetcher = StealthyFetcher()
-        page = fetcher.fetch(url)
+        page = await asyncio.to_thread(fetcher.fetch, url)
         if page.status == 200:
             return page.get_all_text() or page.html_content
         logger.debug(f"Scrapling returned status {page.status} for {url}")
