@@ -3,6 +3,7 @@
 import json
 import logging
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends
 from libs.exceptions import AppError, ValidationError
@@ -11,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
+from models.memory import ConversationMemory
 from models.preference import PreferenceSignal, UserPreference
 from models.user import User
 from schemas.preference import PreferenceCreate, PreferenceResponse, ResolvedPreferences
@@ -65,6 +67,95 @@ class PreferenceSignalResponse(BaseModel):
     course_id: uuid.UUID | None
     context: dict | None
     created_at: str | None
+    dismissed_at: str | None = None
+    dismissal_reason: str | None = None
+
+
+class PreferenceUpdateRequest(BaseModel):
+    value: str | None = None
+    scope: str | None = None
+    source: str | None = None
+    scene_type: str | None = None
+
+
+class DismissRequest(BaseModel):
+    reason: str | None = None
+
+
+class MemoryProfileResponse(BaseModel):
+    id: uuid.UUID
+    summary: str
+    memory_type: str
+    category: str | None
+    importance: float
+    access_count: int
+    source_message: str | None
+    metadata_json: dict | None
+    created_at: str | None
+    updated_at: str | None
+    dismissed_at: str | None = None
+    dismissal_reason: str | None = None
+
+
+class LearningProfileSummary(BaseModel):
+    strength_areas: list[str]
+    weak_areas: list[str]
+    recurring_errors: list[str]
+    inferred_habits: list[str]
+
+
+class LearningProfileResponse(BaseModel):
+    preferences: list[PreferenceResponse]
+    dismissed_preferences: list[PreferenceResponse]
+    signals: list[PreferenceSignalResponse]
+    dismissed_signals: list[PreferenceSignalResponse]
+    memories: list[MemoryProfileResponse]
+    dismissed_memories: list[MemoryProfileResponse]
+    summary: LearningProfileSummary
+
+
+def _serialize_signal(signal: PreferenceSignal) -> PreferenceSignalResponse:
+    return PreferenceSignalResponse(
+        id=signal.id,
+        dimension=signal.dimension,
+        value=signal.value,
+        signal_type=signal.signal_type,
+        course_id=signal.course_id,
+        context=signal.context,
+        created_at=signal.created_at.isoformat() if signal.created_at else None,
+        dismissed_at=signal.dismissed_at.isoformat() if signal.dismissed_at else None,
+        dismissal_reason=signal.dismissal_reason,
+    )
+
+
+def _serialize_memory(memory: ConversationMemory) -> MemoryProfileResponse:
+    return MemoryProfileResponse(
+        id=memory.id,
+        summary=memory.summary,
+        memory_type=memory.memory_type,
+        category=memory.category,
+        importance=memory.importance,
+        access_count=memory.access_count,
+        source_message=memory.source_message,
+        metadata_json=memory.metadata_json,
+        created_at=memory.created_at.isoformat() if memory.created_at else None,
+        updated_at=memory.updated_at.isoformat() if memory.updated_at else None,
+        dismissed_at=memory.dismissed_at.isoformat() if memory.dismissed_at else None,
+        dismissal_reason=memory.dismissal_reason,
+    )
+
+
+def build_learning_profile_summary(memories: list[ConversationMemory]) -> LearningProfileSummary:
+    strengths = [mem.summary for mem in memories if mem.memory_type in {"skill", "knowledge"}][:5]
+    weak_areas = [mem.summary for mem in memories if mem.memory_type == "error"][:5]
+    recurring_errors = [mem.summary for mem in memories if mem.memory_type == "error"][:5]
+    inferred_habits = [mem.summary for mem in memories if mem.memory_type in {"profile", "preference", "episode"}][:5]
+    return LearningProfileSummary(
+        strength_areas=strengths,
+        weak_areas=weak_areas,
+        recurring_errors=recurring_errors,
+        inferred_habits=inferred_habits,
+    )
 
 
 def _normalize_preference_value(dimension: str, value: str) -> str:
@@ -85,6 +176,7 @@ def _normalize_preference_value(dimension: str, value: str) -> str:
 async def list_preferences(
     scope: str | None = None,
     course_id: uuid.UUID | None = None,
+    include_dismissed: bool = False,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -93,6 +185,8 @@ async def list_preferences(
         query = query.where(UserPreference.scope == scope)
     if course_id:
         query = query.where(UserPreference.course_id == course_id)
+    if not include_dismissed:
+        query = query.where(UserPreference.dismissed_at.is_(None))
     result = await db.execute(query.order_by(UserPreference.updated_at.desc()))
     return result.scalars().all()
 
@@ -101,26 +195,66 @@ async def list_preferences(
 async def list_preference_signals(
     course_id: uuid.UUID | None = None,
     limit: int = 20,
+    include_dismissed: bool = False,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     query = select(PreferenceSignal).where(PreferenceSignal.user_id == user.id)
     if course_id:
         query = query.where(PreferenceSignal.course_id == course_id)
+    if not include_dismissed:
+        query = query.where(PreferenceSignal.dismissed_at.is_(None))
     result = await db.execute(query.order_by(PreferenceSignal.created_at.desc()).limit(limit))
     signals = result.scalars().all()
-    return [
-        PreferenceSignalResponse(
-            id=signal.id,
-            dimension=signal.dimension,
-            value=signal.value,
-            signal_type=signal.signal_type,
-            course_id=signal.course_id,
-            context=signal.context,
-            created_at=signal.created_at.isoformat() if signal.created_at else None,
+    return [_serialize_signal(signal) for signal in signals]
+
+
+@router.get("/profile", response_model=LearningProfileResponse)
+async def get_learning_profile(
+    course_id: uuid.UUID | None = None,
+    limit: int = 20,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    pref_query = select(UserPreference).where(UserPreference.user_id == user.id)
+    signal_query = select(PreferenceSignal).where(PreferenceSignal.user_id == user.id)
+    memory_query = select(ConversationMemory).where(ConversationMemory.user_id == user.id)
+
+    if course_id:
+        pref_query = pref_query.where(
+            (UserPreference.course_id == course_id) | UserPreference.course_id.is_(None)
         )
-        for signal in signals
-    ]
+        signal_query = signal_query.where(
+            (PreferenceSignal.course_id == course_id) | PreferenceSignal.course_id.is_(None)
+        )
+        memory_query = memory_query.where(
+            (ConversationMemory.course_id == course_id) | ConversationMemory.course_id.is_(None)
+        )
+
+    pref_result = await db.execute(pref_query.order_by(UserPreference.updated_at.desc()).limit(limit * 2))
+    signal_result = await db.execute(signal_query.order_by(PreferenceSignal.created_at.desc()).limit(limit * 2))
+    memory_result = await db.execute(memory_query.order_by(ConversationMemory.updated_at.desc()).limit(limit * 2))
+
+    preferences = list(pref_result.scalars().all())
+    signals = list(signal_result.scalars().all())
+    memories = list(memory_result.scalars().all())
+
+    active_preferences = [pref for pref in preferences if pref.dismissed_at is None][:limit]
+    dismissed_preferences = [pref for pref in preferences if pref.dismissed_at is not None][:limit]
+    active_signals = [signal for signal in signals if signal.dismissed_at is None][:limit]
+    dismissed_signals = [signal for signal in signals if signal.dismissed_at is not None][:limit]
+    active_memories = [memory for memory in memories if memory.dismissed_at is None][:limit]
+    dismissed_memories = [memory for memory in memories if memory.dismissed_at is not None][:limit]
+
+    return LearningProfileResponse(
+        preferences=[PreferenceResponse.model_validate(pref) for pref in active_preferences],
+        dismissed_preferences=[PreferenceResponse.model_validate(pref) for pref in dismissed_preferences],
+        signals=[_serialize_signal(signal) for signal in active_signals],
+        dismissed_signals=[_serialize_signal(signal) for signal in dismissed_signals],
+        memories=[_serialize_memory(memory) for memory in active_memories],
+        dismissed_memories=[_serialize_memory(memory) for memory in dismissed_memories],
+        summary=build_learning_profile_summary(active_memories),
+    )
 
 
 @router.post("/", response_model=PreferenceResponse, status_code=201)
@@ -145,6 +279,8 @@ async def set_preference(body: PreferenceCreate, user: User = Depends(get_curren
         existing.value = normalized_value
         existing.source = body.source
         existing.confidence = 0.7 if body.source == "onboarding" else 0.5
+        existing.dismissed_at = None
+        existing.dismissal_reason = None
     else:
         pref = UserPreference(
             user_id=user.id,
@@ -161,6 +297,185 @@ async def set_preference(body: PreferenceCreate, user: User = Depends(get_curren
     await db.commit()
     await db.refresh(existing)
     return existing
+
+
+@router.patch("/{preference_id}", response_model=PreferenceResponse)
+async def update_preference(
+    preference_id: uuid.UUID,
+    body: PreferenceUpdateRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(UserPreference).where(UserPreference.id == preference_id, UserPreference.user_id == user.id)
+    )
+    pref = result.scalar_one_or_none()
+    if not pref:
+        raise ValidationError(message="Preference not found")
+
+    payload = body.model_dump(exclude_unset=True)
+    if "value" in payload and payload["value"] is not None:
+        pref.value = _normalize_preference_value(pref.dimension, payload["value"])
+        pref.dismissed_at = None
+        pref.dismissal_reason = None
+    if "scope" in payload and payload["scope"] is not None:
+        pref.scope = payload["scope"]
+    if "source" in payload and payload["source"] is not None:
+        pref.source = payload["source"]
+    if "scene_type" in payload:
+        pref.scene_type = payload["scene_type"]
+
+    await db.commit()
+    await db.refresh(pref)
+    return pref
+
+
+@router.post("/{preference_id}/dismiss", response_model=PreferenceResponse)
+async def dismiss_preference(
+    preference_id: uuid.UUID,
+    body: DismissRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(UserPreference).where(UserPreference.id == preference_id, UserPreference.user_id == user.id)
+    )
+    pref = result.scalar_one_or_none()
+    if not pref:
+        raise ValidationError(message="Preference not found")
+    pref.dismissed_at = datetime.now(timezone.utc)
+    pref.dismissal_reason = body.reason
+    await db.commit()
+    await db.refresh(pref)
+    return pref
+
+
+@router.post("/{preference_id}/restore", response_model=PreferenceResponse)
+async def restore_preference(
+    preference_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(UserPreference).where(UserPreference.id == preference_id, UserPreference.user_id == user.id)
+    )
+    pref = result.scalar_one_or_none()
+    if not pref:
+        raise ValidationError(message="Preference not found")
+    pref.dismissed_at = None
+    pref.dismissal_reason = None
+    await db.commit()
+    await db.refresh(pref)
+    return pref
+
+
+@router.post("/signals/{signal_id}/dismiss", response_model=PreferenceSignalResponse)
+async def dismiss_preference_signal(
+    signal_id: uuid.UUID,
+    body: DismissRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(PreferenceSignal).where(PreferenceSignal.id == signal_id, PreferenceSignal.user_id == user.id)
+    )
+    signal = result.scalar_one_or_none()
+    if not signal:
+        raise ValidationError(message="Preference signal not found")
+    signal.dismissed_at = datetime.now(timezone.utc)
+    signal.dismissal_reason = body.reason
+    await db.commit()
+    await db.refresh(signal)
+    return _serialize_signal(signal)
+
+
+@router.post("/signals/{signal_id}/restore", response_model=PreferenceSignalResponse)
+async def restore_preference_signal(
+    signal_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(PreferenceSignal).where(PreferenceSignal.id == signal_id, PreferenceSignal.user_id == user.id)
+    )
+    signal = result.scalar_one_or_none()
+    if not signal:
+        raise ValidationError(message="Preference signal not found")
+    signal.dismissed_at = None
+    signal.dismissal_reason = None
+    await db.commit()
+    await db.refresh(signal)
+    return _serialize_signal(signal)
+
+
+class MemoryUpdateRequest(BaseModel):
+    summary: str | None = None
+    category: str | None = None
+
+
+@router.patch("/memories/{memory_id}", response_model=MemoryProfileResponse)
+async def update_memory(
+    memory_id: uuid.UUID,
+    body: MemoryUpdateRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(ConversationMemory).where(ConversationMemory.id == memory_id, ConversationMemory.user_id == user.id)
+    )
+    memory = result.scalar_one_or_none()
+    if not memory:
+        raise ValidationError(message="Memory not found")
+
+    payload = body.model_dump(exclude_unset=True)
+    if "summary" in payload and payload["summary"] is not None:
+        memory.summary = payload["summary"].strip()
+        memory.dismissed_at = None
+        memory.dismissal_reason = None
+    if "category" in payload:
+        memory.category = payload["category"]
+    await db.commit()
+    await db.refresh(memory)
+    return _serialize_memory(memory)
+
+
+@router.post("/memories/{memory_id}/dismiss", response_model=MemoryProfileResponse)
+async def dismiss_memory(
+    memory_id: uuid.UUID,
+    body: DismissRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(ConversationMemory).where(ConversationMemory.id == memory_id, ConversationMemory.user_id == user.id)
+    )
+    memory = result.scalar_one_or_none()
+    if not memory:
+        raise ValidationError(message="Memory not found")
+    memory.dismissed_at = datetime.now(timezone.utc)
+    memory.dismissal_reason = body.reason
+    await db.commit()
+    await db.refresh(memory)
+    return _serialize_memory(memory)
+
+
+@router.post("/memories/{memory_id}/restore", response_model=MemoryProfileResponse)
+async def restore_memory(
+    memory_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(ConversationMemory).where(ConversationMemory.id == memory_id, ConversationMemory.user_id == user.id)
+    )
+    memory = result.scalar_one_or_none()
+    if not memory:
+        raise ValidationError(message="Memory not found")
+    memory.dismissed_at = None
+    memory.dismissal_reason = None
+    await db.commit()
+    await db.refresh(memory)
+    return _serialize_memory(memory)
 
 
 @router.get("/resolve", response_model=ResolvedPreferences)

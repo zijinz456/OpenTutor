@@ -930,6 +930,8 @@ async def test_scene_recommendation_endpoint_uses_policy_engine(client):
     assert payload["scene_id"] in {"review_drill", "exam_prep"}
     assert "reason" in payload
     assert "scores" in payload
+    assert "expected_benefit" in payload
+    assert "reasoning_policy" in payload
 
 
 @pytest.mark.asyncio

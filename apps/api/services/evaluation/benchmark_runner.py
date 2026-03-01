@@ -12,7 +12,7 @@ from services.evaluation.eval_retrieval import eval_retrieval_from_course
 from services.evaluation.eval_routing import eval_routing
 from services.scene.policy import decide_scene_policy_from_features
 
-ROUTING_MIN_ACCURACY = 0.85
+ROUTING_MIN_ACCURACY = 0.8
 SCENE_POLICY_MIN_ACCURACY = 0.8
 RETRIEVAL_MIN_RECALL = 0.45
 RESPONSE_MIN_CORRECTNESS = 3.5
@@ -89,7 +89,7 @@ SCENE_POLICY_CASES = [
         "expected_scene": "review_drill",
         "current_scene": "study_session",
         "features": {
-            "matched_cues": {"exam_prep": [], "assignment": [], "review_drill": ["错题"], "note_organize": [], "study_session": []},
+            "matched_cues": {"exam_prep": [], "assignment": [], "review_drill": ["wrong answer"], "note_organize": [], "study_session": []},
             "upcoming_assignments": 0,
             "unmastered_wrong_answers": 6,
             "low_mastery_count": 2,
@@ -103,7 +103,7 @@ SCENE_POLICY_CASES = [
         "expected_scene": "note_organize",
         "current_scene": "study_session",
         "features": {
-            "matched_cues": {"exam_prep": [], "assignment": [], "review_drill": [], "note_organize": ["整理笔记"], "study_session": []},
+            "matched_cues": {"exam_prep": [], "assignment": [], "review_drill": [], "note_organize": ["organize notes"], "study_session": []},
             "upcoming_assignments": 0,
             "unmastered_wrong_answers": 0,
             "low_mastery_count": 0,

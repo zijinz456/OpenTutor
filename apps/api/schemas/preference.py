@@ -22,6 +22,8 @@ class PreferenceResponse(BaseModel):
     source: str
     confidence: float
     course_id: uuid.UUID | None
+    dismissed_at: datetime | None = None
+    dismissal_reason: str | None = None
     updated_at: datetime
 
     model_config = {"from_attributes": True}

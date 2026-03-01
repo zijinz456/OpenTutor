@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Brain, Settings, FileText, BarChart3, Goal, Clock3, ShieldAlert, PlayCircle } from "lucide-react";
+import { Plus, Brain, Settings, FileText, BarChart3, Goal, Clock3, ShieldAlert, PlayCircle, TrendingUp, Zap, BookOpen } from "lucide-react";
 import { useCourseStore } from "@/store/course";
+import { getLearningOverview, getGlobalTrends, type LearningOverview, type LearningTrends } from "@/lib/api";
 import { useT } from "@/lib/i18n-context";
 
 /* Color presets for course card icons */
@@ -40,6 +41,9 @@ export default function DashboardPage() {
     .filter((value): value is string => Boolean(value))
     .sort((a, b) => (a > b ? -1 : 1))[0] ?? null;
 
+  const [overview, setOverview] = useState<LearningOverview | null>(null);
+  const [trends, setTrends] = useState<LearningTrends | null>(null);
+
   const shouldShowOnboarding = useSyncExternalStore(
     () => () => {},
     () => {
@@ -57,6 +61,8 @@ export default function DashboardPage() {
 
   useEffect(() => {
     fetchCourses();
+    getLearningOverview().then(setOverview).catch(() => {});
+    getGlobalTrends(7).then(setTrends).catch(() => {});
   }, [fetchCourses]);
 
   return (
@@ -122,6 +128,71 @@ export default function DashboardPage() {
             <div className="mt-2 text-sm font-semibold text-gray-900">{formatDashboardDate(lastStudyDay)}</div>
           </div>
         </div>
+
+        {/* Learning Stats (only show if user has data) */}
+        {overview && overview.total_courses > 0 && (() => {
+          const todayStudy = trends?.trend?.length
+            ? trends.trend[trends.trend.length - 1]?.study_minutes ?? 0
+            : 0;
+          const weekTotal = trends?.trend?.reduce((s, d) => s + (d.study_minutes ?? 0), 0) ?? 0;
+          const streak = (() => {
+            if (!trends?.trend) return 0;
+            let count = 0;
+            for (let i = trends.trend.length - 1; i >= 0; i--) {
+              if ((trends.trend[i].study_minutes ?? 0) > 0) count++;
+              else break;
+            }
+            return count;
+          })();
+          const mastery = Math.round(overview.average_mastery ?? 0);
+          return (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="rounded-xl border border-indigo-100 bg-indigo-50 p-4">
+                <div className="flex items-center gap-2 text-indigo-500 text-xs uppercase tracking-wide">
+                  <Clock3 className="w-3.5 h-3.5" />
+                  Today
+                </div>
+                <div className="mt-2 text-2xl font-semibold text-indigo-900">
+                  {todayStudy > 0 ? `${todayStudy}m` : "—"}
+                </div>
+                <div className="text-[11px] text-indigo-400 mt-0.5">{weekTotal}m this week</div>
+              </div>
+              <div className="rounded-xl border border-amber-100 bg-amber-50 p-4">
+                <div className="flex items-center gap-2 text-amber-600 text-xs uppercase tracking-wide">
+                  <Zap className="w-3.5 h-3.5" />
+                  Streak
+                </div>
+                <div className="mt-2 text-2xl font-semibold text-amber-900">
+                  {streak > 0 ? `${streak}d` : "—"}
+                </div>
+                <div className="text-[11px] text-amber-400 mt-0.5">{streak > 0 ? "Keep it up!" : "Study today to start"}</div>
+              </div>
+              <div className="rounded-xl border border-green-100 bg-green-50 p-4">
+                <div className="flex items-center gap-2 text-green-600 text-xs uppercase tracking-wide">
+                  <TrendingUp className="w-3.5 h-3.5" />
+                  Mastery
+                </div>
+                <div className="mt-2 text-2xl font-semibold text-green-900">
+                  {mastery > 0 ? `${mastery}%` : "—"}
+                </div>
+                <div className="text-[11px] text-green-400 mt-0.5">{overview.total_courses} courses</div>
+              </div>
+              <div className="rounded-xl border border-purple-100 bg-purple-50 p-4">
+                <div className="flex items-center gap-2 text-purple-600 text-xs uppercase tracking-wide">
+                  <BookOpen className="w-3.5 h-3.5" />
+                  Quiz
+                </div>
+                <div className="mt-2 text-2xl font-semibold text-purple-900">
+                  {(() => {
+                    const total = trends?.trend?.reduce((s, d) => s + (d.quiz_total ?? 0), 0) ?? 0;
+                    return total > 0 ? total : "—";
+                  })()}
+                </div>
+                <div className="text-[11px] text-purple-400 mt-0.5">questions this week</div>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Big Create Button */}
         <button

@@ -7,8 +7,8 @@ UPGRADED: WF-4 now uses multi-agent orchestrator for intent-aware routing
 and MemCell-based memory encoding.
 
 Reference from spec:
-- Phase 0: "LangGraph工作流: WF-2每周准备 + WF-4学习Session"
-- Phase 1: "完整6个工作流"
+- Phase 0: "LangGraph workflows: WF-2 Weekly Prep + WF-4 Study Session"
+- Phase 1: "Complete set of 6 workflows"
 """
 
 import uuid

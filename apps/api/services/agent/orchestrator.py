@@ -449,17 +449,17 @@ def _detect_fatigue(message: str) -> float:
     Positive signals reduce the score to prevent false positives.
     """
     FATIGUE_SIGNALS = [
-        (r"(不想学|不会了|太难了|放弃|好烦|好累|学不动)", 0.35),
+        (r"(don'?t\s+want\s+to\s+study|can'?t\s+do\s+it|too\s+hard|give\s+up|so\s+annoying|so\s+tired|can'?t\s+keep\s+going)", 0.35),
         (r"(confused|tired|give up|too hard|frustrated|hate this|can't do)", 0.35),
-        (r"(看不懂|学不会|怎么还是错|又错了|做不出来)", 0.3),
+        (r"(can'?t\s+understand|can'?t\s+learn|why\s+still\s+wrong|wrong\s+again|can'?t\s+figure\s+out)", 0.3),
         (r"(again wrong|still don't get|keep getting wrong|makes no sense)", 0.3),
-        (r"(算了吧|哎|唉|sigh|ugh|whatever|nvm|forget it)", 0.25),
+        (r"(forget\s+it|sigh|ugh|whatever|nvm|never\s+mind)", 0.25),
         (r"[😫😤😩😭💀🤯😡]{1}", 0.2),
     ]
     POSITIVE_SIGNALS = [
-        (r"(我懂了|明白了|原来如此|学会了|掌握了|搞定了)", -0.3),
+        (r"(i\s+get\s+it|i\s+understand|so\s+that'?s\s+how|learned\s+it|mastered\s+it|got\s+it\s+done)", -0.3),
         (r"(i see|got it|makes sense|understand now|figured it out)", -0.3),
-        (r"(谢谢|不错|挺好|thank|great|nice|cool)", -0.15),
+        (r"(thanks?|not\s+bad|pretty\s+good|great|nice|cool)", -0.15),
     ]
     score = 0.0
     for pattern, weight in FATIGUE_SIGNALS:

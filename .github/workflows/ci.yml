@@ -54,7 +54,12 @@ jobs:
         with:
           node-version: "20"
           cache: "npm"
-          cache-dependency-path: apps/web/package-lock.json
+          cache-dependency-path: |
+            package-lock.json
+            apps/web/package-lock.json
+
+      - name: Install Root runner dependencies
+        run: npm ci
 
       - name: Install Web dependencies
         working-directory: apps/web
@@ -67,6 +72,26 @@ jobs:
       - name: Run Web build
         working-directory: apps/web
         run: npm run build
+
+      - name: Generate host-safe verification summary
+        run: bash scripts/dev_local.sh verify-host
+
+      - name: Gate host-safe verification summary
+        run: |
+          python scripts/validate_verification_summary.py \
+            tmp/verification-summary.json \
+            --allow-skip "DB-backed integration spot check" \
+            --allow-skip "Stack smoke/regression"
+
+      - name: Upload verification summaries
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-summary
+          path: |
+            tmp/verification-summary.md
+            tmp/verification-summary.json
+          if-no-files-found: error
 
   api-smoke:
     name: API Smoke E2E

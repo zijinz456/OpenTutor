@@ -252,13 +252,13 @@ def is_complex_request(user_message: str) -> bool:
     import re
 
     complex_patterns = [
-        r"(准备|备战|复习).*(考试|测验|test|exam)",
+        r"(prepare|get\s+ready|review)\s+.*(test|exam|quiz)",
         r"(prepare|study)\s+(for|plan)",
-        r"帮我(制定|安排|规划).*(计划|方案|schedule)",
+        r"help\s+me\s+(create|make|plan|schedule)\s+.*(plan|schedule)",
         r"(comprehensive|complete|full)\s+(review|study|prep)",
-        r"(从头|系统).*(学|复习|review)",
+        r"(from\s+scratch|systematic(ally)?)\s+.*(learn|study|review)",
         r"(all|every|each)\s+(chapter|topic|concept)",
-        r"(薄弱|weak|gap).*(提升|improve|strengthen)",
+        r"(weak|gap)\s+.*(improve|strengthen)",
     ]
     msg_lower = user_message.lower()
     return any(re.search(p, msg_lower) for p in complex_patterns)

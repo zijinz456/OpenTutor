@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { Loader2, ChevronLeft, ChevronRight, CheckCircle, XCircle, Sparkles } from "lucide-react";
+import { Loader2, ChevronLeft, ChevronRight, CheckCircle, XCircle, Sparkles, Keyboard } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -21,8 +21,8 @@ import { useT } from "@/lib/i18n-context";
  * Reference: spaceforge consolidated-mcq-modal pattern.
  * - One question at a time
  * - Color feedback (green correct, red incorrect)
- * - Keyboard shortcuts (1-4 for MC options)
- * - Score tracking
+ * - Keyboard shortcuts (1-4 for MC options, ←/→ for navigation)
+ * - Score tracking with accuracy percentage
  */
 
 interface QuizPanelProps {
@@ -68,7 +68,7 @@ export function QuizPanel({ courseId }: QuizPanelProps) {
     }
   };
 
-  const handleSelect = async (answer: string) => {
+  const handleSelect = useCallback(async (answer: string) => {
     if (result) return; // Already answered
     setSelectedAnswer(answer);
 
@@ -82,23 +82,59 @@ export function QuizPanel({ courseId }: QuizPanelProps) {
     } catch {
       toast.error("Failed to submit answer");
     }
-  };
+  }, [currentIndex, problems, result]);
 
-  const handleNext = () => {
+  const handleNext = useCallback(() => {
     if (currentIndex < problems.length - 1) {
       setCurrentIndex((i) => i + 1);
       setSelectedAnswer(null);
       setResult(null);
     }
-  };
+  }, [currentIndex, problems.length]);
 
-  const handlePrev = () => {
+  const handlePrev = useCallback(() => {
     if (currentIndex > 0) {
       setCurrentIndex((i) => i - 1);
       setSelectedAnswer(null);
       setResult(null);
     }
-  };
+  }, [currentIndex]);
+
+  // Keyboard shortcuts: 1-4 for options, ←/→ for navigation
+  useEffect(() => {
+    if (problems.length === 0) return;
+    const problem = problems[currentIndex];
+    const optionKeys = problem?.options ? Object.keys(problem.options) : [];
+
+    const handler = (e: KeyboardEvent) => {
+      // Don't capture when user is typing in an input/textarea
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement
+      )
+        return;
+
+      // Number keys 1-4 → select option
+      const num = parseInt(e.key, 10);
+      if (num >= 1 && num <= optionKeys.length && !result) {
+        e.preventDefault();
+        handleSelect(optionKeys[num - 1]);
+        return;
+      }
+
+      // Arrow keys → navigate
+      if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+        e.preventDefault();
+        handleNext();
+      } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+        e.preventDefault();
+        handlePrev();
+      }
+    };
+
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [problems, currentIndex, result, handleNext, handlePrev, handleSelect]);
 
   // Loading state
   if (loading) {
@@ -135,6 +171,7 @@ export function QuizPanel({ courseId }: QuizPanelProps) {
 
   const problem = problems[currentIndex];
   const optionKeys = problem.options ? Object.keys(problem.options) : [];
+  const accuracy = score.total > 0 ? Math.round((score.correct / score.total) * 100) : null;
 
   return (
     <div className="flex-1 flex flex-col" data-testid="quiz-panel">
@@ -143,24 +180,42 @@ export function QuizPanel({ courseId }: QuizPanelProps) {
         <span>
           {t("quiz.question")} {currentIndex + 1} {t("quiz.of")} {problems.length}
         </span>
-        <Badge variant="outline">
-          {score.correct}/{score.total} {t("quiz.correct")}
-        </Badge>
+        <div className="flex items-center gap-2">
+          {accuracy !== null && (
+            <Badge
+              variant="outline"
+              className={
+                accuracy >= 80
+                  ? "border-green-500 text-green-600"
+                  : accuracy >= 50
+                    ? "border-yellow-500 text-yellow-600"
+                    : "border-red-500 text-red-600"
+              }
+            >
+              {accuracy}%
+            </Badge>
+          )}
+          <Badge variant="outline">
+            {score.correct}/{score.total} {t("quiz.correct")}
+          </Badge>
+        </div>
       </div>
 
       {/* Question */}
       <ScrollArea className="flex-1 p-4">
         <div className="mb-4" data-testid="quiz-question">
-          <Badge variant="secondary" className="mb-2 text-xs">
-            {problem.question_type.toUpperCase()}
-          </Badge>
+          <div className="flex items-center gap-2 mb-2">
+            <Badge variant="secondary" className="text-xs">
+              {problem.question_type.toUpperCase()}
+            </Badge>
+          </div>
           <p className="text-sm font-medium leading-relaxed">{problem.question}</p>
         </div>
 
         {/* Options (for MC/TF/select_all) */}
         {problem.options && (
           <div className="space-y-2">
-            {optionKeys.map((key) => {
+            {optionKeys.map((key, idx) => {
               const isSelected = selectedAnswer === key;
               const isCorrect = result && result.correct_answer?.startsWith(key);
               const isWrong = result && isSelected && !result.is_correct;
@@ -185,8 +240,15 @@ export function QuizPanel({ courseId }: QuizPanelProps) {
                   onClick={() => handleSelect(key)}
                   disabled={!!result}
                 >
-                  <span className="font-medium mr-2">{key}.</span>
-                  {problem.options![key]}
+                  <span className="inline-flex items-center">
+                    <span className="font-medium mr-2">{key}.</span>
+                    {problem.options![key]}
+                    {!result && (
+                      <kbd className="ml-auto text-[10px] text-muted-foreground/50 bg-muted px-1 rounded font-mono">
+                        {idx + 1}
+                      </kbd>
+                    )}
+                  </span>
                   {result && isCorrect && (
                     <CheckCircle className="inline h-4 w-4 ml-2 text-green-600" />
                   )}
@@ -206,6 +268,13 @@ export function QuizPanel({ courseId }: QuizPanelProps) {
             <p className="text-sm text-muted-foreground">{result.explanation}</p>
           </div>
         )}
+
+        {/* Next hint after answering */}
+        {result && currentIndex < problems.length - 1 && (
+          <p className="mt-3 text-xs text-muted-foreground/60 text-center">
+            Press <kbd className="px-1 bg-muted rounded font-mono text-[10px]">&rarr;</kbd> for next question
+          </p>
+        )}
       </ScrollArea>
 
       {/* Navigation */}
@@ -214,6 +283,10 @@ export function QuizPanel({ courseId }: QuizPanelProps) {
           <ChevronLeft className="h-4 w-4 mr-1" />
           {t("quiz.prev")}
         </Button>
+        <div className="flex items-center gap-1 text-[10px] text-muted-foreground/40">
+          <Keyboard className="h-3 w-3" />
+          1-{optionKeys.length} select &middot; &larr;&rarr; navigate
+        </div>
         <Button
           variant="ghost"
           size="sm"

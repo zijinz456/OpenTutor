@@ -18,11 +18,11 @@ logger = logging.getLogger(__name__)
 
 # Map of recognized scene IDs with their display info
 SCENE_INFO = {
-    "study_session": {"display": "日常学习", "icon": "📚", "keywords": ["学习", "study", "learn"]},
-    "exam_prep": {"display": "考前冲刺", "icon": "🎯", "keywords": ["考试", "exam", "test", "midterm", "final", "复习"]},
-    "assignment": {"display": "写作业", "icon": "✍️", "keywords": ["作业", "homework", "assignment", "hw"]},
-    "review_drill": {"display": "错题专练", "icon": "🔄", "keywords": ["错题", "wrong", "mistake", "review"]},
-    "note_organize": {"display": "笔记整理", "icon": "📝", "keywords": ["笔记", "notes", "整理", "organize"]},
+    "study_session": {"display": "Daily Study", "icon": "📚", "keywords": ["study", "learn"]},
+    "exam_prep": {"display": "Exam Prep", "icon": "🎯", "keywords": ["exam", "test", "midterm", "final", "review"]},
+    "assignment": {"display": "Homework", "icon": "✍️", "keywords": ["homework", "assignment", "hw"]},
+    "review_drill": {"display": "Error Drill", "icon": "🔄", "keywords": ["wrong", "mistake", "review"]},
+    "note_organize": {"display": "Note Organization", "icon": "📝", "keywords": ["notes", "organize"]},
 }
 
 
@@ -47,6 +47,11 @@ async def explain_scene_switch(ctx: AgentContext, db: AsyncSession) -> dict | No
         "features": decision.features,
         "reason": decision.reason,
         "switch_recommended": decision.switch_recommended,
+        "expected_benefit": getattr(decision, "expected_benefit", ""),
+        "reversible_action": getattr(decision, "reversible_action", True),
+        "layout_policy": getattr(decision, "layout_policy", "balanced_exploration"),
+        "reasoning_policy": getattr(decision, "reasoning_policy", "broad_then_deep"),
+        "workflow_policy": getattr(decision, "workflow_policy", "interactive_tutoring"),
     }
     if not decision.switch_recommended:
         return None
@@ -55,6 +60,11 @@ async def explain_scene_switch(ctx: AgentContext, db: AsyncSession) -> dict | No
         "target_scene": decision.scene_id,
         "reason": decision.reason,
         "policy_confidence": round(decision.confidence, 3),
+        "expected_benefit": getattr(decision, "expected_benefit", ""),
+        "reversible_action": getattr(decision, "reversible_action", True),
+        "layout_policy": getattr(decision, "layout_policy", "balanced_exploration"),
+        "reasoning_policy": getattr(decision, "reasoning_policy", "broad_then_deep"),
+        "workflow_policy": getattr(decision, "workflow_policy", "interactive_tutoring"),
         "score_margin": round(
             decision.scores[decision.scene_id] - max(
                 score for scene, score in decision.scores.items() if scene != decision.scene_id
@@ -72,11 +82,11 @@ class SceneAgent(BaseAgent):
         "You are OpenTutor Zenus's Scene Manager.\n"
         "You detect when the student's learning goal changes and suggest switching modes.\n\n"
         "Available scenes:\n"
-        "- 📚 study_session (日常学习): Complete explanations, explore freely\n"
-        "- 🎯 exam_prep (考前冲刺): Concise summaries, weak point focus, timed quizzes\n"
-        "- ✍️ assignment (写作业): Step-by-step guidance, no direct answers\n"
-        "- 🔄 review_drill (错题专练): Error analysis, derived questions, spaced review\n"
-        "- 📝 note_organize (笔记整理): Structure optimization, cross-chapter integration\n\n"
+        "- 📚 study_session (Daily Study): Complete explanations, explore freely\n"
+        "- 🎯 exam_prep (Exam Prep): Concise summaries, weak point focus, timed quizzes\n"
+        "- ✍️ assignment (Homework): Step-by-step guidance, no direct answers\n"
+        "- 🔄 review_drill (Error Drill): Error analysis, derived questions, spaced review\n"
+        "- 📝 note_organize (Note Organization): Structure optimization, cross-chapter integration\n\n"
         "When suggesting a scene switch:\n"
         "1. Briefly acknowledge the student's goal\n"
         "2. Explain what the new mode offers\n"
@@ -97,6 +107,16 @@ class SceneAgent(BaseAgent):
             parts.append(f"\nDetected target scene: {info['icon']} {info['display']} ({target})")
         else:
             parts.append("\nNo clear target scene detected. Help the student with their request.")
+
+        if ctx.metadata.get("scene_policy"):
+            policy = ctx.metadata["scene_policy"]
+            parts.append(
+                "\nScene strategy:\n"
+                f"- layout_policy: {policy.get('layout_policy', 'balanced_exploration')}\n"
+                f"- reasoning_policy: {policy.get('reasoning_policy', 'broad_then_deep')}\n"
+                f"- workflow_policy: {policy.get('workflow_policy', 'interactive_tutoring')}\n"
+                f"- expected_benefit: {policy.get('expected_benefit', '')}"
+            )
 
         if ctx.preferences:
             pref_lines = [f"- {k}: {v}" for k, v in ctx.preferences.items()]

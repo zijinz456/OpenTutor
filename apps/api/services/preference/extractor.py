@@ -2,7 +2,7 @@
 
 Borrows from:
 - openakita Compiler: lightweight LLM call for extraction (not main conversation LLM)
-- "默认不提取" strategy: ~95% of conversations return NONE
+- "No extraction by default" strategy: ~95% of conversations return NONE
 - Dual-track: Main Brain handles conversation, Compiler extracts signals async
 
 Phase 0-C: Simplified version with 5 preference dimensions.
@@ -88,7 +88,7 @@ async def extract_preference_signal(
         result, _ = await client.extract(EXTRACTION_PROMPT, conversation_text)
         result = result.strip()
 
-        # "默认不提取" — most responses should be NONE
+        # "No extraction by default" — most responses should be NONE
         if result == "NONE" or not result or result.upper().startswith("NONE"):
             return None
 

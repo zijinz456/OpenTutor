@@ -47,6 +47,11 @@ class SceneRecommendationResponse(BaseModel):
     reason: str
     scores: dict[str, float]
     features: dict
+    expected_benefit: str
+    reversible_action: str
+    layout_policy: str
+    reasoning_policy: str
+    workflow_policy: str
 
 
 class SwitchSceneRequest(BaseModel):
@@ -125,7 +130,7 @@ async def get_active_scene(
 @router.get("/{course_id}/recommend", response_model=SceneRecommendationResponse)
 async def recommend_scene(
     course_id: uuid.UUID,
-    message: str,
+    message: str = "",
     active_tab: str = "",
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -149,6 +154,11 @@ async def recommend_scene(
         reason=decision.reason,
         scores=decision.scores,
         features=decision.features,
+        expected_benefit=decision.expected_benefit,
+        reversible_action=decision.reversible_action,
+        layout_policy=decision.layout_policy,
+        reasoning_policy=decision.reasoning_policy,
+        workflow_policy=decision.workflow_policy,
     )
 
 

@@ -13,8 +13,8 @@ _MATERIAL_DISCLAIMER_PATTERNS = (
     "not in the materials",
     "materials do not cover",
     "i couldn't find",
-    "课程材料中没有",
-    "材料中未找到",
+    "not found in the materials",
+    "course materials do not contain",
 )
 
 
@@ -93,7 +93,7 @@ def _find_issue(ctx: AgentContext) -> VerificationIssue | None:
 
     if ctx.intent == IntentType.PLAN:
         lowered = response.lower()
-        has_time_structure = any(token in lowered for token in ("today", "this week", "day-by-day", "daily", "今天", "本周"))
+        has_time_structure = any(token in lowered for token in ("today", "this week", "day-by-day", "daily", "tomorrow", "next week"))
         has_action_items = bool(re.search(r"(^|\n)([-*]|\d+\.)\s+\S+", response))
         if not ctx.tool_calls:
             return VerificationIssue(
@@ -108,7 +108,7 @@ def _find_issue(ctx: AgentContext) -> VerificationIssue | None:
 
     if ctx.intent == IntentType.ASSESS:
         lowered = response.lower()
-        if "memory" in lowered and "inference" not in lowered and "guess" not in lowered and "推测" not in response:
+        if "memory" in lowered and "inference" not in lowered and "guess" not in lowered and "speculation" not in lowered:
             return VerificationIssue(
                 code="assessment_overstates_memory_evidence",
                 message="Assessment answers must distinguish hard evidence from inference.",

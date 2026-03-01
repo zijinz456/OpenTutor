@@ -56,6 +56,7 @@ async def calculate_confidence(
         .where(
             PreferenceSignal.user_id == user_id,
             PreferenceSignal.dimension == dimension,
+            PreferenceSignal.dismissed_at.is_(None),
         )
         .order_by(PreferenceSignal.created_at.desc())
     )
@@ -133,6 +134,8 @@ async def process_signal_to_preference(
     existing = result.scalar_one_or_none()
 
     if existing:
+        if existing.dismissed_at is not None:
+            return None
         existing.value = value
         existing.confidence = confidence
         existing.source = "behavior"

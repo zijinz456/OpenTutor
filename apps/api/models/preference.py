@@ -41,6 +41,8 @@ class UserPreference(Base):
 
     # Confidence
     confidence: Mapped[float] = mapped_column(Float, default=0.5)
+    dismissed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    dismissal_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -71,5 +73,7 @@ class PreferenceSignal(Base):
     dimension: Mapped[str] = mapped_column(String(50))
     value: Mapped[str] = mapped_column(Text)
     context: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)  # Source conversation/action context
+    dismissed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    dismissal_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

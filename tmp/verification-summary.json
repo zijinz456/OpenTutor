@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-03-01T14:25:16.942690+00:00",
+  "generated_at": "2026-03-01T15:36:50.974685+00:00",
   "host": "ZijindeMacBook-Pro.local",
   "working_directory": "/Users/zijinzhang/Desktop/OpenTutor",
   "entries": [
@@ -24,18 +24,18 @@
       "details": "Playwright spec discovery"
     },
     {
-      "status": "SKIP",
+      "status": "PASS",
       "check": "DB-backed integration spot check",
-      "details": "DB-backed integration unavailable on this host (PostgreSQL or localhost:5432 access blocked)"
+      "details": "DB-backed integration available"
     },
     {
-      "status": "SKIP",
-      "check": "Stack smoke/regression",
-      "details": "Stack smoke/regression skipped because API or web is not running"
+      "status": "FAIL",
+      "check": "Smoke test against running stack",
+      "details": "Command failed with exit code 1"
     }
   ],
   "counts": {
-    "PASS": 4,
-    "SKIP": 2
+    "FAIL": 1,
+    "PASS": 5
   }
 }

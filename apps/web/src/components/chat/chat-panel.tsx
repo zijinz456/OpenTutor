@@ -61,12 +61,21 @@ function ExplainableTrace({ metadata }: { metadata: ChatMessageMetadata }) {
           <div>
             <p className="font-medium text-foreground/80">Scene suggestion</p>
             <p>{provenance.scene_switch.reason}</p>
+            {provenance.scene_switch.expected_benefit && (
+              <p className="mt-1">Benefit: {provenance.scene_switch.expected_benefit}</p>
+            )}
+            {provenance.scene_switch.reversible_action && (
+              <p className="mt-1">Reversible: {provenance.scene_switch.reversible_action}</p>
+            )}
           </div>
         )}
         {provenance.scene_resolution?.reason && (
           <div>
             <p className="font-medium text-foreground/80">Current mode</p>
             <p>{provenance.scene_resolution.reason}</p>
+            {provenance.scene_resolution.expected_benefit && (
+              <p className="mt-1">Benefit: {provenance.scene_resolution.expected_benefit}</p>
+            )}
           </div>
         )}
         {provenance.preference_details && provenance.preference_details.length > 0 && (

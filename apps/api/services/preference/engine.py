@@ -65,6 +65,8 @@ async def resolve_preferences(
     # Apply in priority order (template first → temporary last = highest priority)
     for scope in SCOPE_PRIORITY:
         for pref in by_scope[scope]:
+            if pref.dismissed_at is not None:
+                continue
             # Course-scoped prefs apply only when a matching course context exists.
             if scope in ("course", "course_scene"):
                 if not course_id:

@@ -13,6 +13,8 @@ from services.search.hybrid import _tokenize_query, rrf_score, RRF_K
 from services.agent.task_planner import execute_plan_step
 from services.agent.state import AgentContext, TaskPhase
 from models.agent_task import AgentTask
+from models.memory import ConversationMemory
+from models.preference import UserPreference
 from models.study_goal import StudyGoal
 from models.user import User
 from services.activity import engine as activity_engine
@@ -22,6 +24,9 @@ from services.activity.tasks import (
     CANCEL_REQUESTED_STATUS,
 )
 from services.scheduler import engine as scheduler_engine
+from routers.preferences import build_learning_profile_summary
+from services.preference.engine import resolve_preferences
+from services.scene.policy import decide_scene_policy_from_features
 
 
 def test_rrf_score_formula():
@@ -36,12 +41,11 @@ def test_rrf_score_monotonically_decreasing():
         assert scores[i] > scores[i + 1]
 
 
-def test_tokenize_query_handles_mixed_cjk_and_ascii_terms():
-    tokens = _tokenize_query("二分查找 invariant proof")
+def test_tokenize_query_handles_ascii_terms():
+    tokens = _tokenize_query("binary search invariant proof")
 
-    assert "二分查找" in tokens
-    assert "二分" in tokens
-    assert "查找" in tokens
+    assert "binary" in tokens
+    assert "search" in tokens
     assert "invariant" in tokens
     assert "proof" in tokens
 
@@ -82,10 +86,10 @@ from services.preference.scene import detect_scene, DEFAULT_SCENE, SCENE_PATTERN
 def test_detect_scene_all_defined_patterns():
     """Each scene regex should match at least one example."""
     examples = {
-        "exam_prep": "期末复习",
-        "review_drill": "错题复盘",
+        "exam_prep": "help me prepare for the final exam",
+        "review_drill": "review my wrong answers",
         "assignment": "homework problem",
-        "note_organize": "帮我整理笔记",
+        "note_organize": "help me organize my notes",
         "study_session": "please explain this concept",
     }
     supported_scenes = {scene_name for scene_name, _ in SCENE_PATTERNS}
@@ -129,6 +133,100 @@ def test_detect_mime_type_by_extension():
     assert "pdf" in detect_mime_type("test.pdf")
     # .xyz has a registered MIME; use truly unknown extension
     assert detect_mime_type("unknown.zzzzz") == "application/octet-stream"
+
+
+def test_learning_profile_summary_groups_memory_types():
+    memories = [
+        ConversationMemory(summary="Strong at binary search invariants", memory_type="skill"),
+        ConversationMemory(summary="Still confuses heap push/pop order", memory_type="error"),
+        ConversationMemory(summary="Prefers worked examples before abstractions", memory_type="preference"),
+    ]
+
+    summary = build_learning_profile_summary(memories)
+
+    assert "Strong at binary search invariants" in summary.strength_areas
+    assert "Still confuses heap push/pop order" in summary.weak_areas
+    assert "Still confuses heap push/pop order" in summary.recurring_errors
+    assert "Prefers worked examples before abstractions" in summary.inferred_habits
+
+
+class _ScalarListResult:
+    def __init__(self, items):
+        self._items = items
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return list(self._items)
+
+
+class _PreferenceSession:
+    def __init__(self, prefs):
+        self.prefs = prefs
+
+    async def execute(self, _query):
+        return _ScalarListResult(self.prefs)
+
+
+@pytest.mark.asyncio
+async def test_resolve_preferences_skips_dismissed_entries():
+    user_id = uuid.uuid4()
+    active_pref = UserPreference(
+        user_id=user_id,
+        dimension="detail_level",
+        value="concise",
+        scope="global",
+    )
+    dismissed_pref = UserPreference(
+        user_id=user_id,
+        dimension="note_format",
+        value="table",
+        scope="global",
+        dismissed_at=datetime.now(timezone.utc),
+    )
+
+    resolved = await resolve_preferences(_PreferenceSession([active_pref, dismissed_pref]), user_id)
+
+    assert resolved.preferences["detail_level"] == "concise"
+    assert resolved.preferences["note_format"] == "bullet_point"
+    assert resolved.sources["note_format"] == "system_default"
+
+
+def test_scene_policy_decision_exposes_strategy_bundle():
+    features = {
+        "matched_cues": {
+            "study_session": [],
+            "exam_prep": ["final"],
+            "assignment": [],
+            "review_drill": ["wrong answers"],
+            "note_organize": [],
+        },
+        "upcoming_assignments": 1,
+        "unmastered_wrong_answers": 4,
+        "low_mastery_count": 3,
+        "content_nodes": 12,
+        "active_tab": "review",
+        "course_active_scene": "study_session",
+        "active_goal_title": "Ace the final",
+        "active_goal_next_action": "Review wrong answers tonight",
+        "active_goal_target_days": 4,
+        "nearest_deadline_days": 2,
+        "recent_failed_tasks": 1,
+        "pending_approval_count": 0,
+        "running_task_count": 0,
+        "urgent_forgetting_count": 2,
+        "warning_forgetting_count": 1,
+    }
+
+    decision = decide_scene_policy_from_features(features=features, current_scene="study_session")
+
+    assert decision.scene_id in {"review_drill", "exam_prep", "assignment"}
+    assert decision.expected_benefit
+    assert decision.reversible_action
+    assert decision.layout_policy
+    assert decision.reasoning_policy
+    assert decision.workflow_policy
 
 
 class _ScalarResult:
