@@ -4,6 +4,7 @@ import { expect, test } from "@playwright/test";
 import { expectAssistantMessage, expectGeneratedNotes, expectGeneratedStudyPlan } from "./helpers/test-utils";
 
 const fixturePath = path.join(process.cwd(), "tests/e2e/fixtures/sample-course.md");
+const apiBaseUrl = process.env.PLAYWRIGHT_API_URL || "http://127.0.0.1:8005/api";
 
 async function createCourse(page: import("@playwright/test").Page, projectName: string) {
   await page.goto("/new");
@@ -61,7 +62,7 @@ async function seedQuizSet(
 ) {
   const rawContent = JSON.stringify(questions);
 
-  const response = await request.post("http://127.0.0.1:8005/api/quiz/save-generated", {
+  const response = await request.post(`${apiBaseUrl}/quiz/save-generated`, {
     data: {
       course_id: courseId,
       raw_content: rawContent,

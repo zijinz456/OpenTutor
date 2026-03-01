@@ -5,7 +5,7 @@ Endpoints for listing scenes, getting active scene, switching scenes, and creati
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +16,7 @@ from models.user import User
 from services.auth.dependency import get_current_user
 from services.course_access import get_course_or_404
 from services.scene.manager import switch_scene, get_scene_config, load_snapshot
+from libs.exceptions import ConflictError, NotFoundError
 
 router = APIRouter()
 
@@ -37,6 +38,15 @@ class ActiveSceneResponse(BaseModel):
     scene_id: str
     config: dict
     snapshot: dict | None
+
+
+class SceneRecommendationResponse(BaseModel):
+    scene_id: str
+    confidence: float
+    switch_recommended: bool
+    reason: str
+    scores: dict[str, float]
+    features: dict
 
 
 class SwitchSceneRequest(BaseModel):
@@ -112,6 +122,36 @@ async def get_active_scene(
     return ActiveSceneResponse(scene_id=scene_id, config=config, snapshot=snapshot)
 
 
+@router.get("/{course_id}/recommend", response_model=SceneRecommendationResponse)
+async def recommend_scene(
+    course_id: uuid.UUID,
+    message: str,
+    active_tab: str = "",
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Recommend the best scene for a message via the scene policy engine."""
+    course = await get_course_or_404(db, course_id, user_id=user.id)
+    from services.scene.policy import resolve_scene_policy
+
+    decision = await resolve_scene_policy(
+        db,
+        user_id=user.id,
+        course_id=course_id,
+        message=message,
+        current_scene=course.active_scene or "study_session",
+        active_tab=active_tab,
+    )
+    return SceneRecommendationResponse(
+        scene_id=decision.scene_id,
+        confidence=round(decision.confidence, 3),
+        switch_recommended=decision.switch_recommended,
+        reason=decision.reason,
+        scores=decision.scores,
+        features=decision.features,
+    )
+
+
 @router.post("/{course_id}/switch", response_model=SwitchSceneResponse)
 async def switch_scene_endpoint(
     course_id: uuid.UUID,
@@ -131,7 +171,7 @@ async def switch_scene_endpoint(
             current_ui_state=body.current_ui_state,
         )
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise NotFoundError(str(e))
     await db.commit()
     return SwitchSceneResponse(**result)
 
@@ -146,7 +186,7 @@ async def create_custom_scene(
     # Check if scene_id already exists
     existing = await db.execute(select(Scene).where(Scene.scene_id == body.scene_id))
     if existing.scalar_one_or_none():
-        raise HTTPException(status_code=409, detail=f"Scene '{body.scene_id}' already exists")
+        raise ConflictError(f"Scene '{body.scene_id}' already exists")
 
     scene = Scene(
         scene_id=body.scene_id,

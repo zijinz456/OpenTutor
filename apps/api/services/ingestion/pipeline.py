@@ -22,6 +22,7 @@ import logging
 import mimetypes
 import re
 import uuid
+from collections.abc import Mapping
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,6 +32,46 @@ from models.ingestion import IngestionJob, Assignment
 from services.llm.router import get_llm_client
 
 logger = logging.getLogger(__name__)
+
+_PHASE_LABELS = {
+    "uploaded": "Upload received",
+    "extracting": "Extracting content",
+    "classifying": "Classifying material",
+    "dispatching": "Building workspace artifacts",
+    "embedding": "Building semantic index",
+    "completed": "Ready",
+    "failed": "Failed",
+}
+
+
+def _set_job_phase(
+    job: IngestionJob,
+    *,
+    status: str,
+    progress_percent: int,
+    phase_label: str | None = None,
+    embedding_status: str | None = None,
+    nodes_created: int | None = None,
+    error_message: str | None = None,
+) -> None:
+    job.status = status
+    job.progress_percent = max(0, min(progress_percent, 100))
+    job.phase_label = phase_label or _PHASE_LABELS.get(status)
+    if embedding_status is not None:
+        job.embedding_status = embedding_status
+    if nodes_created is not None:
+        job.nodes_created = nodes_created
+    job.error_message = error_message
+
+
+def _count_created_nodes(dispatch_result: Mapping[str, object] | None) -> int:
+    if not dispatch_result:
+        return 0
+    total = 0
+    for value in dispatch_result.values():
+        if isinstance(value, int):
+            total += value
+    return total
 
 # ── Step 0: Filename regex patterns (expanded) ──
 
@@ -307,10 +348,14 @@ async def run_ingestion_pipeline(
         content_hash=content_hash,
         course_id=course_id,
         course_preset=course_id is not None,
-        status="extracting",
+        status="uploaded",
+        progress_percent=5,
+        phase_label=_PHASE_LABELS["uploaded"],
+        embedding_status="pending",
     )
     db.add(job)
     await db.flush()
+    await db.commit()
 
     try:
         # Step 1: MIME detection
@@ -318,7 +363,8 @@ async def run_ingestion_pipeline(
             job.mime_type = detect_mime_type(filename, file_bytes)
 
         # Step 2: Content extraction
-        job.status = "extracting"
+        _set_job_phase(job, status="extracting", progress_percent=20)
+        await db.commit()
         if pre_fetched_html:
             # Authenticated scraping: content already fetched, parse HTML to text
             from services.ingestion.document_loader import clean_soup, get_text_from_soup
@@ -332,12 +378,19 @@ async def run_ingestion_pipeline(
         job.extracted_markdown = extracted
 
         if not extracted:
-            job.status = "failed"
-            job.error_message = "No content could be extracted"
+            _set_job_phase(
+                job,
+                status="failed",
+                progress_percent=20,
+                embedding_status="failed",
+                error_message="No content could be extracted",
+            )
+            await db.commit()
             return job
 
         # Step 3: 3-tier classification
-        job.status = "classifying"
+        _set_job_phase(job, status="classifying", progress_percent=45)
+        await db.commit()
         job.content_category, job.classification_method = await classify_document(
             extracted,
             filename,
@@ -350,18 +403,43 @@ async def run_ingestion_pipeline(
                 job.course_id = matched_id
 
         # Step 5: Status update
-        job.status = "dispatching"
+        _set_job_phase(job, status="dispatching", progress_percent=70)
+        await db.commit()
 
         # Step 6: Dispatch to business tables
         dispatch_result = await _dispatch_content(db, job)
         job.dispatched = True
         job.dispatched_to = dispatch_result
-        job.status = "completed"
+        nodes_created = _count_created_nodes(dispatch_result)
+        needs_embedding = bool((dispatch_result or {}).get("content_tree"))
+        if needs_embedding:
+            _set_job_phase(
+                job,
+                status="embedding",
+                progress_percent=90,
+                embedding_status="pending",
+                nodes_created=nodes_created,
+            )
+        else:
+            _set_job_phase(
+                job,
+                status="completed",
+                progress_percent=100,
+                embedding_status="completed",
+                nodes_created=nodes_created,
+            )
 
     except Exception as e:
-        job.status = "failed"
-        job.error_message = str(e)
+        _set_job_phase(
+            job,
+            status="failed",
+            progress_percent=job.progress_percent or 0,
+            embedding_status="failed",
+            nodes_created=job.nodes_created,
+            error_message=str(e),
+        )
         logger.error(f"Ingestion pipeline failed: {e}")
+        await db.commit()
 
     await db.flush()
     return job

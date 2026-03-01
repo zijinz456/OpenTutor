@@ -7,7 +7,8 @@ new scrape/session pipeline.
 from urllib.parse import urlparse
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
+from libs.exceptions import PermissionDeniedError, ValidationError
 from pydantic import BaseModel, AnyHttpUrl
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -72,7 +73,7 @@ async def canvas_login(
         await browser.close()
 
     if not success:
-        raise HTTPException(status_code=401, detail="Canvas login failed")
+        raise PermissionDeniedError("Canvas login failed")
 
     result = await db.execute(
         select(AuthSession).where(
@@ -114,10 +115,7 @@ async def canvas_sync(
 ):
     """Legacy sync endpoint bridged to one-off scrape execution."""
     if body.api_token:
-        raise HTTPException(
-            status_code=410,
-            detail="Token-based Canvas sync is deprecated. Use authenticated scrape sessions.",
-        )
+        raise ValidationError("Token-based Canvas sync is deprecated. Use authenticated scrape sessions.")
 
     from services.browser.automation import fetch_with_browser
     from services.parser.url import extract_text_from_html
@@ -128,10 +126,7 @@ async def canvas_sync(
     dashboard_url = f"{str(body.canvas_url).rstrip('/')}/dashboard"
     html = await fetch_with_browser(dashboard_url, session_name=session_name)
     if not html:
-        raise HTTPException(
-            status_code=401,
-            detail="Canvas session expired or unavailable. Please login again via /api/canvas/login.",
-        )
+        raise PermissionDeniedError("Canvas session expired or unavailable. Please login again via /api/canvas/login.")
     text = extract_text_from_html(html)
     return {
         "status": "ok",

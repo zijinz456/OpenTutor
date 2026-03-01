@@ -52,7 +52,12 @@ class IngestionJob(Base):
 
     # Pipeline status
     status: Mapped[str] = mapped_column(String(20), default="pending")
-    # Status: pending, extracting, classifying, dispatching, completed, failed
+    # Status: pending, uploaded, extracting, classifying, dispatching, embedding, completed, failed
+    progress_percent: Mapped[int] = mapped_column(Integer, default=0)
+    phase_label: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    embedding_status: Mapped[str] = mapped_column(String(20), default="pending")
+    # Embedding status: pending, running, completed, failed
+    nodes_created: Mapped[int] = mapped_column(Integer, default=0)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # Dispatch tracking

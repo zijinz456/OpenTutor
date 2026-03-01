@@ -9,6 +9,7 @@ import { create } from "zustand";
 import {
   getChatSessionMessages,
   listChatSessions,
+  type PlanProgressEvent,
   streamChat,
   type ChatAction,
   type ChatHistoryMessage,
@@ -37,7 +38,9 @@ interface ChatState {
   messagesByCourse: Record<string, ChatMessage[]>;
   sessionIds: Record<string, string>;
   sessionsByCourse: Record<string, ChatSessionSummary[]>;
+  planProgressByCourse: Record<string, PlanProgressEvent | null>;
   messages: ChatMessage[];
+  activePlan: PlanProgressEvent | null;
   isStreaming: boolean;
   isLoadingSessions: boolean;
   error: string | null;
@@ -62,12 +65,30 @@ interface ChatState {
 
 let messageCounter = 0;
 
+/**
+ * Helper: compute the derived `messages` and `activePlan` fields from the
+ * per-course maps.  Every `set()` call that touches `messagesByCourse` or
+ * `planProgressByCourse` should spread the result of this helper so the
+ * top-level `messages` / `activePlan` always stay in sync automatically.
+ */
+function deriveActive(
+  state: Pick<ChatState, "messagesByCourse" | "planProgressByCourse" | "activeCourseId">,
+) {
+  const id = state.activeCourseId;
+  return {
+    messages: id ? state.messagesByCourse[id] ?? [] : [],
+    activePlan: id ? state.planProgressByCourse[id] ?? null : null,
+  };
+}
+
 export const useChatStore = create<ChatState>((set, get) => ({
   activeCourseId: null,
   messagesByCourse: {},
   sessionIds: {},
   sessionsByCourse: {},
+  planProgressByCourse: {},
   messages: [],
+  activePlan: null,
   isStreaming: false,
   isLoadingSessions: false,
   error: null,
@@ -84,11 +105,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   setOnAction: (cb) => set({ onAction: cb }),
   setCourseContext: (courseId) =>
-    set((s) => ({
-      activeCourseId: courseId,
-      messages: s.messagesByCourse[courseId] ?? [],
-      error: null,
-    })),
+    set((s) => {
+      const next = { ...s, activeCourseId: courseId };
+      return { activeCourseId: courseId, ...deriveActive(next), error: null };
+    }),
   loadSessions: async (courseId, options) => {
     set({ isLoadingSessions: true, error: null });
     try {
@@ -121,18 +141,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
         timestamp: message.created_at ? new Date(message.created_at) : new Date(),
         metadata: message.metadata_json ?? null,
       }));
-      set((s) => ({
-        activeCourseId: courseId,
-        messages: hydratedMessages,
-        messagesByCourse: {
-          ...s.messagesByCourse,
-          [courseId]: hydratedMessages,
-        },
-        sessionIds: {
-          ...s.sessionIds,
-          [courseId]: sessionId,
-        },
-      }));
+      set((s) => {
+        const nextMBC = { ...s.messagesByCourse, [courseId]: hydratedMessages };
+        const next = { ...s, activeCourseId: courseId, messagesByCourse: nextMBC };
+        return {
+          activeCourseId: courseId,
+          messagesByCourse: nextMBC,
+          sessionIds: { ...s.sessionIds, [courseId]: sessionId },
+          ...deriveActive(next),
+        };
+      });
     } catch (e) {
       set({ error: (e as Error).message });
     } finally {
@@ -140,18 +158,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
   startNewSession: (courseId) =>
-    set((s) => ({
-      activeCourseId: courseId,
-      messages: [],
-      messagesByCourse: {
-        ...s.messagesByCourse,
-        [courseId]: [],
-      },
-      sessionIds: Object.fromEntries(
-        Object.entries(s.sessionIds).filter(([key]) => key !== courseId),
-      ),
-      error: null,
-    })),
+    set((s) => {
+      const nextMBC = { ...s.messagesByCourse, [courseId]: [] };
+      const next = { ...s, activeCourseId: courseId, messagesByCourse: nextMBC };
+      return {
+        activeCourseId: courseId,
+        messagesByCourse: nextMBC,
+        sessionIds: Object.fromEntries(
+          Object.entries(s.sessionIds).filter(([key]) => key !== courseId),
+        ),
+        ...deriveActive(next),
+        error: null,
+      };
+    }),
 
   sendMessage: async (courseId, content, options?) => {
     if (get().activeCourseId !== courseId) {
@@ -179,15 +198,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
         content: message.content,
       }));
 
-    set((s) => ({
-      messages: [...s.messages, userMsg, assistantMsg],
-      messagesByCourse: {
+    set((s) => {
+      const nextMBC = {
         ...s.messagesByCourse,
         [courseId]: [...(s.messagesByCourse[courseId] ?? []), userMsg, assistantMsg],
-      },
-      isStreaming: true,
-      error: null,
-    }));
+      };
+      return {
+        messagesByCourse: nextMBC,
+        ...deriveActive({ ...s, messagesByCourse: nextMBC }),
+        isStreaming: true,
+        error: null,
+      };
+    });
 
     const controller = new AbortController();
     set({ _abortController: controller });
@@ -204,55 +226,57 @@ export const useChatStore = create<ChatState>((set, get) => ({
         images: options?.images,
       })) {
         if (event.type === "content") {
-          set((s) => ({
-            messages: s.messages.map((m) =>
-              m.id === assistantMsg.id ? { ...m, content: m.content + event.content } : m,
-            ),
-            messagesByCourse: {
+          set((s) => {
+            const nextMBC = {
               ...s.messagesByCourse,
               [courseId]: (s.messagesByCourse[courseId] ?? []).map((m) =>
                 m.id === assistantMsg.id ? { ...m, content: m.content + event.content } : m,
               ),
-            },
-          }));
+            };
+            return { messagesByCourse: nextMBC, ...deriveActive({ ...s, messagesByCourse: nextMBC }) };
+          });
         } else if (event.type === "action") {
           const { onAction } = get();
           if (onAction) {
             onAction(event.action);
           }
+        } else if (event.type === "plan_step") {
+          set((s) => ({
+            activePlan: event.task,
+            planProgressByCourse: {
+              ...s.planProgressByCourse,
+              [courseId]: event.task,
+            },
+          }));
         } else if (event.type === "tool_status") {
           set({ toolStatus: { tool: event.tool, status: event.status } });
           if (event.status === "complete") {
             setTimeout(() => set({ toolStatus: null }), 1500);
           }
         } else if (event.type === "replace") {
-          set((s) => ({
-            messages: s.messages.map((m) =>
-              m.id === assistantMsg.id ? { ...m, content: event.content } : m,
-            ),
-            messagesByCourse: {
+          set((s) => {
+            const nextMBC = {
               ...s.messagesByCourse,
               [courseId]: (s.messagesByCourse[courseId] ?? []).map((m) =>
                 m.id === assistantMsg.id ? { ...m, content: event.content } : m,
               ),
-            },
-          }));
+            };
+            return { messagesByCourse: nextMBC, ...deriveActive({ ...s, messagesByCourse: nextMBC }) };
+          });
         } else if (event.type === "done" && event.sessionId) {
-          set((s) => ({
-            messages: s.messages.map((m) =>
-              m.id === assistantMsg.id ? { ...m, metadata: event.metadata ?? m.metadata ?? null } : m,
-            ),
-            messagesByCourse: {
+          set((s) => {
+            const nextMBC = {
               ...s.messagesByCourse,
               [courseId]: (s.messagesByCourse[courseId] ?? []).map((m) =>
                 m.id === assistantMsg.id ? { ...m, metadata: event.metadata ?? m.metadata ?? null } : m,
               ),
-            },
-            sessionIds: {
-              ...s.sessionIds,
-              [courseId]: event.sessionId!,
-            },
-          }));
+            };
+            return {
+              messagesByCourse: nextMBC,
+              ...deriveActive({ ...s, messagesByCourse: nextMBC }),
+              sessionIds: { ...s.sessionIds, [courseId]: event.sessionId! },
+            };
+          });
         }
       }
       await get().loadSessions(courseId);
@@ -267,19 +291,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set((s) => {
       const targetCourseId = courseId ?? s.activeCourseId;
       if (!targetCourseId) {
-        return { messages: [], error: null, sessionIds: {} };
+        return { messages: [], activePlan: null, error: null, sessionIds: {} };
       }
 
-      const nextMessagesByCourse = { ...s.messagesByCourse };
-      delete nextMessagesByCourse[targetCourseId];
+      const nextMBC = { ...s.messagesByCourse };
+      delete nextMBC[targetCourseId];
 
       const nextSessionIds = { ...s.sessionIds };
       delete nextSessionIds[targetCourseId];
 
+      const nextPPC = { ...s.planProgressByCourse };
+      delete nextPPC[targetCourseId];
+
+      const next = { ...s, messagesByCourse: nextMBC, planProgressByCourse: nextPPC };
       return {
-        messages: s.activeCourseId === targetCourseId ? [] : s.messages,
-        messagesByCourse: nextMessagesByCourse,
+        messagesByCourse: nextMBC,
         sessionIds: nextSessionIds,
+        planProgressByCourse: nextPPC,
+        ...deriveActive(next),
         error: null,
       };
     }),

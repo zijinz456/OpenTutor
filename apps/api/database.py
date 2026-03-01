@@ -24,3 +24,6 @@ class Base(DeclarativeBase):
 async def get_db() -> AsyncSession:
     async with async_session() as session:
         yield session
+
+
+import models  # noqa: E402,F401  # Register ORM models with Base.metadata

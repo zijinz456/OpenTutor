@@ -23,7 +23,7 @@ class PreferenceAgent(BaseAgent):
 
     name = "preference"
     profile = (
-        "You are OpenTutor's Preference Manager.\n"
+        "You are OpenTutor Zenus's Preference Manager.\n"
         "Help the student adjust their learning experience settings.\n\n"
         "Available preference dimensions:\n"
         "- note_format: bullet_point | table | mind_map | step_by_step | summary\n"

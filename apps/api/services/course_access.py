@@ -1,13 +1,40 @@
-"""Shared helpers for resolving course records consistently."""
+"""Shared helpers for resolving database records consistently."""
 
 import uuid
+from typing import TypeVar
 
-from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
+from libs.exceptions import NotFoundError
 from models.course import Course
+
+T = TypeVar("T")
+
+
+async def get_or_404(
+    db: AsyncSession,
+    model: type[T],
+    record_id: uuid.UUID,
+    *,
+    user_id: uuid.UUID | None = None,
+    label: str | None = None,
+) -> T:
+    """Return a record by primary key or raise NotFoundError.
+
+    When auth is enabled and user_id is provided, also checks ownership
+    via the model's ``user_id`` column (if it exists).
+    """
+    query = select(model).where(model.id == record_id)  # type: ignore[attr-defined]
+    if settings.auth_enabled and user_id is not None and hasattr(model, "user_id"):
+        query = query.where(model.user_id == user_id)  # type: ignore[attr-defined]
+
+    result = await db.execute(query)
+    obj = result.scalar_one_or_none()
+    if not obj:
+        raise NotFoundError(label or model.__name__, record_id)  # type: ignore[attr-defined]
+    return obj
 
 
 async def get_course_or_404(
@@ -16,17 +43,5 @@ async def get_course_or_404(
     *,
     user_id: uuid.UUID | None = None,
 ) -> Course:
-    """Return a course or raise 404.
-
-    In local single-user mode we only require the course to exist.
-    When auth is enabled, ownership is enforced if a user id is provided.
-    """
-    query = select(Course).where(Course.id == course_id)
-    if settings.auth_enabled and user_id is not None:
-        query = query.where(Course.user_id == user_id)
-
-    result = await db.execute(query)
-    course = result.scalar_one_or_none()
-    if not course:
-        raise HTTPException(status_code=404, detail="Course not found")
-    return course
+    """Return a course or raise 404."""
+    return await get_or_404(db, Course, course_id, user_id=user_id, label="Course")

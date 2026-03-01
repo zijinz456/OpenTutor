@@ -17,14 +17,14 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  title: "OpenTutor — Personalized Learning Agent",
+  title: "OpenTutor Zenus — Personalized Learning Agent",
   description: "Upload any learning material, get a personalized study space with AI notes, quizzes, and chat.",
-  applicationName: "OpenTutor",
+  applicationName: "OpenTutor Zenus",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
-    title: "OpenTutor",
+    title: "OpenTutor Zenus",
   },
   icons: {
     icon: [

@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
   generateFlashcards,
+  getDueFlashcards,
   listGeneratedFlashcardBatches,
   reviewFlashcard,
   saveGeneratedFlashcards,
@@ -28,6 +29,7 @@ export function FlashcardPanel({ courseId }: FlashcardPanelProps) {
   const [reviewing, setReviewing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [batches, setBatches] = useState<GeneratedAssetBatchSummary[]>([]);
+  const [dueCount, setDueCount] = useState(0);
 
   const loadBatches = useCallback(async () => {
     try {
@@ -37,9 +39,19 @@ export function FlashcardPanel({ courseId }: FlashcardPanelProps) {
     }
   }, [courseId]);
 
+  const loadDueCards = useCallback(async () => {
+    try {
+      const data = await getDueFlashcards(courseId);
+      setDueCount(data.due_count);
+    } catch {
+      setDueCount(0);
+    }
+  }, [courseId]);
+
   useEffect(() => {
     void loadBatches();
-  }, [loadBatches]);
+    void loadDueCards();
+  }, [loadBatches, loadDueCards]);
 
   const handleGenerate = async () => {
     setGenerating(true);
@@ -96,11 +108,41 @@ export function FlashcardPanel({ courseId }: FlashcardPanelProps) {
     }
   };
 
+  const handleLoadDue = async () => {
+    setGenerating(true);
+    try {
+      const data = await getDueFlashcards(courseId);
+      if (data.cards.length === 0) {
+        toast.info("No cards due for review right now!");
+        return;
+      }
+      setCards(data.cards);
+      setCurrentIndex(0);
+      setFlipped(false);
+      toast.success(`${data.due_count} cards due for review`);
+    } catch {
+      toast.error("Failed to load due cards");
+    } finally {
+      setGenerating(false);
+    }
+  };
+
   // Empty state
   if (cards.length === 0) {
     return (
       <div className="flex-1 flex items-center justify-center p-4 text-center">
         <div>
+          {dueCount > 0 && (
+            <div className="mb-4">
+              <Badge variant="destructive" className="mb-2">{dueCount} cards due today</Badge>
+              <div>
+                <Button onClick={handleLoadDue} disabled={generating} size="sm" variant="default" className="mb-3">
+                  <RotateCcw className="h-4 w-4 mr-1" />
+                  Review Due Cards
+                </Button>
+              </div>
+            </div>
+          )}
           <p className="text-muted-foreground text-sm mb-3">{t("flashcard.empty")}</p>
           <Button onClick={handleGenerate} disabled={generating} size="sm">
             {generating ? (
@@ -121,7 +163,7 @@ export function FlashcardPanel({ courseId }: FlashcardPanelProps) {
   }
 
   const card = cards[currentIndex];
-  const dueCount = cards.filter(
+  const currentDueCount = cards.filter(
     (c) => !c.fsrs.due || new Date(c.fsrs.due) <= new Date()
   ).length;
   const latestBatch = batches.find((batch) => batch.is_active) ?? null;
@@ -144,7 +186,7 @@ export function FlashcardPanel({ courseId }: FlashcardPanelProps) {
             <Download className="h-4 w-4 mr-1" />
             Save New
           </Button>
-          <Badge variant="outline">{dueCount} {t("flashcard.due")}</Badge>
+          <Badge variant="outline">{currentDueCount} {t("flashcard.due")}</Badge>
           <Badge variant="secondary">{card.difficulty}</Badge>
         </div>
       </div>

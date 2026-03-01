@@ -1,0 +1,41 @@
+{
+  "generated_at": "2026-03-01T14:25:16.942690+00:00",
+  "host": "ZijindeMacBook-Pro.local",
+  "working_directory": "/Users/zijinzhang/Desktop/OpenTutor",
+  "entries": [
+    {
+      "status": "PASS",
+      "check": "Service-layer tests",
+      "details": "Service-layer tests"
+    },
+    {
+      "status": "PASS",
+      "check": "Agent regression tests",
+      "details": "Agent regression tests"
+    },
+    {
+      "status": "PASS",
+      "check": "Frontend lint",
+      "details": "Frontend lint"
+    },
+    {
+      "status": "PASS",
+      "check": "Playwright spec discovery",
+      "details": "Playwright spec discovery"
+    },
+    {
+      "status": "SKIP",
+      "check": "DB-backed integration spot check",
+      "details": "DB-backed integration unavailable on this host (PostgreSQL or localhost:5432 access blocked)"
+    },
+    {
+      "status": "SKIP",
+      "check": "Stack smoke/regression",
+      "details": "Stack smoke/regression skipped because API or web is not running"
+    }
+  ],
+  "counts": {
+    "PASS": 4,
+    "SKIP": 2
+  }
+}

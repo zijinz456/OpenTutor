@@ -26,6 +26,12 @@ class EvalRetrievalRequest(BaseModel):
     k: int = 5
 
 
+class RegressionBenchmarkRequest(BaseModel):
+    course_id: uuid.UUID | None = None
+    retrieval_queries: list[dict] | None = None
+    response_cases: list[dict] | None = None
+
+
 @router.post("/routing")
 async def run_routing_eval(
     user: User = Depends(get_current_user),
@@ -112,3 +118,21 @@ async def run_retrieval_eval(
             for s in result.per_query
         ],
     }
+
+
+@router.post("/regression")
+async def run_regression_eval(
+    body: RegressionBenchmarkRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Run the bundled regression benchmark suite."""
+    _ = user
+    from services.evaluation.benchmark_runner import run_regression_benchmark
+
+    return await run_regression_benchmark(
+        db=db if body.course_id and body.retrieval_queries else None,
+        course_id=body.course_id,
+        retrieval_queries=body.retrieval_queries,
+        response_cases=body.response_cases,
+    )

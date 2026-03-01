@@ -5,7 +5,7 @@ import uuid
 
 logger = logging.getLogger(__name__)
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +18,7 @@ from services.auth.dependency import get_current_user
 from services.course_access import get_course_or_404
 from services.parser.quiz import extract_questions
 from services.practice.annotation import build_practice_problem, parse_question_array
+from libs.exceptions import NotFoundError, ValidationError
 
 router = APIRouter()
 
@@ -106,7 +107,7 @@ async def save_generated_quiz(
 
     questions = parse_question_array(body.raw_content)
     if not questions:
-        raise HTTPException(status_code=400, detail="No valid question set found in assistant response")
+        raise ValidationError("No valid question set found in assistant response")
 
     replace_batch_id = body.replace_batch_id
     next_version = 1
@@ -121,7 +122,7 @@ async def save_generated_quiz(
         )
         prior_problems = prior_result.scalars().all()
         if not prior_problems:
-            raise HTTPException(status_code=404, detail="Generated batch not found")
+            raise NotFoundError("Generated batch")
         next_version = max(problem.source_version for problem in prior_problems) + 1
         for problem in prior_problems:
             problem.is_archived = True
@@ -175,7 +176,7 @@ async def extract_quiz(body: ExtractRequest, user: User = Depends(get_current_us
         )
         node = result.scalar_one_or_none()
         if not node or not node.content:
-            raise HTTPException(status_code=404, detail="Content node not found or empty")
+            raise NotFoundError("Content node not found or empty")
 
         problems = await extract_questions(
             node.content, node.title, body.course_id, body.content_node_id
@@ -341,7 +342,7 @@ async def submit_answer(
     )
     problem = result.scalar_one_or_none()
     if not problem:
-        raise HTTPException(status_code=404, detail="Problem not found")
+        raise NotFoundError("Problem", body.problem_id)
 
     # Check correctness
     is_correct = False

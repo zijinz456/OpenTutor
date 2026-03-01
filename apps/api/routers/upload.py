@@ -15,15 +15,17 @@ import uuid
 from pathlib import Path
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, UploadFile, File, Form
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
+from libs.exceptions import AppError, NotFoundError, PermissionDeniedError, ValidationError
 from database import get_db, async_session
 from models.ingestion import IngestionJob
 from models.user import User
+from services.ingestion.pipeline import _set_job_phase
 from services.ingestion.pipeline import run_ingestion_pipeline
 from services.auth.dependency import get_current_user
 from services.course_access import get_course_or_404
@@ -40,16 +42,16 @@ def _validate_url(url: str) -> str:
     """Validate URL to prevent SSRF attacks."""
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
-        raise HTTPException(status_code=400, detail="Only HTTP/HTTPS URLs are allowed")
+        raise ValidationError("Only HTTP/HTTPS URLs are allowed")
 
     hostname = parsed.hostname
     if not hostname:
-        raise HTTPException(status_code=400, detail="Invalid URL")
+        raise ValidationError("Invalid URL")
 
     # Block internal/private IPs
     try:
         if _is_blocked_ip(hostname):
-            raise HTTPException(status_code=400, detail="Internal URLs are not allowed")
+            raise ValidationError("Internal URLs are not allowed")
     except ValueError:
         # Not an IP — hostname, allow but check for obvious internal hostnames
         blocked_hosts = {
@@ -61,15 +63,15 @@ def _validate_url(url: str) -> str:
             "metadata.google.internal",
         }
         if hostname.lower() in blocked_hosts:
-            raise HTTPException(status_code=400, detail="Internal URLs are not allowed")
+            raise ValidationError("Internal URLs are not allowed")
         try:
             resolved = socket.getaddrinfo(hostname, None, proto=socket.IPPROTO_TCP)
         except socket.gaierror:
-            raise HTTPException(status_code=400, detail="Hostname could not be resolved") from None
+            raise ValidationError("Hostname could not be resolved") from None
         for entry in resolved:
             resolved_ip = entry[4][0]
             if _is_blocked_ip(resolved_ip):
-                raise HTTPException(status_code=400, detail="Internal URLs are not allowed")
+                raise ValidationError("Internal URLs are not allowed")
 
     return url
 
@@ -91,21 +93,54 @@ def _load_scrape_fixture_html(url: str) -> str | None:
     safe_slug = re.sub(r"[^a-zA-Z0-9/_-]", "", slug)
     fixture_path = Path(settings.scrape_fixture_dir, f"{safe_slug}.html")
     if not fixture_path.exists():
-        raise HTTPException(status_code=404, detail=f"Scrape fixture not found for {parsed.path or '/'}")
+        raise NotFoundError(f"Scrape fixture for {parsed.path or '/'}")
     return fixture_path.read_text(encoding="utf-8")
 
 
 router = APIRouter()
 
 
-async def _background_embed(course_id: uuid.UUID):
+async def _background_embed(course_id: uuid.UUID, job_id: uuid.UUID):
     """Fire-and-forget: compute embeddings for newly ingested content."""
     try:
         from services.embedding.content import embed_course_content
         async with async_session() as db:
+            job = await db.get(IngestionJob, job_id)
+            if job:
+                _set_job_phase(
+                    job,
+                    status="embedding",
+                    progress_percent=max(job.progress_percent or 0, 92),
+                    embedding_status="running",
+                    nodes_created=job.nodes_created,
+                )
+                await db.flush()
             await embed_course_content(db, course_id)
+            if job:
+                _set_job_phase(
+                    job,
+                    status="completed",
+                    progress_percent=100,
+                    embedding_status="completed",
+                    nodes_created=job.nodes_created,
+                )
             await db.commit()
     except Exception as e:
+        try:
+            async with async_session() as db:
+                job = await db.get(IngestionJob, job_id)
+                if job:
+                    _set_job_phase(
+                        job,
+                        status="failed",
+                        progress_percent=job.progress_percent or 90,
+                        embedding_status="failed",
+                        nodes_created=job.nodes_created,
+                        error_message=str(e),
+                    )
+                    await db.commit()
+        except Exception:
+            logger.debug("Failed to persist embedding failure for job %s", job_id, exc_info=True)
         logger.debug(f"Background embedding failed: {e}")
 
 
@@ -124,25 +159,22 @@ async def upload_file(
     try:
         cid = uuid.UUID(course_id)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail="Invalid course_id") from e
+        raise ValidationError("Invalid course_id") from e
 
     await get_course_or_404(db, cid, user_id=user.id)
 
     # Validate file
     if not file.filename:
-        raise HTTPException(status_code=400, detail="No filename provided")
+        raise ValidationError("No filename provided")
 
     supported_exts = {".pdf", ".pptx", ".ppt", ".docx", ".doc", ".html", ".htm", ".txt", ".md"}
     ext = os.path.splitext(file.filename)[1].lower()
     if ext not in supported_exts:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unsupported file type: {ext}. Supported: {', '.join(supported_exts)}",
-        )
+        raise ValidationError(f"Unsupported file type: {ext}. Supported: {', '.join(supported_exts)}")
 
     file_bytes = await file.read()
     if len(file_bytes) > settings.max_upload_size_mb * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="File too large")
+        raise ValidationError("File too large")
 
     # Save file to disk
     import hashlib
@@ -164,11 +196,11 @@ async def upload_file(
     await db.commit()
 
     if job.status == "failed":
-        raise HTTPException(status_code=500, detail=job.error_message or "Ingestion failed")
+        raise AppError(job.error_message or "Ingestion failed")
 
     # Fire background embedding computation
     if (job.dispatched_to or {}).get("content_tree", 0) > 0:
-        asyncio.create_task(_background_embed(cid))
+        asyncio.create_task(_background_embed(cid, job.id))
 
     return {
         "status": "ok",
@@ -195,7 +227,7 @@ async def scrape_url(
     try:
         cid = uuid.UUID(course_id)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail="Invalid course_id") from e
+        raise ValidationError("Invalid course_id") from e
 
     await get_course_or_404(db, cid, user_id=user.id)
 
@@ -210,11 +242,11 @@ async def scrape_url(
     await db.commit()
 
     if job.status == "failed":
-        raise HTTPException(status_code=500, detail=job.error_message or "Scrape failed")
+        raise AppError(job.error_message or "Scrape failed")
 
     # Fire background embedding computation
     if (job.dispatched_to or {}).get("content_tree", 0) > 0:
-        asyncio.create_task(_background_embed(cid))
+        asyncio.create_task(_background_embed(cid, job.id))
 
     return {
         "status": "ok",
@@ -233,6 +265,7 @@ async def list_ingestion_jobs(
     db: AsyncSession = Depends(get_db),
 ):
     """List ingestion jobs for a course."""
+    await get_course_or_404(db, course_id, user_id=user.id)
     result = await db.execute(
         select(IngestionJob)
         .where(IngestionJob.course_id == course_id)
@@ -246,8 +279,14 @@ async def list_ingestion_jobs(
             "source_type": j.source_type,
             "category": j.content_category,
             "status": j.status,
+            "phase_label": j.phase_label,
+            "progress_percent": j.progress_percent,
+            "embedding_status": j.embedding_status,
+            "nodes_created": j.nodes_created,
+            "error_message": j.error_message,
             "dispatched_to": j.dispatched_to,
             "created_at": j.created_at.isoformat(),
+            "updated_at": j.updated_at.isoformat() if j.updated_at else None,
         }
         for j in jobs
     ]
@@ -295,16 +334,16 @@ async def get_uploaded_file(
     )
     job = result.scalar_one_or_none()
     if not job or not job.file_path:
-        raise HTTPException(status_code=404, detail="File not found")
+        raise NotFoundError("File")
 
     file_path = Path(job.file_path).resolve()
     upload_dir = Path(settings.upload_dir).resolve()
     # Path traversal protection
     if not str(file_path).startswith(str(upload_dir)):
-        raise HTTPException(status_code=403, detail="Access denied")
+        raise PermissionDeniedError("Access denied")
 
     if not file_path.exists():
-        raise HTTPException(status_code=404, detail="File not found on disk")
+        raise NotFoundError("File on disk")
 
     # Determine media type from original filename
     media_type = mimetypes.guess_type(job.original_filename or "")[0] or "application/octet-stream"

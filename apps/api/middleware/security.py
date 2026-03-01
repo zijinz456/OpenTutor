@@ -8,6 +8,7 @@ Adds:
 """
 
 import logging
+import os
 import re
 import time
 from collections import defaultdict
@@ -56,7 +57,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
 @dataclass
 class _RateBucket:
-    tokens: float = 0.0
+    tokens: float = -1.0  # sentinel: initialised on first use
     last_refill: float = field(default_factory=time.monotonic)
 
 
@@ -89,6 +90,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         elapsed = now - bucket.last_refill
         bucket.last_refill = now
 
+        # First request: start with a full bucket
+        if bucket.tokens < 0:
+            bucket.tokens = float(rpm)
+
         # Refill tokens (1 token per second * rpm/60)
         refill_rate = rpm / 60.0
         bucket.tokens = min(rpm, bucket.tokens + elapsed * refill_rate)
@@ -99,8 +104,15 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         return False
 
     async def dispatch(self, request: Request, call_next):
+        if os.environ.get("DISABLE_RATE_LIMIT") == "1":
+            return await call_next(request)
+
         client_ip = self._get_client_ip(request)
         path = request.url.path
+
+        # Webhook endpoints have their own verification; exempt from rate limiting
+        if path.startswith("/api/webhooks/"):
+            return await call_next(request)
 
         # Determine rate limit
         is_llm = any(path.startswith(p) for p in self._LLM_PATHS)

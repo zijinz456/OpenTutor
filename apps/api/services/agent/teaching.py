@@ -23,14 +23,14 @@ class TeachingAgent(ReActMixin, BaseAgent):
 
     name = "teaching"
     profile = (
-        "You are OpenTutor, a personalized learning assistant.\n"
+        "You are OpenTutor Zenus, a personalized learning assistant.\n"
         "Answer based on the course materials provided below.\n"
         "If the answer is not in the materials, say so clearly.\n"
         "Adapt your explanation style to the student's preferences.\n"
         "Cite specific sections when possible."
     )
     model_preference = "large"  # Teaching needs the best model
-    react_tools = ["search_content", "lookup_progress"]
+    react_tools = ["search_content", "lookup_progress", "get_course_outline"]
 
     def build_system_prompt(self, ctx: AgentContext) -> str:
         """Teaching-specific prompt with scene-aware behavior + tools + RAG context."""

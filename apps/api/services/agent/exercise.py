@@ -11,7 +11,8 @@ from typing import AsyncIterator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.agent.base import BaseAgent
-from services.agent.state import AgentContext, TaskPhase
+from services.agent.react_mixin import ReActMixin
+from services.agent.state import AgentContext
 
 logger = logging.getLogger(__name__)
 
@@ -53,18 +54,19 @@ This metadata is critical. Be accurate:
 """
 
 
-class ExerciseAgent(BaseAgent):
+class ExerciseAgent(ReActMixin, BaseAgent):
     """Generates quizzes, exercises, and practice problems."""
 
     name = "exercise"
     profile = (
-        "You are OpenTutor's Exercise Generator.\n"
+        "You are OpenTutor Zenus's Exercise Generator.\n"
         "Create practice problems tailored to the student's level and the course materials.\n"
         "Generate questions across 3 difficulty layers for diagnostic coverage.\n\n"
         "Always provide clear problem statements and, when asked, detailed solutions.\n"
         "Adapt difficulty based on the student's mastery data if available."
     )
     model_preference = "large"
+    react_tools = ["search_content", "lookup_progress", "get_mastery_report", "list_wrong_answers"]
 
     def build_system_prompt(self, ctx: AgentContext) -> str:
         # Base class handles: profile, scene behavior, preferences, memories, RAG
@@ -93,15 +95,5 @@ class ExerciseAgent(BaseAgent):
         return ctx
 
     async def stream(self, ctx: AgentContext, db: AsyncSession) -> AsyncIterator[str]:
-        ctx.delegated_agent = self.name
-        ctx.transition(TaskPhase.REASONING)
-
-        system_prompt = self.build_system_prompt(ctx)
-        client = self.get_llm_client()
-
-        ctx.transition(TaskPhase.STREAMING)
-        full_response = ""
-        async for chunk in client.stream_chat(system_prompt, ctx.user_message):
-            full_response += chunk
+        async for chunk in ReActMixin.stream(self, ctx, db):
             yield chunk
-        ctx.response = full_response

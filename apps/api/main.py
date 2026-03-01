@@ -1,4 +1,4 @@
-"""OpenTutor API — FastAPI entry point."""
+"""OpenTutor Zenus API — FastAPI entry point."""
 
 import os
 import logging
@@ -9,19 +9,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from config import settings
-from database import engine, Base
-from routers import auth, upload, chat, courses, preferences, quiz, notes, workflows, progress, flashcards, canvas, notifications, scrape, scenes, wrong_answers, tasks, evaluation, experiments
+from database import engine
+from libs.exceptions import AppError
+from routers import auth, upload, chat, courses, preferences, quiz, notes, workflows, progress, flashcards, canvas, notifications, scrape, scenes, wrong_answers, tasks, goals, evaluation, experiments, push, notification_settings
 from services.llm.router import LLMConfigurationError
 
 logger = logging.getLogger(__name__)
-
-
-async def _maybe_create_tables() -> None:
-    if not settings.app_auto_create_tables:
-        return
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    logger.info("Auto-created database tables on startup")
 
 
 async def _maybe_seed_system_data() -> None:
@@ -109,7 +102,6 @@ async def lifespan(app: FastAPI):
     os.makedirs(settings.upload_dir, exist_ok=True)
     from services.agent.orchestrator import wait_for_background_tasks
 
-    await _maybe_create_tables()
     await _maybe_seed_system_data()
     await _maybe_connect_mcp_servers()
     _maybe_start_scheduler()
@@ -123,7 +115,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="OpenTutor API",
+    title="OpenTutor Zenus API",
     description="Personalized Learning Agent Backend",
     version="0.1.0",
     lifespan=lifespan,
@@ -145,9 +137,14 @@ app.add_middleware(RateLimitMiddleware, default_rpm=120, llm_rpm=20)
 app.add_middleware(SecurityHeadersMiddleware)
 
 
+@app.exception_handler(AppError)
+async def app_error_handler(_: Request, exc: AppError):
+    return JSONResponse(status_code=exc.status, content=exc.to_dict())
+
+
 @app.exception_handler(LLMConfigurationError)
 async def llm_configuration_error_handler(_: Request, exc: LLMConfigurationError):
-    return JSONResponse(status_code=503, content={"detail": str(exc)})
+    return JSONResponse(status_code=503, content={"code": "llm_configuration_error", "message": str(exc), "status": 503})
 
 # Auth endpoints only available when AUTH_ENABLED=true (production mode)
 if settings.auth_enabled:
@@ -167,13 +164,34 @@ app.include_router(scrape.router, prefix="/api/scrape", tags=["scrape"])
 app.include_router(scenes.router, prefix="/api/scenes", tags=["scenes"])
 app.include_router(wrong_answers.router, prefix="/api/wrong-answers", tags=["wrong-answers"])
 app.include_router(tasks.router, prefix="/api/tasks", tags=["tasks"])
+app.include_router(goals.router, prefix="/api/goals", tags=["goals"])
 app.include_router(evaluation.router, prefix="/api/eval", tags=["evaluation"])
 app.include_router(experiments.router, prefix="/api/experiments", tags=["experiments"])
+app.include_router(push.router, prefix="/api/notifications/push", tags=["notifications"])
+app.include_router(notification_settings.router, prefix="/api/notifications", tags=["notifications"])
+
+# Multi-channel webhook endpoints (only if channels configured)
+if settings.enabled_channels:
+    from routers import webhooks
+    app.include_router(webhooks.router, prefix="/api/webhooks", tags=["webhooks"])
 
 
 @app.get("/api/health")
 async def health():
+    from sqlalchemy import text
+    from database import async_session
     from services.llm.router import get_registry
+    from services.agent.container_sandbox import container_runtime_available
+
+    # Database connectivity check
+    db_ok = False
+    try:
+        async with async_session() as db:
+            await db.execute(text("SELECT 1"))
+        db_ok = True
+    except Exception:
+        logger.warning("Health check: database unreachable")
+
     registry = get_registry()
     provider_health = {
         name: client.is_healthy
@@ -185,13 +203,20 @@ async def health():
         llm_status = "degraded"
     else:
         llm_status = "ready"
+
+    overall = "ok" if db_ok else "degraded"
     return {
-        "status": "ok",
+        "status": overall,
         "version": "0.1.0",
+        "database": "connected" if db_ok else "unreachable",
         "llm_providers": registry.available_providers,
         "llm_primary": registry._primary,
         "llm_required": settings.llm_required,
         "llm_available": bool(registry.available_providers),
         "llm_status": llm_status,
         "llm_provider_health": provider_health,
+        "deployment_mode": settings.deployment_mode,
+        "code_sandbox_backend": settings.code_sandbox_backend,
+        "code_sandbox_runtime": settings.code_sandbox_runtime,
+        "code_sandbox_runtime_available": container_runtime_available(),
     }

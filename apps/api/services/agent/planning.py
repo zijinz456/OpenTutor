@@ -12,17 +12,18 @@ from typing import AsyncIterator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.agent.base import BaseAgent
-from services.agent.state import AgentContext, TaskPhase
+from services.agent.react_mixin import ReActMixin
+from services.agent.state import AgentContext
 
 logger = logging.getLogger(__name__)
 
 
-class PlanningAgent(BaseAgent):
+class PlanningAgent(ReActMixin, BaseAgent):
     """Generates and adjusts study plans based on deadlines, mastery, and preferences."""
 
     name = "planning"
     profile = (
-        "You are OpenTutor's Study Planner.\n"
+        "You are OpenTutor Zenus's Study Planner.\n"
         "Create actionable, realistic study plans based on:\n"
         "- Upcoming deadlines and exam dates\n"
         "- Student's current mastery levels\n"
@@ -36,6 +37,7 @@ class PlanningAgent(BaseAgent):
         "- Output in clear markdown format"
     )
     model_preference = "large"
+    react_tools = ["lookup_progress", "get_mastery_report", "get_course_outline", "list_study_goals", "list_assignments"]
 
     def build_system_prompt(self, ctx: AgentContext) -> str:
         # Use base class for scene-aware prompt, then append planning-specific context
@@ -56,18 +58,8 @@ class PlanningAgent(BaseAgent):
         return ctx
 
     async def stream(self, ctx: AgentContext, db: AsyncSession) -> AsyncIterator[str]:
-        ctx.delegated_agent = self.name
-        ctx.transition(TaskPhase.REASONING)
-
-        system_prompt = self.build_system_prompt(ctx)
-        client = self.get_llm_client()
-
-        ctx.transition(TaskPhase.STREAMING)
-        full_response = ""
-        async for chunk in client.stream_chat(system_prompt, ctx.user_message):
-            full_response += chunk
+        async for chunk in ReActMixin.stream(self, ctx, db):
             yield chunk
-        ctx.response = full_response
 
         # Persist generated plan to StudyPlan table
         await self._save_plan(ctx, db)

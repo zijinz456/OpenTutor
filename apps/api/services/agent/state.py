@@ -11,7 +11,7 @@ import time
 import logging
 from enum import Enum
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 logger = logging.getLogger(__name__)
 
@@ -27,9 +27,24 @@ class TaskPhase(str, Enum):
     VERIFYING = "verifying"       # Self-check (ReflectionAgent)
     STREAMING = "streaming"       # SSE streaming to client
     POST_PROCESSING = "post"      # Signal extraction, memory encoding
+    PARALLEL_DISPATCH = "parallel_dispatch"  # Swarm: fan-out to multiple agents
+    MERGING = "merging"           # Swarm: merging parallel results
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
+
+
+class SceneName(str, Enum):
+    """Canonical scene identifiers (v3 preset scenes)."""
+    STUDY_SESSION = "study_session"
+    EXAM_PREP = "exam_prep"
+    ASSIGNMENT = "assignment"
+    REVIEW_DRILL = "review_drill"
+    NOTE_ORGANIZE = "note_organize"
+
+    @classmethod
+    def is_valid(cls, value: str) -> bool:
+        return value in cls._value2member_map_
 
 
 class IntentType(str, Enum):
@@ -51,7 +66,7 @@ class IntentType(str, Enum):
 class AgentContext:
     """Shared context passed between orchestrator and specialist agents.
 
-    Combines OpenClaw SessionEntry concepts with OpenTutor's domain context.
+    Combines OpenClaw SessionEntry concepts with OpenTutor Zenus's domain context.
     """
     # Identity
     user_id: uuid.UUID
@@ -71,7 +86,7 @@ class AgentContext:
     # Routing
     intent: IntentType = IntentType.GENERAL
     intent_confidence: float = 0.0
-    scene: str = "study_session"
+    scene: str = SceneName.STUDY_SESSION
 
     # Context data (populated by context loading phase)
     preferences: dict[str, str] = field(default_factory=dict)
@@ -108,6 +123,11 @@ class AgentContext:
     error: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    # Swarm / parallel execution fields
+    parallel_branches: list[dict] = field(default_factory=list)
+    swarm_mode: bool = False
+    merge_strategy: str = "llm_synthesize"
+
     def transition(self, new_phase: TaskPhase):
         """State transition with history tracking."""
         old_phase = self.phase
@@ -135,7 +155,7 @@ class AgentContext:
 
     def to_status_dict(self) -> dict:
         """Serializable status for frontend progress display."""
-        return {
+        status = {
             "session_id": str(self.session_id),
             "phase": self.phase.value,
             "intent": self.intent.value,
@@ -144,3 +164,34 @@ class AgentContext:
             "tokens": self.total_tokens,
             "error": self.error,
         }
+        if self.swarm_mode:
+            status["swarm"] = {
+                "enabled": True,
+                "merge_strategy": self.merge_strategy,
+                "branches": len(self.parallel_branches),
+                "successful": sum(
+                    1 for b in self.parallel_branches if b.get("success")
+                ),
+                "agents": [b.get("agent") for b in self.parallel_branches],
+            }
+        return status
+
+
+@dataclass
+class AgentVerificationResult:
+    status: Literal["pass", "repaired", "failed"]
+    code: str
+    message: str
+    repair_attempted: bool = False
+
+
+@dataclass
+class AgentTurnEnvelope:
+    response: str
+    agent: str
+    intent: str
+    actions: list[dict]
+    tool_calls: list[dict]
+    provenance: dict[str, Any]
+    verifier: AgentVerificationResult | None
+    task_link: dict[str, Any] | None = None

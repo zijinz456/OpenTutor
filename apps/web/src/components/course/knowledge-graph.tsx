@@ -15,14 +15,17 @@ interface KnowledgeGraphProps {
 
 /**
  * Knowledge graph visualization using Canvas API.
- * Renders course content tree as a force-directed graph.
+ * Renders course content tree as a hierarchical circular graph.
+ * Uses ResizeObserver + devicePixelRatio for crisp rendering at any size.
  */
 export function KnowledgeGraph({ courseId }: KnowledgeGraphProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [nodes, setNodes] = useState<GraphNode[]>([]);
   const [edges, setEdges] = useState<GraphEdge[]>([]);
   const [loading, setLoading] = useState(true);
   const [zoom, setZoom] = useState(1);
+  const [canvasSize, setCanvasSize] = useState({ width: 800, height: 600 });
 
   const loadGraph = useCallback(async () => {
     setLoading(true);
@@ -37,6 +40,36 @@ export function KnowledgeGraph({ courseId }: KnowledgeGraphProps) {
     }
   }, [courseId]);
 
+  // Resize canvas to match container with DPR-aware backing store
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const { width, height } = entry.contentRect;
+        if (width > 0 && height > 0) {
+          setCanvasSize({ width: Math.round(width), height: Math.round(height) });
+        }
+      }
+    });
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
+
+  // Apply DPR scaling to canvas backing store
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = canvasSize.width * dpr;
+    canvas.height = canvasSize.height * dpr;
+    canvas.style.width = `${canvasSize.width}px`;
+    canvas.style.height = `${canvasSize.height}px`;
+    const ctx = canvas.getContext("2d");
+    if (ctx) ctx.scale(dpr, dpr);
+  }, [canvasSize]);
+
   const layoutAndDraw = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -44,8 +77,9 @@ export function KnowledgeGraph({ courseId }: KnowledgeGraphProps) {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const width = canvas.width;
-    const height = canvas.height;
+    const dpr = window.devicePixelRatio || 1;
+    const width = canvasSize.width;
+    const height = canvasSize.height;
 
     // Simple hierarchical layout
     const layoutNodes = [...nodes];
@@ -74,9 +108,15 @@ export function KnowledgeGraph({ courseId }: KnowledgeGraphProps) {
     // Build node map for edge rendering
     const nodeMap = new Map(layoutNodes.map((n) => [n.id, n]));
 
-    // Clear
-    ctx.clearRect(0, 0, width, height);
+    // Clear (use backing store size to clear everything)
     ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.restore();
+
+    ctx.save();
+    const dprScale = dpr;
+    ctx.setTransform(dprScale, 0, 0, dprScale, 0, 0);
     ctx.translate(width / 2 * (1 - zoom), height / 2 * (1 - zoom));
     ctx.scale(zoom, zoom);
 
@@ -117,7 +157,7 @@ export function KnowledgeGraph({ courseId }: KnowledgeGraphProps) {
     }
 
     ctx.restore();
-  }, [edges, nodes, zoom]);
+  }, [edges, nodes, zoom, canvasSize]);
 
   useEffect(() => {
     loadGraph();
@@ -180,12 +220,10 @@ export function KnowledgeGraph({ courseId }: KnowledgeGraphProps) {
           </Button>
         </div>
       </div>
-      <div className="flex-1 relative">
+      <div ref={containerRef} className="flex-1 relative">
         <canvas
           ref={canvasRef}
-          width={800}
-          height={600}
-          className="w-full h-full"
+          className="absolute inset-0"
         />
         {/* Legend */}
         <div className="absolute bottom-2 left-2 bg-background/80 backdrop-blur-sm rounded p-2 text-xs flex gap-3">

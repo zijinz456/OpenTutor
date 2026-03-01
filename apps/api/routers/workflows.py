@@ -12,7 +12,7 @@ Exposes the 6 workflow pipelines:
 import uuid
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,6 +21,8 @@ from models.user import User
 from services.auth.dependency import get_current_user
 from services.course_access import get_course_or_404
 from services.activity.tasks import create_task
+from services.provenance import build_provenance
+from libs.exceptions import AppError, NotFoundError, ValidationError
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -61,8 +63,8 @@ def _raise_if_service_error(result: dict) -> None:
     if not error:
         return
     if error == "Assignment not found":
-        raise HTTPException(status_code=404, detail=error)
-    raise HTTPException(status_code=400, detail=error)
+        raise NotFoundError("Assignment")
+    raise ValidationError(error)
 
 
 # ── Endpoints ──
@@ -82,15 +84,22 @@ async def semester_init(body: SemesterInitRequest, user: User = Depends(get_curr
             title=f"Initialized {body.semester_name}",
             summary=f"Created {len(result.get('courses', []))} courses and generated a semester plan.",
             source="workflow",
+            metadata_json={
+                "provenance": build_provenance(
+                    workflow="semester_init",
+                    generated=True,
+                    source_labels=["workflow", "generated"],
+                )
+            },
             result_json=result,
         )
         await db.commit()
         return result
-    except HTTPException:
+    except AppError:
         raise
     except Exception as e:
         logger.exception("WF-1 failed: user_id=%s semester=%s", user.id, body.semester_name)
-        raise HTTPException(status_code=500, detail="Semester init failed") from e
+        raise AppError("Semester init failed") from e
 
 
 @router.get("/weekly-prep")
@@ -107,13 +116,21 @@ async def weekly_prep(user: User = Depends(get_current_user), db: AsyncSession =
             title="Generated weekly prep plan",
             summary=(result.get("plan", "") or "Weekly plan generated.")[:300],
             source="workflow",
+            metadata_json={"provenance": build_provenance(
+                workflow="weekly_prep",
+                generated=True,
+                source_labels=["workflow", "generated"],
+                content_refs=result.get("provenance", {}).get("content_refs"),
+                content_count=result.get("provenance", {}).get("content_count"),
+                extra={"next_action": result.get("next_action")},
+            )},
             result_json=result,
         )
         await db.commit()
         return result
     except Exception as e:
         logger.exception("WF-2 failed: user_id=%s", user.id)
-        raise HTTPException(status_code=500, detail="Weekly prep failed") from e
+        raise AppError("Weekly prep failed") from e
 
 
 @router.post("/assignment-analysis")
@@ -132,12 +149,19 @@ async def assignment_analysis(body: AssignmentAnalysisRequest, user: User = Depe
             title=f"Analyzed assignment: {result.get('title', 'Assignment')}",
             summary=(result.get("analysis", "") or "Assignment analysis generated.")[:300],
             source="workflow",
-            metadata_json={"assignment_id": result.get("assignment_id")},
+            metadata_json={
+                "assignment_id": result.get("assignment_id"),
+                "provenance": build_provenance(
+                    workflow="assignment_analysis",
+                    generated=True,
+                    source_labels=["workflow", "generated"],
+                ),
+            },
             result_json=result,
         )
         await db.commit()
         return result
-    except HTTPException:
+    except AppError:
         raise
     except Exception as e:
         logger.exception(
@@ -145,7 +169,7 @@ async def assignment_analysis(body: AssignmentAnalysisRequest, user: User = Depe
             user.id,
             body.assignment_id,
         )
-        raise HTTPException(status_code=500, detail="Assignment analysis failed") from e
+        raise AppError("Assignment analysis failed") from e
 
 
 @router.get("/wrong-answer-review")
@@ -167,14 +191,21 @@ async def wrong_answer_review(
             title="Generated wrong-answer review",
             summary=(result.get("review", "") or "Wrong-answer review generated.")[:300],
             source="workflow",
-            metadata_json={"wrong_answer_count": result.get("wrong_answer_count", 0)},
+            metadata_json={
+                "wrong_answer_count": result.get("wrong_answer_count", 0),
+                "provenance": build_provenance(
+                    workflow="wrong_answer_review",
+                    generated=True,
+                    source_labels=["workflow", "generated"],
+                ),
+            },
             result_json=result,
         )
         await db.commit()
         return result
     except Exception as e:
         logger.exception("WF-5 failed: user_id=%s course_id=%s", user.id, course_id)
-        raise HTTPException(status_code=500, detail="Wrong-answer review failed") from e
+        raise AppError("Wrong-answer review failed") from e
 
 
 @router.post("/wrong-answer-review/mark")
@@ -195,7 +226,7 @@ async def mark_wrong_answers_reviewed(
             "WF-5 mark reviewed failed: wrong_answer_count=%d",
             len(body.wrong_answer_ids),
         )
-        raise HTTPException(status_code=500, detail="Mark reviewed failed") from e
+        raise AppError("Mark reviewed failed") from e
 
 
 @router.post("/exam-prep")
@@ -215,7 +246,15 @@ async def exam_prep(body: ExamPrepRequest, user: User = Depends(get_current_user
             title="Generated exam prep plan",
             summary=(result.get("plan", "") or "Exam prep plan generated.")[:300],
             source="workflow",
-            metadata_json={"days_until_exam": body.days_until_exam, "exam_topic": body.exam_topic},
+            metadata_json={
+                "days_until_exam": body.days_until_exam,
+                "exam_topic": body.exam_topic,
+                "provenance": build_provenance(
+                    workflow="exam_prep",
+                    generated=True,
+                    source_labels=["workflow", "generated"],
+                ),
+            },
             result_json=result,
         )
         await db.commit()
@@ -227,7 +266,7 @@ async def exam_prep(body: ExamPrepRequest, user: User = Depends(get_current_user
             body.course_id,
             body.days_until_exam,
         )
-        raise HTTPException(status_code=500, detail="Exam prep failed") from e
+        raise AppError("Exam prep failed") from e
 
 
 @router.post("/study-plans/save")
@@ -252,7 +291,7 @@ async def save_study_plan(
             replace_batch_id=body.replace_batch_id,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise NotFoundError(str(exc)) from exc
 
     await db.commit()
     return result

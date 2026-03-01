@@ -1,9 +1,11 @@
 """Preference CRUD and local runtime configuration endpoints."""
 
+import json
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends
-from fastapi import HTTPException
+from libs.exceptions import AppError, ValidationError
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +17,8 @@ from schemas.preference import PreferenceCreate, PreferenceResponse, ResolvedPre
 from services.auth.dependency import get_current_user
 from services.llm.local_config import get_llm_runtime_config, test_llm_connection, update_llm_runtime_config
 from services.preference.engine import resolve_preferences
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -196,6 +200,69 @@ async def test_runtime_llm_config(
     try:
         return await test_llm_connection(body.provider, body.model, body.api_key)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise ValidationError(message=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise AppError(message=str(exc)) from exc
+
+
+# ── NL Preference Parsing ──
+
+_NL_PREFERENCE_PROMPT = """\
+You are a preference parser for a tutoring app.  Given the user's natural
+language request, extract the preference dimension and value.
+
+Available dimensions and valid values:
+- note_format: bullet_point | table | mind_map | step_by_step | summary
+- detail_level: concise | balanced | detailed
+- explanation_style: formal | conversational | socratic | example_heavy
+- language: en | zh | ja | ko | es | fr
+
+Return ONLY a JSON object like {"dimension": "...", "value": "..."}.
+If you cannot determine the intent, return {"dimension": null, "value": null}.
+"""
+
+
+class NLPreferenceRequest(BaseModel):
+    text: str
+
+
+class NLPreferenceResult(BaseModel):
+    dimension: str | None = None
+    value: str | None = None
+    label: str | None = None
+
+
+@router.post("/parse-nl", response_model=NLPreferenceResult)
+async def parse_nl_preference(
+    body: NLPreferenceRequest,
+    user: User = Depends(get_current_user),
+):
+    """Parse a natural language preference request using LLM."""
+    _ = user
+    from services.llm.router import get_registry
+
+    registry = get_registry()
+    try:
+        client, model = registry.get_client("small")
+        resp = await client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": _NL_PREFERENCE_PROMPT},
+                {"role": "user", "content": body.text},
+            ],
+            temperature=0,
+            max_tokens=100,
+        )
+        raw = resp.choices[0].message.content or "{}"
+        # Strip markdown fences if present
+        raw = raw.strip()
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0]
+        parsed = json.loads(raw)
+        dim = parsed.get("dimension")
+        val = parsed.get("value")
+        label = f"{(dim or '').replace('_', ' ')}: {val}" if dim and val else None
+        return NLPreferenceResult(dimension=dim, value=val, label=label)
+    except Exception as e:
+        logger.warning("NL preference parsing failed: %s", e)
+        return NLPreferenceResult()

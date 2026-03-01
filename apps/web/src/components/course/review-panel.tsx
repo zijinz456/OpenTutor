@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import ReactMarkdown from "react-markdown";
+import { MarkdownRenderer } from "@/components/course/markdown-renderer";
 import { Loader2, RefreshCcw, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -197,7 +197,7 @@ export function ReviewPanel({ courseId }: ReviewPanelProps) {
 
         {reviewMarkdown && (
           <div className="rounded-lg border bg-muted/30 p-4 prose prose-sm max-w-none" data-testid="review-markdown">
-            <ReactMarkdown>{reviewMarkdown}</ReactMarkdown>
+            <MarkdownRenderer content={reviewMarkdown} />
           </div>
         )}
 

@@ -9,7 +9,19 @@ import pytest
 
 # ── Search: RRF scoring ──
 
-from services.search.hybrid import rrf_score, RRF_K
+from services.search.hybrid import _tokenize_query, rrf_score, RRF_K
+from services.agent.task_planner import execute_plan_step
+from services.agent.state import AgentContext, TaskPhase
+from models.agent_task import AgentTask
+from models.study_goal import StudyGoal
+from models.user import User
+from services.activity import engine as activity_engine
+from services.activity.tasks import (
+    APPROVAL_PENDING,
+    APPROVAL_REQUIRED_STATUS,
+    CANCEL_REQUESTED_STATUS,
+)
+from services.scheduler import engine as scheduler_engine
 
 
 def test_rrf_score_formula():
@@ -22,6 +34,16 @@ def test_rrf_score_monotonically_decreasing():
     scores = [rrf_score(r) for r in range(1, 20)]
     for i in range(len(scores) - 1):
         assert scores[i] > scores[i + 1]
+
+
+def test_tokenize_query_handles_mixed_cjk_and_ascii_terms():
+    tokens = _tokenize_query("二分查找 invariant proof")
+
+    assert "二分查找" in tokens
+    assert "二分" in tokens
+    assert "查找" in tokens
+    assert "invariant" in tokens
+    assert "proof" in tokens
 
 
 # ── Preference: confidence calculation ──
@@ -107,6 +129,225 @@ def test_detect_mime_type_by_extension():
     assert "pdf" in detect_mime_type("test.pdf")
     # .xyz has a registered MIME; use truly unknown extension
     assert detect_mime_type("unknown.zzzzz") == "application/octet-stream"
+
+
+class _ScalarResult:
+    def __init__(self, task):
+        self._task = task
+
+    def scalar_one_or_none(self):
+        return self._task
+
+
+class _FakeSession:
+    def __init__(self, task):
+        self.task = task
+        self.commits = 0
+        self.refreshes = 0
+
+    async def execute(self, _query):
+        return _ScalarResult(self.task)
+
+    async def commit(self):
+        self.commits += 1
+
+    async def refresh(self, _task):
+        self.refreshes += 1
+
+
+class _FakeSessionContext:
+    def __init__(self, session):
+        self.session = session
+
+    async def __aenter__(self):
+        return self.session
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+
+def _patch_task_session(monkeypatch, task: AgentTask) -> _FakeSession:
+    session = _FakeSession(task)
+    monkeypatch.setattr(activity_engine, "async_session", lambda: _FakeSessionContext(session))
+    return session
+
+
+class _ScalarCollectionResult:
+    def __init__(self, items):
+        self._items = items
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return list(self._items)
+
+    def scalar_one_or_none(self):
+        return self._items[0] if self._items else None
+
+
+class _SchedulerSession:
+    def __init__(self, user: User):
+        self.user = user
+        self.goals: list[StudyGoal] = []
+        self.tasks: list[AgentTask] = []
+
+    async def execute(self, query):
+        entity = query.column_descriptions[0].get("entity")
+        if entity is User:
+            return _ScalarCollectionResult([self.user])
+        if entity is StudyGoal:
+            return _ScalarCollectionResult(self.goals)
+        if entity is AgentTask:
+            return _ScalarCollectionResult(self.tasks[:1])
+        return _ScalarCollectionResult([])
+
+    def add(self, obj):
+        if isinstance(obj, StudyGoal):
+            if obj.id is None:
+                obj.id = uuid.uuid4()
+            self.goals.append(obj)
+
+    async def commit(self):
+        return None
+
+    async def refresh(self, _obj):
+        return None
+
+
+@pytest.mark.asyncio
+async def test_reject_task_then_retry_resets_approval(monkeypatch):
+    user_id = uuid.uuid4()
+    task = AgentTask(
+        id=uuid.uuid4(),
+        user_id=user_id,
+        course_id=None,
+        task_type="exam_prep",
+        status=APPROVAL_REQUIRED_STATUS,
+        title="Approval gated task",
+        source="workflow",
+        requires_approval=True,
+        attempts=1,
+        max_attempts=2,
+    )
+    _patch_task_session(monkeypatch, task)
+
+    rejected = await activity_engine.reject_task(task.id, user_id)
+    assert rejected is task
+    assert task.status == "rejected"
+    assert task.approval_status == "rejected"
+    assert task.error_message == "Rejected before execution."
+    assert task.approved_at is None
+
+    retried = await activity_engine.retry_task(task.id, user_id)
+    assert retried is task
+    assert task.status == APPROVAL_REQUIRED_STATUS
+    assert task.approval_status == APPROVAL_PENDING
+    assert task.attempts == 0
+    assert task.result_json is None
+    assert task.checkpoint_json is None
+    assert task.step_results_json is None
+
+
+@pytest.mark.asyncio
+async def test_cancel_running_task_and_resume_from_cancelled(monkeypatch):
+    user_id = uuid.uuid4()
+    task = AgentTask(
+        id=uuid.uuid4(),
+        user_id=user_id,
+        course_id=None,
+        task_type="multi_step",
+        status="running",
+        title="Resumable task",
+        source="workflow",
+        requires_approval=False,
+        result_json={"steps": [{"step_index": 0, "success": True}]},
+        metadata_json={"plan_progress": [{"step_index": 0, "status": "completed"}]},
+        attempts=1,
+        max_attempts=2,
+    )
+    _patch_task_session(monkeypatch, task)
+
+    cancelled = await activity_engine.cancel_task(task.id, user_id)
+    assert cancelled is task
+    assert task.status == CANCEL_REQUESTED_STATUS
+    assert task.cancel_requested_at is not None
+
+    task.status = "cancelled"
+    resumed = await activity_engine.resume_task(task.id, user_id)
+    assert resumed is task
+    assert task.status == "resuming"
+    assert task.cancel_requested_at is None
+    assert task.result_json == {"steps": [{"step_index": 0, "success": True}]}
+
+
+@pytest.mark.asyncio
+async def test_resume_requires_approval_when_cancelled_before_approval(monkeypatch):
+    user_id = uuid.uuid4()
+    task = AgentTask(
+        id=uuid.uuid4(),
+        user_id=user_id,
+        course_id=None,
+        task_type="exam_prep",
+        status="cancelled",
+        title="Cancelled before approval",
+        source="workflow",
+        requires_approval=True,
+        approved_at=None,
+        attempts=0,
+        max_attempts=2,
+    )
+    _patch_task_session(monkeypatch, task)
+
+    resumed = await activity_engine.resume_task(task.id, user_id)
+    assert resumed is task
+    assert task.status == APPROVAL_REQUIRED_STATUS
+    assert task.approval_status == APPROVAL_PENDING
+
+
+@pytest.mark.asyncio
+async def test_approve_invalid_state_raises_task_mutation_error(monkeypatch):
+    user_id = uuid.uuid4()
+    task = AgentTask(
+        id=uuid.uuid4(),
+        user_id=user_id,
+        course_id=None,
+        task_type="weekly_prep",
+        status="completed",
+        title="Already done",
+        source="workflow",
+        requires_approval=False,
+        attempts=1,
+        max_attempts=1,
+    )
+    _patch_task_session(monkeypatch, task)
+
+    with pytest.raises(activity_engine.TaskMutationError):
+        await activity_engine.approve_task(task.id, user_id)
+
+
+@pytest.mark.asyncio
+async def test_weekly_scheduler_enqueues_durable_task_and_creates_goal(monkeypatch):
+    user = User(id=uuid.uuid4(), email="scheduler@test.dev", hashed_password="x")
+    session = _SchedulerSession(user)
+
+    monkeypatch.setattr(scheduler_engine, "async_session", lambda: _FakeSessionContext(session))
+    submit_task = AsyncMock()
+    push_notification = AsyncMock()
+    monkeypatch.setattr(scheduler_engine, "submit_task", submit_task)
+    monkeypatch.setattr(scheduler_engine, "_push_notification", push_notification)
+
+    await scheduler_engine.weekly_prep_job()
+
+    assert len(session.goals) == 1
+    assert session.goals[0].metadata_json["goal_kind"] == "weekly_review"
+    submit_task.assert_awaited_once()
+    queued_kwargs = submit_task.await_args.kwargs
+    assert queued_kwargs["task_type"] == "weekly_prep"
+    assert queued_kwargs["source"] == "scheduler"
+    assert queued_kwargs["goal_id"] == session.goals[0].id
+    assert queued_kwargs["metadata_json"]["provenance"]["scheduler_trigger"] == "weekly_scheduler"
+    push_notification.assert_awaited_once()
 
 
 def test_normalize_problem_metadata_applies_generic_defaults():
@@ -257,3 +498,41 @@ def test_resolve_tab_layout_falls_back_to_scene_defaults():
 
     assert scene_manager._resolve_tab_layout(scene_config, None) == scene_config["tab_preset"]
     assert scene_manager._resolve_tab_layout(scene_config, {"open_tabs": []}) == scene_config["tab_preset"]
+
+
+@pytest.mark.asyncio
+async def test_execute_plan_step_marks_failed_context_as_unsuccessful(monkeypatch):
+    failed_ctx = AgentContext(
+        user_id=uuid.uuid4(),
+        course_id=uuid.uuid4(),
+        user_message="help me study",
+    )
+    failed_ctx.response = ""
+    failed_ctx.mark_failed("planner failed")
+
+    async def fake_run_agent_turn(**_kwargs):
+        return failed_ctx
+
+    monkeypatch.setattr("services.agent.orchestrator.run_agent_turn", fake_run_agent_turn)
+
+    step_result = await execute_plan_step(
+        step={
+            "step_index": 0,
+            "step_type": "build_study_plan",
+            "title": "Build plan",
+            "description": "Create a study plan",
+            "depends_on": [],
+        },
+        previous_results=[],
+        user_id=uuid.uuid4(),
+        course_id=uuid.uuid4(),
+        db=MagicMock(),
+        db_factory=MagicMock(),
+    )
+
+    assert step_result["success"] is False
+    assert step_result["error"] == "planner failed"
+    assert step_result["input_message"] == "Create a study plan"
+    assert step_result["tool_calls"] == []
+    assert step_result["verifier"] is None
+    assert step_result["provenance"] is None

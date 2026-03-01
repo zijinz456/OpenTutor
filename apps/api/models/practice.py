@@ -4,7 +4,7 @@ import uuid
 from typing import Optional
 from datetime import datetime
 
-from sqlalchemy import String, DateTime, ForeignKey, Text, Integer, Boolean, func
+from sqlalchemy import Index, String, DateTime, ForeignKey, Text, Integer, Boolean, func
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -15,6 +15,9 @@ class PracticeProblem(Base):
     """Practice problems extracted from course content."""
 
     __tablename__ = "practice_problems"
+    __table_args__ = (
+        Index("ix_practice_problem_course", "course_id"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     course_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("courses.id"))

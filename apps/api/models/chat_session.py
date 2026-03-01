@@ -22,6 +22,7 @@ class ChatSession(Base):
 
     scene_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     title: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    channel: Mapped[Optional[str]] = mapped_column(String(30), default="web", nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

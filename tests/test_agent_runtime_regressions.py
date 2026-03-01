@@ -1,11 +1,12 @@
+import json
 import uuid
+from types import SimpleNamespace
 
 import pytest
 
 from services.agent.scene_agent import SceneAgent
-from services.agent.state import AgentContext
-from services.agent.orchestrator import _build_provenance
-from services.agent.orchestrator import run_agent_turn
+from services.agent.state import AgentContext, IntentType
+from services.agent.orchestrator import _build_provenance, orchestrate_stream, run_agent_turn
 from services.search.hybrid import vector_search
 
 
@@ -53,6 +54,20 @@ class _FunctionCallingAgent(_StreamingOnlyAgent):
             yield chunk
 
 
+class _RepairingLLMClient(_DummyLLMClient):
+    async def chat(self, *_args, **_kwargs):
+        return ("I couldn't find this in the course materials, so here is a general explanation.", self._usage)
+
+
+class _RepairingAgent(_StreamingOnlyAgent):
+    def __init__(self):
+        super().__init__(["This is definitely covered by the course."], usage={"input_tokens": 2, "output_tokens": 3})
+        self._client = _RepairingLLMClient({"input_tokens": 2, "output_tokens": 3})
+
+    def build_system_prompt(self, _ctx):
+        return "system"
+
+
 @pytest.mark.asyncio
 async def test_run_agent_turn_uses_stream_runtime_and_parses_actions(monkeypatch):
     dummy_agent = _StreamingOnlyAgent(
@@ -64,7 +79,7 @@ async def test_run_agent_turn_uses_stream_runtime_and_parses_actions(monkeypatch
         usage={"input_tokens": 5, "output_tokens": 7},
     )
 
-    async def fake_prepare_agent_turn(ctx, _db):
+    async def fake_prepare_agent_turn(ctx, _db, **_kwargs):
         return ctx, dummy_agent
 
     monkeypatch.setattr("services.agent.orchestrator.prepare_agent_turn", fake_prepare_agent_turn)
@@ -89,7 +104,7 @@ async def test_run_agent_turn_does_not_double_count_function_calling_usage(monke
         usage={"input_tokens": 3, "output_tokens": 2},
     )
 
-    async def fake_prepare_agent_turn(ctx, _db):
+    async def fake_prepare_agent_turn(ctx, _db, **_kwargs):
         return ctx, dummy_agent
 
     monkeypatch.setattr("services.agent.orchestrator.prepare_agent_turn", fake_prepare_agent_turn)
@@ -114,7 +129,25 @@ async def test_scene_agent_falls_back_to_teaching_when_no_scene_switch(monkeypat
         ctx.response = "Detailed help from teaching agent."
         yield ctx.response
 
+    class _Decision:
+        scene_id = "study_session"
+        confidence = 0.4
+        scores = {
+            "study_session": 1.0,
+            "exam_prep": 0.5,
+            "assignment": 0.4,
+            "review_drill": 0.3,
+            "note_organize": 0.2,
+        }
+        features = {}
+        reason = "Stay in study_session."
+        switch_recommended = False
+
+    async def fake_resolve_scene_policy(*_args, **_kwargs):
+        return _Decision()
+
     monkeypatch.setattr("services.agent.teaching.TeachingAgent.stream", fake_teaching_stream)
+    monkeypatch.setattr("services.agent.scene_agent.resolve_scene_policy", fake_resolve_scene_policy)
 
     agent = SceneAgent()
     ctx = AgentContext(
@@ -177,3 +210,73 @@ def test_build_provenance_includes_explainable_scene_and_content_details():
     assert provenance["scene_switch"]["target_scene"] == "exam_prep"
     assert provenance["preference_details"][0]["source"] == "course"
     assert provenance["content_refs"][0]["title"] == "Week 6 Review"
+
+
+@pytest.mark.asyncio
+async def test_run_agent_turn_records_verifier_and_repaired_response(monkeypatch):
+    repairing_agent = _RepairingAgent()
+
+    async def fake_prepare_agent_turn(ctx, _db, **_kwargs):
+        ctx.intent = IntentType.LEARN
+        ctx.content_docs = []
+        return ctx, repairing_agent
+
+    monkeypatch.setattr("services.agent.orchestrator.prepare_agent_turn", fake_prepare_agent_turn)
+
+    ctx = await run_agent_turn(
+        user_id=uuid.uuid4(),
+        course_id=uuid.uuid4(),
+        message="Explain radix sort",
+        db=None,
+        db_factory=None,
+    )
+
+    assert ctx.metadata["verifier"]["status"] == "repaired"
+    assert "couldn't find this in the course materials" in ctx.response.lower()
+
+
+@pytest.mark.asyncio
+async def test_orchestrate_stream_complex_request_returns_task_link(monkeypatch):
+    async def fake_classify_intent(ctx):
+        ctx.intent = IntentType.PLAN
+        ctx.intent_confidence = 0.92
+        return ctx
+
+    async def fake_load_context(ctx, _db, db_factory=None):
+        return ctx
+
+    async def fake_create_plan(*_args, **_kwargs):
+        return [
+            {
+                "step_index": 0,
+                "step_type": "check_progress",
+                "title": "Check progress",
+                "agent": "assessment",
+                "depends_on": [],
+            }
+        ]
+
+    async def fake_submit_task(**_kwargs):
+        return SimpleNamespace(id=uuid.uuid4(), task_type="multi_step", status="queued")
+
+    monkeypatch.setattr("services.agent.orchestrator.classify_intent", fake_classify_intent)
+    monkeypatch.setattr("services.agent.orchestrator.load_context", fake_load_context)
+    monkeypatch.setattr("services.agent.task_planner.is_complex_request", lambda _message: True)
+    monkeypatch.setattr("services.agent.task_planner.create_plan", fake_create_plan)
+    monkeypatch.setattr("services.activity.engine.submit_task", fake_submit_task)
+
+    events = []
+    async for event in orchestrate_stream(
+        user_id=uuid.uuid4(),
+        course_id=uuid.uuid4(),
+        message="Help me prepare for next week's exam with a full plan",
+        db=None,
+        db_factory=None,
+    ):
+        events.append(event)
+
+    done_event = next(event for event in events if event["event"] == "done")
+    payload = json.loads(done_event["data"])
+    assert payload["agent"] == "coordinator"
+    assert payload["task_link"]["task_type"] == "multi_step"
+    assert payload["verifier"]["code"] == "background_task_created"

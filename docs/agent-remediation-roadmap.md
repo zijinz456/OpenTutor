@@ -1,7 +1,10 @@
-# OpenTutor Agent Remediation Roadmap
+# OpenTutor Zenus Agent Remediation Roadmap
+
+For the product-layer execution roadmap that extends beyond the runtime fixes in
+this document, see [docs/agent-product-roadmap.md](./agent-product-roadmap.md).
 
 This document turns the current code audit into an execution plan. The goal is
-to move OpenTutor from a strong AI-enhanced learning workspace to a more
+to move OpenTutor Zenus from a strong AI-enhanced learning workspace to a more
 coherent, durable agent system.
 
 ## 1. Runtime Unification

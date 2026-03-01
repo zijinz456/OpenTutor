@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ArrowLeft, BarChart3, BookOpen, BrainCircuit, Clock, Database, Loader2, RefreshCw, Target } from "lucide-react";
+import { ArrowLeft, BookOpen, BrainCircuit, Clock, Loader2, RefreshCw, Target } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -12,7 +12,6 @@ import {
   triggerConsolidation,
   type LearningOverview,
   type LearningTrends,
-  type TrendDataPoint,
   type MemoryStats,
 } from "@/lib/api";
 import {
@@ -28,7 +27,6 @@ import {
   PieChart,
   Pie,
   Cell,
-  Legend,
 } from "recharts";
 
 const GAP_COLORS: Record<string, string> = {

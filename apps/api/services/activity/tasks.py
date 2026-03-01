@@ -9,6 +9,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.agent_task import AgentTask
+from utils.serializers import serialize_model
 
 
 def _truncate_summary(summary: str | None, limit: int = 500) -> str | None:
@@ -19,35 +20,90 @@ def _truncate_summary(summary: str | None, limit: int = 500) -> str | None:
     return summary[: limit - 3] + "..."
 
 
-FINAL_TASK_STATUSES = {"completed", "failed", "cancelled"}
-EXECUTABLE_TASK_STATUSES = {"queued", "retrying"}
-APPROVAL_REQUIRED_STATUS = "awaiting_approval"
+FINAL_TASK_STATUSES = {"completed", "failed", "cancelled", "rejected"}
+EXECUTABLE_TASK_STATUSES = {"queued", "resuming"}
+APPROVAL_REQUIRED_STATUS = "pending_approval"
+LEGACY_APPROVAL_REQUIRED_STATUS = "awaiting_approval"
+CANCEL_REQUESTED_STATUS = "cancel_requested"
+REJECTED_TASK_STATUS = "rejected"
+RESUMING_TASK_STATUS = "resuming"
+TASK_KIND_READ_ONLY = "read_only"
+TASK_KIND_CONTENT_MUTATION = "content_mutation"
+TASK_KIND_NOTIFICATION = "notification"
+TASK_KIND_EXTERNAL = "external_side_effect"
+APPROVAL_NOT_REQUIRED = "not_required"
+APPROVAL_PENDING = "pending"
+APPROVAL_APPROVED = "approved"
+APPROVAL_REJECTED = "rejected"
+
+
+def normalize_task_status(status: str | None) -> str:
+    if status == LEGACY_APPROVAL_REQUIRED_STATUS:
+        return APPROVAL_REQUIRED_STATUS
+    if status == "retrying":
+        return "queued"
+    return status or "queued"
+
+
+def infer_task_kind(task_type: str, input_json: dict[str, Any] | None = None) -> str:
+    payload = input_json or {}
+    if task_type == "code_execution":
+        if payload.get("persist") or payload.get("file_output") or payload.get("write_files"):
+            return TASK_KIND_EXTERNAL
+        return TASK_KIND_EXTERNAL
+    if task_type in {"semester_init"}:
+        return TASK_KIND_CONTENT_MUTATION
+    if task_type in {"notification_dispatch", "push_notification"}:
+        return TASK_KIND_NOTIFICATION
+    return TASK_KIND_READ_ONLY
+
+
+def infer_risk_level(task_kind: str, requires_approval: bool, task_type: str) -> str:
+    if task_type in {"code_execution", "semester_init"}:
+        return "high"
+    if requires_approval or task_kind in {TASK_KIND_NOTIFICATION, TASK_KIND_EXTERNAL}:
+        return "medium"
+    return "low"
+
+
+def infer_approval_status(
+    *,
+    requires_approval: bool,
+    status: str,
+    approved_at: datetime | None,
+) -> str:
+    normalized_status = normalize_task_status(status)
+    if not requires_approval:
+        return APPROVAL_NOT_REQUIRED
+    if normalized_status == REJECTED_TASK_STATUS:
+        return APPROVAL_REJECTED
+    if normalized_status == APPROVAL_REQUIRED_STATUS or approved_at is None:
+        return APPROVAL_PENDING
+    return APPROVAL_APPROVED
 
 
 def serialize_task(task: AgentTask) -> dict[str, Any]:
-    return {
-        "id": str(task.id),
-        "user_id": str(task.user_id),
-        "course_id": str(task.course_id) if task.course_id else None,
-        "task_type": task.task_type,
-        "status": task.status,
-        "title": task.title,
-        "summary": task.summary,
-        "source": task.source,
-        "input_json": task.input_json,
-        "metadata_json": task.metadata_json,
-        "result_json": task.result_json,
-        "error_message": task.error_message,
-        "attempts": task.attempts,
-        "max_attempts": task.max_attempts,
-        "requires_approval": task.requires_approval,
-        "approved_at": task.approved_at.isoformat() if task.approved_at else None,
-        "started_at": task.started_at.isoformat() if task.started_at else None,
-        "cancel_requested_at": task.cancel_requested_at.isoformat() if task.cancel_requested_at else None,
-        "created_at": task.created_at.isoformat() if task.created_at else None,
-        "updated_at": task.updated_at.isoformat() if task.updated_at else None,
-        "completed_at": task.completed_at.isoformat() if task.completed_at else None,
-    }
+    normalized_status = normalize_task_status(task.status)
+    approval_status = infer_approval_status(
+        requires_approval=task.requires_approval,
+        status=normalized_status,
+        approved_at=task.approved_at,
+    )
+    step_results = list(task.step_results_json or [])
+    return serialize_model(
+        task,
+        extra={
+            "status": normalized_status,
+            "task_kind": task.task_kind,
+            "risk_level": task.risk_level,
+            "approval_status": approval_status,
+            "checkpoint_json": task.checkpoint_json,
+            "step_results": step_results,
+            "step_results_json": step_results,
+            "provenance": task.provenance_json,
+            "provenance_json": task.provenance_json,
+        },
+    )
 
 
 async def create_task(
@@ -57,6 +113,7 @@ async def create_task(
     title: str,
     task_type: str,
     course_id: uuid.UUID | None = None,
+    goal_id: uuid.UUID | None = None,
     status: str = "completed",
     summary: str | None = None,
     source: str = "workflow",
@@ -67,16 +124,30 @@ async def create_task(
     attempts: int = 0,
     max_attempts: int = 1,
     requires_approval: bool = False,
+    task_kind: str | None = None,
+    risk_level: str | None = None,
+    approval_status: str | None = None,
+    checkpoint_json: dict[str, Any] | None = None,
+    step_results_json: list[dict[str, Any]] | None = None,
+    provenance_json: dict[str, Any] | None = None,
     approved_at: datetime | None = None,
     started_at: datetime | None = None,
     cancel_requested_at: datetime | None = None,
 ) -> AgentTask:
-    normalized_status = status
+    normalized_status = normalize_task_status(status)
     if normalized_status == "queued" and requires_approval and approved_at is None:
         normalized_status = APPROVAL_REQUIRED_STATUS
+    resolved_task_kind = task_kind or infer_task_kind(task_type, input_json)
+    resolved_risk_level = risk_level or infer_risk_level(resolved_task_kind, requires_approval, task_type)
+    resolved_approval_status = approval_status or infer_approval_status(
+        requires_approval=requires_approval,
+        status=normalized_status,
+        approved_at=approved_at,
+    )
     task = AgentTask(
         user_id=user_id,
         course_id=course_id,
+        goal_id=goal_id,
         task_type=task_type,
         status=normalized_status,
         title=title,
@@ -89,6 +160,12 @@ async def create_task(
         attempts=attempts,
         max_attempts=max(1, max_attempts),
         requires_approval=requires_approval,
+        task_kind=resolved_task_kind,
+        risk_level=resolved_risk_level,
+        approval_status=resolved_approval_status,
+        checkpoint_json=checkpoint_json,
+        step_results_json=step_results_json,
+        provenance_json=provenance_json,
         approved_at=approved_at,
         started_at=started_at,
         cancel_requested_at=cancel_requested_at,

@@ -63,6 +63,10 @@ apscheduler>=3.10.0
 bcrypt>=4.0.0
 python-jose[cryptography]>=3.3.0
 
+# Web Push Notifications
+pywebpush>=2.0.0
+py-vapid>=1.9.0
+
 # Utilities
 tenacity==9.0.0
 httpx==0.28.1

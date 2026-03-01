@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, ArrowLeft, CheckCircle2, Eye, EyeOff, Globe, Moon, Palette, RefreshCw, Sun, Wrench } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Bell, CheckCircle2, Eye, EyeOff, Globe, Moon, Palette, RefreshCw, Sun, Wrench } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
 import { Button } from "@/components/ui/button";
@@ -12,16 +12,17 @@ import { toast } from "sonner";
 import { setLocale, getLocale, type Locale } from "@/lib/i18n";
 import { useT } from "@/lib/i18n-context";
 import {
+  applyTemplate,
   getHealthStatus,
   getLlmRuntimeConfig,
+  listTemplates,
   testLlmRuntimeConnection,
   updateLlmRuntimeConfig,
   type HealthStatus,
   type LlmConnectionTestResult,
   type LlmRuntimeConfig,
 } from "@/lib/api";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
+import { PushSubscriptionManager } from "@/components/push-subscription-manager";
 const PROVIDERS = ["openai", "anthropic", "deepseek", "openrouter", "gemini", "groq"] as const;
 
 type ProviderName = (typeof PROVIDERS)[number];
@@ -91,8 +92,8 @@ export default function SettingsPage() {
 
   const loadTemplates = async () => {
     try {
-      const res = await fetch(`${API_BASE}/progress/templates`);
-      if (res.ok) setTemplates(await res.json());
+      const data = await listTemplates();
+      setTemplates(data as unknown as Template[]);
     } catch {
       // Templates may not be seeded yet
     }
@@ -134,15 +135,8 @@ export default function SettingsPage() {
   const handleApplyTemplate = async (templateId: string) => {
     setApplying(templateId);
     try {
-      const res = await fetch(`${API_BASE}/progress/templates/apply`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ template_id: templateId }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        toast.success(`Applied "${data.template}" template (${data.applied_preferences} preferences)`);
-      }
+      await applyTemplate(templateId);
+      toast.success("Template applied successfully");
     } catch {
       toast.error("Failed to apply template");
     } finally {
@@ -266,7 +260,7 @@ export default function SettingsPage() {
               </>
             ) : (
               <p className="text-sm text-muted-foreground">
-                Unable to load runtime health from <code>{API_BASE}/health</code>.
+                Unable to load runtime health from the API server.
               </p>
             )}
           </div>
@@ -448,6 +442,14 @@ export default function SettingsPage() {
               System
             </Button>
           </div>
+        </section>
+
+        <section data-testid="settings-notifications">
+          <div className="flex items-center gap-2 mb-3">
+            <Bell className="h-4 w-4" />
+            <h2 className="font-medium">Notifications</h2>
+          </div>
+          <PushSubscriptionManager />
         </section>
 
         <section>

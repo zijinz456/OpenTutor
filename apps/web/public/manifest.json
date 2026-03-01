@@ -1,6 +1,6 @@
 {
-  "name": "OpenTutor — Personalized Learning Agent",
-  "short_name": "OpenTutor",
+  "name": "OpenTutor Zenus — Personalized Learning Agent",
+  "short_name": "OpenTutor Zenus",
   "description": "Upload any learning material, get a personalized study space with AI notes, quizzes, and chat.",
   "start_url": "/",
   "display": "standalone",

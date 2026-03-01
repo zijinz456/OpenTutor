@@ -7,7 +7,7 @@ import { create } from "zustand";
 import {
   Course,
   ContentNode,
-  listCourses,
+  listCourseOverview,
   createCourse,
   deleteCourse,
   getContentTree,
@@ -37,7 +37,7 @@ export const useCourseStore = create<CourseState>((set, get) => ({
   fetchCourses: async () => {
     set({ loading: true, error: null });
     try {
-      const courses = await listCourses();
+      const courses = await listCourseOverview();
       set({ courses, loading: false });
     } catch (e) {
       set({ error: (e as Error).message, loading: false });

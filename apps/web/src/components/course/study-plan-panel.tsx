@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import ReactMarkdown from "react-markdown";
+import { MarkdownRenderer } from "@/components/course/markdown-renderer";
 import { CalendarDays, Download, Loader2, ShieldCheck, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -130,7 +130,7 @@ export function StudyPlanPanel({ courseId }: StudyPlanPanelProps) {
       <div className="flex-1 overflow-y-auto p-4">
         {planMarkdown ? (
           <div className="prose prose-sm max-w-none" data-testid="study-plan-content">
-            <ReactMarkdown>{planMarkdown}</ReactMarkdown>
+            <MarkdownRenderer content={planMarkdown} />
           </div>
         ) : (
           <div className="h-full flex items-center justify-center text-center">

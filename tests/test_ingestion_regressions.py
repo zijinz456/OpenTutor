@@ -21,6 +21,9 @@ class _FakeDB:
     async def flush(self):
         return None
 
+    async def commit(self):
+        return None
+
     async def execute(self, _stmt):
         class _Res:
             def scalar_one_or_none(self):
@@ -128,7 +131,10 @@ async def test_run_ingestion_pipeline_file_sets_source_fields():
         )
 
     nodes = [x for x in db.added if isinstance(x, CourseContentTree)]
-    assert job.status == "completed"
+    assert job.status == "embedding"
+    assert job.progress_percent == 90
+    assert job.embedding_status == "pending"
+    assert job.nodes_created == len(nodes)
     assert nodes
     assert all(n.source_type == "file" for n in nodes)
     assert all(n.source_file == "lecture01.pdf" for n in nodes)
@@ -161,7 +167,10 @@ async def test_run_ingestion_pipeline_url_sets_source_fields():
         )
 
     nodes = [x for x in db.added if isinstance(x, CourseContentTree)]
-    assert job.status == "completed"
+    assert job.status == "embedding"
+    assert job.progress_percent == 90
+    assert job.embedding_status == "pending"
+    assert job.nodes_created == len(nodes)
     assert nodes
     assert all(n.source_type == "url" for n in nodes)
     assert all(n.source_file == target_url for n in nodes)

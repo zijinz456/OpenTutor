@@ -7,6 +7,8 @@ import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
 
+from libs.exceptions import NotFoundError
+
 from models.scrape import ScrapeSource
 from routers.scrape import (
     create_scrape_source,
@@ -85,10 +87,10 @@ async def test_create_scrape_source_course_not_found_404():
         requires_auth=False,
     )
 
-    with pytest.raises(HTTPException) as e:
+    with pytest.raises(NotFoundError) as e:
         await create_scrape_source(body=body, user=_user(), db=db)
 
-    assert e.value.status_code == 404
+    assert e.value.status == 404
 
 
 @pytest.mark.asyncio
@@ -150,7 +152,7 @@ async def test_create_scrape_source_canvas_url_stays_user_configured():
 async def test_update_scrape_source_not_found_404():
     db = _FakeDB(execute_results=[_FakeResult(scalar=None)])
 
-    with pytest.raises(HTTPException) as e:
+    with pytest.raises(NotFoundError) as e:
         await update_scrape_source(
             source_id=uuid.uuid4(),
             body=ScrapeSourceUpdate(label="x"),
@@ -158,7 +160,7 @@ async def test_update_scrape_source_not_found_404():
             db=db,
         )
 
-    assert e.value.status_code == 404
+    assert e.value.status == 404
 
 
 @pytest.mark.asyncio
@@ -189,30 +191,30 @@ async def test_update_scrape_source_turn_off_auth_clears_fields():
 async def test_delete_scrape_source_not_found_404():
     db = _FakeDB(execute_results=[_FakeResult(scalar=None)])
 
-    with pytest.raises(HTTPException) as e:
+    with pytest.raises(NotFoundError) as e:
         await delete_scrape_source(source_id=uuid.uuid4(), user=_user(), db=db)
 
-    assert e.value.status_code == 404
+    assert e.value.status == 404
 
 
 @pytest.mark.asyncio
 async def test_scrape_now_not_found_404():
     db = _FakeDB(execute_results=[_FakeResult(scalar=None)])
 
-    with pytest.raises(HTTPException) as e:
+    with pytest.raises(NotFoundError) as e:
         await scrape_now(source_id=uuid.uuid4(), user=_user(), db=db)
 
-    assert e.value.status_code == 404
+    assert e.value.status == 404
 
 
 @pytest.mark.asyncio
 async def test_validate_auth_session_not_found_404():
     db = _FakeDB(execute_results=[_FakeResult(scalar=None)])
 
-    with pytest.raises(HTTPException) as e:
+    with pytest.raises(NotFoundError) as e:
         await validate_auth_session(session_name="../bad", user=_user(), db=db)
 
-    assert e.value.status_code == 404
+    assert e.value.status == 404
 
 
 def _mock_playwright_module(monkeypatch):

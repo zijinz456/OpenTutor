@@ -2,15 +2,19 @@
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from fastapi import APIRouter, Depends
+from sqlalchemy import func, literal, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
+from models.agent_task import AgentTask
 from models.course import Course
 from models.content import CourseContentTree
+from models.chat_session import ChatSession
+from models.ingestion import IngestionJob
+from models.study_goal import StudyGoal
 from models.user import User
-from schemas.course import CourseCreate, CourseResponse, ContentNodeResponse
+from schemas.course import CourseCreate, CourseOverviewCard, CourseResponse, ContentNodeResponse
 from services.auth.dependency import get_current_user
 from services.course_access import get_course_or_404
 
@@ -59,6 +63,115 @@ async def list_courses(user: User = Depends(get_current_user), db: AsyncSession 
         select(Course).where(Course.user_id == user.id).order_by(Course.created_at.desc())
     )
     return result.scalars().all()
+
+
+@router.get("/overview", response_model=list[CourseOverviewCard])
+async def list_course_overview(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    file_counts = (
+        select(
+            IngestionJob.course_id.label("course_id"),
+            func.count(IngestionJob.id).label("file_count"),
+        )
+        .group_by(IngestionJob.course_id)
+        .subquery()
+    )
+    content_counts = (
+        select(
+            CourseContentTree.course_id.label("course_id"),
+            func.count(CourseContentTree.id).label("content_node_count"),
+        )
+        .group_by(CourseContentTree.course_id)
+        .subquery()
+    )
+    goal_counts = (
+        select(
+            StudyGoal.course_id.label("course_id"),
+            func.count(StudyGoal.id).label("active_goal_count"),
+        )
+        .where(StudyGoal.status == "active")
+        .group_by(StudyGoal.course_id)
+        .subquery()
+    )
+    pending_tasks = (
+        select(
+            AgentTask.course_id.label("course_id"),
+            func.count(AgentTask.id).label("pending_task_count"),
+        )
+        .where(AgentTask.status.in_(("queued", "running", "resuming", "cancel_requested")))
+        .group_by(AgentTask.course_id)
+        .subquery()
+    )
+    pending_approvals = (
+        select(
+            AgentTask.course_id.label("course_id"),
+            func.count(AgentTask.id).label("pending_approval_count"),
+        )
+        .where(AgentTask.status.in_(("awaiting_approval", "pending_approval")))
+        .group_by(AgentTask.course_id)
+        .subquery()
+    )
+    last_activity = (
+        select(
+            AgentTask.course_id.label("course_id"),
+            func.max(AgentTask.updated_at).label("last_agent_activity_at"),
+        )
+        .group_by(AgentTask.course_id)
+        .subquery()
+    )
+    latest_scene_id = (
+        select(ChatSession.scene_id)
+        .where(ChatSession.course_id == Course.id)
+        .order_by(ChatSession.updated_at.desc(), ChatSession.created_at.desc())
+        .limit(1)
+        .scalar_subquery()
+    )
+
+    result = await db.execute(
+        select(
+            Course.id,
+            Course.name,
+            Course.description,
+            Course.created_at,
+            Course.updated_at,
+            func.coalesce(file_counts.c.file_count, literal(0)).label("file_count"),
+            func.coalesce(content_counts.c.content_node_count, literal(0)).label("content_node_count"),
+            func.coalesce(goal_counts.c.active_goal_count, literal(0)).label("active_goal_count"),
+            func.coalesce(pending_tasks.c.pending_task_count, literal(0)).label("pending_task_count"),
+            func.coalesce(pending_approvals.c.pending_approval_count, literal(0)).label("pending_approval_count"),
+            last_activity.c.last_agent_activity_at,
+            func.coalesce(latest_scene_id, Course.active_scene).label("last_scene_id"),
+        )
+        .select_from(Course)
+        .outerjoin(file_counts, file_counts.c.course_id == Course.id)
+        .outerjoin(content_counts, content_counts.c.course_id == Course.id)
+        .outerjoin(goal_counts, goal_counts.c.course_id == Course.id)
+        .outerjoin(pending_tasks, pending_tasks.c.course_id == Course.id)
+        .outerjoin(pending_approvals, pending_approvals.c.course_id == Course.id)
+        .outerjoin(last_activity, last_activity.c.course_id == Course.id)
+        .where(Course.user_id == user.id)
+        .order_by(Course.updated_at.desc(), Course.created_at.desc())
+    )
+
+    return [
+        CourseOverviewCard(
+            id=row.id,
+            name=row.name,
+            description=row.description,
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+            file_count=int(row.file_count or 0),
+            content_node_count=int(row.content_node_count or 0),
+            active_goal_count=int(row.active_goal_count or 0),
+            pending_task_count=int(row.pending_task_count or 0),
+            pending_approval_count=int(row.pending_approval_count or 0),
+            last_agent_activity_at=row.last_agent_activity_at,
+            last_scene_id=row.last_scene_id,
+        )
+        for row in result.all()
+    ]
 
 
 @router.post("/", response_model=CourseResponse, status_code=201)

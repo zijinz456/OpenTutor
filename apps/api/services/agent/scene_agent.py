@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from services.agent.base import BaseAgent
 from services.agent.state import AgentContext, TaskPhase
 from services.agent.teaching import TeachingAgent
+from services.scene.policy import resolve_scene_policy
 
 logger = logging.getLogger(__name__)
 
@@ -25,30 +26,42 @@ SCENE_INFO = {
 }
 
 
-def explain_scene_switch(message: str, current_scene: str) -> dict | None:
-    """Infer target scene and expose the matched cues for provenance."""
-    msg_lower = message.lower()
-    for scene_id, info in SCENE_INFO.items():
-        if scene_id == current_scene:
-            continue
-        matched = [kw for kw in info["keywords"] if kw in msg_lower]
-        if matched:
-            return {
-                "current_scene": current_scene,
-                "target_scene": scene_id,
-                "matched_keywords": matched[:3],
-                "reason": (
-                    f"Detected {info['display']} intent from "
-                    f"{', '.join(repr(keyword) for keyword in matched[:3])}."
-                ),
-            }
-    return None
-
-
-def infer_target_scene(message: str, current_scene: str) -> str | None:
-    """Infer the most likely target scene from the user's message."""
-    explanation = explain_scene_switch(message, current_scene)
-    return explanation["target_scene"] if explanation else None
+async def explain_scene_switch(ctx: AgentContext, db: AsyncSession) -> dict | None:
+    """Infer target scene through the shared policy engine."""
+    try:
+        decision = await resolve_scene_policy(
+            db,
+            user_id=ctx.user_id,
+            course_id=ctx.course_id,
+            message=ctx.user_message,
+            current_scene=ctx.scene,
+            active_tab=ctx.active_tab,
+        )
+    except Exception as exc:
+        logger.warning("Scene policy failed inside SceneAgent: %s", exc)
+        return None
+    ctx.metadata["scene_policy"] = {
+        "recommended_scene": decision.scene_id,
+        "confidence": round(decision.confidence, 3),
+        "scores": decision.scores,
+        "features": decision.features,
+        "reason": decision.reason,
+        "switch_recommended": decision.switch_recommended,
+    }
+    if not decision.switch_recommended:
+        return None
+    return {
+        "current_scene": ctx.scene,
+        "target_scene": decision.scene_id,
+        "reason": decision.reason,
+        "policy_confidence": round(decision.confidence, 3),
+        "score_margin": round(
+            decision.scores[decision.scene_id] - max(
+                score for scene, score in decision.scores.items() if scene != decision.scene_id
+            ),
+            3,
+        ),
+    }
 
 
 class SceneAgent(BaseAgent):
@@ -56,7 +69,7 @@ class SceneAgent(BaseAgent):
 
     name = "scene"
     profile = (
-        "You are OpenTutor's Scene Manager.\n"
+        "You are OpenTutor Zenus's Scene Manager.\n"
         "You detect when the student's learning goal changes and suggest switching modes.\n\n"
         "Available scenes:\n"
         "- 📚 study_session (日常学习): Complete explanations, explore freely\n"
@@ -78,7 +91,7 @@ class SceneAgent(BaseAgent):
         parts = [self.profile]
         parts.append(f"\nCurrent scene: {ctx.scene}")
 
-        target = infer_target_scene(ctx.user_message, ctx.scene)
+        target = (ctx.metadata.get("scene_switch") or {}).get("target_scene")
         if target and target in SCENE_INFO:
             info = SCENE_INFO[target]
             parts.append(f"\nDetected target scene: {info['icon']} {info['display']} ({target})")
@@ -94,7 +107,7 @@ class SceneAgent(BaseAgent):
     async def execute(self, ctx: AgentContext, db: AsyncSession) -> AgentContext:
         from services.llm.router import get_llm_client
 
-        scene_switch = explain_scene_switch(ctx.user_message, ctx.scene)
+        scene_switch = await explain_scene_switch(ctx, db)
         target = scene_switch["target_scene"] if scene_switch else None
         if scene_switch:
             ctx.metadata["scene_switch"] = scene_switch
@@ -113,7 +126,7 @@ class SceneAgent(BaseAgent):
         ctx.transition(TaskPhase.REASONING)
 
         # If no scene switch is needed, continue with normal teaching behavior.
-        scene_switch = explain_scene_switch(ctx.user_message, ctx.scene)
+        scene_switch = await explain_scene_switch(ctx, db)
         target = scene_switch["target_scene"] if scene_switch else None
         if scene_switch:
             ctx.metadata["scene_switch"] = scene_switch
