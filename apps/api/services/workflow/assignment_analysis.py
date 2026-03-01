@@ -98,6 +98,7 @@ async def run_assignment_analysis(
 
     return {
         "assignment_id": str(assignment.id),
+        "course_id": str(assignment.course_id),
         "title": assignment.title,
         "analysis": analysis,
         "relevant_content_count": len(relevant_docs),

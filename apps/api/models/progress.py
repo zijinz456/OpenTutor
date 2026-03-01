@@ -47,10 +47,15 @@ class LearningProgress(Base):
     gap_type: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
     # fundamental_gap | transfer_gap | trap_vulnerability | mastered
 
-    # Spaced repetition (Phase 2: FSRS)
+    # Spaced repetition — FSRS-4.5 fields
     next_review_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    ease_factor: Mapped[float] = mapped_column(Float, default=2.5)
+    ease_factor: Mapped[float] = mapped_column(Float, default=2.5)  # legacy SM-2 compat
     interval_days: Mapped[int] = mapped_column(Integer, default=0)
+    fsrs_difficulty: Mapped[float] = mapped_column(Float, default=5.0)  # 1-10
+    fsrs_stability: Mapped[float] = mapped_column(Float, default=0.0)  # days until 90% recall
+    fsrs_reps: Mapped[int] = mapped_column(Integer, default=0)
+    fsrs_lapses: Mapped[int] = mapped_column(Integer, default=0)
+    fsrs_state: Mapped[str] = mapped_column(String(20), default="new")  # new|learning|review|relearning
 
     last_studied_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

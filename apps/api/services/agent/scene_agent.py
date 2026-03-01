@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.agent.base import BaseAgent
 from services.agent.state import AgentContext, TaskPhase
+from services.agent.teaching import TeachingAgent
 
 logger = logging.getLogger(__name__)
 
@@ -24,16 +25,30 @@ SCENE_INFO = {
 }
 
 
-def infer_target_scene(message: str, current_scene: str) -> str | None:
-    """Infer the most likely target scene from the user's message."""
+def explain_scene_switch(message: str, current_scene: str) -> dict | None:
+    """Infer target scene and expose the matched cues for provenance."""
     msg_lower = message.lower()
     for scene_id, info in SCENE_INFO.items():
         if scene_id == current_scene:
             continue
-        for kw in info["keywords"]:
-            if kw in msg_lower:
-                return scene_id
+        matched = [kw for kw in info["keywords"] if kw in msg_lower]
+        if matched:
+            return {
+                "current_scene": current_scene,
+                "target_scene": scene_id,
+                "matched_keywords": matched[:3],
+                "reason": (
+                    f"Detected {info['display']} intent from "
+                    f"{', '.join(repr(keyword) for keyword in matched[:3])}."
+                ),
+            }
     return None
+
+
+def infer_target_scene(message: str, current_scene: str) -> str | None:
+    """Infer the most likely target scene from the user's message."""
+    explanation = explain_scene_switch(message, current_scene)
+    return explanation["target_scene"] if explanation else None
 
 
 class SceneAgent(BaseAgent):
@@ -79,6 +94,13 @@ class SceneAgent(BaseAgent):
     async def execute(self, ctx: AgentContext, db: AsyncSession) -> AgentContext:
         from services.llm.router import get_llm_client
 
+        scene_switch = explain_scene_switch(ctx.user_message, ctx.scene)
+        target = scene_switch["target_scene"] if scene_switch else None
+        if scene_switch:
+            ctx.metadata["scene_switch"] = scene_switch
+        if not target:
+            return await TeachingAgent().run(ctx, db)
+
         system_prompt = self.build_system_prompt(ctx)
         client = get_llm_client()
         ctx.response, _ = await client.chat(system_prompt, ctx.user_message)
@@ -90,13 +112,14 @@ class SceneAgent(BaseAgent):
         ctx.delegated_agent = self.name
         ctx.transition(TaskPhase.REASONING)
 
-        # If already in the target scene, fall through to teaching
-        target = infer_target_scene(ctx.user_message, ctx.scene)
+        # If no scene switch is needed, continue with normal teaching behavior.
+        scene_switch = explain_scene_switch(ctx.user_message, ctx.scene)
+        target = scene_switch["target_scene"] if scene_switch else None
+        if scene_switch:
+            ctx.metadata["scene_switch"] = scene_switch
         if not target:
-            # No scene switch needed — delegate to teaching agent behavior
-            ctx.transition(TaskPhase.STREAMING)
-            yield "I'll help you with that right away.\n"
-            ctx.response = "I'll help you with that right away."
+            async for chunk in TeachingAgent().stream(ctx, db):
+                yield chunk
             return
 
         system_prompt = self.build_system_prompt(ctx)

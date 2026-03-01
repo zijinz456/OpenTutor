@@ -267,24 +267,37 @@ async def consolidate_memories(
                 candidates.append((mem_a, mem_b, overlap))
 
     # Phase 2: Embedding cosine similarity confirmation (mem0 pattern, threshold 0.85)
+    # Upgraded: merge duplicates into a stronger combined memory instead of just deleting
+    merged_pairs: list[tuple] = []  # (keeper, loser, similarity)
     for mem_a, mem_b, word_overlap in candidates:
         if mem_a.id in removed or mem_b.id in removed:
             continue
-        # If both have embeddings, use semantic similarity for final confirmation
+        is_duplicate = False
         if mem_a.embedding and mem_b.embedding:
             similarity = _cosine_similarity(mem_a.embedding, mem_b.embedding)
             if similarity >= 0.85:
-                # Confirmed duplicate — keep the more important one
-                if mem_b.importance >= mem_a.importance:
-                    removed.add(mem_a.id)
-                else:
-                    removed.add(mem_b.id)
+                is_duplicate = True
         elif word_overlap >= 0.7:
-            # No embeddings available — fall back to high word overlap threshold
+            is_duplicate = True
+
+        if is_duplicate:
+            # Keep the more important one, merge info from the other
             if mem_b.importance >= mem_a.importance:
-                removed.add(mem_a.id)
+                keeper, loser = mem_b, mem_a
             else:
-                removed.add(mem_b.id)
+                keeper, loser = mem_a, mem_b
+            merged_pairs.append((keeper, loser))
+            removed.add(loser.id)
+
+    # Apply merges: boost keeper importance and accumulate access counts
+    for keeper, loser in merged_pairs:
+        keeper.importance = min(1.0, keeper.importance + loser.importance * 0.3)
+        keeper.access_count = (keeper.access_count or 0) + (loser.access_count or 0)
+        # Append merge metadata
+        meta = keeper.metadata_json or {}
+        meta["merge_count"] = meta.get("merge_count", 1) + 1
+        meta["last_merged_at"] = datetime.now(timezone.utc).isoformat()
+        keeper.metadata_json = meta
 
     for mem in memories:
         if mem.id in removed:

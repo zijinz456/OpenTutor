@@ -13,12 +13,14 @@ Provides safe execution of student code snippets with:
 """
 
 import asyncio
-import concurrent.futures
-import contextlib
-import io
 import json
 import logging
+import os
 import re
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
 from typing import AsyncIterator
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -96,55 +98,55 @@ class CodeExecutionAgent(BaseAgent):
         return True, "OK"
 
     def _execute_safe(self, code: str) -> dict:
-        """Execute code in restricted sandbox (HelloAgents CodeRunner pattern).
+        """Execute code in an isolated subprocess with resource limits."""
+        runner_path = Path(__file__).with_name("sandbox_runner.py")
+        payload = json.dumps({"code": code})
 
-        Uses restricted builtins, captured I/O streams, and enforced timeout.
-        """
-        import builtins
-
-        stdout_buf = io.StringIO()
-        stderr_buf = io.StringIO()
-
-        # Build restricted builtins
-        blocked_builtins = {"open", "exec", "eval", "__import__", "compile",
-                            "globals", "locals", "breakpoint", "exit", "quit"}
-        safe_builtins = {k: v for k, v in builtins.__dict__.items()
-                         if k not in blocked_builtins}
-
-        safe_globals: dict = {"__builtins__": safe_builtins}
-
-        # Pre-import allowed modules
-        for mod_name in self.ALLOWED_MODULES:
+        with tempfile.TemporaryDirectory(prefix="opentutor-code-") as tempdir:
+            env = {"PYTHONIOENCODING": "utf-8"}
             try:
-                safe_globals[mod_name] = __import__(mod_name)
-            except ImportError:
-                pass
+                completed = subprocess.run(
+                    [sys.executable, "-I", str(runner_path)],
+                    input=payload,
+                    text=True,
+                    capture_output=True,
+                    timeout=self.MAX_EXECUTION_TIME,
+                    cwd=tempdir,
+                    env=env,
+                    check=False,
+                )
+            except subprocess.TimeoutExpired:
+                return {
+                    "success": False,
+                    "output": "",
+                    "error": f"Execution timed out after {self.MAX_EXECUTION_TIME} seconds",
+                }
+            except Exception as e:
+                return {
+                    "success": False,
+                    "output": "",
+                    "error": f"{type(e).__name__}: {e}",
+                }
 
-        def _run():
-            with contextlib.redirect_stdout(stdout_buf), contextlib.redirect_stderr(stderr_buf):
-                exec(code, safe_globals)  # noqa: S102 — sandboxed exec
-
+        raw = (completed.stdout or "").strip()
         try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(_run)
-                future.result(timeout=self.MAX_EXECUTION_TIME)
-            return {
-                "success": True,
-                "output": stdout_buf.getvalue()[:2000],
-                "error": stderr_buf.getvalue()[:500],
-            }
-        except concurrent.futures.TimeoutError:
-            return {
+            parsed = json.loads(raw) if raw else {}
+        except json.JSONDecodeError:
+            parsed = {
                 "success": False,
-                "output": stdout_buf.getvalue()[:2000],
-                "error": f"Execution timed out after {self.MAX_EXECUTION_TIME} seconds",
+                "output": (completed.stdout or "")[:2000],
+                "error": (completed.stderr or "Sandbox returned invalid JSON")[:500],
             }
-        except Exception as e:
-            return {
-                "success": False,
-                "output": stdout_buf.getvalue()[:2000],
-                "error": f"{type(e).__name__}: {e}",
-            }
+
+        if completed.returncode != 0 and parsed.get("success", False):
+            parsed["success"] = False
+            parsed["error"] = (completed.stderr or "Sandbox process failed")[:500]
+
+        return {
+            "success": bool(parsed.get("success")),
+            "output": str(parsed.get("output", ""))[:2000],
+            "error": str(parsed.get("error", ""))[:500],
+        }
 
     async def execute(self, ctx: AgentContext, db: AsyncSession) -> AgentContext:
         """Extract code, validate, execute, then generate explanation."""

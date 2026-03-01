@@ -5,12 +5,12 @@ import uuid
 
 logger = logging.getLogger(__name__)
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database import get_db
+from database import async_session, get_db
 from models.content import CourseContentTree
 from models.practice import PracticeProblem, PracticeResult
 from models.user import User
@@ -220,8 +220,121 @@ async def list_problems(course_id: uuid.UUID, user: User = Depends(get_current_u
     return result.scalars().all()
 
 
+async def _auto_derive_diagnostic(wrong_answer_id: uuid.UUID, user_id: uuid.UUID) -> None:
+    """Background task: auto-generate a diagnostic pair for a wrong answer."""
+    try:
+        async with async_session() as db:
+            from models.ingestion import WrongAnswer
+            from models.practice import PracticeProblem as PP
+            result = await db.execute(
+                select(WrongAnswer, PP)
+                .join(PP, WrongAnswer.problem_id == PP.id)
+                .where(WrongAnswer.id == wrong_answer_id, WrongAnswer.user_id == user_id)
+            )
+            row = result.one_or_none()
+            if not row:
+                return
+            wa, problem = row
+            # Skip if diagnostic pair already exists
+            existing = await db.execute(
+                select(PP.id).where(PP.parent_problem_id == problem.id, PP.is_diagnostic == True)
+            )
+            if existing.scalar_one_or_none():
+                return
+            # Only auto-derive for non-diagnostic problems with difficulty_layer >= 2
+            if problem.is_diagnostic or (problem.difficulty_layer and problem.difficulty_layer < 2):
+                return
+            # Use the derive logic inline (lighter than calling the endpoint)
+            from services.llm.router import get_llm_client
+            from services.practice.annotation import build_practice_problem
+            import json
+
+            client = get_llm_client()
+            metadata_str = ""
+            if problem.problem_metadata:
+                meta = problem.problem_metadata
+                parts = []
+                if meta.get("core_concept"):
+                    parts.append(f"Core concept: {meta['core_concept']}")
+                if meta.get("potential_traps"):
+                    parts.append(f"Known traps to remove: {', '.join(meta['potential_traps'])}")
+                if parts:
+                    metadata_str = "\nQuestion metadata:\n" + "\n".join(parts)
+
+            prompt = f"""You are a diagnostic question designer. A student got this question wrong.
+Generate a SIMPLIFIED "clean" diagnostic version that:
+1. Tests the EXACT SAME core concept
+2. Removes all distractors, traps, and misleading wording
+3. Uses simpler numbers/context
+4. If multi-step, only keep the key step
+
+Original question: {problem.question}
+Question type: {problem.question_type}
+Correct answer: {wa.correct_answer}
+Student's wrong answer: {wa.user_answer}
+Error category: {wa.error_category or 'unknown'}
+{metadata_str}
+
+Return JSON only:
+{{"question": "...", "options": {{"A": "...", "B": "...", "C": "...", "D": "..."}} or null, "correct_answer": "...", "explanation": "...", "simplifications_made": ["list of simplifications"], "core_concept_preserved": "concept name"}}"""
+
+            response, _ = await client.chat(
+                "You design diagnostic questions. Output valid JSON only.", prompt,
+            )
+            try:
+                derived = json.loads(response)
+            except json.JSONDecodeError:
+                derived = {"question": response[:500]}
+
+            if not derived.get("question"):
+                return
+
+            new_problem = build_practice_problem(
+                course_id=problem.course_id,
+                content_node_id=problem.content_node_id,
+                title=(problem.problem_metadata or {}).get("core_concept", problem.question[:80]),
+                question={
+                    "question_type": problem.question_type,
+                    "question": derived.get("question", ""),
+                    "options": derived.get("options"),
+                    "correct_answer": derived.get("correct_answer") or wa.correct_answer,
+                    "explanation": derived.get("explanation", "Simplified diagnostic check."),
+                    "difficulty_layer": 1,
+                    "problem_metadata": {
+                        "core_concept": derived.get("core_concept_preserved", ""),
+                        "bloom_level": "understand",
+                        "potential_traps": [],
+                        "layer_justification": "Auto-generated diagnostic pair.",
+                    },
+                },
+                order_index=problem.order_index,
+                knowledge_points=wa.knowledge_points or problem.knowledge_points,
+                source="derived",
+                parent_problem_id=problem.id,
+                is_diagnostic=True,
+                difficulty_layer_default=1,
+                extra_metadata={
+                    "simplifications_made": derived.get("simplifications_made", []),
+                    "core_concept_preserved": derived.get("core_concept_preserved", ""),
+                    "original_problem_id": str(problem.id),
+                    "wrong_answer_id": str(wa.id),
+                    "auto_generated": True,
+                },
+            )
+            db.add(new_problem)
+            await db.commit()
+            logger.info("Auto-generated diagnostic pair for wrong answer %s", wrong_answer_id)
+    except Exception as e:
+        logger.warning("Auto-derive diagnostic failed (best-effort): %s", e)
+
+
 @router.post("/submit", response_model=AnswerResponse)
-async def submit_answer(body: SubmitAnswerRequest, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def submit_answer(
+    body: SubmitAnswerRequest,
+    background_tasks: BackgroundTasks,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     """Submit an answer to a practice problem."""
     result = await db.execute(
         select(PracticeProblem).where(PracticeProblem.id == body.problem_id)
@@ -265,6 +378,7 @@ async def submit_answer(body: SubmitAnswerRequest, user: User = Depends(get_curr
     db.add(pr)
 
     # v3: Auto-archive wrong answers for review system
+    wa = None
     if not is_correct:
         from models.ingestion import WrongAnswer
         wa = WrongAnswer(
@@ -280,7 +394,7 @@ async def submit_answer(body: SubmitAnswerRequest, user: User = Depends(get_curr
         )
         db.add(wa)
 
-    # v4: Update progress with weighted decay mastery
+    # v4: Update progress with weighted decay mastery + FSRS
     try:
         from services.progress.tracker import update_quiz_result
         await update_quiz_result(
@@ -292,6 +406,10 @@ async def submit_answer(body: SubmitAnswerRequest, user: User = Depends(get_curr
         logger.warning("Progress update failed (best-effort): %s", e)
 
     await db.commit()
+
+    # Auto-derive diagnostic pair in background for wrong answers
+    if not is_correct and wa:
+        background_tasks.add_task(_auto_derive_diagnostic, wa.id, user.id)
 
     return AnswerResponse(
         is_correct=is_correct,

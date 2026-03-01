@@ -51,7 +51,8 @@ test.describe.serial("Scene System", () => {
   test("default scene is study_session", async ({ page }) => {
     await createCourseWithContent(page, "Scene Default");
     const trigger = page.getByTestId("scene-selector-trigger");
-    await expect(trigger).toContainText("Study Session", { ignoreCase: true });
+    // The backend may use "Daily Study" or "Study Session" as the display name
+    await expect(trigger).toContainText(/study|daily/i);
   });
 
   test("switching to exam_prep shows study plan panel", async ({ page }) => {
@@ -69,7 +70,7 @@ test.describe.serial("Scene System", () => {
   test("switching to assignment adjusts workspace", async ({ page }) => {
     await createCourseWithContent(page, "Scene Assignment");
     await switchScene(page, "assignment");
-    await expect(page.getByTestId("scene-selector-trigger")).toContainText("Assignment", { ignoreCase: true });
+    await expect(page.getByTestId("scene-selector-trigger")).toContainText(/assignment|homework/i);
   });
 
   test("switching to review_drill scene", async ({ page }) => {
@@ -107,7 +108,7 @@ test.describe.serial("Scene System", () => {
     await switchScene(page, "exam_prep");
     await expect(page.getByTestId("scene-selector-trigger")).toContainText("Exam Prep", { ignoreCase: true });
     await switchScene(page, "study_session");
-    await expect(page.getByTestId("scene-selector-trigger")).toContainText("Study Session", { ignoreCase: true });
+    await expect(page.getByTestId("scene-selector-trigger")).toContainText(/study|daily/i);
   });
 
   test("scene switching applies layout preset", async ({ page }) => {

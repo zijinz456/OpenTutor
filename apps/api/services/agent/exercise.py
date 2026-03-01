@@ -72,6 +72,11 @@ class ExerciseAgent(BaseAgent):
 
         parts = [base]
         parts.append(_LAYER_INSTRUCTION)
+
+        # Inject adaptive difficulty guidance if available
+        if hasattr(ctx, "difficulty_guidance") and ctx.difficulty_guidance:
+            parts.append(ctx.difficulty_guidance)
+
         parts.append(
             "\nIf the user asks for a practice set that could be saved or reused, "
             "output a valid JSON array following the shared schema exactly. "

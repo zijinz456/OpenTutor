@@ -17,9 +17,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
-# Truncation limit for tool results (OpenAkita uses 16000; we use 8000
-# to leave more room for educational context in the prompt)
-MAX_TOOL_RESULT_CHARS = 8000
+# Truncation limit for tool results (OpenAkita uses 16000; we use 6000
+# to balance information completeness with context budget)
+MAX_TOOL_RESULT_CHARS = 6000
 
 
 # ── Data Classes ──

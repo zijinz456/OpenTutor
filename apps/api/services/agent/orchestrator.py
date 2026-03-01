@@ -95,6 +95,7 @@ def build_agent_context(
     active_tab: str = "",
     tab_context: dict | None = None,
     scene: str | None = None,
+    images: list[dict] | None = None,
 ) -> AgentContext:
     """Create a normalized AgentContext for chat or workflow entry points."""
     ctx = AgentContext(
@@ -106,6 +107,7 @@ def build_agent_context(
         conversation_history=(history or [])[-10:],
         active_tab=active_tab,
         tab_context=tab_context or {},
+        images=images or [],
     )
     if scene:
         ctx.scene = scene
@@ -153,23 +155,171 @@ def _trim_context(ctx: AgentContext) -> AgentContext:
     return ctx
 
 
+def _has_pending_markers(buffer: str) -> bool:
+    return any(marker in buffer for marker in ("[ACTION:", "[TOOL_START:", "[TOOL_DONE:"))
+
+
+def _parse_action_marker(marker: str) -> dict:
+    parts = marker.split(":")
+    action_data = {"action": parts[0]}
+    if len(parts) >= 2:
+        action_data["value"] = parts[1]
+    if len(parts) >= 3:
+        action_data["extra"] = parts[2]
+    return action_data
+
+
+def _strip_incomplete_markers(buffer: str) -> str:
+    return re.sub(r"\[(TOOL_START|TOOL_DONE|ACTION):[^\]]*$", "", buffer)
+
+
+async def _consume_agent_stream(ctx: AgentContext, agent: BaseAgent, db: AsyncSession) -> AgentContext:
+    """Run any agent through its streaming interface and normalize marker output.
+
+    This keeps workflow/non-SSE paths aligned with chat by exercising the same
+    tool-capable runtime and stripping UI markers from the persisted response.
+    """
+    buffer = ""
+    content_parts: list[str] = []
+
+    async for chunk in agent.stream(ctx, db):
+        buffer += chunk
+        changed = True
+        while changed:
+            changed = False
+
+            if "[TOOL_START:" in buffer:
+                start = buffer.index("[TOOL_START:")
+                end = buffer.find("]", start)
+                if end != -1:
+                    before = buffer[:start]
+                    if before:
+                        content_parts.append(before)
+                    buffer = buffer[end + 1:]
+                    changed = True
+                    continue
+
+            if "[TOOL_DONE:" in buffer:
+                start = buffer.index("[TOOL_DONE:")
+                end = buffer.find("]", start)
+                if end != -1:
+                    before = buffer[:start]
+                    if before:
+                        content_parts.append(before)
+                    buffer = buffer[end + 1:]
+                    changed = True
+                    continue
+
+            if "[ACTION:" in buffer:
+                start = buffer.index("[ACTION:")
+                end = buffer.find("]", start)
+                if end != -1:
+                    before = buffer[:start]
+                    if before:
+                        content_parts.append(before)
+                    marker = buffer[start + 8:end]
+                    ctx.actions.append(_parse_action_marker(marker))
+                    buffer = buffer[end + 1:]
+                    changed = True
+                    continue
+
+        if buffer and not _has_pending_markers(buffer):
+            content_parts.append(buffer)
+            buffer = ""
+        elif _has_pending_markers(buffer) and len(buffer) > 500:
+            logger.warning("Flushing oversized marker buffer (%d chars)", len(buffer))
+            content_parts.append(buffer)
+            buffer = ""
+
+    if buffer:
+        cleaned = _strip_incomplete_markers(buffer)
+        if cleaned:
+            content_parts.append(cleaned)
+
+    cleaned_response = "".join(content_parts).strip()
+    if cleaned_response:
+        ctx.response = cleaned_response
+    return ctx
+
+
+def _finalize_token_usage(ctx: AgentContext, agent: BaseAgent) -> None:
+    """Normalize token accounting for direct-stream and ReAct paths."""
+    try:
+        client = agent.get_llm_client()
+        should_add_last_usage = (
+            ctx.react_iterations == 0
+            or not hasattr(client, "chat_with_tools")
+        )
+        usage = client.get_last_usage()
+        if usage and should_add_last_usage:
+            ctx.input_tokens += usage.get("input_tokens", 0)
+            ctx.output_tokens += usage.get("output_tokens", 0)
+        ctx.total_tokens = ctx.input_tokens + ctx.output_tokens
+    except Exception as e:
+        logger.debug("Token tracking unavailable: %s", e)
+
+
+def _build_provenance(ctx: AgentContext) -> dict:
+    """Create a compact provenance summary for UI and persistence."""
+    return {
+        "scene": ctx.scene,
+        "scene_resolution": ctx.metadata.get("scene_resolution"),
+        "scene_switch": ctx.metadata.get("scene_switch"),
+        "preferences_applied": sorted(ctx.preferences.keys()),
+        "preference_sources": ctx.preference_sources,
+        "preference_details": [
+            {
+                "dimension": key,
+                "value": value,
+                "source": ctx.preference_sources.get(key, "unknown"),
+            }
+            for key, value in sorted(ctx.preferences.items())
+        ],
+        "content_count": len(ctx.content_docs),
+        "content_titles": [doc.get("title", "") for doc in ctx.content_docs[:3] if doc.get("title")],
+        "content_refs": [
+            {
+                "title": doc.get("title"),
+                "source_type": doc.get("source_type"),
+                "preview": (doc.get("content") or "")[:140],
+            }
+            for doc in ctx.content_docs[:3]
+            if doc.get("title") or doc.get("content")
+        ],
+        "memory_count": len(ctx.memories),
+        "tool_count": len(ctx.tool_calls),
+        "tool_names": [call.get("tool") for call in ctx.tool_calls[:5] if call.get("tool")],
+        "action_count": len(ctx.actions),
+    }
+
+
 # ── Context Loading ──
 
 async def load_context(ctx: AgentContext, db: AsyncSession) -> AgentContext:
-    """Load preferences, memories, and RAG content safely on a shared session.
+    """Load preferences, memories, and RAG content.
 
-    AsyncSession does not permit overlapping DB work on the same connection, so
-    these lookups run sequentially here. This keeps the streaming path stable.
+    These run sequentially because AsyncSession does not permit overlapping DB
+    work on the same connection.  Each step is wrapped in its own try/except so
+    a failure in one does not block the others.
     """
     ctx.transition(TaskPhase.LOADING_CONTEXT)
 
     from services.preference.engine import resolve_preferences
-    from services.preference.scene import detect_scene
+    from services.preference.scene import explain_scene_detection
     from services.memory.pipeline import retrieve_memories
 
     # Detect scene for preference cascade (only if not explicitly set by caller)
     if ctx.scene == "study_session":
-        ctx.scene = detect_scene(ctx.user_message)
+        scene_resolution = explain_scene_detection(ctx.user_message)
+        ctx.scene = scene_resolution["scene"]
+        ctx.metadata["scene_resolution"] = scene_resolution
+    else:
+        ctx.metadata["scene_resolution"] = {
+            "scene": ctx.scene,
+            "mode": "explicit",
+            "matched_text": None,
+            "reason": "Scene provided by the caller or course context.",
+        }
 
     # Use rag-fusion for complex queries, regular hybrid for simple ones
     async def search_content():
@@ -205,6 +355,18 @@ async def load_context(ctx: AgentContext, db: AsyncSession) -> AgentContext:
 
     # Apply context window budget trimming (OpenClaw compaction)
     ctx = _trim_context(ctx)
+
+    # Adaptive difficulty guidance for QUIZ intent
+    if ctx.intent == IntentType.QUIZ:
+        try:
+            from services.learning_science.difficulty_selector import (
+                get_recommendation_for_node,
+                format_for_prompt,
+            )
+            rec = await get_recommendation_for_node(db, ctx.user_id, ctx.course_id)
+            ctx.difficulty_guidance = format_for_prompt(rec)
+        except Exception as exc:
+            logger.warning("Difficulty recommendation failed: %s", exc)
 
     return ctx
 
@@ -271,7 +433,8 @@ async def run_agent_turn(
         scene=scene,
     )
     ctx, agent = await prepare_agent_turn(ctx, db)
-    ctx = await agent.run(ctx, db)
+    ctx = await _consume_agent_stream(ctx, agent, db)
+    _finalize_token_usage(ctx, agent)
     ctx = await apply_reflection(ctx)
     if ctx.response and post_process_inline:
         await post_process(ctx, db_factory)
@@ -349,12 +512,18 @@ async def post_process(ctx: AgentContext, db_factory) -> None:
                 if extracted.get("entities") or extracted.get("relationships"):
                     await store_graph_entities(db, ctx.user_id, ctx.course_id, extracted)
 
+            # 4. Auto-consolidation (every N messages)
+            async def auto_consolidate():
+                from services.agent.memory_agent import maybe_auto_consolidate
+                await maybe_auto_consolidate(db, ctx.user_id, ctx.course_id)
+
             # Execute sequentially — AsyncSession is NOT safe for concurrent use.
             # _retry_async handles per-task error isolation (returns None on failure).
             for coro_fn, name, retries in [
                 (extract_signal, "signal_extraction", 2),
                 (encode_mem, "memory_encoding", 2),
                 (extract_graph, "graph_extraction", 1),
+                (auto_consolidate, "auto_consolidation", 1),
             ]:
                 await _retry_async(coro_fn, name, max_retries=retries)
 
@@ -387,17 +556,29 @@ def _detect_fatigue(message: str) -> float:
     """Detect student frustration/fatigue level (0.0-1.0).
 
     OpenAkita persona dimension pattern: check signals across multiple categories.
+    Positive signals reduce the score to prevent false positives.
     """
     FATIGUE_SIGNALS = [
-        r"(不想学|不会|太难|放弃|烦|累|confused|tired|give up|too hard|frustrated)",
-        r"(看不懂|学不会|怎么还是错|again wrong|still don't get)",
-        r"^(算了|哎|唉|sigh|ugh|whatever)$",
+        (r"(不想学|不会了|太难了|放弃|好烦|好累|学不动)", 0.35),
+        (r"(confused|tired|give up|too hard|frustrated|hate this|can't do)", 0.35),
+        (r"(看不懂|学不会|怎么还是错|又错了|做不出来)", 0.3),
+        (r"(again wrong|still don't get|keep getting wrong|makes no sense)", 0.3),
+        (r"(算了吧|哎|唉|sigh|ugh|whatever|nvm|forget it)", 0.25),
+        (r"[😫😤😩😭💀🤯😡]{1}", 0.2),
+    ]
+    POSITIVE_SIGNALS = [
+        (r"(我懂了|明白了|原来如此|学会了|掌握了|搞定了)", -0.3),
+        (r"(i see|got it|makes sense|understand now|figured it out)", -0.3),
+        (r"(谢谢|不错|挺好|thank|great|nice|cool)", -0.15),
     ]
     score = 0.0
-    for pattern in FATIGUE_SIGNALS:
+    for pattern, weight in FATIGUE_SIGNALS:
         if re.search(pattern, message, re.IGNORECASE):
-            score += 0.3
-    return min(score, 1.0)
+            score += weight
+    for pattern, weight in POSITIVE_SIGNALS:
+        if re.search(pattern, message, re.IGNORECASE):
+            score += weight
+    return max(0.0, min(score, 1.0))
 
 
 # ── Main Orchestration ──
@@ -414,6 +595,7 @@ async def orchestrate_stream(
     active_tab: str = "",
     tab_context: dict | None = None,
     scene: str | None = None,
+    images: list[dict] | None = None,
 ) -> AsyncIterator[dict]:
     """Main orchestration entry point for streaming responses.
 
@@ -439,6 +621,7 @@ async def orchestrate_stream(
         active_tab=active_tab,
         tab_context=tab_context,
         scene=scene,
+        images=images,
     )
 
     # Emit agent status
@@ -456,8 +639,36 @@ async def orchestrate_stream(
         }),
     }
 
-    # 3. Load context in parallel
+    # 3. Load context (sequential — AsyncSession constraint)
     ctx = await load_context(ctx, db)
+
+    # Detect complex multi-step requests and submit as background task
+    from services.agent.task_planner import is_complex_request
+    if is_complex_request(ctx.user_message) and ctx.intent in (IntentType.PLAN, IntentType.LEARN, IntentType.REVIEW):
+        try:
+            from services.agent.task_planner import create_plan
+            from services.activity.engine import submit_task
+
+            plan_steps = await create_plan(ctx.user_message, ctx.user_id, ctx.course_id)
+            task = await submit_task(
+                user_id=ctx.user_id,
+                task_type="multi_step",
+                title=f"Multi-step plan: {ctx.user_message[:100]}",
+                course_id=ctx.course_id,
+                source="chat",
+                input_json={"steps": plan_steps, "course_id": str(ctx.course_id)},
+            )
+            yield {
+                "event": "plan_step",
+                "data": json.dumps({
+                    "task_id": str(task.id),
+                    "steps": [{"title": s["title"], "status": "pending"} for s in plan_steps],
+                    "message": "I've created a multi-step plan for your request. It's running in the background.",
+                }),
+            }
+            ctx.metadata["multi_step_task_id"] = str(task.id)
+        except Exception as e:
+            logger.warning("Multi-step planning failed, falling back to single turn: %s", e)
 
     fatigue = _detect_fatigue(ctx.user_message)
     if fatigue > 0.6 and "motivation" in AGENT_REGISTRY:
@@ -529,12 +740,8 @@ async def orchestrate_stream(
                     if before:
                         yield {"event": "message", "data": json.dumps({"content": before})}
                     marker = buffer[start + 8:end]
-                    parts = marker.split(":")
-                    action_data = {"action": parts[0]}
-                    if len(parts) >= 2:
-                        action_data["value"] = parts[1]
-                    if len(parts) >= 3:
-                        action_data["extra"] = parts[2]
+                    action_data = _parse_action_marker(marker)
+                    ctx.actions.append(action_data)
                     yield {"event": "action", "data": json.dumps(action_data)}
                     buffer = buffer[end + 1:]
                     changed = True
@@ -559,17 +766,7 @@ async def orchestrate_stream(
         if buffer:
             yield {"event": "message", "data": json.dumps({"content": buffer})}
 
-    # Token tracking: add usage from the last LLM call to any tokens already
-    # accumulated by the ReAct loop (which tracks intermediate chat_with_tools calls)
-    try:
-        client = agent.get_llm_client()
-        usage = client.get_last_usage()
-        if usage:
-            ctx.input_tokens += usage.get("input_tokens", 0)
-            ctx.output_tokens += usage.get("output_tokens", 0)
-            ctx.total_tokens = ctx.input_tokens + ctx.output_tokens
-    except Exception as e:
-        logger.debug("Token tracking unavailable: %s", e)
+    _finalize_token_usage(ctx, agent)
 
     should_reflect = (
         bool(ctx.response)
@@ -591,6 +788,8 @@ async def orchestrate_stream(
             "intent": ctx.intent.value,
             "session_id": str(ctx.session_id),
             "tokens": ctx.total_tokens,
+            "actions": ctx.actions,
+            "provenance": _build_provenance(ctx),
             "reflection": ctx.metadata.get("reflection"),
         }),
     }

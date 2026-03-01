@@ -2,10 +2,16 @@
 
 import { useCallback, useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
-import { CalendarDays, Download, Loader2, Sparkles } from "lucide-react";
+import { CalendarDays, Download, Loader2, ShieldCheck, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { getExamPrepPlan, listStudyPlanBatches, saveStudyPlan, type GeneratedAssetBatchSummary } from "@/lib/api";
+import {
+  getExamPrepPlan,
+  listStudyPlanBatches,
+  saveStudyPlan,
+  submitAgentTask,
+  type GeneratedAssetBatchSummary,
+} from "@/lib/api";
 import { toast } from "sonner";
 
 interface StudyPlanPanelProps {
@@ -17,6 +23,7 @@ export function StudyPlanPanel({ courseId }: StudyPlanPanelProps) {
   const [planMarkdown, setPlanMarkdown] = useState("");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [queueing, setQueueing] = useState(false);
   const [batches, setBatches] = useState<GeneratedAssetBatchSummary[]>([]);
 
   const loadBatches = useCallback(async () => {
@@ -59,6 +66,28 @@ export function StudyPlanPanel({ courseId }: StudyPlanPanelProps) {
     }
   };
 
+  const handleQueue = async () => {
+    setQueueing(true);
+    try {
+      const days = Math.max(1, Number.parseInt(daysUntilExam || "7", 10) || 7);
+      await submitAgentTask({
+        task_type: "exam_prep",
+        title: "Queued exam prep plan",
+        course_id: courseId,
+        summary: `Generate a ${days}-day exam prep plan in the background.`,
+        input_json: { course_id: courseId, days_until_exam: days },
+        source: "study_plan_panel",
+        requires_approval: true,
+        max_attempts: 2,
+      });
+      toast.success("Queued exam prep task for approval in Activity");
+    } catch (error) {
+      toast.error((error as Error).message || "Failed to queue exam prep task");
+    } finally {
+      setQueueing(false);
+    }
+  };
+
   const latestBatch = batches.find((batch) => batch.is_active) ?? null;
 
   return (
@@ -87,6 +116,10 @@ export function StudyPlanPanel({ courseId }: StudyPlanPanelProps) {
             inputMode="numeric"
             placeholder="days"
           />
+          <Button size="sm" variant="outline" onClick={handleQueue} disabled={queueing || loading}>
+            {queueing ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <ShieldCheck className="h-4 w-4 mr-1" />}
+            Queue
+          </Button>
           <Button data-testid="study-plan-generate" size="sm" onClick={handleGenerate} disabled={loading}>
             {loading ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Sparkles className="h-4 w-4 mr-1" />}
             Generate

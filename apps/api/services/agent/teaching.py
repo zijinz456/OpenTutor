@@ -44,5 +44,5 @@ class TeachingAgent(ReActMixin, BaseAgent):
         """Generate teaching response using RAG context."""
         system_prompt = self.build_system_prompt(ctx)
         client = self.get_llm_client()
-        ctx.response, _ = await client.chat(system_prompt, ctx.user_message)
+        ctx.response, _ = await client.chat(system_prompt, ctx.user_message, images=ctx.images or None)
         return ctx

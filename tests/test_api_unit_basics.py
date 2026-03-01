@@ -2,6 +2,7 @@ import asyncio
 import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
+from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
@@ -11,6 +12,7 @@ from routers.preferences import _normalize_preference_value
 from routers.upload import _validate_url
 from routers.wrong_answers import derive_question, diagnose_from_pair
 from routers.workflows import _raise_if_service_error
+from services.llm.local_config import get_llm_runtime_config, update_llm_runtime_config
 from services.llm import router as llm_router
 from services.preference.scene import DEFAULT_SCENE, detect_scene
 
@@ -52,6 +54,70 @@ def test_llm_router_falls_back_to_mock_without_keys(monkeypatch):
     assert "No LLM API key configured" in response
     assert usage["input_tokens"] > 0
     assert usage["output_tokens"] > 0
+
+
+def test_llm_router_raises_when_llm_required_without_provider(monkeypatch):
+    monkeypatch.setattr(llm_router.settings, "openai_api_key", "", raising=False)
+    monkeypatch.setattr(llm_router.settings, "anthropic_api_key", "", raising=False)
+    monkeypatch.setattr(llm_router.settings, "deepseek_api_key", "", raising=False)
+    monkeypatch.setattr(llm_router.settings, "openrouter_api_key", "", raising=False)
+    monkeypatch.setattr(llm_router.settings, "gemini_api_key", "", raising=False)
+    monkeypatch.setattr(llm_router.settings, "groq_api_key", "", raising=False)
+    monkeypatch.setattr(llm_router.settings, "llm_required", True, raising=False)
+    monkeypatch.setattr(llm_router, "_registry", None, raising=False)
+
+    with pytest.raises(llm_router.LLMConfigurationError):
+        llm_router.get_llm_client()
+
+    monkeypatch.setattr(llm_router.settings, "llm_required", False, raising=False)
+
+
+def test_update_llm_runtime_config_persists_and_masks(monkeypatch, tmp_path):
+    env_path = tmp_path / ".env"
+    monkeypatch.setattr("services.llm.local_config._env_path", lambda: env_path)
+    monkeypatch.setattr(llm_router, "_registry", "sentinel", raising=False)
+
+    config = update_llm_runtime_config(
+        {
+            "provider": "openai",
+            "model": "gpt-4o-mini",
+            "llm_required": True,
+            "provider_keys": {"openai": "sk-test-12345678"},
+        }
+    )
+
+    assert config["provider"] == "openai"
+    assert config["llm_required"] is True
+    openai_status = next(item for item in config["providers"] if item["provider"] == "openai")
+    assert openai_status["has_key"] is True
+    assert openai_status["masked_key"] == "sk-t...5678"
+    assert "OPENAI_API_KEY=sk-test-12345678" in env_path.read_text()
+    assert llm_router._registry is None
+
+
+def test_get_llm_runtime_config_reads_existing_env(monkeypatch, tmp_path):
+    env_path = tmp_path / ".env"
+    env_path.write_text("ANTHROPIC_API_KEY=anthropic-secret-1234\n", encoding="utf-8")
+    monkeypatch.setattr("services.llm.local_config._env_path", lambda: env_path)
+
+    config = get_llm_runtime_config()
+
+    anthropic_status = next(item for item in config["providers"] if item["provider"] == "anthropic")
+    assert anthropic_status["has_key"] is True
+    assert anthropic_status["masked_key"] == "anth...1234"
+
+
+def test_update_llm_runtime_config_can_delete_saved_key(monkeypatch, tmp_path):
+    env_path = tmp_path / ".env"
+    env_path.write_text("OPENAI_API_KEY=sk-delete-me-9876\n", encoding="utf-8")
+    monkeypatch.setattr("services.llm.local_config._env_path", lambda: env_path)
+    monkeypatch.setattr(llm_router.settings, "openai_api_key", "sk-delete-me-9876", raising=False)
+
+    config = update_llm_runtime_config({"provider_keys": {"openai": ""}})
+
+    openai_status = next(item for item in config["providers"] if item["provider"] == "openai")
+    assert openai_status["has_key"] is False
+    assert "OPENAI_API_KEY" not in env_path.read_text()
 
 
 def test_build_session_title_trims_and_compacts_whitespace():

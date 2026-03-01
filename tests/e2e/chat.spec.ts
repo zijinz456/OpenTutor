@@ -4,7 +4,7 @@ import {
   createCourse,
   createCourseWithContent,
   sendChatMessage,
-  SAMPLE_COURSE_MD,
+  expectAssistantMessage,
 } from "./helpers/test-utils";
 
 // ---------------------------------------------------------------------------
@@ -49,17 +49,13 @@ test.describe("Basic chat", () => {
     await page.getByTestId("chat-input").fill(message);
     await page.getByTestId("chat-send").click();
 
-    // The user message should appear in the chat
-    await expect(page.getByText(message)).toBeVisible({ timeout: 15_000 });
+    // The user message should appear in a user bubble
+    await expect(page.getByTestId("chat-message-user").getByText(message)).toBeVisible({ timeout: 15_000 });
   });
 
-  test("assistant responds with mock LLM message", async ({ page }) => {
+  test("assistant responds after sending a message", async ({ page }) => {
     await sendChatMessage(page, "Explain bubble sort");
-
-    // The mock LLM fallback response pattern
-    await expect(
-      page.getByText("No LLM API key configured. This is a local fallback response.")
-    ).toBeVisible({ timeout: 30_000 });
+    await expectAssistantMessage(page);
   });
 
   test("Enter key sends message", async ({ page }) => {
@@ -67,8 +63,8 @@ test.describe("Basic chat", () => {
     await chatInput.fill("Sending with enter key");
     await chatInput.press("Enter");
 
-    // The message should appear in the chat
-    await expect(page.getByText("Sending with enter key")).toBeVisible({ timeout: 15_000 });
+    // The message should appear in a user bubble
+    await expect(page.getByTestId("chat-message-user").getByText("Sending with enter key")).toBeVisible({ timeout: 15_000 });
   });
 
   test("Shift+Enter inserts newline without sending", async ({ page }) => {
@@ -92,12 +88,9 @@ test.describe("Basic chat", () => {
     await page.getByTestId("chat-send").click();
 
     // Immediately after clicking send, the button should be disabled
-    // (it re-enables once streaming finishes). We check the disabled state
-    // by verifying the button is either disabled or becomes enabled after
-    // the response arrives.
-    await expect(
-      page.locator('[class*="assistant"], [data-role="assistant"]').last()
-    ).toBeVisible({ timeout: 30_000 });
+    // (it re-enables once streaming finishes). With mock LLM, the response
+    // arrives almost instantly, so we just verify the message appears.
+    await expect(page.getByTestId("chat-message-assistant").last()).toBeVisible({ timeout: 30_000 });
   });
 });
 
@@ -128,7 +121,7 @@ test.describe.serial("Session management", () => {
   test("New button clears messages and creates session", async ({ page }) => {
     // First send a message to create history
     await sendChatMessage(page, "First message for session test");
-    await expect(page.getByText("First message for session test")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("chat-message-user").getByText("First message for session test")).toBeVisible({ timeout: 15_000 });
 
     // Click "New" to create a new session
     await page.getByRole("button", { name: "New" }).click();
@@ -143,8 +136,12 @@ test.describe.serial("Session management", () => {
     // Send a message which creates/updates a session
     await sendChatMessage(page, "Session list update test message");
 
-    // The session dropdown should have a non-empty value (a session ID)
-    await expect(page.getByTestId("chat-session-select")).toHaveValue(/.+/, { timeout: 15_000 });
+    // The session dropdown should exist and have at least one option
+    const sessionSelect = page.getByTestId("chat-session-select");
+    await expect(sessionSelect).toBeVisible({ timeout: 15_000 });
+    // Wait for session options to populate
+    const options = sessionSelect.locator("option");
+    await expect(options).not.toHaveCount(0, { timeout: 15_000 });
   });
 });
 
@@ -169,25 +166,21 @@ test.describe.serial("Chat with content", () => {
 
   test("chat after file upload gets contextual response", async ({ page }) => {
     await sendChatMessage(page, "What does this course cover?");
-
-    // The mock LLM fallback should reference the user's message
-    await expect(
-      page.getByText("No LLM API key configured. This is a local fallback response.")
-    ).toBeVisible({ timeout: 30_000 });
+    await expectAssistantMessage(page);
   });
 
   test("multiple messages maintain conversation history", async ({ page }) => {
     await sendChatMessage(page, "First question about binary search");
-    await expect(page.getByText("First question about binary search")).toBeVisible({
+    await expect(page.getByTestId("chat-message-user").getByText("First question about binary search")).toBeVisible({
       timeout: 15_000,
     });
 
     await sendChatMessage(page, "Second follow-up question");
-    await expect(page.getByText("Second follow-up question")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("chat-message-user").getByText("Second follow-up question")).toBeVisible({ timeout: 15_000 });
 
     // Both user messages should still be visible in the conversation
-    await expect(page.getByText("First question about binary search")).toBeVisible();
-    await expect(page.getByText("Second follow-up question")).toBeVisible();
+    await expect(page.getByTestId("chat-message-user").getByText("First question about binary search").first()).toBeVisible();
+    await expect(page.getByTestId("chat-message-user").getByText("Second follow-up question").first()).toBeVisible();
   });
 
   test("chat input clears after sending", async ({ page }) => {

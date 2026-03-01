@@ -200,7 +200,7 @@ test.describe("Onboarding flow", () => {
     await page.getByText("Practice First").click();
     await page.getByRole("button", { name: /Continue/i }).click();
 
-    await page.getByText("Detailed").click();
+    await page.getByText("Detailed", { exact: true }).click();
     await page.getByRole("button", { name: /Continue/i }).click();
 
     await page.getByText("Triple Panel").click();

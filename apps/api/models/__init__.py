@@ -15,6 +15,7 @@ from models.chat_session import ChatSession
 from models.chat_message import ChatMessageLog
 from models.generated_asset import GeneratedAsset
 from models.study_plan import StudyPlan
+from models.agent_task import AgentTask
 
 __all__ = [
     "User",
@@ -41,4 +42,5 @@ __all__ = [
     "ChatMessageLog",
     "GeneratedAsset",
     "StudyPlan",
+    "AgentTask",
 ]

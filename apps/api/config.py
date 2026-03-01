@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     # Model size routing (agent preference hints)
     llm_model_large: str = ""   # e.g. gpt-4o for teaching/planning agents
     llm_model_small: str = ""   # e.g. gpt-4o-mini for preference/scene agents
+    llm_required: bool = False
 
     # Authentication
     auth_enabled: bool = False
@@ -56,6 +57,13 @@ class Settings(BaseSettings):
     app_auto_create_tables: bool = False
     app_auto_seed_system: bool = False
     app_run_scheduler: bool = False
+    app_run_activity_engine: bool = False
+
+    # Code sandbox
+    code_sandbox_backend: str = "auto"  # auto | container | process
+    code_sandbox_runtime: str = "docker"  # docker | podman
+    code_sandbox_image: str = "python:3.11-alpine"
+    code_sandbox_timeout_seconds: int = 5
 
     @property
     def cors_origin_list(self) -> list[str]:

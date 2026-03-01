@@ -33,6 +33,32 @@ def _resolve_tab_layout(scene_config: dict[str, Any], snapshot: dict[str, Any] |
     return tab_preset if isinstance(tab_preset, list) else []
 
 
+def _build_scene_switch_explanation(
+    *,
+    old_scene_id: str,
+    new_scene_id: str,
+    trigger_type: str,
+    trigger_context: str | None,
+    scene_config: dict[str, Any],
+) -> dict[str, Any]:
+    display_name = scene_config.get("display_name") or new_scene_id
+    workflow = scene_config.get("workflow") or "custom"
+    tab_types = [tab.get("type") for tab in scene_config.get("tab_preset", []) if isinstance(tab, dict)]
+    if trigger_type == "ai_suggested":
+        reason = f"Switched from {old_scene_id} to {display_name} because the assistant detected a better study mode."
+    elif trigger_type == "auto":
+        reason = f"Automatically switched into {display_name} to align the workspace with the current workflow."
+    else:
+        reason = f"Switched from {old_scene_id} to {display_name}."
+    if trigger_context:
+        reason = f"{reason} Trigger: {trigger_context}"
+    return {
+        "workflow": workflow,
+        "recommended_tabs": tab_types,
+        "reason": reason,
+    }
+
+
 async def switch_scene(
     db: AsyncSession,
     course_id: uuid.UUID,
@@ -97,6 +123,13 @@ async def switch_scene(
         "config": scene_config,
         "tab_layout": tab_layout,
         "init_actions": init_actions,
+        "explanation": _build_scene_switch_explanation(
+            old_scene_id=old_scene_id,
+            new_scene_id=new_scene_id,
+            trigger_type=trigger_type,
+            trigger_context=trigger_context,
+            scene_config=scene_config,
+        ),
     }
 
 

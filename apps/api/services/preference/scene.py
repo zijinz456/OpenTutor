@@ -36,16 +36,32 @@ SCENE_PATTERNS: list[tuple[str, re.Pattern]] = [
 DEFAULT_SCENE = "study_session"
 
 
+def explain_scene_detection(message: str, course_name: str | None = None) -> dict:
+    """Return detected scene with a lightweight explanation for UI provenance."""
+    text = f"{message} {course_name or ''}"
+
+    for scene_name, pattern in SCENE_PATTERNS:
+        match = pattern.search(text)
+        if match:
+            return {
+                "scene": scene_name,
+                "mode": "inferred",
+                "matched_text": match.group(0),
+                "reason": f"Matched study-mode cue '{match.group(0)}'.",
+            }
+
+    return {
+        "scene": DEFAULT_SCENE,
+        "mode": "default",
+        "matched_text": None,
+        "reason": "No explicit study-mode cue detected; using the default study session scene.",
+    }
+
+
 def detect_scene(message: str, course_name: str | None = None) -> str:
     """Detect the current study scene from user message.
 
     Phase 1: regex-based detection.
     Returns v3 canonical scene ID for preference cascade + scene behavior injection.
     """
-    text = f"{message} {course_name or ''}"
-
-    for scene_name, pattern in SCENE_PATTERNS:
-        if pattern.search(text):
-            return scene_name
-
-    return DEFAULT_SCENE
+    return explain_scene_detection(message, course_name)["scene"]

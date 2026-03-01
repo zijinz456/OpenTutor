@@ -4,12 +4,14 @@ import os
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from config import settings
 from database import engine, Base
-from routers import auth, upload, chat, courses, preferences, quiz, notes, workflows, progress, flashcards, canvas, notifications, scrape, scenes, wrong_answers
+from routers import auth, upload, chat, courses, preferences, quiz, notes, workflows, progress, flashcards, canvas, notifications, scrape, scenes, wrong_answers, tasks, evaluation, experiments
+from services.llm.router import LLMConfigurationError
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +57,30 @@ def _maybe_stop_scheduler() -> None:
     logger.info("Scheduler stopped")
 
 
+def _should_run_activity_engine() -> bool:
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return False
+    return settings.app_run_activity_engine
+
+
+def _maybe_start_activity_engine() -> None:
+    if not _should_run_activity_engine():
+        return
+    from services.activity.engine import start_activity_engine
+
+    start_activity_engine()
+    logger.info("Activity engine started")
+
+
+async def _maybe_stop_activity_engine() -> None:
+    if not _should_run_activity_engine():
+        return
+    from services.activity.engine import stop_activity_engine
+
+    await stop_activity_engine()
+    logger.info("Activity engine stopped")
+
+
 async def _maybe_connect_mcp_servers() -> None:
     """Connect to MCP servers and register their tools."""
     try:
@@ -87,7 +113,9 @@ async def lifespan(app: FastAPI):
     await _maybe_seed_system_data()
     await _maybe_connect_mcp_servers()
     _maybe_start_scheduler()
+    _maybe_start_activity_engine()
     yield
+    await _maybe_stop_activity_engine()
     _maybe_stop_scheduler()           # Stop scheduling new tasks first
     await wait_for_background_tasks() # Then wait for in-flight tasks
     await _maybe_disconnect_mcp_servers()
@@ -109,6 +137,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Security middleware stack (order matters: outermost runs first)
+from middleware.security import SecurityHeadersMiddleware, RateLimitMiddleware, AuditLogMiddleware
+
+app.add_middleware(AuditLogMiddleware)
+app.add_middleware(RateLimitMiddleware, default_rpm=120, llm_rpm=20)
+app.add_middleware(SecurityHeadersMiddleware)
+
+
+@app.exception_handler(LLMConfigurationError)
+async def llm_configuration_error_handler(_: Request, exc: LLMConfigurationError):
+    return JSONResponse(status_code=503, content={"detail": str(exc)})
+
 # Auth endpoints only available when AUTH_ENABLED=true (production mode)
 if settings.auth_enabled:
     app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
@@ -126,15 +166,32 @@ app.include_router(notifications.router, prefix="/api/notifications", tags=["not
 app.include_router(scrape.router, prefix="/api/scrape", tags=["scrape"])
 app.include_router(scenes.router, prefix="/api/scenes", tags=["scenes"])
 app.include_router(wrong_answers.router, prefix="/api/wrong-answers", tags=["wrong-answers"])
+app.include_router(tasks.router, prefix="/api/tasks", tags=["tasks"])
+app.include_router(evaluation.router, prefix="/api/eval", tags=["evaluation"])
+app.include_router(experiments.router, prefix="/api/experiments", tags=["experiments"])
 
 
 @app.get("/api/health")
 async def health():
     from services.llm.router import get_registry
     registry = get_registry()
+    provider_health = {
+        name: client.is_healthy
+        for name, client in registry._providers.items()
+    }
+    if not registry.available_providers:
+        llm_status = "configuration_required" if settings.llm_required else "mock_fallback"
+    elif registry._primary and not provider_health.get(registry._primary, True):
+        llm_status = "degraded"
+    else:
+        llm_status = "ready"
     return {
         "status": "ok",
         "version": "0.1.0",
         "llm_providers": registry.available_providers,
         "llm_primary": registry._primary,
+        "llm_required": settings.llm_required,
+        "llm_available": bool(registry.available_providers),
+        "llm_status": llm_status,
+        "llm_provider_health": provider_health,
     }

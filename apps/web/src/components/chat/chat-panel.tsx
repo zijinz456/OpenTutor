@@ -1,19 +1,23 @@
 "use client";
 
 import { useRef, useEffect, useState, useCallback } from "react";
-import { Download, MessageSquarePlus, Send } from "lucide-react";
+import { Download, ImagePlus, MessageSquarePlus, Send, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Badge } from "@/components/ui/badge";
 import { useChatStore, type ChatMessage } from "@/store/chat";
 import { useT } from "@/lib/i18n-context";
 import {
   listGeneratedQuizBatches,
   parseGeneratedQuizDraft,
   saveGeneratedQuiz,
+  type ChatMessageMetadata,
   type GeneratedQuizBatchSummary,
+  type ImageAttachment,
 } from "@/lib/api";
 import { toast } from "sonner";
+import { MarkdownRenderer } from "@/components/course/markdown-renderer";
 
 /**
  * Chat Panel — AI conversation with SSE streaming.
@@ -27,6 +31,75 @@ interface ChatPanelProps {
   courseId: string;
   activeTab?: string;
   scene?: string;
+}
+
+function ExplainableTrace({ metadata }: { metadata: ChatMessageMetadata }) {
+  const provenance = metadata.provenance;
+  if (!provenance) return null;
+
+  const hasDetails = Boolean(
+    provenance.scene_resolution?.reason ||
+    provenance.scene_switch?.reason ||
+    provenance.preference_details?.length ||
+    provenance.content_refs?.length ||
+    provenance.tool_names?.length,
+  );
+
+  if (!hasDetails) return null;
+
+  return (
+    <details className="mt-2 rounded-md border border-border/60 bg-background/60 px-2 py-1.5 text-xs text-muted-foreground">
+      <summary className="cursor-pointer select-none font-medium text-foreground/80">
+        Why this answer
+      </summary>
+      <div className="mt-2 space-y-2">
+        {provenance.scene_switch?.reason && (
+          <div>
+            <p className="font-medium text-foreground/80">Scene suggestion</p>
+            <p>{provenance.scene_switch.reason}</p>
+          </div>
+        )}
+        {provenance.scene_resolution?.reason && (
+          <div>
+            <p className="font-medium text-foreground/80">Current mode</p>
+            <p>{provenance.scene_resolution.reason}</p>
+          </div>
+        )}
+        {provenance.preference_details && provenance.preference_details.length > 0 && (
+          <div>
+            <p className="font-medium text-foreground/80">Preferences applied</p>
+            <ul className="list-disc pl-4">
+              {provenance.preference_details.slice(0, 4).map((detail) => (
+                <li key={`${detail.dimension}-${detail.value}`}>
+                  {detail.dimension}: {detail.value} via {detail.source}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {provenance.content_refs && provenance.content_refs.length > 0 && (
+          <div>
+            <p className="font-medium text-foreground/80">Materials consulted</p>
+            <ul className="list-disc pl-4">
+              {provenance.content_refs.map((ref, index) => (
+                <li key={`${ref.title || "ref"}-${index}`}>
+                  {ref.title || "Untitled material"}
+                  {ref.source_type ? ` (${ref.source_type})` : ""}
+                  {ref.preview ? `: ${ref.preview}` : ""}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {provenance.tool_names && provenance.tool_names.length > 0 && (
+          <div>
+            <p className="font-medium text-foreground/80">Tools used</p>
+            <p>{provenance.tool_names.join(", ")}</p>
+          </div>
+        )}
+      </div>
+    </details>
+  );
 }
 
 function MessageBubble({
@@ -65,15 +138,42 @@ function MessageBubble({
   return (
     <div className={`flex ${isUser ? "justify-end" : "justify-start"} mb-3`}>
       <div
+        data-testid={`chat-message-${message.role}`}
+        data-role={message.role}
         className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${
           isUser
             ? "bg-primary text-primary-foreground"
             : "bg-muted"
         }`}
       >
-        <div className="whitespace-pre-wrap">{message.content || (
+        {message.content ? (
+          isUser ? (
+            <div className="whitespace-pre-wrap">{message.content}</div>
+          ) : (
+            <MarkdownRenderer content={message.content} className="prose-sm prose-compact [&>*:first-child]:mt-0 [&>*:last-child]:mb-0" />
+          )
+        ) : (
           <span className="animate-pulse">{t("chat.thinking")}</span>
-        )}</div>
+        )}
+        {!isUser && message.metadata && (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {message.metadata.agent && <Badge variant="outline">{message.metadata.agent}</Badge>}
+            {message.metadata.intent && <Badge variant="outline">{message.metadata.intent}</Badge>}
+            {typeof message.metadata.provenance?.content_count === "number" && message.metadata.provenance.content_count > 0 && (
+              <Badge variant="outline">course {message.metadata.provenance.content_count}</Badge>
+            )}
+            {typeof message.metadata.provenance?.memory_count === "number" && message.metadata.provenance.memory_count > 0 && (
+              <Badge variant="outline">memory {message.metadata.provenance.memory_count}</Badge>
+            )}
+            {typeof message.metadata.provenance?.tool_count === "number" && message.metadata.provenance.tool_count > 0 && (
+              <Badge variant="outline">tools {message.metadata.provenance.tool_count}</Badge>
+            )}
+            {typeof message.metadata.tokens === "number" && message.metadata.tokens > 0 && (
+              <Badge variant="outline">{message.metadata.tokens} tok</Badge>
+            )}
+          </div>
+        )}
+        {!isUser && message.metadata && <ExplainableTrace metadata={message.metadata} />}
         {!isUser && generatedQuestions.length > 0 && (
           <div className="mt-3 flex items-center justify-between gap-2 border-t pt-2">
             <span className="text-xs text-muted-foreground">
@@ -121,8 +221,10 @@ export function ChatPanel({ courseId, activeTab, scene }: ChatPanelProps) {
     sessionsByCourse,
   } = useChatStore();
   const [input, setInput] = useState("");
+  const [imageAttachments, setImageAttachments] = useState<ImageAttachment[]>([]);
   const [generatedBatches, setGeneratedBatches] = useState<GeneratedQuizBatchSummary[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
   const sessions = sessionsByCourse[courseId] ?? [];
   const currentSessionId = sessionIds[courseId] ?? "";
   const latestGeneratedBatch = generatedBatches.find((batch) => batch.is_active) ?? null;
@@ -150,11 +252,47 @@ export function ChatPanel({ courseId, activeTab, scene }: ChatPanelProps) {
     }
   }, [messages]);
 
+  const handleImageSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+    const MAX_IMAGES = 4;
+    const remaining = MAX_IMAGES - imageAttachments.length;
+    const toProcess = Array.from(files).slice(0, remaining);
+
+    for (const file of toProcess) {
+      if (!file.type.startsWith("image/")) continue;
+      if (file.size > 10 * 1024 * 1024) {
+        toast.error("Image must be under 10MB");
+        continue;
+      }
+      const base64 = await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const result = reader.result as string;
+          resolve(result.split(",")[1]); // strip data:...;base64, prefix
+        };
+        reader.readAsDataURL(file);
+      });
+      setImageAttachments((prev) => [
+        ...prev,
+        { data: base64, media_type: file.type, filename: file.name },
+      ]);
+    }
+    // Reset input so same file can be re-selected
+    e.target.value = "";
+  }, [imageAttachments.length]);
+
+  const removeImage = useCallback((index: number) => {
+    setImageAttachments((prev) => prev.filter((_, i) => i !== index));
+  }, []);
+
   const handleSend = async () => {
     const text = input.trim();
-    if (!text || isStreaming) return;
+    if ((!text && imageAttachments.length === 0) || isStreaming) return;
+    const images = imageAttachments.length > 0 ? [...imageAttachments] : undefined;
     setInput("");
-    await sendMessage(courseId, text, { activeTab, scene });
+    setImageAttachments([]);
+    await sendMessage(courseId, text || "Please analyze this image.", { activeTab, scene, images });
   };
 
   return (
@@ -234,10 +372,51 @@ export function ChatPanel({ courseId, activeTab, scene }: ChatPanelProps) {
 
       {/* Input */}
       <div className="border-t p-3">
+        {/* Image attachment previews */}
+        {imageAttachments.length > 0 && (
+          <div className="flex gap-2 mb-2 flex-wrap">
+            {imageAttachments.map((img, i) => (
+              <div key={i} className="relative group">
+                <img
+                  src={`data:${img.media_type};base64,${img.data}`}
+                  alt={img.filename || "attachment"}
+                  className="h-16 w-16 object-cover rounded-md border"
+                />
+                <button
+                  type="button"
+                  title="Remove image"
+                  onClick={() => removeImage(i)}
+                  className="absolute -top-1.5 -right-1.5 bg-destructive text-destructive-foreground rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
         <div className="flex gap-2">
+          <input
+            ref={imageInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/gif"
+            multiple
+            onChange={handleImageSelect}
+            className="hidden"
+            aria-label="Upload images"
+          />
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            onClick={() => imageInputRef.current?.click()}
+            disabled={isStreaming || imageAttachments.length >= 4}
+            title="Attach image"
+          >
+            <ImagePlus className="h-4 w-4" />
+          </Button>
           <Textarea
             data-testid="chat-input"
-            placeholder={t("chat.placeholder")}
+            placeholder={imageAttachments.length > 0 ? "Describe what you need help with..." : t("chat.placeholder")}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
@@ -253,7 +432,7 @@ export function ChatPanel({ courseId, activeTab, scene }: ChatPanelProps) {
             data-testid="chat-send"
             size="icon"
             onClick={handleSend}
-            disabled={isStreaming || !input.trim()}
+            disabled={isStreaming || (!input.trim() && imageAttachments.length === 0)}
           >
             <Send className="h-4 w-4" />
           </Button>

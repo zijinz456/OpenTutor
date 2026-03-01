@@ -2,7 +2,7 @@ version: "3.9"
 
 services:
   db:
-    image: pgvector/pgvector:pg16
+    image: pgvector/pgvector:pg17
     container_name: opentutor-db
     environment:
       POSTGRES_USER: opentutor
@@ -46,6 +46,11 @@ services:
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       LLM_PROVIDER: ${LLM_PROVIDER:-openai}
       LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
+      APP_AUTO_CREATE_TABLES: ${APP_AUTO_CREATE_TABLES:-true}
+      APP_AUTO_SEED_SYSTEM: ${APP_AUTO_SEED_SYSTEM:-true}
+      APP_RUN_SCHEDULER: ${APP_RUN_SCHEDULER:-false}
+      APP_RUN_ACTIVITY_ENGINE: ${APP_RUN_ACTIVITY_ENGINE:-true}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
       UPLOAD_DIR: /app/uploads
     volumes:
       - ./apps/api:/app
@@ -56,6 +61,24 @@ services:
       redis:
         condition: service_healthy
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000/api}
+    container_name: opentutor-web
+    ports:
+      - "3000:3000"
+    depends_on:
+      api:
+        condition: service_healthy
 
 volumes:
   pgdata:

@@ -114,7 +114,8 @@ async def vector_search(
     """pgvector cosine similarity search on content tree embeddings.
 
     Searches pre-computed embeddings on CourseContentTree nodes.
-    Falls back to ConversationMemory search if no content embeddings exist.
+    Does not fall back to conversation memories. Memory retrieval is handled by
+    the memory pipeline and should not be injected as course material context.
     """
     try:
         from services.embedding.registry import get_embedding_provider
@@ -149,30 +150,7 @@ async def vector_search(
             for n in nodes
         ]
 
-    # Fallback: search conversation memories
-    from models.memory import ConversationMemory
-
-    result = await db.execute(
-        select(ConversationMemory)
-        .where(
-            ConversationMemory.course_id == course_id,
-            ConversationMemory.embedding.isnot(None),
-        )
-        .order_by(ConversationMemory.embedding.cosine_distance(query_embedding))
-        .limit(limit)
-    )
-    memories = result.scalars().all()
-    return [
-        {
-            "id": str(m.id),
-            "title": "Previous interaction",
-            "content": m.summary or "",
-            "level": 0,
-            "score": 1.0,
-            "source": "vector",
-        }
-        for m in memories
-    ]
+    return []
 
 
 async def tree_search(

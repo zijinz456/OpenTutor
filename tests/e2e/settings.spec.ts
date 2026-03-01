@@ -24,6 +24,24 @@ test.describe("Settings", () => {
     await expect(page.getByText("Settings")).toBeVisible();
   });
 
+  test("AI runtime card shows LLM status details", async ({ page }) => {
+    await page.goto("/settings");
+    const runtimeCard = page.getByTestId("settings-llm-status");
+    await expect(runtimeCard).toBeVisible({ timeout: 15_000 });
+    await expect(runtimeCard.getByText(/AI Runtime/i)).toBeVisible();
+    await expect(runtimeCard.getByText(/LLM required:/i).first()).toBeVisible();
+  });
+
+  test("provider connections section shows API key inputs", async ({ page }) => {
+    await page.goto("/settings");
+    await expect(page.getByTestId("settings-api-keys")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("settings-llm-provider")).toBeVisible();
+    await expect(page.getByTestId("settings-llm-model")).toBeVisible();
+    await expect(page.getByTestId("provider-key-openai")).toBeVisible();
+    await expect(page.getByTestId("test-provider-key-openai")).toBeVisible();
+    await expect(page.getByTestId("settings-save-llm")).toBeVisible();
+  });
+
   test("back button returns to dashboard", async ({ page }) => {
     await page.goto("/settings");
     await page.locator("header").getByRole("button").first().click();
@@ -81,17 +99,8 @@ test.describe("Settings", () => {
 
   test("templates section shows templates or empty state", async ({ page }) => {
     await page.goto("/settings");
-    // Either templates are loaded (cards with "Apply" buttons) or the empty message appears
-    const hasTemplates = await page
-      .getByRole("button", { name: "Apply" })
-      .first()
-      .isVisible({ timeout: 10_000 })
-      .catch(() => false);
-    const hasEmpty = await page
-      .getByText("No templates available", { exact: false })
-      .isVisible()
-      .catch(() => false);
-    expect(hasTemplates || hasEmpty).toBeTruthy();
+    await expect(page.getByText("Learning Templates")).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator("body")).toContainText(/Apply|No templates available/i, { timeout: 15_000 });
   });
 
   test("Apply button triggers template application", async ({ page }) => {

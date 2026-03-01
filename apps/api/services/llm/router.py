@@ -20,6 +20,10 @@ from config import settings
 
 logger = logging.getLogger(__name__)
 
+
+class LLMConfigurationError(RuntimeError):
+    """Raised when AI features are used without a configured real provider."""
+
 # Progressive cooldown steps (borrowed from openakita)
 COOLDOWN_STEPS = [5, 10, 20, 60]
 
@@ -94,19 +98,50 @@ class LLMClient(ABC):
         self._circuit_open = False
 
     @abstractmethod
-    async def stream_chat(self, system_prompt: str, user_message: str) -> AsyncIterator[str]:
-        """Stream chat response chunks. Token usage stored in _last_usage."""
+    async def stream_chat(self, system_prompt: str, user_message: str, images: list[dict] | None = None) -> AsyncIterator[str]:
+        """Stream chat response chunks. Token usage stored in _last_usage.
+
+        images: optional list of {"data": base64_str, "media_type": "image/png"|...}
+        """
         ...
 
     @abstractmethod
-    async def chat(self, system_prompt: str, user_message: str) -> tuple[str, dict]:
-        """Non-streaming chat response. Returns (content, usage_dict)."""
+    async def chat(self, system_prompt: str, user_message: str, images: list[dict] | None = None) -> tuple[str, dict]:
+        """Non-streaming chat response. Returns (content, usage_dict).
+
+        images: optional list of {"data": base64_str, "media_type": "image/png"|...}
+        """
         ...
 
     @abstractmethod
     async def extract(self, system_prompt: str, user_message: str) -> tuple[str, dict]:
         """Lightweight extraction call. Returns (content, usage_dict)."""
         ...
+
+
+def _build_openai_user_content(text: str, images: list[dict] | None = None) -> str | list[dict]:
+    """Build OpenAI user content with optional vision image blocks."""
+    if not images:
+        return text
+    content: list[dict] = [{"type": "text", "text": text}]
+    for img in images:
+        data_uri = f"data:{img.get('media_type', 'image/png')};base64,{img['data']}"
+        content.append({"type": "image_url", "image_url": {"url": data_uri, "detail": "auto"}})
+    return content
+
+
+def _build_anthropic_user_content(text: str, images: list[dict] | None = None) -> str | list[dict]:
+    """Build Anthropic user content with optional vision image blocks."""
+    if not images:
+        return text
+    content: list[dict] = []
+    for img in images:
+        content.append({
+            "type": "image",
+            "source": {"type": "base64", "media_type": img.get("media_type", "image/png"), "data": img["data"]},
+        })
+    content.append({"type": "text", "text": text})
+    return content
 
 
 class OpenAIClient(LLMClient):
@@ -119,6 +154,7 @@ class OpenAIClient(LLMClient):
 
     def __init__(self, api_key: str, model: str, base_url: str | None = None, name: str = "openai"):
         super().__init__()
+        import httpx
         from openai import AsyncOpenAI
 
         self.provider_name = name
@@ -126,16 +162,19 @@ class OpenAIClient(LLMClient):
         kwargs = {"api_key": api_key}
         if base_url:
             kwargs["base_url"] = base_url
+        # Timeout: 10s connect, 120s read (streaming), 30s write, 10s pool
+        kwargs["timeout"] = httpx.Timeout(connect=10, read=120, write=30, pool=10)
         self.client = AsyncOpenAI(**kwargs)
         self.model = model
 
-    async def stream_chat(self, system_prompt: str, user_message: str) -> AsyncIterator[str]:
+    async def stream_chat(self, system_prompt: str, user_message: str, images: list[dict] | None = None) -> AsyncIterator[str]:
         try:
+            user_content = _build_openai_user_content(user_message, images)
             create_kwargs: dict[str, Any] = {
                 "model": self.model,
                 "messages": [
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_message},
+                    {"role": "user", "content": user_content},
                 ],
                 "stream": True,
             }
@@ -158,13 +197,14 @@ class OpenAIClient(LLMClient):
             self.mark_unhealthy(str(e))
             raise
 
-    async def chat(self, system_prompt: str, user_message: str) -> tuple[str, dict]:
+    async def chat(self, system_prompt: str, user_message: str, images: list[dict] | None = None) -> tuple[str, dict]:
         try:
+            user_content = _build_openai_user_content(user_message, images)
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_message},
+                    {"role": "user", "content": user_content},
                 ],
             )
             self.mark_healthy()
@@ -237,18 +277,24 @@ class AnthropicClient(LLMClient):
 
     def __init__(self, api_key: str, model: str):
         super().__init__()
+        import httpx
         from anthropic import AsyncAnthropic
 
-        self.client = AsyncAnthropic(api_key=api_key)
+        # Timeout: 10s connect, 120s read (streaming), 30s write, 10s pool
+        self.client = AsyncAnthropic(
+            api_key=api_key,
+            timeout=httpx.Timeout(connect=10, read=120, write=30, pool=10),
+        )
         self.model = model
 
-    async def stream_chat(self, system_prompt: str, user_message: str) -> AsyncIterator[str]:
+    async def stream_chat(self, system_prompt: str, user_message: str, images: list[dict] | None = None) -> AsyncIterator[str]:
         try:
+            user_content = _build_anthropic_user_content(user_message, images)
             async with self.client.messages.stream(
                 model=self.model,
                 max_tokens=4096,
                 system=system_prompt,
-                messages=[{"role": "user", "content": user_message}],
+                messages=[{"role": "user", "content": user_content}],
             ) as stream:
                 marked_healthy = False
                 async for text in stream.text_stream:
@@ -266,13 +312,14 @@ class AnthropicClient(LLMClient):
             self.mark_unhealthy(str(e))
             raise
 
-    async def chat(self, system_prompt: str, user_message: str) -> tuple[str, dict]:
+    async def chat(self, system_prompt: str, user_message: str, images: list[dict] | None = None) -> tuple[str, dict]:
         try:
+            user_content = _build_anthropic_user_content(user_message, images)
             response = await self.client.messages.create(
                 model=self.model,
                 max_tokens=4096,
                 system=system_prompt,
-                messages=[{"role": "user", "content": user_message}],
+                messages=[{"role": "user", "content": user_content}],
             )
             self.mark_healthy()
             usage = {
@@ -401,11 +448,12 @@ class MockLLMClient(LLMClient):
         """Rough token estimate for mock tracking."""
         return max(1, len(text) // 4)
 
-    async def stream_chat(self, system_prompt: str, user_message: str) -> AsyncIterator[str]:
+    async def stream_chat(self, system_prompt: str, user_message: str, images: list[dict] | None = None) -> AsyncIterator[str]:
         self.mark_healthy()
+        img_note = f" (with {len(images)} image(s))" if images else ""
         content = (
             "No LLM API key configured. This is a local fallback response. "
-            f"Your message was: {user_message}"
+            f"Your message was: {user_message}{img_note}"
         )
         self._last_usage = {
             "input_tokens": self._estimate_tokens(system_prompt + user_message),
@@ -413,11 +461,12 @@ class MockLLMClient(LLMClient):
         }
         yield content
 
-    async def chat(self, system_prompt: str, user_message: str) -> tuple[str, dict]:
+    async def chat(self, system_prompt: str, user_message: str, images: list[dict] | None = None) -> tuple[str, dict]:
         self.mark_healthy()
+        img_note = f" (with {len(images)} image(s))" if images else ""
         content = (
             "No LLM API key configured. This is a local fallback response. "
-            f"Your message was: {user_message}"
+            f"Your message was: {user_message}{img_note}"
         )
         usage = {
             "input_tokens": self._estimate_tokens(system_prompt + user_message),
@@ -474,6 +523,11 @@ class ProviderRegistry:
 
         Fallback chain: model_variants → primary → fallback_order.
         """
+        if not self._providers:
+            raise LLMConfigurationError(
+                "No LLM provider is configured. Set an API key or local LLM backend before using AI features."
+            )
+
         # Check model_preference hints (large/small/fast) first
         if name and name in self._model_variants:
             client = self._model_variants[name]
@@ -681,12 +735,18 @@ def _build_registry() -> ProviderRegistry:
 
     # --- Mock fallback ---
     if not registry.available_providers:
-        logger.warning(
-            "No LLM API key configured; using mock fallback provider. "
-            "Set OPENAI_API_KEY / ANTHROPIC_API_KEY / DEEPSEEK_API_KEY / "
-            "OPENROUTER_API_KEY / GEMINI_API_KEY / GROQ_API_KEY for real outputs."
-        )
-        registry.register("mock", MockLLMClient(), primary=True)
+        if settings.llm_required:
+            logger.error(
+                "No LLM provider configured while LLM_REQUIRED is enabled. "
+                "AI endpoints will fail until a real provider is configured."
+            )
+        else:
+            logger.warning(
+                "No LLM API key configured; using mock fallback provider. "
+                "Set OPENAI_API_KEY / ANTHROPIC_API_KEY / DEEPSEEK_API_KEY / "
+                "OPENROUTER_API_KEY / GEMINI_API_KEY / GROQ_API_KEY for real outputs."
+            )
+            registry.register("mock", MockLLMClient(), primary=True)
 
     return registry
 

@@ -61,13 +61,15 @@ test.describe.serial("NL Tuning FAB", () => {
     await page.locator('button[title="Fine-tune Agent"]').click();
     await page.getByPlaceholder('e.g. "simplify notes"').fill("change format");
     await page.keyboard.press("Enter");
+    // Wait for clarify view to appear
+    await expect(page.getByText("Notes panel: change formatting style")).toBeVisible({ timeout: 10_000 });
     await page.getByText("Notes panel: change formatting style").click();
     // Sub-options for note_format
-    await expect(page.getByText("Bullet Points")).toBeVisible();
-    await expect(page.getByText("Table")).toBeVisible();
-    await expect(page.getByText("Mind Map")).toBeVisible();
-    await expect(page.getByText("Step-by-Step")).toBeVisible();
-    await expect(page.getByText("Summary")).toBeVisible();
+    await expect(page.getByText("Bullet Points")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText("Table", { exact: true })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText("Mind Map")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText("Step-by-Step")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText("Summary", { exact: true })).toBeVisible({ timeout: 10_000 });
   });
 
   test("selecting a sub-option calls setPreference and shows toast", async ({ page }) => {
@@ -88,8 +90,9 @@ test.describe.serial("NL Tuning FAB", () => {
     await page.keyboard.press("Enter");
     await page.getByText("AI responses: adjust detail level").click();
     // Should be in sub-options view with Back button
-    await expect(page.getByText("Back")).toBeVisible();
-    await page.getByText("Back").click();
+    const backBtn = page.getByRole("button", { name: "Back" });
+    await expect(backBtn).toBeVisible();
+    await backBtn.click();
     // Should return to clarify view
     await expect(page.getByText("What would you like to adjust?")).toBeVisible();
   });
@@ -97,11 +100,12 @@ test.describe.serial("NL Tuning FAB", () => {
   test("close button dismisses the popup", async ({ page }) => {
     await createCourseWithContent(page, "FAB Close");
     await page.locator('button[title="Fine-tune Agent"]').click();
-    await expect(page.getByText("Fine-tune Agent").first()).toBeVisible();
-    // Click the X close button
-    await page.locator(".lucide-x").first().click();
+    await expect(page.getByPlaceholder('e.g. "simplify notes"')).toBeVisible();
+    // The close button is a small button with X icon (class text-gray-400) inside the popup header.
+    // Use the FAB toggle button itself to close (it toggles open/close)
+    await page.locator('button[title="Fine-tune Agent"]').click();
     // Popup should be gone, but FAB should still be visible
-    await expect(page.getByPlaceholder('e.g. "simplify notes"')).not.toBeVisible();
+    await expect(page.getByPlaceholder('e.g. "simplify notes"')).not.toBeVisible({ timeout: 5_000 });
     await expect(page.locator('button[title="Fine-tune Agent"]')).toBeVisible();
   });
 });

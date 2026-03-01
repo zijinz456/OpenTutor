@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { skipOnboarding, createCourseWithContent } from "./helpers/test-utils";
+import { skipOnboarding, createCourseWithContent, ensureRightPanelVisible } from "./helpers/test-utils";
 
 test.describe.serial("Keyboard Shortcuts", () => {
   test.beforeEach(async ({ page }) => {
@@ -16,10 +16,11 @@ test.describe.serial("Keyboard Shortcuts", () => {
 
   test("Cmd+2 applies quizFocused layout", async ({ page }) => {
     await createCourseWithContent(page, "KB Quiz");
+    await ensureRightPanelVisible(page);
     const modifier = process.platform === "darwin" ? "Meta" : "Control";
     await page.keyboard.press(`${modifier}+2`);
     // Quiz area should be visible
-    await expect(page.getByRole("button", { name: "Quiz" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Quiz", exact: true })).toBeVisible();
   });
 
   test("Cmd+3 applies chatFocused layout", async ({ page }) => {

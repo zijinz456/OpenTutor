@@ -19,6 +19,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.progress import LearningProgress
 from models.practice import PracticeResult, PracticeProblem
 from models.content import CourseContentTree
+from services.spaced_repetition.fsrs import FSRSCard, review_card
+from services.learning_science.knowledge_tracer import compute_mastery_from_sequence
 
 logger = logging.getLogger(__name__)
 
@@ -98,16 +100,22 @@ async def update_quiz_result(
     if is_correct:
         progress.quiz_correct += 1
 
-    # Weighted decay mastery from recent results
-    mastery = await _compute_weighted_mastery(db, user_id, course_id, content_node_id)
-    if mastery is not None:
-        # Blend: weighted decay (0.7) + time component (0.3)
+    # Mastery from two models: weighted decay + BKT probabilistic
+    weighted_mastery = await _compute_weighted_mastery(db, user_id, course_id, content_node_id)
+    bkt_mastery = await _compute_bkt_mastery(db, user_id, course_id, content_node_id)
+
+    if weighted_mastery is not None and bkt_mastery is not None:
+        # Blend: BKT (0.5) + weighted decay (0.2) + time (0.3)
         progress.mastery_score = (
-            mastery * 0.7
+            bkt_mastery * 0.5
+            + weighted_mastery * 0.2
             + min(progress.time_spent_minutes / 60, 1.0) * 0.3
         )
+    elif weighted_mastery is not None:
+        progress.mastery_score = weighted_mastery * 0.7 + min(progress.time_spent_minutes / 60, 1.0) * 0.3
+    elif bkt_mastery is not None:
+        progress.mastery_score = bkt_mastery * 0.7 + min(progress.time_spent_minutes / 60, 1.0) * 0.3
     else:
-        # Fallback for first attempt
         quiz_mastery = progress.quiz_correct / max(progress.quiz_attempts, 1)
         progress.mastery_score = quiz_mastery * 0.7 + min(progress.time_spent_minutes / 60, 1.0) * 0.3
 
@@ -116,6 +124,9 @@ async def update_quiz_result(
     if gap_type:
         progress.gap_type = gap_type
 
+    # FSRS spaced repetition scheduling
+    _apply_fsrs_review(progress, is_correct)
+
     # Update status
     if progress.mastery_score >= 0.8 and progress.quiz_attempts >= 3:
         progress.status = "mastered"
@@ -123,6 +134,37 @@ async def update_quiz_result(
         progress.status = "reviewed"
 
     return progress
+
+
+def _apply_fsrs_review(progress: LearningProgress, is_correct: bool) -> None:
+    """Apply FSRS review to update spaced repetition fields.
+
+    Maps quiz correctness to FSRS ratings:
+    - Correct → 3 (Good)
+    - Wrong   → 1 (Again)
+    """
+    card = FSRSCard(
+        difficulty=progress.fsrs_difficulty,
+        stability=progress.fsrs_stability,
+        reps=progress.fsrs_reps,
+        lapses=progress.fsrs_lapses,
+        last_review=progress.last_studied_at,
+        due=progress.next_review_at,
+        state=progress.fsrs_state,
+    )
+
+    rating = 3 if is_correct else 1
+    now = datetime.utcnow()
+    updated_card, _log = review_card(card, rating, now)
+
+    progress.fsrs_difficulty = updated_card.difficulty
+    progress.fsrs_stability = updated_card.stability
+    progress.fsrs_reps = updated_card.reps
+    progress.fsrs_lapses = updated_card.lapses
+    progress.fsrs_state = updated_card.state
+    progress.next_review_at = updated_card.due
+    progress.interval_days = max(1, round(updated_card.stability)) if updated_card.stability > 0 else 0
+    progress.last_studied_at = now
 
 
 async def _compute_weighted_mastery(
@@ -168,6 +210,40 @@ async def _compute_weighted_mastery(
         total_weight += w
 
     return weighted_correct / total_weight if total_weight > 0 else None
+
+
+async def _compute_bkt_mastery(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    course_id: uuid.UUID,
+    content_node_id: uuid.UUID | None,
+) -> float | None:
+    """Compute mastery using Bayesian Knowledge Tracing over the answer sequence."""
+    query = (
+        select(PracticeResult.is_correct, PracticeProblem.question_type)
+        .join(PracticeProblem, PracticeResult.problem_id == PracticeProblem.id)
+        .where(
+            PracticeResult.user_id == user_id,
+            PracticeProblem.course_id == course_id,
+        )
+        .order_by(PracticeResult.answered_at.asc())
+        .limit(_RECENT_RESULTS_LIMIT)
+    )
+    if content_node_id:
+        query = query.where(PracticeProblem.content_node_id == content_node_id)
+
+    result = await db.execute(query)
+    rows = result.all()
+
+    if not rows:
+        return None
+
+    results_seq = [bool(correct) for correct, _ in rows]
+    # Use most common question type for parameter estimation
+    q_types = [qt for _, qt in rows if qt]
+    question_type = max(set(q_types), key=q_types.count) if q_types else None
+
+    return compute_mastery_from_sequence(results_seq, question_type)
 
 
 async def _infer_gap_type(
