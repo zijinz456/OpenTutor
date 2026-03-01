@@ -54,7 +54,8 @@ async def node_classify_intent(state: StudyState) -> dict:
 
 
 async def node_load_context(state: StudyState) -> dict:
-    from services.agent.orchestrator import build_agent_context, load_context
+    from services.agent.registry import build_agent_context
+    from services.agent.context_builder import load_context
     from services.agent.state import IntentType
 
     ctx = build_agent_context(
@@ -83,7 +84,8 @@ async def node_search_content(state: StudyState) -> dict:
 async def node_generate_response(state: StudyState) -> dict:
     """Route to appropriate specialist agent based on intent."""
     from services.agent.state import AgentContext, IntentType
-    from services.agent.orchestrator import apply_reflection, get_agent
+    from services.agent.orchestrator import apply_reflection
+    from services.agent.registry import get_agent
 
     ctx = AgentContext(
         user_id=state["user_id"],

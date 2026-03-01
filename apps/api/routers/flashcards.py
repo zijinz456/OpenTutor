@@ -1,9 +1,10 @@
 """Flashcard + FSRS spaced repetition API endpoints."""
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
+from libs.exceptions import NotFoundError
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -79,7 +80,7 @@ async def save_generated_flashcards(
             replace_batch_id=body.replace_batch_id,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise NotFoundError(resource="generated_asset", resource_id=str(body.replace_batch_id)) from exc
 
     await db.commit()
     return result
@@ -101,3 +102,53 @@ async def list_generated_flashcards(
         course_id=course_id,
         asset_type="flashcards",
     )
+
+
+@router.get("/due/{course_id}")
+async def get_due_flashcards(
+    course_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get flashcards due for review today across all saved batches for a course.
+
+    Scans all active flashcard batches and returns cards whose FSRS `due` date
+    is at or before the current time, plus any new cards (no FSRS data yet).
+    """
+    from models.generated_asset import GeneratedAsset
+
+    await get_course_or_404(db, course_id, user_id=user.id)
+
+    result = await db.execute(
+        select(GeneratedAsset).where(
+            GeneratedAsset.user_id == user.id,
+            GeneratedAsset.course_id == course_id,
+            GeneratedAsset.asset_type == "flashcards",
+            GeneratedAsset.is_active == True,  # noqa: E712
+        )
+    )
+    batches = result.scalars().all()
+
+    now = datetime.now(timezone.utc)
+    due_cards: list[dict] = []
+
+    for batch in batches:
+        cards = (batch.content_json or {}).get("cards", [])
+        for card in cards:
+            fsrs = card.get("fsrs")
+            if not fsrs:
+                # New card — always due
+                due_cards.append({**card, "batch_id": str(batch.id)})
+            else:
+                due_str = fsrs.get("due")
+                if due_str:
+                    try:
+                        due_dt = datetime.fromisoformat(due_str.replace("Z", "+00:00"))
+                        if due_dt <= now:
+                            due_cards.append({**card, "batch_id": str(batch.id)})
+                    except (ValueError, TypeError):
+                        due_cards.append({**card, "batch_id": str(batch.id)})
+                else:
+                    due_cards.append({**card, "batch_id": str(batch.id)})
+
+    return {"cards": due_cards, "due_count": len(due_cards), "total_batches": len(batches)}

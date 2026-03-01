@@ -7,7 +7,6 @@
  * - Images: Cache-first with expiry
  */
 
-const CACHE_NAME = "opentutor-v1";
 const STATIC_CACHE = "opentutor-static-v1";
 const API_CACHE = "opentutor-api-v1";
 
@@ -97,3 +96,40 @@ async function networkFirst(request, cacheName) {
     });
   }
 }
+
+// ── Push Notifications ──
+
+// Push notification handler
+self.addEventListener("push", (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch {
+    data = { body: event.data ? event.data.text() : "" };
+  }
+  const title = data.title || "OpenTutor";
+  const options = {
+    body: data.body || "",
+    icon: "/favicon.ico",
+    tag: data.tag || "opentutor-notification",
+    data: { url: data.url || "/", notificationId: data.id },
+    actions: data.actions || [],
+    requireInteraction: data.priority === "high" || data.priority === "urgent",
+  };
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const url = event.notification.data?.url || "/";
+  event.waitUntil(
+    clients
+      .matchAll({ type: "window", includeUncontrolled: true })
+      .then((windowClients) => {
+        for (const client of windowClients) {
+          if (client.url.includes(url) && "focus" in client) return client.focus();
+        }
+        return clients.openWindow(url);
+      })
+  );
+});

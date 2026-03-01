@@ -37,7 +37,7 @@ import { NLTuningFAB } from "@/components/course/nl-tuning-fab";
 import { ActivityBar } from "@/components/workspace/activity-bar";
 import { StatusBar } from "@/components/workspace/status-bar";
 import { useGroupRef } from "react-resizable-panels";
-import { getFilesByCourseId, getFileUrl, getCourseProgress, type ChatAction, type SwitchResult } from "@/lib/api";
+import { getFilesByCourseId, getFileUrl, getCourseProgress, listAgentTasks, type ChatAction, type SwitchResult } from "@/lib/api";
 import { SceneSelector } from "@/components/scene/scene-selector";
 import { PreferenceConfirmDialog } from "@/components/preference/preference-confirm-dialog";
 import { useSceneStore } from "@/store/scene";
@@ -88,6 +88,7 @@ export default function CoursePage() {
   const courseId = params.id as string;
   const panelGroupRef = useGroupRef();
   const initialSceneAppliedRef = useRef<string | null>(null);
+  const hadActiveTaskRef = useRef(false);
 
   const { activeCourse, setActiveCourse, courses, fetchCourses, contentTree } =
     useCourseStore();
@@ -118,6 +119,20 @@ export default function CoursePage() {
     }
   }, [courseId, courses, setActiveCourse]);
 
+  // On first load: send the init prompt saved during course creation (if any)
+  useEffect(() => {
+    const key = `course_init_prompt_${courseId}`;
+    const initPrompt = localStorage.getItem(key);
+    if (initPrompt) {
+      localStorage.removeItem(key);
+      // Wait briefly for chat store to initialize, then auto-send
+      const timer = setTimeout(() => {
+        void useChatStore.getState().sendMessage(courseId, initPrompt);
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [courseId]);
+
   useEffect(() => {
     getFilesByCourseId(courseId)
       .then((files) => {
@@ -135,6 +150,50 @@ export default function CoursePage() {
         setStudyTime(mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins}m`);
       })
       .catch(() => { /* no progress yet */ });
+  }, [courseId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let timer: number | null = null;
+
+    const pollTaskFocus = async () => {
+      try {
+        const tasks = await listAgentTasks(courseId);
+        if (cancelled) return;
+        const hasActiveTask = tasks.some((task) =>
+          ["pending_approval", "queued", "running", "resuming", "cancel_requested"].includes(task.status),
+        );
+
+        if (hasActiveTask && !hadActiveTaskRef.current) {
+          hadActiveTaskRef.current = true;
+          setRightTab("activity");
+          setActivityItem("activity");
+          setHiddenPanels((prev) => {
+            const next = new Set(prev);
+            next.delete("quiz");
+            return next;
+          });
+        } else if (!hasActiveTask) {
+          hadActiveTaskRef.current = false;
+        }
+      } catch {
+        if (!cancelled) {
+          hadActiveTaskRef.current = false;
+        }
+      }
+    };
+
+    void pollTaskFocus();
+    timer = window.setInterval(() => {
+      void pollTaskFocus();
+    }, 5000);
+
+    return () => {
+      cancelled = true;
+      if (timer) {
+        window.clearInterval(timer);
+      }
+    };
   }, [courseId]);
 
   const applyPreset = useCallback((preset: LayoutPreset) => {

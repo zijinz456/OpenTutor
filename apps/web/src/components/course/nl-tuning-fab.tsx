@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Wand2, X, HelpCircle, ChevronLeft } from "lucide-react";
-import { setPreference } from "@/lib/api";
+import { Wand2, X, HelpCircle, ChevronLeft, Loader2 } from "lucide-react";
+import { parseNLPreference, setPreference } from "@/lib/api";
 import { toast } from "sonner";
 
 interface NLTuningFABProps {
@@ -53,7 +53,7 @@ const CLARIFY_OPTIONS: ClarifyOption[] = [
   },
 ];
 
-type ViewState = "input" | "clarify" | "sub_options";
+type ViewState = "input" | "parsing" | "clarify" | "sub_options";
 
 export function NLTuningFAB({ courseId }: NLTuningFABProps) {
   const [open, setOpen] = useState(false);
@@ -75,10 +75,28 @@ export function NLTuningFAB({ courseId }: NLTuningFABProps) {
     setSelectedDimension(null);
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!input.trim()) return;
-    setLastInput(input.trim());
+    const text = input.trim();
+    setLastInput(text);
     setInput("");
+    setView("parsing");
+
+    // Try LLM-based parsing first
+    try {
+      const result = await parseNLPreference(text);
+      if (result.dimension && result.value) {
+        // LLM successfully parsed — apply directly
+        await setPreference(result.dimension, result.value, "course", courseId, "nl_tuning");
+        toast.success(`Applied: ${result.label ?? `${result.dimension} → ${result.value}`}`);
+        handleClose();
+        return;
+      }
+    } catch {
+      // LLM unavailable — fall through to manual clarification
+    }
+
+    // Fallback: show manual clarification menu
     setView("clarify");
   };
 
@@ -136,15 +154,22 @@ export function NLTuningFAB({ courseId }: NLTuningFABProps) {
                 <input
                   ref={inputRef}
                   className="w-full h-10 px-4 border border-gray-200 rounded-lg bg-white text-[13px] text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-600/20 focus:border-indigo-600"
-                  placeholder='e.g. "simplify notes", "change format"...'
+                  placeholder='e.g. "simplify notes", "use more examples"...'
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+                  onKeyDown={(e) => e.key === "Enter" && void handleSubmit()}
                 />
                 <span className="text-[11px] text-gray-400">
-                  Type a request to adjust layout, note format, or AI style
+                  Describe what you want to change — AI will parse your intent
                 </span>
               </>
+            )}
+
+            {view === "parsing" && (
+              <div className="flex items-center justify-center gap-2 py-4">
+                <Loader2 className="w-4 h-4 animate-spin text-indigo-600" />
+                <span className="text-[13px] text-gray-500">Understanding your request...</span>
+              </div>
             )}
 
             {view === "clarify" && (

@@ -1,12 +1,5 @@
 """Orchestrator — central coordinator for multi-agent architecture.
 
-Borrows from:
-- HelloAgents ProgrammingTutor: TutorAgent → PlannerAgent / ExerciseAgent routing
-- MetaGPT Team: role-based dispatch + shared memory
-- OpenClaw: agent.list + bindings + queue lanes + Memory Flush
-- OpenAkita: state machine lifecycle
-- NanoClaw group-queue: exponential backoff retry for post-processing
-
 Flow:
 1. Classify intent (rule match → LLM fallback)
 2. Load context (preferences, memories, RAG via rag-fusion in parallel)
@@ -15,6 +8,10 @@ Flow:
 5. Stream response + collect token usage
 6. Reflection self-check (optional VERIFYING phase)
 7. Post-process with retry (signal extraction, memory encoding, graph extraction)
+
+Registry and context loading extracted to:
+- services.agent.registry — agent registration + intent mapping
+- services.agent.context_builder — context loading + token trimming
 """
 
 import asyncio
@@ -22,137 +19,25 @@ import json
 import logging
 import re
 import uuid
+from dataclasses import asdict
 from typing import AsyncIterator
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.agent.state import AgentContext, IntentType, TaskPhase
+from services.agent.state import AgentContext, AgentTurnEnvelope, AgentVerificationResult, IntentType, TaskPhase
 from services.agent.router import classify_intent
 from services.agent.base import BaseAgent
-from services.agent.teaching import TeachingAgent
-from services.agent.exercise import ExerciseAgent
-from services.agent.planning import PlanningAgent
-from services.agent.review import ReviewAgent
-from services.agent.preference_agent import PreferenceAgent
-from services.agent.scene_agent import SceneAgent
-from services.agent.code_execution import CodeExecutionAgent
-from services.agent.curriculum import CurriculumAgent
-from services.agent.assessment import AssessmentAgent
-from services.agent.motivation import MotivationAgent
+from services.agent.registry import AGENT_REGISTRY, get_agent, build_agent_context
+from services.agent.context_builder import load_context
+from services.agent.swarm import should_use_swarm
+from services.agent.merger import merge_results
 
 logger = logging.getLogger(__name__)
 
 # ── Background Task Tracking ──
-# Keep weak references to post-processing tasks so they don't get GC'd
-# and we can await them during graceful shutdown.
 _background_tasks: set[asyncio.Task] = set()
 
 
-# ── Agent Registry ──
-
-AGENT_REGISTRY: dict[str, BaseAgent] = {
-    "teaching": TeachingAgent(),
-    "exercise": ExerciseAgent(),
-    "planning": PlanningAgent(),
-    "review": ReviewAgent(),
-    "preference": PreferenceAgent(),
-    "scene": SceneAgent(),
-    "code_execution": CodeExecutionAgent(),
-    "curriculum": CurriculumAgent(),
-    "assessment": AssessmentAgent(),
-    "motivation": MotivationAgent(),
-}
-
-# Intent → Agent mapping (OpenClaw binding pattern, v3: + scene_switch + new agents)
-INTENT_AGENT_MAP: dict[IntentType, str] = {
-    IntentType.LEARN: "teaching",
-    IntentType.QUIZ: "exercise",
-    IntentType.PLAN: "planning",
-    IntentType.REVIEW: "review",
-    IntentType.PREFERENCE: "preference",
-    IntentType.LAYOUT: "preference",       # Layout changes go through preference agent
-    IntentType.GENERAL: "teaching",        # General chat defaults to teaching
-    IntentType.SCENE_SWITCH: "scene",      # v3: Scene transition suggestions
-    IntentType.CODE: "code_execution",     # Code execution requests
-    IntentType.CURRICULUM: "curriculum",   # Course structure analysis
-    IntentType.ASSESS: "assessment",       # Learning assessment & reports
-}
-
-
-def get_agent(intent: IntentType) -> BaseAgent:
-    """Resolve intent to specialist agent (OpenClaw binding resolution)."""
-    agent_name = INTENT_AGENT_MAP.get(intent, "teaching")
-    return AGENT_REGISTRY[agent_name]
-
-
-def build_agent_context(
-    user_id: uuid.UUID,
-    course_id: uuid.UUID,
-    message: str,
-    conversation_id: uuid.UUID | None = None,
-    session_id: uuid.UUID | None = None,
-    history: list[dict] | None = None,
-    active_tab: str = "",
-    tab_context: dict | None = None,
-    scene: str | None = None,
-    images: list[dict] | None = None,
-) -> AgentContext:
-    """Create a normalized AgentContext for chat or workflow entry points."""
-    ctx = AgentContext(
-        user_id=user_id,
-        course_id=course_id,
-        user_message=message,
-        conversation_id=conversation_id,
-        session_id=session_id or uuid.uuid4(),
-        conversation_history=(history or [])[-10:],
-        active_tab=active_tab,
-        tab_context=tab_context or {},
-        images=images or [],
-    )
-    if scene:
-        ctx.scene = scene
-    return ctx
-
-
-# ── Context Window Management (OpenClaw compaction pattern) ──
-
-# Token budgets for each context category
-MEMORY_BUDGET = 1500
-RAG_BUDGET = 3000
-HISTORY_BUDGET = 2000
-
-
-def _estimate_tokens(text: str) -> int:
-    """Rough token estimate (English ÷4, CJK ÷2)."""
-    ascii_chars = sum(1 for c in text if ord(c) < 128)
-    non_ascii = len(text) - ascii_chars
-    return ascii_chars // 4 + non_ascii // 2
-
-
-def _trim_context(ctx: AgentContext) -> AgentContext:
-    """Trim context to fit token budgets. Keeps highest-relevance items.
-
-    OpenClaw compaction pattern: soft trim by priority, preserving most useful content.
-    """
-    # 1. Trim conversation history (keep newest, drop oldest)
-    history_tokens = sum(_estimate_tokens(m.get("content", "")) for m in ctx.conversation_history)
-    while history_tokens > HISTORY_BUDGET and len(ctx.conversation_history) > 2:
-        removed = ctx.conversation_history.pop(0)
-        history_tokens -= _estimate_tokens(removed.get("content", ""))
-
-    # 2. Trim RAG docs (sorted by relevance; drop lowest-scored last items)
-    rag_tokens = sum(_estimate_tokens(d.get("content", "")) for d in ctx.content_docs)
-    while rag_tokens > RAG_BUDGET and ctx.content_docs:
-        removed = ctx.content_docs.pop()
-        rag_tokens -= _estimate_tokens(removed.get("content", ""))
-
-    # 3. Trim memories (sorted by hybrid_score; drop lowest last items)
-    mem_tokens = sum(_estimate_tokens(m.get("summary", "")) for m in ctx.memories)
-    while mem_tokens > MEMORY_BUDGET and ctx.memories:
-        removed = ctx.memories.pop()
-        mem_tokens -= _estimate_tokens(removed.get("summary", ""))
-
-    return ctx
 
 
 def _has_pending_markers(buffer: str) -> bool:
@@ -261,9 +146,31 @@ def _finalize_token_usage(ctx: AgentContext, agent: BaseAgent) -> None:
 
 def _build_provenance(ctx: AgentContext) -> dict:
     """Create a compact provenance summary for UI and persistence."""
-    return {
-        "scene": ctx.scene,
+    from services.provenance import build_provenance
+
+    payload = build_provenance(
+        scene=ctx.scene,
+        content_refs=[
+            {
+                "title": doc.get("title"),
+                "source_type": doc.get("source_type"),
+                "preview": (doc.get("content") or "")[:140],
+            }
+            for doc in ctx.content_docs[:3]
+            if doc.get("title") or doc.get("content")
+        ],
+        content_count=len(ctx.content_docs),
+        memory_count=len(ctx.memories),
+        tool_names=[call.get("tool") for call in ctx.tool_calls[:5] if call.get("tool")],
+        action_count=len(ctx.actions),
+        generated=True,
+        user_input=bool((ctx.user_message or "").strip()),
+        source_labels=["generated"],
+    )
+    payload.update({
+        "course_count": len(ctx.content_docs),
         "scene_resolution": ctx.metadata.get("scene_resolution"),
+        "scene_policy": ctx.metadata.get("scene_policy"),
         "scene_switch": ctx.metadata.get("scene_switch"),
         "preferences_applied": sorted(ctx.preferences.keys()),
         "preference_sources": ctx.preference_sources,
@@ -275,107 +182,83 @@ def _build_provenance(ctx: AgentContext) -> dict:
             }
             for key, value in sorted(ctx.preferences.items())
         ],
-        "content_count": len(ctx.content_docs),
-        "content_titles": [doc.get("title", "") for doc in ctx.content_docs[:3] if doc.get("title")],
-        "content_refs": [
-            {
-                "title": doc.get("title"),
-                "source_type": doc.get("source_type"),
-                "preview": (doc.get("content") or "")[:140],
-            }
-            for doc in ctx.content_docs[:3]
-            if doc.get("title") or doc.get("content")
-        ],
-        "memory_count": len(ctx.memories),
-        "tool_count": len(ctx.tool_calls),
-        "tool_names": [call.get("tool") for call in ctx.tool_calls[:5] if call.get("tool")],
-        "action_count": len(ctx.actions),
+        "workflow_count": 1 if ctx.metadata.get("workflow_name") else 0,
+        "generated_count": 1 if ctx.response else 0,
+    })
+    return payload
+
+
+def _get_verifier_result(ctx: AgentContext) -> AgentVerificationResult | None:
+    verifier_payload = ctx.metadata.get("verifier")
+    if not isinstance(verifier_payload, dict):
+        return None
+    try:
+        return AgentVerificationResult(
+            status=verifier_payload["status"],
+            code=verifier_payload["code"],
+            message=verifier_payload["message"],
+            repair_attempted=bool(verifier_payload.get("repair_attempted", False)),
+        )
+    except KeyError:
+        return None
+
+
+def _build_turn_envelope(ctx: AgentContext) -> AgentTurnEnvelope:
+    return AgentTurnEnvelope(
+        response=ctx.response,
+        agent=ctx.delegated_agent or "coordinator",
+        intent=ctx.intent.value,
+        actions=ctx.actions,
+        tool_calls=ctx.tool_calls,
+        provenance=ctx.metadata.get("provenance") or _build_provenance(ctx),
+        verifier=_get_verifier_result(ctx),
+        task_link=ctx.metadata.get("task_link"),
+    )
+
+
+def _envelope_payload(ctx: AgentContext) -> dict:
+    envelope = _build_turn_envelope(ctx)
+    return {
+        "status": "complete",
+        "session_id": str(ctx.session_id),
+        "response": envelope.response,
+        "agent": envelope.agent,
+        "intent": envelope.intent,
+        "tokens": ctx.total_tokens,
+        "actions": envelope.actions,
+        "tool_calls": envelope.tool_calls,
+        "provenance": envelope.provenance,
+        "verifier": asdict(envelope.verifier) if envelope.verifier else None,
+        "task_link": envelope.task_link,
+        "reflection": ctx.metadata.get("reflection"),
     }
 
 
-# ── Context Loading ──
-
-async def load_context(ctx: AgentContext, db: AsyncSession) -> AgentContext:
-    """Load preferences, memories, and RAG content.
-
-    These run sequentially because AsyncSession does not permit overlapping DB
-    work on the same connection.  Each step is wrapped in its own try/except so
-    a failure in one does not block the others.
-    """
-    ctx.transition(TaskPhase.LOADING_CONTEXT)
-
-    from services.preference.engine import resolve_preferences
-    from services.preference.scene import explain_scene_detection
-    from services.memory.pipeline import retrieve_memories
-
-    # Detect scene for preference cascade (only if not explicitly set by caller)
-    if ctx.scene == "study_session":
-        scene_resolution = explain_scene_detection(ctx.user_message)
-        ctx.scene = scene_resolution["scene"]
-        ctx.metadata["scene_resolution"] = scene_resolution
-    else:
-        ctx.metadata["scene_resolution"] = {
-            "scene": ctx.scene,
-            "mode": "explicit",
-            "matched_text": None,
-            "reason": "Scene provided by the caller or course context.",
-        }
-
-    # Use rag-fusion for complex queries, regular hybrid for simple ones
-    async def search_content():
-        # Use rag-fusion for LEARN/REVIEW intents (benefit from multi-query)
-        if ctx.intent in (IntentType.LEARN, IntentType.REVIEW):
-            from services.search.rag_fusion import rag_fusion_search
-            return await rag_fusion_search(db, ctx.course_id, ctx.user_message, limit=5)
-        else:
-            from services.search.hybrid import hybrid_search
-            return await hybrid_search(db, ctx.course_id, ctx.user_message, limit=5)
-
+async def apply_verifier(ctx: AgentContext, agent: BaseAgent) -> AgentContext:
+    if ctx.intent not in (IntentType.LEARN, IntentType.REVIEW, IntentType.QUIZ, IntentType.PLAN, IntentType.ASSESS):
+        return ctx
     try:
-        resolved = await resolve_preferences(db, ctx.user_id, ctx.course_id, scene=ctx.scene)
-        ctx.preferences = resolved.preferences
-        ctx.preference_sources = resolved.sources
-    except Exception as exc:
-        await db.rollback()
-        logger.warning("Preference loading failed: %s", exc)
+        from services.agent.verifier import verify_and_repair
 
-    try:
-        memories = await retrieve_memories(db, ctx.user_id, ctx.user_message, ctx.course_id, limit=3)
-        ctx.memories = memories
-    except Exception as exc:
-        await db.rollback()
-        logger.warning("Memory retrieval failed: %s", exc)
-
-    try:
-        content_docs = await search_content()
-        ctx.content_docs = content_docs
-    except Exception as exc:
-        await db.rollback()
-        logger.warning("RAG search failed: %s", exc)
-
-    # Apply context window budget trimming (OpenClaw compaction)
-    ctx = _trim_context(ctx)
-
-    # Adaptive difficulty guidance for QUIZ intent
-    if ctx.intent == IntentType.QUIZ:
-        try:
-            from services.learning_science.difficulty_selector import (
-                get_recommendation_for_node,
-                format_for_prompt,
-            )
-            rec = await get_recommendation_for_node(db, ctx.user_id, ctx.course_id)
-            ctx.difficulty_guidance = format_for_prompt(rec)
-        except Exception as exc:
-            logger.warning("Difficulty recommendation failed: %s", exc)
-
+        original_response = ctx.response
+        ctx.transition(TaskPhase.VERIFYING)
+        ctx.metadata["provenance"] = _build_provenance(ctx)
+        ctx = await verify_and_repair(ctx, agent)
+        ctx.metadata["verifier_replaced"] = ctx.response != original_response
+    except Exception as e:
+        logger.warning("Verifier failed (non-critical): %s", e)
     return ctx
 
 
-async def prepare_agent_turn(ctx: AgentContext, db: AsyncSession) -> tuple[AgentContext, BaseAgent]:
+# load_context imported from services.agent.context_builder
+
+async def prepare_agent_turn(
+    ctx: AgentContext, db: AsyncSession, db_factory=None,
+) -> tuple[AgentContext, BaseAgent]:
     """Run shared orchestration steps before agent execution."""
     ctx.transition(TaskPhase.ROUTING)
     ctx = await classify_intent(ctx)
-    ctx = await load_context(ctx, db)
+    ctx = await load_context(ctx, db, db_factory=db_factory)
 
     fatigue = _detect_fatigue(ctx.user_message)
     if fatigue > 0.6 and "motivation" in AGENT_REGISTRY:
@@ -389,6 +272,9 @@ async def prepare_agent_turn(ctx: AgentContext, db: AsyncSession) -> tuple[Agent
 
 async def apply_reflection(ctx: AgentContext) -> AgentContext:
     """Optionally improve long substantive responses."""
+    verifier_status = (ctx.metadata.get("verifier") or {}).get("status")
+    if verifier_status == "failed":
+        return ctx
     if not ctx.response or ctx.intent not in (IntentType.LEARN, IntentType.REVIEW) or len(ctx.response) <= 100:
         return ctx
     try:
@@ -432,10 +318,14 @@ async def run_agent_turn(
         tab_context=tab_context,
         scene=scene,
     )
-    ctx, agent = await prepare_agent_turn(ctx, db)
+    ctx, agent = await prepare_agent_turn(ctx, db, db_factory=db_factory)
     ctx = await _consume_agent_stream(ctx, agent, db)
     _finalize_token_usage(ctx, agent)
+    ctx.metadata["provenance"] = _build_provenance(ctx)
+    ctx = await apply_verifier(ctx, agent)
     ctx = await apply_reflection(ctx)
+    ctx.metadata["provenance"] = _build_provenance(ctx)
+    ctx.metadata["turn_envelope"] = _envelope_payload(ctx)
     if ctx.response and post_process_inline:
         await post_process(ctx, db_factory)
     return ctx
@@ -639,8 +529,8 @@ async def orchestrate_stream(
         }),
     }
 
-    # 3. Load context (sequential — AsyncSession constraint)
-    ctx = await load_context(ctx, db)
+    # 3. Load context (parallel when enabled, sequential fallback)
+    ctx = await load_context(ctx, db, db_factory=db_factory)
 
     # Detect complex multi-step requests and submit as background task
     from services.agent.task_planner import is_complex_request
@@ -650,6 +540,18 @@ async def orchestrate_stream(
             from services.activity.engine import submit_task
 
             plan_steps = await create_plan(ctx.user_message, ctx.user_id, ctx.course_id)
+            initial_plan_progress = [
+                {
+                    "step_index": step["step_index"],
+                    "step_type": step.get("step_type", "unknown"),
+                    "title": step.get("title", f"Step {step['step_index'] + 1}"),
+                    "status": "pending",
+                    "depends_on": step.get("depends_on", []),
+                    "agent": step.get("agent"),
+                    "summary": None,
+                }
+                for step in plan_steps
+            ]
             task = await submit_task(
                 user_id=ctx.user_id,
                 task_type="multi_step",
@@ -657,16 +559,38 @@ async def orchestrate_stream(
                 course_id=ctx.course_id,
                 source="chat",
                 input_json={"steps": plan_steps, "course_id": str(ctx.course_id)},
+                metadata_json={"plan_progress": initial_plan_progress, "origin_message": ctx.user_message[:300]},
             )
             yield {
                 "event": "plan_step",
                 "data": json.dumps({
                     "task_id": str(task.id),
-                    "steps": [{"title": s["title"], "status": "pending"} for s in plan_steps],
+                    "steps": initial_plan_progress,
                     "message": "I've created a multi-step plan for your request. It's running in the background.",
                 }),
             }
-            ctx.metadata["multi_step_task_id"] = str(task.id)
+            ctx.metadata["task_link"] = {
+                "task_id": str(task.id),
+                "task_type": task.task_type,
+                "status": task.status,
+            }
+            ctx.delegated_agent = "coordinator"
+            ctx.response = (
+                "I created a background plan for this request. "
+                "It will review your current progress, identify weak spots, and coordinate the next study actions. "
+                "You can watch the task progress in the activity panel while continuing with the workspace."
+            )
+            ctx.metadata["provenance"] = _build_provenance(ctx)
+            ctx.metadata["verifier"] = asdict(
+                AgentVerificationResult(
+                    status="pass",
+                    code="background_task_created",
+                    message="Complex request was converted into a durable background task.",
+                )
+            )
+            yield {"event": "message", "data": json.dumps({"content": ctx.response})}
+            yield {"event": "done", "data": json.dumps(_envelope_payload(ctx))}
+            return
         except Exception as e:
             logger.warning("Multi-step planning failed, falling back to single turn: %s", e)
 
@@ -678,124 +602,204 @@ async def orchestrate_stream(
         agent = get_agent(ctx.intent)
     ctx.delegated_agent = agent.name
 
-    yield {
-        "event": "status",
-        "data": json.dumps({
-            "phase": "generating",
-            "agent": agent.name,
-        }),
-    }
+    # ── Swarm check: should we fan-out to multiple agents in parallel? ──
+    from config import settings
 
-    # 5. Stream response with marker parsing + token tracking
-    # Markers: [ACTION:...] (UI actions), [TOOL_START:...] / [TOOL_DONE:...] (ReAct tools)
-    buffer = ""
-    async for chunk in agent.stream(ctx, db):
-        buffer += chunk
+    swarm_plan = should_use_swarm(ctx) if settings.swarm_enabled else None
 
-        # Parse markers one at a time until no more complete markers found
-        changed = True
-        while changed:
-            changed = False
+    if swarm_plan:
+        # ── Parallel multi-agent (swarm) execution path ──
+        ctx.swarm_mode = True
+        ctx.merge_strategy = swarm_plan.merge_strategy
 
-            # Parse [TOOL_START:tool_name] markers
-            if "[TOOL_START:" in buffer:
-                start = buffer.index("[TOOL_START:")
-                end = buffer.find("]", start)
-                if end != -1:
-                    before = buffer[:start]
-                    if before:
-                        yield {"event": "message", "data": json.dumps({"content": before})}
-                    tool_name = buffer[start + 12:end]
-                    yield {
-                        "event": "tool_status",
-                        "data": json.dumps({"status": "running", "tool": tool_name}),
-                    }
-                    buffer = buffer[end + 1:]
-                    changed = True
-                    continue
+        yield {
+            "event": "status",
+            "data": json.dumps({
+                "phase": "parallel_dispatch",
+                "agents": [a["agent"] for a in swarm_plan.agents],
+            }),
+        }
+        yield {
+            "event": "swarm_start",
+            "data": json.dumps({
+                "agents": [a["agent"] for a in swarm_plan.agents],
+                "reason": swarm_plan.reason,
+            }),
+        }
 
-            # Parse [TOOL_DONE:tool_name] markers
-            if "[TOOL_DONE:" in buffer:
-                start = buffer.index("[TOOL_DONE:")
-                end = buffer.find("]", start)
-                if end != -1:
-                    before = buffer[:start]
-                    if before:
-                        yield {"event": "message", "data": json.dumps({"content": before})}
-                    tool_name = buffer[start + 11:end]
-                    yield {
-                        "event": "tool_status",
-                        "data": json.dumps({"status": "complete", "tool": tool_name}),
-                    }
-                    buffer = buffer[end + 1:]
-                    changed = True
-                    continue
+        ctx.transition(TaskPhase.PARALLEL_DISPATCH)
+        branches = await agent.delegate_parallel(
+            swarm_plan.agents, ctx, db_factory,
+            timeout=settings.swarm_timeout_seconds,
+        )
 
-            # Parse [ACTION:...] markers (existing UI action system)
-            if "[ACTION:" in buffer:
-                start = buffer.index("[ACTION:")
-                end = buffer.find("]", start)
-                if end != -1:
-                    before = buffer[:start]
-                    if before:
-                        yield {"event": "message", "data": json.dumps({"content": before})}
-                    marker = buffer[start + 8:end]
-                    action_data = _parse_action_marker(marker)
-                    ctx.actions.append(action_data)
-                    yield {"event": "action", "data": json.dumps(action_data)}
-                    buffer = buffer[end + 1:]
-                    changed = True
-                    continue
+        # Token usage already aggregated by delegate_parallel()
 
-        # Yield remaining buffer content (no pending markers)
-        has_pending = any(m in buffer for m in ("[ACTION:", "[TOOL_START:", "[TOOL_DONE:"))
-        if buffer and not has_pending:
-            yield {"event": "message", "data": json.dumps({"content": buffer})}
-            buffer = ""
-        elif has_pending and len(buffer) > 500:
-            # Safety: if buffer grows too large with an incomplete marker,
-            # the marker is likely malformed — flush everything as text
-            logger.warning("Flushing oversized marker buffer (%d chars)", len(buffer))
-            yield {"event": "message", "data": json.dumps({"content": buffer})}
-            buffer = ""
+        ctx.transition(TaskPhase.MERGING)
+        yield {
+            "event": "swarm_merging",
+            "data": json.dumps({"strategy": swarm_plan.merge_strategy}),
+        }
 
-    # Yield any remaining buffer (strip incomplete markers)
-    if buffer:
-        # Remove stray incomplete markers that never closed
-        buffer = re.sub(r"\[(TOOL_START|TOOL_DONE|ACTION):[^\]]*$", "", buffer)
+        merged = await merge_results(
+            branches, ctx.user_message,
+            strategy=swarm_plan.merge_strategy,
+            primary_agent=swarm_plan.primary_agent,
+        )
+
+        # Stream the merged response in chunks
+        for i in range(0, len(merged), 100):
+            chunk = merged[i:i + 100]
+            yield {"event": "message", "data": json.dumps({"content": chunk})}
+
+        ctx.response = merged
+        ctx.transition(TaskPhase.COMPLETED)
+        ctx.metadata["provenance"] = _build_provenance(ctx)
+
+        # Done streaming (swarm path)
+        yield {
+            "event": "done",
+            "data": json.dumps({
+                **_envelope_payload(ctx),
+                "swarm": {
+                    "agents": [a["agent"] for a in swarm_plan.agents],
+                    "merge_strategy": swarm_plan.merge_strategy,
+                    "reason": swarm_plan.reason,
+                    "branches": [
+                        {
+                            "agent": b["agent"],
+                            "success": b["success"],
+                            "tokens": b["tokens"],
+                            "duration_ms": b["duration_ms"],
+                        }
+                        for b in branches
+                    ],
+                },
+            }),
+        }
+
+        # Post-processing (same pattern as single-agent path)
+        if ctx.response:
+            task = asyncio.create_task(post_process(ctx, db_factory))
+            _background_tasks.add(task)
+            task.add_done_callback(_background_tasks.discard)
+
+    else:
+        # ── Single-agent execution path (existing flow) ──
+
+        yield {
+            "event": "status",
+            "data": json.dumps({
+                "phase": "generating",
+                "agent": agent.name,
+            }),
+        }
+
+        # 5. Stream response with marker parsing + token tracking
+        # Markers: [ACTION:...] (UI actions), [TOOL_START:...] / [TOOL_DONE:...] (ReAct tools)
+        buffer = ""
+        async for chunk in agent.stream(ctx, db):
+            buffer += chunk
+
+            # Parse markers one at a time until no more complete markers found
+            changed = True
+            while changed:
+                changed = False
+
+                # Parse [TOOL_START:tool_name] markers
+                if "[TOOL_START:" in buffer:
+                    start = buffer.index("[TOOL_START:")
+                    end = buffer.find("]", start)
+                    if end != -1:
+                        before = buffer[:start]
+                        if before:
+                            yield {"event": "message", "data": json.dumps({"content": before})}
+                        tool_name = buffer[start + 12:end]
+                        yield {
+                            "event": "tool_status",
+                            "data": json.dumps({"status": "running", "tool": tool_name}),
+                        }
+                        buffer = buffer[end + 1:]
+                        changed = True
+                        continue
+
+                # Parse [TOOL_DONE:tool_name] markers
+                if "[TOOL_DONE:" in buffer:
+                    start = buffer.index("[TOOL_DONE:")
+                    end = buffer.find("]", start)
+                    if end != -1:
+                        before = buffer[:start]
+                        if before:
+                            yield {"event": "message", "data": json.dumps({"content": before})}
+                        tool_name = buffer[start + 11:end]
+                        yield {
+                            "event": "tool_status",
+                            "data": json.dumps({"status": "complete", "tool": tool_name}),
+                        }
+                        buffer = buffer[end + 1:]
+                        changed = True
+                        continue
+
+                # Parse [ACTION:...] markers (existing UI action system)
+                if "[ACTION:" in buffer:
+                    start = buffer.index("[ACTION:")
+                    end = buffer.find("]", start)
+                    if end != -1:
+                        before = buffer[:start]
+                        if before:
+                            yield {"event": "message", "data": json.dumps({"content": before})}
+                        marker = buffer[start + 8:end]
+                        action_data = _parse_action_marker(marker)
+                        ctx.actions.append(action_data)
+                        yield {"event": "action", "data": json.dumps(action_data)}
+                        buffer = buffer[end + 1:]
+                        changed = True
+                        continue
+
+            # Yield remaining buffer content (no pending markers)
+            has_pending = any(m in buffer for m in ("[ACTION:", "[TOOL_START:", "[TOOL_DONE:"))
+            if buffer and not has_pending:
+                yield {"event": "message", "data": json.dumps({"content": buffer})}
+                buffer = ""
+            elif has_pending and len(buffer) > 500:
+                # Safety: if buffer grows too large with an incomplete marker,
+                # the marker is likely malformed — flush everything as text
+                logger.warning("Flushing oversized marker buffer (%d chars)", len(buffer))
+                yield {"event": "message", "data": json.dumps({"content": buffer})}
+                buffer = ""
+
+        # Yield any remaining buffer (strip incomplete markers)
         if buffer:
-            yield {"event": "message", "data": json.dumps({"content": buffer})}
+            # Remove stray incomplete markers that never closed
+            buffer = re.sub(r"\[(TOOL_START|TOOL_DONE|ACTION):[^\]]*$", "", buffer)
+            if buffer:
+                yield {"event": "message", "data": json.dumps({"content": buffer})}
 
-    _finalize_token_usage(ctx, agent)
+        _finalize_token_usage(ctx, agent)
+        streamed_response = ctx.response
+        ctx.metadata["provenance"] = _build_provenance(ctx)
+        ctx = await apply_verifier(ctx, agent)
 
-    should_reflect = (
-        bool(ctx.response)
-        and ctx.intent in (IntentType.LEARN, IntentType.REVIEW)
-        and len(ctx.response) > 100
-    )
-    if should_reflect:
-        yield {"event": "status", "data": json.dumps({"phase": "verifying"})}
-        ctx = await apply_reflection(ctx)
-    if ctx.metadata.get("response_replaced"):
-        yield {"event": "replace", "data": json.dumps({"content": ctx.response})}
+        should_reflect = (
+            bool(ctx.response)
+            and ctx.intent in (IntentType.LEARN, IntentType.REVIEW)
+            and len(ctx.response) > 100
+        )
+        if should_reflect:
+            yield {"event": "status", "data": json.dumps({"phase": "verifying"})}
+            ctx = await apply_reflection(ctx)
+        ctx.metadata["provenance"] = _build_provenance(ctx)
+        if ctx.response != streamed_response:
+            yield {"event": "replace", "data": json.dumps({"content": ctx.response})}
 
-    # Done streaming
-    yield {
-        "event": "done",
-        "data": json.dumps({
-            "status": "complete",
-            "agent": agent.name,
-            "intent": ctx.intent.value,
-            "session_id": str(ctx.session_id),
-            "tokens": ctx.total_tokens,
-            "actions": ctx.actions,
-            "provenance": _build_provenance(ctx),
-            "reflection": ctx.metadata.get("reflection"),
-        }),
-    }
+        # Done streaming
+        yield {
+            "event": "done",
+            "data": json.dumps(_envelope_payload(ctx)),
+        }
 
-    # 7. Post-processing with retry (tracked to prevent GC and enable graceful shutdown)
-    if ctx.response:
-        task = asyncio.create_task(post_process(ctx, db_factory))
-        _background_tasks.add(task)
-        task.add_done_callback(_background_tasks.discard)
+        # 7. Post-processing with retry (tracked to prevent GC and enable graceful shutdown)
+        if ctx.response:
+            task = asyncio.create_task(post_process(ctx, db_factory))
+            _background_tasks.add(task)
+            task.add_done_callback(_background_tasks.discard)

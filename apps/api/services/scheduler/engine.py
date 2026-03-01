@@ -6,13 +6,16 @@ Jobs:
 1. weekly_prep_job — runs every Monday 8:00 AM, triggers WF-2 for all users
 2. fsrs_review_job — runs every hour, checks for due flashcards and pushes reminders
 3. scrape_refresh_job — runs every 24h, re-scrapes URLs with auto-scrape enabled
+4. timing_analysis_job — runs daily, computes preferred study times from habit logs
+5. escalation_check_job — runs every 2 hours, escalates unread high-priority notifications
 
-Notifications are stored in a `notifications` table and delivered via SSE or polling.
+Notifications are dispatched through NotificationDispatcher which handles dedup,
+quiet hours, frequency caps, channel routing, and delivery tracking.
 """
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -20,66 +23,49 @@ from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import select, func
 
 from database import async_session
+from models.agent_task import AgentTask
 from models.user import User
 from models.progress import LearningProgress
 from models.notification import Notification
+from models.study_goal import StudyGoal
+from services.notification.dispatcher import dispatch as dispatch_notification
+from services.activity.engine import submit_task
+from services.provenance import build_provenance
 
 logger = logging.getLogger(__name__)
 
 scheduler = AsyncIOScheduler()
 
-# SSE subscribers: user_id → list of asyncio.Queue
-_sse_subscribers: dict[str, list] = {}
+# SSE subscriber management has moved to services.notification.channels.sse.
+# Re-export for backward compatibility.
+from services.notification.channels.sse import subscribe_sse, unsubscribe_sse  # noqa: F401
 
 
-def subscribe_sse(user_id: uuid.UUID):
-    """Create an SSE subscription queue for a user."""
-    import asyncio
-    queue: asyncio.Queue = asyncio.Queue()
-    key = str(user_id)
-    _sse_subscribers.setdefault(key, []).append(queue)
-    return queue
+async def _push_notification(
+    user_id: uuid.UUID,
+    title: str,
+    body: str,
+    category: str = "reminder",
+    course_id: uuid.UUID | None = None,
+    priority: str = "normal",
+    dedup_key: str | None = None,
+):
+    """Dispatch notification via NotificationDispatcher.
 
-
-def unsubscribe_sse(user_id: uuid.UUID, queue):
-    """Remove an SSE subscription."""
-    key = str(user_id)
-    subs = _sse_subscribers.get(key, [])
-    if queue in subs:
-        subs.remove(queue)
-
-
-async def _push_notification(user_id: uuid.UUID, title: str, body: str, category: str = "reminder", course_id: uuid.UUID | None = None):
-    """Persist notification to DB and push to SSE subscribers."""
+    Wraps the central dispatch() call with its own DB session, suitable for
+    scheduler jobs that run outside a request context.
+    """
     async with async_session() as db:
-        notif = Notification(
+        await dispatch_notification(
             user_id=user_id,
-            course_id=course_id,
             title=title,
             body=body,
             category=category,
+            course_id=course_id,
+            priority=priority,
+            dedup_key=dedup_key,
+            db=db,
         )
-        db.add(notif)
-        await db.commit()
-        await db.refresh(notif)
-
-    logger.info("Notification pushed: [%s] %s — %s", category, title, body[:80])
-
-    # Push to SSE subscribers
-    import json
-    payload = json.dumps({
-        "id": str(notif.id),
-        "title": title,
-        "body": body,
-        "category": category,
-        "created_at": notif.created_at.isoformat() if notif.created_at else None,
-    })
-    key = str(user_id)
-    for queue in _sse_subscribers.get(key, []):
-        try:
-            queue.put_nowait(payload)
-        except Exception:
-            pass
 
 
 async def weekly_prep_job():
@@ -88,15 +74,43 @@ async def weekly_prep_job():
     async with async_session() as db:
         result = await db.execute(select(User))
         users = result.scalars().all()
+        now = datetime.now(timezone.utc)
+        week_start = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
 
         for user in users:
             try:
-                from services.workflow.weekly_prep import run_weekly_prep
-                plan_result = await run_weekly_prep(db, user.id)
-                _push_notification(
+                goal = await _get_or_create_weekly_review_goal(db, user.id, week_start)
+                if await _has_scheduled_weekly_task(db, user.id, goal.id, week_start):
+                    continue
+                await submit_task(
+                    user_id=user.id,
+                    goal_id=goal.id,
+                    task_type="weekly_prep",
+                    title=f"Weekly review for {week_start.date().isoformat()}",
+                    summary="Scheduler queued a weekly review to refresh your study plan and next action.",
+                    source="scheduler",
+                    input_json={
+                        "trigger": "weekly_scheduler",
+                        "week_start": week_start.date().isoformat(),
+                    },
+                    metadata_json={
+                        "provenance": build_provenance(
+                            workflow="weekly_prep",
+                            generated=True,
+                            source_labels=["workflow", "generated", "scheduler"],
+                            scheduler_trigger="weekly_scheduler",
+                        ),
+                        "scheduler": {
+                            "job": "weekly_prep",
+                            "week_start": week_start.date().isoformat(),
+                        },
+                    },
+                    max_attempts=2,
+                )
+                await _push_notification(
                     user.id,
-                    "Weekly Study Plan Ready",
-                    f"Your plan for this week is ready. {len(plan_result.get('deadlines', []))} upcoming deadlines.",
+                    "Weekly Review Queued",
+                    "OpenTutor queued your weekly review task. Approve or inspect it from the activity panel once it starts.",
                     category="weekly_prep",
                 )
             except Exception as e:
@@ -127,7 +141,7 @@ async def fsrs_review_job():
         for row in rows:
             user_id, due_count = row
             if due_count > 0:
-                _push_notification(
+                await _push_notification(
                     user_id,
                     f"{due_count} Cards Due for Review",
                     f"You have {due_count} flashcards ready for spaced repetition review. Review now to strengthen your memory!",
@@ -190,7 +204,6 @@ async def memory_consolidation_job():
 async def inactivity_alert_job():
     """Inactivity alert — remind users who haven't studied for 3+ days."""
     logger.info("Checking for inactive users...")
-    from datetime import timedelta
     threshold = datetime.now(timezone.utc) - timedelta(days=3)
 
     async with async_session() as db:
@@ -252,6 +265,265 @@ async def daily_suggestion_job():
                 logger.error("Daily suggestion failed for user %s: %s", user.id, e)
 
 
+async def progress_driven_review_job():
+    """Progress-driven review — auto-generate targeted review tasks for weak areas.
+
+    This is the core "autonomous agent loop":
+    1. Check each user's learning progress for topics with low mastery
+    2. If unmastered wrong answers exceed a threshold, auto-create a review_drill task
+    3. Notify the user so they can approve and begin the review
+
+    This connects the FSRS data with the agent task system to make the agent
+    proactively drive learning, not just respond to user messages.
+    """
+    logger.info("Running progress-driven review job...")
+    from models.wrong_answer import WrongAnswer
+
+    async with async_session() as db:
+        result = await db.execute(select(User))
+        users = result.scalars().all()
+        now = datetime.now(timezone.utc)
+        tasks_created = 0
+
+        for user in users:
+            try:
+                # Count unmastered wrong answers per course
+                wa_result = await db.execute(
+                    select(
+                        WrongAnswer.course_id,
+                        func.count(WrongAnswer.id).label("unmastered_count"),
+                    )
+                    .where(
+                        WrongAnswer.user_id == user.id,
+                        WrongAnswer.mastered.is_(False),
+                    )
+                    .group_by(WrongAnswer.course_id)
+                )
+                rows = wa_result.all()
+
+                for row in rows:
+                    course_id, unmastered_count = row
+                    if unmastered_count < 3:
+                        continue  # Not enough weak areas to warrant a task
+
+                    # Check if we already created a review task today for this course
+                    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+                    existing = await db.execute(
+                        select(AgentTask).where(
+                            AgentTask.user_id == user.id,
+                            AgentTask.course_id == course_id,
+                            AgentTask.task_type == "wrong_answer_review",
+                            AgentTask.source == "scheduler",
+                            AgentTask.created_at >= today_start,
+                        ).limit(1)
+                    )
+                    if existing.scalar_one_or_none():
+                        continue  # Already created today
+
+                    # Create the review task (requires approval)
+                    await submit_task(
+                        user_id=user.id,
+                        task_type="wrong_answer_review",
+                        title=f"Review {unmastered_count} weak areas",
+                        summary=f"You have {unmastered_count} unmastered wrong answers. "
+                                f"This task will generate targeted exercises to strengthen these areas.",
+                        source="scheduler",
+                        input_json={
+                            "course_id": str(course_id),
+                            "trigger": "progress_check",
+                            "unmastered_count": unmastered_count,
+                        },
+                        metadata_json={
+                            "provenance": build_provenance(
+                                workflow="progress_driven_review",
+                                generated=True,
+                                source_labels=["workflow", "generated", "scheduler"],
+                                scheduler_trigger="progress_check",
+                            ),
+                        },
+                        max_attempts=2,
+                        requires_approval=True,
+                        course_id=course_id,
+                    )
+                    await _push_notification(
+                        user.id,
+                        f"{unmastered_count} weak areas detected",
+                        "OpenTutor found topics you're struggling with and queued a targeted review. "
+                        "Approve the task from the activity panel to start.",
+                        category="progress_review",
+                        course_id=course_id,
+                    )
+                    tasks_created += 1
+
+            except Exception as e:
+                logger.error("Progress-driven review failed for user %s: %s", user.id, e)
+
+        logger.info("Progress-driven review complete: created %d tasks", tasks_created)
+
+
+async def timing_analysis_job():
+    """Timing analysis — compute preferred study times from habit logs.
+
+    Uses services.notification.timing.compute_preferred_study_time() to
+    analyse each user's study patterns and update their NotificationSettings
+    with the learned preferred_study_time and confidence score.
+
+    Runs once daily.
+    """
+    logger.info("Running timing analysis job...")
+    from services.notification.timing import compute_preferred_study_time
+    from services.notification.dispatcher import get_or_create_settings
+
+    async with async_session() as db:
+        result = await db.execute(select(User))
+        users = result.scalars().all()
+
+        updated = 0
+        for user in users:
+            try:
+                preferred_time, confidence = await compute_preferred_study_time(
+                    user.id, db
+                )
+                if preferred_time is not None:
+                    ns = await get_or_create_settings(user.id, db)
+                    ns.preferred_study_time = preferred_time
+                    ns.study_time_confidence = confidence
+                    updated += 1
+            except Exception as e:
+                logger.error("Timing analysis failed for user %s: %s", user.id, e)
+
+        await db.commit()
+        logger.info("Timing analysis complete: updated %d/%d users", updated, len(users))
+
+
+async def escalation_check_job():
+    """Escalation check — re-deliver unread high-priority notifications.
+
+    Finds notifications with priority "high" or "urgent" that have not been
+    read within the user's configured escalation_delay_hours window, and
+    re-dispatches them with "urgent" priority so the dispatcher bypasses
+    quiet hours and frequency caps on the second delivery attempt.
+
+    Runs every 2 hours.
+    """
+    logger.info("Running escalation check job...")
+    from models.notification_settings import NotificationSettings
+
+    async with async_session() as db:
+        now = datetime.now(timezone.utc)
+
+        # Find users with escalation enabled
+        settings_result = await db.execute(
+            select(NotificationSettings).where(
+                NotificationSettings.escalation_enabled.is_(True)
+            )
+        )
+        all_settings = settings_result.scalars().all()
+
+        escalated = 0
+        for ns in all_settings:
+            try:
+                cutoff = now - timedelta(hours=ns.escalation_delay_hours)
+
+                # Unread high-priority notifications older than the escalation window
+                notif_result = await db.execute(
+                    select(Notification).where(
+                        Notification.user_id == ns.user_id,
+                        Notification.read.is_(False),
+                        Notification.priority.in_(["high", "urgent"]),
+                        Notification.created_at <= cutoff,
+                    )
+                )
+                unread = notif_result.scalars().all()
+
+                for notif in unread:
+                    # Mark original as read to prevent re-escalation loops
+                    notif.read = True
+
+                    await dispatch_notification(
+                        user_id=ns.user_id,
+                        title=f"[Reminder] {notif.title}",
+                        body=notif.body,
+                        category=notif.category,
+                        course_id=notif.course_id,
+                        priority="urgent",
+                        dedup_key=f"escalation-{notif.id}",
+                        db=db,
+                    )
+                    escalated += 1
+            except Exception as e:
+                logger.error("Escalation check failed for user %s: %s", ns.user_id, e)
+
+        await db.commit()
+        logger.info("Escalation check complete: escalated %d notifications", escalated)
+
+
+async def _get_or_create_weekly_review_goal(
+    db,
+    user_id: uuid.UUID,
+    week_start: datetime,
+) -> StudyGoal:
+    result = await db.execute(
+        select(StudyGoal)
+        .where(
+            StudyGoal.user_id == user_id,
+            StudyGoal.status == "active",
+            StudyGoal.course_id.is_(None),
+        )
+        .order_by(StudyGoal.created_at.asc())
+    )
+    goals = result.scalars().all()
+    for goal in goals:
+        metadata = goal.metadata_json or {}
+        if metadata.get("goal_kind") == "weekly_review":
+            goal.target_date = week_start + timedelta(days=6)
+            goal.metadata_json = {
+                **metadata,
+                "system_managed": True,
+            }
+            await db.commit()
+            await db.refresh(goal)
+            return goal
+
+    goal = StudyGoal(
+        user_id=user_id,
+        course_id=None,
+        title="Stay on track this week",
+        objective="Refresh priorities every week, review deadlines, and keep one clear next study action active.",
+        success_metric="Complete a weekly review and keep the next action current.",
+        current_milestone="Weekly review queue initialized",
+        next_action="Review this week's queued study task.",
+        status="active",
+        confidence="system",
+        target_date=week_start + timedelta(days=6),
+        metadata_json={"goal_kind": "weekly_review", "system_managed": True},
+    )
+    db.add(goal)
+    await db.commit()
+    await db.refresh(goal)
+    return goal
+
+
+async def _has_scheduled_weekly_task(
+    db,
+    user_id: uuid.UUID,
+    goal_id: uuid.UUID,
+    week_start: datetime,
+) -> bool:
+    result = await db.execute(
+        select(AgentTask)
+        .where(
+            AgentTask.user_id == user_id,
+            AgentTask.goal_id == goal_id,
+            AgentTask.task_type == "weekly_prep",
+            AgentTask.source == "scheduler",
+            AgentTask.created_at >= week_start,
+        )
+        .limit(1)
+    )
+    return result.scalar_one_or_none() is not None
+
+
 def start_scheduler():
     """Start the APScheduler with all configured jobs."""
     # Weekly prep: every Monday at 8:00 AM
@@ -305,6 +577,33 @@ def start_scheduler():
         trigger=CronTrigger(hour=9, minute=0),
         id="daily_suggestion",
         name="Daily Forgetting-Curve Suggestion",
+        replace_existing=True,
+    )
+
+    # Timing analysis: daily at 3:00 AM (low-traffic window)
+    scheduler.add_job(
+        timing_analysis_job,
+        trigger=CronTrigger(hour=3, minute=0),
+        id="timing_analysis",
+        name="Study Timing Analysis",
+        replace_existing=True,
+    )
+
+    # Progress-driven review: every 4 hours (core autonomous agent loop)
+    scheduler.add_job(
+        progress_driven_review_job,
+        trigger=IntervalTrigger(hours=4),
+        id="progress_driven_review",
+        name="Progress-Driven Review (auto-generate tasks for weak areas)",
+        replace_existing=True,
+    )
+
+    # Escalation check: every 2 hours
+    scheduler.add_job(
+        escalation_check_job,
+        trigger=IntervalTrigger(hours=2),
+        id="escalation_check",
+        name="Notification Escalation Check",
         replace_existing=True,
     )
 

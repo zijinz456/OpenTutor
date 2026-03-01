@@ -4,8 +4,8 @@ import uuid
 from types import SimpleNamespace
 
 import pytest
-from fastapi import HTTPException
 
+from libs.exceptions import ValidationError
 from models.scrape import AuthSession
 from routers.canvas import canvas_login, canvas_sync, CanvasLoginRequest, CanvasSyncRequest
 
@@ -95,7 +95,7 @@ async def test_canvas_login_creates_auth_session_without_login_actions(monkeypat
 
 @pytest.mark.asyncio
 async def test_canvas_sync_rejects_token_mode():
-    with pytest.raises(HTTPException) as e:
+    with pytest.raises(ValidationError) as e:
         await canvas_sync(
             body=CanvasSyncRequest(
                 canvas_url="https://canvas.example.edu",
@@ -104,4 +104,4 @@ async def test_canvas_sync_rejects_token_mode():
             user=_user(),
             db=_FakeDB(),
         )
-    assert e.value.status_code == 410
+    assert e.value.status == 422

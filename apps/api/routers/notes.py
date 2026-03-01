@@ -2,7 +2,8 @@
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
+from libs.exceptions import NotFoundError
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -45,7 +46,7 @@ async def restructure_content(body: RestructureRequest, user: User = Depends(get
     )
     node = result.scalar_one_or_none()
     if not node or not node.content:
-        raise HTTPException(status_code=404, detail="Content node not found or empty")
+        raise NotFoundError(resource="content_node", resource_id=str(body.content_node_id))
 
     # Verify course ownership
     await get_course_or_404(db, node.course_id, user_id=user.id)
@@ -89,7 +90,7 @@ async def save_generated_notes(
             replace_batch_id=body.replace_batch_id,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise NotFoundError(resource="generated_asset", resource_id=str(body.replace_batch_id)) from exc
 
     await db.commit()
     return result

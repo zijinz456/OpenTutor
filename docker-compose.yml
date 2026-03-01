@@ -46,21 +46,28 @@ services:
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       LLM_PROVIDER: ${LLM_PROVIDER:-openai}
       LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
-      APP_AUTO_CREATE_TABLES: ${APP_AUTO_CREATE_TABLES:-true}
+      LLM_REQUIRED: ${LLM_REQUIRED:-true}
+      APP_AUTO_CREATE_TABLES: ${APP_AUTO_CREATE_TABLES:-false}
       APP_AUTO_SEED_SYSTEM: ${APP_AUTO_SEED_SYSTEM:-true}
       APP_RUN_SCHEDULER: ${APP_RUN_SCHEDULER:-false}
       APP_RUN_ACTIVITY_ENGINE: ${APP_RUN_ACTIVITY_ENGINE:-true}
+      CODE_SANDBOX_BACKEND: ${CODE_SANDBOX_BACKEND:-container}
+      CODE_SANDBOX_RUNTIME: ${CODE_SANDBOX_RUNTIME:-docker}
+      CODE_SANDBOX_IMAGE: ${CODE_SANDBOX_IMAGE:-python:3.11-alpine}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
       UPLOAD_DIR: /app/uploads
+      SCRAPE_FIXTURE_DIR: /fixtures/e2e/scrape
     volumes:
       - ./apps/api:/app
+      - ./tests/e2e/fixtures:/fixtures/e2e:ro
       - uploads:/app/uploads
+      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
-    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    command: bash -lc "alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port 8000 --reload"
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/api/health || exit 1"]
       interval: 10s

@@ -11,6 +11,7 @@ Reference:
 
 import uuid
 import logging
+import re
 
 from sqlalchemy import select, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,10 +23,47 @@ logger = logging.getLogger(__name__)
 # RRF constant (standard value from literature)
 RRF_K = 60
 
+_CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]+")
+_ASCII_TERM_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_\-]{1,}")
+
 
 def rrf_score(rank: int) -> float:
     """Reciprocal Rank Fusion score: 1/(k + rank)."""
     return 1.0 / (RRF_K + rank)
+
+
+def _contains_cjk(text: str) -> bool:
+    return bool(_CJK_RE.search(text))
+
+
+def _tokenize_query(query: str) -> list[str]:
+    """Extract mixed English/CJK search terms without relying on whitespace."""
+    terms: list[str] = []
+    seen: set[str] = set()
+
+    def _push(term: str) -> None:
+        value = term.strip().lower()
+        if len(value) < 2 or value in seen:
+            return
+        seen.add(value)
+        terms.append(value)
+
+    for match in _ASCII_TERM_RE.finditer(query):
+        _push(match.group(0))
+
+    for segment in _CJK_RE.findall(query):
+        _push(segment)
+        if len(segment) <= 2:
+            continue
+        for size in (2, 3):
+            if len(segment) < size:
+                continue
+            for idx in range(len(segment) - size + 1):
+                _push(segment[idx : idx + size])
+
+    if not terms and query.strip():
+        _push(query[:100])
+    return terms[:12]
 
 
 async def keyword_search(
@@ -40,20 +78,22 @@ async def keyword_search(
     Falls back to ILIKE if search_vector is not populated.
     """
     # Try full-text search first (BM25 via ts_rank_cd)
-    result = await db.execute(
-        text("""
-            SELECT id, title, content, level,
-                   ts_rank_cd(search_vector, plainto_tsquery('simple', :query), 32) AS rank
-            FROM course_content_tree
-            WHERE course_id = :course_id
-              AND search_vector IS NOT NULL
-              AND search_vector @@ plainto_tsquery('simple', :query)
-            ORDER BY rank DESC
-            LIMIT :limit
-        """),
-        {"course_id": str(course_id), "query": query, "limit": limit},
-    )
-    rows = result.fetchall()
+    rows = []
+    if not _contains_cjk(query):
+        result = await db.execute(
+            text("""
+                SELECT id, title, content, level,
+                       ts_rank_cd(search_vector, plainto_tsquery('simple', :query), 32) AS rank
+                FROM course_content_tree
+                WHERE course_id = :course_id
+                  AND search_vector IS NOT NULL
+                  AND search_vector @@ plainto_tsquery('simple', :query)
+                ORDER BY rank DESC
+                LIMIT :limit
+            """),
+            {"course_id": str(course_id), "query": query, "limit": limit},
+        )
+        rows = result.fetchall()
 
     if rows:
         return [
@@ -69,12 +109,16 @@ async def keyword_search(
         ]
 
     # Fallback: ILIKE for nodes without search_vector
-    terms = [t.strip() for t in query.split() if len(t.strip()) >= 2]
-    if not terms:
-        terms = [query[:100]]
+    terms = _tokenize_query(query)
 
     from sqlalchemy import or_
-    conditions = [CourseContentTree.content.ilike(f"%{t}%") for t in terms[:5]]
+    conditions = [
+        or_(
+            CourseContentTree.title.ilike(f"%{t}%"),
+            CourseContentTree.content.ilike(f"%{t}%"),
+        )
+        for t in terms[:6]
+    ]
 
     result = await db.execute(
         select(CourseContentTree)
@@ -180,13 +224,12 @@ async def tree_search(
         return []
 
     # Simple relevance check: does the query relate to this chapter?
-    query_lower = query.lower()
+    query_terms = _tokenize_query(query)
     relevant_chapters = []
     for ch in chapters:
         title_lower = (ch.title or "").lower()
         content_lower = (ch.content or "")[:500].lower()
-        if any(term in title_lower or term in content_lower
-               for term in query_lower.split() if len(term) >= 2):
+        if any(term in title_lower or term in content_lower for term in query_terms):
             relevant_chapters.append(ch)
 
     if not relevant_chapters:
@@ -209,8 +252,8 @@ async def tree_search(
         for child in children:
             content_lower = (child.content or "").lower()
             hit_count = sum(
-                1 for t in query_lower.split()
-                if len(t) >= 2 and t in content_lower
+                1 for t in query_terms
+                if t in content_lower or t in (child.title or "").lower()
             )
             if hit_count > 0 or len(children) <= 3:
                 results.append({

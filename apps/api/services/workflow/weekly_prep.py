@@ -19,8 +19,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.course import Course
 from models.ingestion import Assignment, StudySession
 from services.llm.router import get_llm_client
+from services.provenance import build_provenance
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_next_action(plan: str) -> str | None:
+    for raw_line in plan.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith(("- ", "* ")):
+            return line[2:].strip()[:200] or None
+        if len(line) > 3 and line[0].isdigit() and line[1:3] == ". ":
+            return line[3:].strip()[:200] or None
+    return None
 
 
 async def load_upcoming_deadlines(
@@ -160,8 +173,30 @@ Create a day-by-day plan (Mon-Sun) that:
 Output in markdown format.""",
     )
 
+    content_refs = [
+        {
+            "title": deadline["title"],
+            "source_type": "assignment",
+            "preview": f"{deadline['course']} due in {deadline['days_until_due']} days",
+        }
+        for deadline in deadlines[:5]
+    ]
+    next_action = _extract_next_action(plan)
+
     return {
         "deadlines": deadlines,
         "stats": stats,
         "plan": plan,
+        "next_action": next_action,
+        "provenance": build_provenance(
+            workflow="weekly_prep",
+            content_refs=content_refs,
+            content_count=len(deadlines),
+            generated=True,
+            source_labels=["workflow", "generated"],
+            extra={
+                "course_count": len(courses),
+                "deadline_count": len(deadlines),
+            },
+        ),
     }

@@ -16,12 +16,13 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
 from database import get_db, async_session
+from libs.exceptions import NotFoundError
 from models.chat_message import ChatMessageLog
 from models.chat_session import ChatSession
 from models.user import User
@@ -29,6 +30,7 @@ from schemas.chat import ChatRequest
 from services.agent.orchestrator import orchestrate_stream
 from services.auth.dependency import get_current_user
 from services.course_access import get_course_or_404
+from utils.serializers import serialize_model
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +62,7 @@ async def _resolve_chat_session(
         )
         session = result.scalar_one_or_none()
         if not session:
-            raise HTTPException(status_code=404, detail="Chat session not found")
+            raise NotFoundError("Chat session", session_id)
         if scene_id and session.scene_id != scene_id:
             session.scene_id = scene_id
         if not session.title:
@@ -104,15 +106,10 @@ async def _persist_chat_turn(
 
 
 def _serialize_session(session: ChatSession, message_count: int) -> dict:
-    return {
-        "id": str(session.id),
-        "course_id": str(session.course_id),
-        "scene_id": session.scene_id,
-        "title": session.title or "New Chat",
-        "created_at": session.created_at.isoformat() if session.created_at else None,
-        "updated_at": session.updated_at.isoformat() if session.updated_at else None,
-        "message_count": message_count,
-    }
+    data = serialize_model(session, ["id", "course_id", "scene_id", "title", "created_at", "updated_at"])
+    data["title"] = data.get("title") or "New Chat"
+    data["message_count"] = message_count
+    return data
 
 
 @router.get("/courses/{course_id}/sessions")
@@ -161,7 +158,7 @@ async def get_chat_session_messages(
     )
     session = session_result.scalar_one_or_none()
     if not session:
-        raise HTTPException(status_code=404, detail="Chat session not found")
+        raise NotFoundError("Chat session", session_id)
 
     result = await db.execute(
         select(ChatMessageLog)
@@ -174,13 +171,7 @@ async def get_chat_session_messages(
     return {
         "session": _serialize_session(session, len(messages)),
         "messages": [
-            {
-                "id": str(message.id),
-                "role": message.role,
-                "content": message.content,
-                "metadata_json": message.metadata_json,
-                "created_at": message.created_at.isoformat() if message.created_at else None,
-            }
+            serialize_model(message, ["id", "role", "content", "metadata_json", "created_at"])
             for message in messages
         ],
     }
@@ -246,6 +237,8 @@ async def chat_stream(body: ChatRequest, user: User = Depends(get_current_user),
                         "tokens": payload.get("tokens"),
                         "provenance": payload.get("provenance"),
                         "actions": payload.get("actions", []),
+                        "verifier": payload.get("verifier"),
+                        "task_link": payload.get("task_link"),
                         "reflection": payload.get("reflection"),
                     }
                 elif event.get("event") == "replace":

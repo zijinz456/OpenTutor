@@ -2,7 +2,7 @@
 
 import { useEffect, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Brain, Settings, FileText, BarChart3 } from "lucide-react";
+import { Plus, Brain, Settings, FileText, BarChart3, Goal, Clock3, ShieldAlert, PlayCircle } from "lucide-react";
 import { useCourseStore } from "@/store/course";
 import { useT } from "@/lib/i18n-context";
 
@@ -23,10 +23,22 @@ function getInitials(name: string) {
     .join("");
 }
 
+function formatDashboardDate(value?: string | null) {
+  if (!value) return "No recent activity";
+  return new Date(value).toLocaleDateString();
+}
+
 export default function DashboardPage() {
   const router = useRouter();
   const t = useT();
   const { courses, loading, fetchCourses } = useCourseStore();
+  const totalActiveGoals = courses.reduce((sum, course) => sum + (course.active_goal_count ?? 0), 0);
+  const totalPendingApprovals = courses.reduce((sum, course) => sum + (course.pending_approval_count ?? 0), 0);
+  const totalRunningTasks = courses.reduce((sum, course) => sum + (course.pending_task_count ?? 0), 0);
+  const lastStudyDay = courses
+    .map((course) => course.last_agent_activity_at)
+    .filter((value): value is string => Boolean(value))
+    .sort((a, b) => (a > b ? -1 : 1))[0] ?? null;
 
   const shouldShowOnboarding = useSyncExternalStore(
     () => () => {},
@@ -76,8 +88,39 @@ export default function DashboardPage() {
             {t("dashboard.title")}
           </h1>
           <p className="text-[15px] text-gray-500 leading-snug">
-            Upload learning materials and let Agent create your personalized study experience.
+            Resume goals, approvals, and active agent work across your courses.
           </p>
+        </div>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+            <div className="flex items-center gap-2 text-gray-500 text-xs uppercase tracking-wide">
+              <Goal className="w-3.5 h-3.5" />
+              Active Goals
+            </div>
+            <div className="mt-2 text-2xl font-semibold text-gray-900">{totalActiveGoals}</div>
+          </div>
+          <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+            <div className="flex items-center gap-2 text-gray-500 text-xs uppercase tracking-wide">
+              <ShieldAlert className="w-3.5 h-3.5" />
+              Pending Approvals
+            </div>
+            <div className="mt-2 text-2xl font-semibold text-gray-900">{totalPendingApprovals}</div>
+          </div>
+          <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+            <div className="flex items-center gap-2 text-gray-500 text-xs uppercase tracking-wide">
+              <PlayCircle className="w-3.5 h-3.5" />
+              Running Tasks
+            </div>
+            <div className="mt-2 text-2xl font-semibold text-gray-900">{totalRunningTasks}</div>
+          </div>
+          <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+            <div className="flex items-center gap-2 text-gray-500 text-xs uppercase tracking-wide">
+              <Clock3 className="w-3.5 h-3.5" />
+              Last Study Day
+            </div>
+            <div className="mt-2 text-sm font-semibold text-gray-900">{formatDashboardDate(lastStudyDay)}</div>
+          </div>
         </div>
 
         {/* Big Create Button */}
@@ -122,19 +165,32 @@ export default function DashboardPage() {
                       <span className="font-semibold text-base text-gray-900 truncate" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
                         {course.name}
                       </span>
-                      {/* TODO: Use updated_at once the Course API includes it; created_at is a fallback */}
                       <span className="text-xs text-gray-400">
-                        Created: {new Date(course.created_at).toLocaleDateString()}
+                        Updated: {formatDashboardDate(course.updated_at ?? course.created_at)}
                       </span>
                     </div>
                   </div>
-                  <div className="flex gap-4">
+                  <div className="grid grid-cols-2 gap-3 text-xs text-gray-500">
                     <div className="flex items-center gap-1">
                       <FileText className="w-3.5 h-3.5 text-gray-400" />
-                      <span className="text-xs text-gray-500">{course.description || "0 files"}</span>
+                      <span>{course.file_count ?? 0} files</span>
                     </div>
+                    <span>{course.active_goal_count ?? 0} active goals</span>
+                    <span>{course.pending_task_count ?? 0} running tasks</span>
+                    <span>{course.pending_approval_count ?? 0} approvals</span>
                   </div>
-                  {/* TODO: Derive feature tags from actual course data once the API provides them */}
+                  <div className="text-xs text-gray-500">
+                    {course.description || `Scene: ${course.last_scene_id || "study_session"}`}
+                  </div>
+                  <span
+                    className={`inline-flex w-fit rounded-full px-2.5 py-1 text-xs font-medium ${
+                      (course.pending_approval_count ?? 0) > 0
+                        ? "bg-amber-50 text-amber-700"
+                        : "bg-indigo-50 text-indigo-700"
+                    }`}
+                  >
+                    {(course.pending_approval_count ?? 0) > 0 ? "Resume approval flow" : "Resume work"}
+                  </span>
                 </button>
               );
             })}

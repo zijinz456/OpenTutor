@@ -48,7 +48,7 @@ class ReviewAgent(ReActMixin, BaseAgent):
     name = "review"
     react_tools = ["list_wrong_answers", "search_content", "lookup_progress"]
     profile = (
-        "You are OpenTutor's Review Specialist.\n"
+        "You are OpenTutor Zenus's Review Specialist.\n"
         "Analyze student errors using structured data and diagnostic results.\n\n"
         "Error categories (from pre-classification, do not reclassify):\n"
         "1. conceptual: Misunderstanding of core concepts\n"

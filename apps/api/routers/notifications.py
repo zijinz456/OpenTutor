@@ -4,16 +4,18 @@ import asyncio
 import uuid
 import logging
 
-from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
 from database import get_db
+from libs.exceptions import NotFoundError
 from models.notification import Notification
 from models.user import User
 from services.auth.dependency import get_current_user
+from utils.serializers import serialize_model
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -44,18 +46,8 @@ async def list_notifications(
 
     result = await db.execute(query)
     rows = result.scalars().all()
-    return [
-        NotificationOut(
-            id=str(n.id),
-            user_id=str(n.user_id),
-            title=n.title,
-            body=n.body,
-            category=n.category,
-            created_at=n.created_at.isoformat() if n.created_at else "",
-            read=n.read,
-        )
-        for n in rows
-    ]
+    fields = ["id", "user_id", "title", "body", "category", "created_at", "read"]
+    return [NotificationOut(**serialize_model(n, fields)) for n in rows]
 
 
 @router.post("/{notification_id}/read")
@@ -73,7 +65,7 @@ async def read_notification(
     )
     notif = result.scalar_one_or_none()
     if not notif:
-        raise HTTPException(status_code=404, detail="Notification not found")
+        raise NotFoundError("Notification", notification_id)
     notif.read = True
     await db.commit()
     return {"status": "ok"}
@@ -82,7 +74,7 @@ async def read_notification(
 @router.get("/stream")
 async def notification_stream(user: User = Depends(get_current_user)):
     """SSE endpoint for real-time notification push."""
-    from services.scheduler.engine import subscribe_sse, unsubscribe_sse
+    from services.notification.channels.sse import subscribe_sse, unsubscribe_sse
 
     queue = subscribe_sse(user.id)
 

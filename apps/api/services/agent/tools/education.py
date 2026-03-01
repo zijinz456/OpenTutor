@@ -503,30 +503,36 @@ class SuggestRelatedTopicsTool(Tool):
             if not kps:
                 return ToolResult(success=True, output=f"No knowledge points found matching '{topic}'.")
 
-            # Find all KPs that share dependencies or are dependents
+            # Collect IDs from dependencies (upstream)
             all_related_ids = set()
+            source_ids = {kp.id for kp in kps}
             for kp in kps:
                 if kp.dependencies:
                     all_related_ids.update(kp.dependencies)
 
-            # Also find KPs that depend on these
-            for kp in kps:
-                dep_result = await db.execute(
-                    select(KnowledgePoint).where(
-                        KnowledgePoint.course_id == ctx.course_id,
-                    )
+            # Single query to find reverse dependents (downstream) — avoids N+1
+            all_course_kps = await db.execute(
+                select(KnowledgePoint).where(
+                    KnowledgePoint.course_id == ctx.course_id,
                 )
-                all_kps = dep_result.scalars().all()
-                for other in all_kps:
-                    if other.dependencies and kp.id in (other.dependencies or []):
+            )
+            for other in all_course_kps.scalars().all():
+                if other.dependencies:
+                    if source_ids & set(other.dependencies):
                         all_related_ids.add(other.id)
 
-            # Load names
+            # Remove self-references
+            all_related_ids -= source_ids
+
+            # Single batch query to load related KP names — avoids N+1
             lines = []
-            for rid in list(all_related_ids)[:10]:
-                r = await db.execute(select(KnowledgePoint).where(KnowledgePoint.id == rid))
-                related = r.scalar_one_or_none()
-                if related:
+            if all_related_ids:
+                related_result = await db.execute(
+                    select(KnowledgePoint).where(
+                        KnowledgePoint.id.in_(list(all_related_ids)[:10])
+                    )
+                )
+                for related in related_result.scalars().all():
                     lines.append(f"- {related.name}")
 
             if not lines:
@@ -582,6 +588,195 @@ class GetForgettingForecastTool(Tool):
             return ToolResult(success=False, output="", error=str(e))
 
 
+class GetCourseOutlineTool(Tool):
+    """Return a compact top-level course outline."""
+
+    name = "get_course_outline"
+    description = (
+        "Return the top-level course outline from the course content tree. "
+        "Useful for planning, curriculum analysis, and grounding answers in structure."
+    )
+    domain = "education"
+
+    def get_parameters(self) -> list[ToolParameter]:
+        return []
+
+    async def run(self, parameters: dict[str, Any], ctx: Any, db: AsyncSession) -> ToolResult:
+        from models.content import CourseContentTree
+
+        try:
+            result = await db.execute(
+                select(CourseContentTree)
+                .where(CourseContentTree.course_id == ctx.course_id)
+                .order_by(CourseContentTree.level.asc(), CourseContentTree.order_index.asc(), CourseContentTree.created_at.asc())
+                .limit(30)
+            )
+            nodes = result.scalars().all()
+            if not nodes:
+                return ToolResult(success=True, output="No course outline is available yet.")
+
+            lines = []
+            for node in nodes:
+                if node.level > 2:
+                    continue
+                indent = "  " * node.level
+                lines.append(f"{indent}- {node.title}")
+
+            return ToolResult(success=True, output="Course outline:\n" + "\n".join(lines[:20]))
+        except Exception as e:
+            logger.error("get_course_outline failed: %s", e)
+            return ToolResult(success=False, output="", error=str(e))
+
+
+class ListStudyGoalsTool(Tool):
+    """Return active or historical study goals."""
+
+    name = "list_study_goals"
+    description = "List the student's study goals for the current course."
+    domain = "education"
+
+    def get_parameters(self) -> list[ToolParameter]:
+        return [
+            ToolParameter(
+                name="status",
+                type="string",
+                description="Optional goal status filter.",
+                required=False,
+                enum=["active", "paused", "completed"],
+            ),
+        ]
+
+    async def run(self, parameters: dict[str, Any], ctx: Any, db: AsyncSession) -> ToolResult:
+        from models.study_goal import StudyGoal
+
+        try:
+            stmt = (
+                select(StudyGoal)
+                .where(
+                    StudyGoal.user_id == ctx.user_id,
+                    StudyGoal.course_id == ctx.course_id,
+                )
+                .order_by(StudyGoal.updated_at.desc(), StudyGoal.created_at.desc())
+            )
+            if parameters.get("status"):
+                stmt = stmt.where(StudyGoal.status == parameters["status"])
+
+            result = await db.execute(stmt.limit(10))
+            goals = result.scalars().all()
+            if not goals:
+                return ToolResult(success=True, output="No study goals found for this course.")
+
+            lines = [
+                f"- {goal.title}: status={goal.status}, next_action={goal.next_action or 'not set'}, target={goal.target_date or 'none'}"
+                for goal in goals
+            ]
+            return ToolResult(success=True, output="Study goals:\n" + "\n".join(lines))
+        except Exception as e:
+            logger.error("list_study_goals failed: %s", e)
+            return ToolResult(success=False, output="", error=str(e))
+
+
+class ListRecentTasksTool(Tool):
+    """Return recent durable tasks for the current course."""
+
+    name = "list_recent_tasks"
+    description = "List recent durable agent tasks, including approvals and failures."
+    domain = "education"
+
+    def get_parameters(self) -> list[ToolParameter]:
+        return [
+            ToolParameter(
+                name="limit",
+                type="integer",
+                description="Maximum number of tasks to return.",
+                required=False,
+                default=5,
+            ),
+        ]
+
+    async def run(self, parameters: dict[str, Any], ctx: Any, db: AsyncSession) -> ToolResult:
+        from models.agent_task import AgentTask
+
+        try:
+            limit = min(int(parameters.get("limit", 5)), 10)
+            result = await db.execute(
+                select(AgentTask)
+                .where(
+                    AgentTask.user_id == ctx.user_id,
+                    AgentTask.course_id == ctx.course_id,
+                )
+                .order_by(AgentTask.updated_at.desc(), AgentTask.created_at.desc())
+                .limit(limit)
+            )
+            tasks = result.scalars().all()
+            if not tasks:
+                return ToolResult(success=True, output="No recent tasks found.")
+
+            lines = [
+                f"- {task.title}: type={task.task_type}, status={task.status}, attempts={task.attempts}/{task.max_attempts}"
+                for task in tasks
+            ]
+            return ToolResult(success=True, output="Recent tasks:\n" + "\n".join(lines))
+        except Exception as e:
+            logger.error("list_recent_tasks failed: %s", e)
+            return ToolResult(success=False, output="", error=str(e))
+
+
+class ListAssignmentsTool(Tool):
+    """Return assignments/exams extracted from ingestion."""
+
+    name = "list_assignments"
+    description = "List assignments, quizzes, or exams associated with the course."
+    domain = "education"
+
+    def get_parameters(self) -> list[ToolParameter]:
+        return [
+            ToolParameter(
+                name="limit",
+                type="integer",
+                description="Maximum number of assignments to return.",
+                required=False,
+                default=10,
+            ),
+            ToolParameter(
+                name="include_completed",
+                type="boolean",
+                description="Whether to include completed assignments.",
+                required=False,
+                default=False,
+            ),
+        ]
+
+    async def run(self, parameters: dict[str, Any], ctx: Any, db: AsyncSession) -> ToolResult:
+        from models.ingestion import Assignment
+
+        try:
+            limit = min(int(parameters.get("limit", 10)), 20)
+            include_completed = bool(parameters.get("include_completed", False))
+
+            stmt = (
+                select(Assignment)
+                .where(Assignment.course_id == ctx.course_id)
+                .order_by(Assignment.created_at.desc())
+            )
+            if not include_completed:
+                stmt = stmt.where(Assignment.status != "completed")
+
+            result = await db.execute(stmt.limit(limit))
+            assignments = result.scalars().all()
+            if not assignments:
+                return ToolResult(success=True, output="No assignments found for this course.")
+
+            lines = [
+                f"- {assignment.title}: type={assignment.assignment_type or 'general'}, status={assignment.status}, due={assignment.due_date or 'unspecified'}"
+                for assignment in assignments
+            ]
+            return ToolResult(success=True, output="Assignments:\n" + "\n".join(lines))
+        except Exception as e:
+            logger.error("list_assignments failed: %s", e)
+            return ToolResult(success=False, output="", error=str(e))
+
+
 # ── Registry Helper ──
 
 
@@ -592,6 +787,10 @@ def get_builtin_tools() -> list[Tool]:
         SearchContentTool(),
         ListWrongAnswersTool(),
         GetMasteryReportTool(),
+        GetCourseOutlineTool(),
+        ListStudyGoalsTool(),
+        ListRecentTasksTool(),
+        ListAssignmentsTool(),
         RunCodeTool(),
         CheckPrerequisitesTool(),
         SuggestRelatedTopicsTool(),

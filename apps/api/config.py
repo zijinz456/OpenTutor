@@ -40,6 +40,7 @@ class Settings(BaseSettings):
 
     # Authentication
     auth_enabled: bool = False
+    deployment_mode: str = "single_user"  # single_user | multi_user
     jwt_secret_key: str = "change-me-in-production"
     jwt_algorithm: str = "HS256"
     jwt_access_token_expire_minutes: int = 30
@@ -59,11 +60,47 @@ class Settings(BaseSettings):
     app_run_scheduler: bool = False
     app_run_activity_engine: bool = False
 
+    # Multi-channel messaging
+    channels_enabled: str = ""  # Comma-separated: "whatsapp,imessage"
+    channel_auto_create_users: bool = True
+    channel_default_scene: str = "study_session"
+
+    # WhatsApp Cloud API
+    whatsapp_phone_number_id: str = ""
+    whatsapp_access_token: str = ""
+    whatsapp_app_secret: str = ""
+    whatsapp_verify_token: str = ""
+
+    # iMessage via BlueBubbles
+    bluebubbles_server_url: str = ""  # e.g. http://localhost:1234
+    bluebubbles_password: str = ""
+    bluebubbles_webhook_secret: str = ""
+
+    # Notification push
+    push_notifications_enabled: bool = False
+    vapid_private_key: str = ""
+    vapid_public_key: str = ""
+    vapid_claims_email: str = ""
+
+    # Swarm / parallel execution
+    swarm_enabled: bool = True
+    swarm_max_concurrency: int = 4
+    swarm_timeout_seconds: float = 30.0
+    swarm_token_budget: int = 50000
+    parallel_context_loading: bool = True
+    activity_engine_max_concurrency: int = 3
+
     # Code sandbox
-    code_sandbox_backend: str = "auto"  # auto | container | process
+    code_sandbox_backend: str = "container"  # container | auto | process
     code_sandbox_runtime: str = "docker"  # docker | podman
     code_sandbox_image: str = "python:3.11-alpine"
     code_sandbox_timeout_seconds: int = 5
+
+    @property
+    def enabled_channels(self) -> list[str]:
+        if not self.channels_enabled.strip():
+            return []
+        return [c.strip() for c in self.channels_enabled.split(",") if c.strip()]
 
     @property
     def cors_origin_list(self) -> list[str]:

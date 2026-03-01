@@ -8,7 +8,7 @@ import logging
 from dataclasses import dataclass
 
 from services.agent.state import AgentContext, IntentType
-from services.agent.router import classify_intent
+from services.agent.router import classify_intent, rule_match
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +54,7 @@ async def eval_routing(
     cases: list[RoutingEvalCase] | None = None,
     user_id=None,
     course_id=None,
+    offline_only: bool = False,
 ) -> RoutingEvalResult:
     """Run routing evaluation against golden cases.
 
@@ -73,7 +74,15 @@ async def eval_routing(
             course_id=cid,
             user_message=case.message,
         )
-        ctx = await classify_intent(ctx)
+        if offline_only:
+            matched = rule_match(case.message)
+            if matched:
+                ctx.intent, ctx.intent_confidence = matched
+            else:
+                ctx.intent = IntentType.GENERAL
+                ctx.intent_confidence = 0.3
+        else:
+            ctx = await classify_intent(ctx)
         predicted = ctx.intent.value
 
         if predicted == case.expected_intent:

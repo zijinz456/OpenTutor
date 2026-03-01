@@ -19,12 +19,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.agent.base import BaseAgent
-from services.agent.state import AgentContext, TaskPhase
+from services.agent.react_mixin import ReActMixin
+from services.agent.state import AgentContext
 
 logger = logging.getLogger(__name__)
 
 
-class CurriculumAgent(BaseAgent):
+class CurriculumAgent(ReActMixin, BaseAgent):
     """Handles course structure analysis and knowledge graph queries."""
 
     name = "curriculum"
@@ -39,6 +40,7 @@ class CurriculumAgent(BaseAgent):
         "When discussing prerequisites, be specific about which concepts depend on which."
     )
     model_preference = "large"
+    react_tools = ["get_course_outline", "search_content"]
 
     async def _load_course_structure(self, ctx: AgentContext, db: AsyncSession) -> str:
         """Load course content tree and build a structured summary."""
@@ -100,19 +102,6 @@ class CurriculumAgent(BaseAgent):
         return ctx
 
     async def stream(self, ctx: AgentContext, db: AsyncSession) -> AsyncIterator[str]:
-        """Stream curriculum analysis response."""
-        ctx.delegated_agent = self.name
-        ctx.transition(TaskPhase.REASONING)
-
-        content_summary = await self._load_course_structure(ctx, db)
-
-        system_prompt = self.build_system_prompt(ctx)
-        system_prompt += f"\n\n## Course Structure:\n{content_summary}"
-
-        client = self.get_llm_client()
-        ctx.transition(TaskPhase.STREAMING)
-        full_response = ""
-        async for chunk in client.stream_chat(system_prompt, ctx.user_message):
-            full_response += chunk
+        """Stream curriculum analysis response through the shared ReAct runtime."""
+        async for chunk in ReActMixin.stream(self, ctx, db):
             yield chunk
-        ctx.response = full_response

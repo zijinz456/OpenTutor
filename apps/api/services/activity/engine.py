@@ -5,14 +5,32 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from config import settings
 from database import async_session
 from models.agent_task import AgentTask
-from services.activity.tasks import APPROVAL_REQUIRED_STATUS, EXECUTABLE_TASK_STATUSES, _truncate_summary
+from models.study_goal import StudyGoal
+from services.agent.code_execution import pop_sandbox_backend_override, push_sandbox_backend_override
+from services.activity.tasks import (
+    APPROVAL_APPROVED,
+    APPROVAL_PENDING,
+    APPROVAL_REJECTED,
+    APPROVAL_REQUIRED_STATUS,
+    CANCEL_REQUESTED_STATUS,
+    EXECUTABLE_TASK_STATUSES,
+    REJECTED_TASK_STATUS,
+    RESUMING_TASK_STATUS,
+    _truncate_summary,
+    infer_approval_status,
+    normalize_task_status,
+)
+from services.provenance import build_provenance, merge_provenance
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +39,27 @@ IDLE_INTERVAL_SECONDS = 2.0
 
 _worker_task: asyncio.Task | None = None
 _stop_event: asyncio.Event | None = None
+_worker_semaphore: asyncio.Semaphore | None = None
+_inflight_tasks: set[asyncio.Task] = set()
+
+
+class TaskMutationError(ValueError):
+    """Raised when an agent task transition is invalid for the current state."""
+
+
+class TaskCancelledError(RuntimeError):
+    """Raised when a running task is cancelled with partial progress available."""
+
+    def __init__(
+        self,
+        message: str = "Task cancelled by user.",
+        *,
+        result_payload: dict[str, Any] | None = None,
+        summary: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.result_payload = result_payload
+        self.summary = summary
 
 
 def _utcnow() -> datetime:
@@ -41,12 +80,160 @@ def _queueable_status(task: AgentTask) -> str:
     return "queued"
 
 
+def _refresh_task_policy(task: AgentTask) -> None:
+    task.status = normalize_task_status(task.status)
+    task.approval_status = infer_approval_status(
+        requires_approval=task.requires_approval,
+        status=task.status,
+        approved_at=task.approved_at,
+    )
+
+
+def _task_event(task: AgentTask, event: str, **details: Any) -> None:
+    metadata = dict(task.metadata_json or {})
+    history = list(metadata.get("status_history") or [])
+    history.append(
+        {
+            "event": event,
+            "status": task.status,
+            "at": _utcnow().isoformat(),
+            "details": details or None,
+        }
+    )
+    metadata["status_history"] = history[-20:]
+    task.metadata_json = metadata
+
+
+def _coerce_step_results(raw_steps: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw_steps, list):
+        return []
+    normalized: list[dict[str, Any]] = []
+    for item in raw_steps:
+        if not isinstance(item, dict):
+            continue
+        if "step_index" not in item:
+            continue
+        normalized.append(item)
+    normalized.sort(key=lambda item: int(item.get("step_index", 0)))
+    return normalized
+
+
+def _build_plan_result_payload(steps: list[dict[str, Any]], results: list[dict[str, Any]]) -> dict[str, Any]:
+    completed = sum(1 for item in results if item.get("success"))
+    failed = sum(1 for item in results if not item.get("success"))
+    return {
+        "steps": results,
+        "completed": completed,
+        "failed": failed,
+        "total": len(steps),
+        "resume_available": completed + failed < len(steps),
+    }
+
+
+def _build_plan_summary(steps: list[dict[str, Any]], results: list[dict[str, Any]]) -> str:
+    payload = _build_plan_result_payload(steps, results)
+    summary_parts = [f"{payload['completed']}/{payload['total']} steps completed"]
+    if payload["failed"]:
+        summary_parts.append(f"{payload['failed']} failed")
+    if payload["resume_available"]:
+        summary_parts.append("resume available")
+    return "; ".join(summary_parts)
+
+
+def _build_checkpoint(
+    results: list[dict[str, Any]],
+    *,
+    active_step_index: int | None = None,
+) -> dict[str, Any]:
+    completed = [item for item in results if item.get("success")]
+    failed = [item for item in results if not item.get("success")]
+    last_success = completed[-1] if completed else None
+    retry_counts: dict[str, int] = {}
+    for item in results:
+        retry_counts[str(item.get("step_index"))] = int(item.get("retry_count") or 0)
+    return {
+        "last_completed_step_index": last_success.get("step_index") if last_success else None,
+        "last_success_summary": last_success.get("summary") if last_success else None,
+        "active_step_index": active_step_index,
+        "completed_step_count": len(completed),
+        "failed_step_count": len(failed),
+        "resume_from_step_index": active_step_index if active_step_index is not None else len(completed),
+        "retry_counts": retry_counts,
+    }
+
+
+def _merge_step_provenance(results: list[dict[str, Any]]) -> dict[str, Any] | None:
+    merged: dict[str, Any] | None = None
+    for item in results:
+        provenance = item.get("provenance")
+        if isinstance(provenance, dict):
+            merged = merge_provenance(merged, provenance)
+    return merged
+
+
+def _extract_first_action(text: str | None) -> str | None:
+    if not text:
+        return None
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith(("- ", "* ")):
+            return line[2:].strip()[:200] or None
+        if len(line) > 3 and line[0].isdigit() and line[1:3] == ". ":
+            return line[3:].strip()[:200] or None
+    return None
+
+
+async def _sync_goal_after_task_success(db: AsyncSession, task: AgentTask, result_payload: dict[str, Any]) -> None:
+    if not task.goal_id:
+        return
+    result = await db.execute(
+        select(StudyGoal).where(StudyGoal.id == task.goal_id, StudyGoal.user_id == task.user_id)
+    )
+    goal = result.scalar_one_or_none()
+    if not goal:
+        return
+
+    metadata = dict(goal.metadata_json or {})
+    metadata["last_task_id"] = str(task.id)
+    metadata["last_task_type"] = task.task_type
+    metadata["last_reviewed_at"] = _utcnow().isoformat()
+
+    if task.task_type == "weekly_prep":
+        week_start = (task.input_json or {}).get("week_start")
+        if week_start:
+            metadata["last_week_start"] = str(week_start)
+        deadline_count = len(result_payload.get("deadlines") or [])
+        metadata["last_deadline_count"] = deadline_count
+        goal.current_milestone = f"Weekly review refreshed with {deadline_count} tracked deadlines"
+        next_action = (
+            result_payload.get("next_action")
+            or _extract_first_action(result_payload.get("plan"))
+            or goal.next_action
+        )
+        if next_action:
+            goal.next_action = next_action
+
+    goal.metadata_json = metadata
+
+
+@contextmanager
+def _force_container_sandbox():
+    token = push_sandbox_backend_override("container")
+    try:
+        yield
+    finally:
+        pop_sandbox_backend_override(token)
+
+
 async def submit_task(
     *,
     user_id: uuid.UUID,
     task_type: str,
     title: str,
     course_id: uuid.UUID | None = None,
+    goal_id: uuid.UUID | None = None,
     summary: str | None = None,
     source: str = "workflow",
     input_json: dict[str, Any] | None = None,
@@ -61,6 +248,7 @@ async def submit_task(
             db,
             user_id=user_id,
             course_id=course_id,
+            goal_id=goal_id,
             task_type=task_type,
             title=title,
             summary=summary,
@@ -84,12 +272,38 @@ async def approve_task(task_id: uuid.UUID, user_id: uuid.UUID) -> AgentTask | No
         task = result.scalar_one_or_none()
         if not task:
             return None
+        _refresh_task_policy(task)
         if task.status != APPROVAL_REQUIRED_STATUS:
-            return task
+            raise TaskMutationError(f"Task cannot be approved from status '{task.status}'")
         task.approved_at = _utcnow()
         task.status = "queued"
+        task.approval_status = APPROVAL_APPROVED
         task.error_message = None
         task.completed_at = None
+        _task_event(task, "approved")
+        await db.commit()
+        await db.refresh(task)
+        return task
+
+
+async def reject_task(task_id: uuid.UUID, user_id: uuid.UUID) -> AgentTask | None:
+    async with async_session() as db:
+        result = await db.execute(
+            select(AgentTask).where(AgentTask.id == task_id, AgentTask.user_id == user_id)
+        )
+        task = result.scalar_one_or_none()
+        if not task:
+            return None
+        _refresh_task_policy(task)
+        if task.status != APPROVAL_REQUIRED_STATUS:
+            raise TaskMutationError(f"Task cannot be rejected from status '{task.status}'")
+        now = _utcnow()
+        task.status = REJECTED_TASK_STATUS
+        task.approval_status = APPROVAL_REJECTED
+        task.error_message = "Rejected before execution."
+        task.completed_at = now
+        task.approved_at = None
+        _task_event(task, "rejected")
         await db.commit()
         await db.refresh(task)
         return task
@@ -103,11 +317,46 @@ async def cancel_task(task_id: uuid.UUID, user_id: uuid.UUID) -> AgentTask | Non
         task = result.scalar_one_or_none()
         if not task:
             return None
+        _refresh_task_policy(task)
         now = _utcnow()
+        if task.status in {"completed", "failed", "cancelled", REJECTED_TASK_STATUS}:
+            raise TaskMutationError(f"Task cannot be cancelled from status '{task.status}'")
         task.cancel_requested_at = now
-        if task.status in {"queued", "retrying", APPROVAL_REQUIRED_STATUS}:
+        if task.status in {"queued", RESUMING_TASK_STATUS, APPROVAL_REQUIRED_STATUS}:
             task.status = "cancelled"
             task.completed_at = now
+            task.error_message = "Cancelled before execution."
+            _task_event(task, "cancelled")
+        elif task.status == "running":
+            task.status = CANCEL_REQUESTED_STATUS
+            task.completed_at = None
+            _task_event(task, "cancel_requested")
+        await db.commit()
+        await db.refresh(task)
+        return task
+
+
+async def resume_task(task_id: uuid.UUID, user_id: uuid.UUID) -> AgentTask | None:
+    async with async_session() as db:
+        result = await db.execute(
+            select(AgentTask).where(AgentTask.id == task_id, AgentTask.user_id == user_id)
+        )
+        task = result.scalar_one_or_none()
+        if not task:
+            return None
+        _refresh_task_policy(task)
+        if task.status == CANCEL_REQUESTED_STATUS:
+            raise TaskMutationError("Task cancellation is still in progress")
+        if task.status != "cancelled":
+            raise TaskMutationError(f"Task cannot be resumed from status '{task.status}'")
+        task.error_message = None
+        task.completed_at = None
+        task.cancel_requested_at = None
+        task.status = RESUMING_TASK_STATUS if (not task.requires_approval or task.approved_at is not None) else APPROVAL_REQUIRED_STATUS
+        task.approval_status = (
+            APPROVAL_APPROVED if task.status == RESUMING_TASK_STATUS and task.requires_approval else APPROVAL_PENDING
+        ) if task.requires_approval else task.approval_status
+        _task_event(task, "resumed")
         await db.commit()
         await db.refresh(task)
         return task
@@ -121,21 +370,37 @@ async def retry_task(task_id: uuid.UUID, user_id: uuid.UUID) -> AgentTask | None
         task = result.scalar_one_or_none()
         if not task:
             return None
-        if task.status == "running":
-            return task
+        _refresh_task_policy(task)
+        if task.status in {"running", CANCEL_REQUESTED_STATUS}:
+            raise TaskMutationError(f"Task cannot be retried from status '{task.status}'")
+        if task.status not in {"failed", "cancelled", REJECTED_TASK_STATUS}:
+            raise TaskMutationError(f"Task cannot be retried from status '{task.status}'")
         task.error_message = None
         task.result_json = None
+        task.step_results_json = None
+        task.checkpoint_json = None
+        task.provenance_json = None
         task.summary = None
         task.started_at = None
         task.completed_at = None
         task.cancel_requested_at = None
+        task.attempts = 0
+        if task.requires_approval:
+            task.approved_at = None
         task.status = _queueable_status(task)
+        task.approval_status = infer_approval_status(
+            requires_approval=task.requires_approval,
+            status=task.status,
+            approved_at=task.approved_at,
+        )
+        _task_event(task, "retried")
         await db.commit()
         await db.refresh(task)
         return task
 
 
-async def _claim_next_task() -> uuid.UUID | None:
+async def _claim_pending_tasks(limit: int) -> list[uuid.UUID]:
+    """Claim up to *limit* executable tasks atomically, returning their IDs."""
     async with async_session() as db:
         result = await db.execute(
             select(AgentTask)
@@ -145,17 +410,27 @@ async def _claim_next_task() -> uuid.UUID | None:
                 AgentTask.cancel_requested_at.is_(None),
             )
             .order_by(AgentTask.created_at.asc())
-            .limit(1)
+            .limit(limit)
             .with_for_update(skip_locked=True)
         )
-        task = result.scalar_one_or_none()
-        if not task:
-            return None
-        task.status = "running"
-        task.started_at = _utcnow()
-        task.attempts += 1
+        tasks = result.scalars().all()
+        if not tasks:
+            return []
+        now = _utcnow()
+        ids: list[uuid.UUID] = []
+        for task in tasks:
+            _refresh_task_policy(task)
+            task.status = "running"
+            task.approval_status = infer_approval_status(
+                requires_approval=task.requires_approval,
+                status=task.status,
+                approved_at=task.approved_at,
+            )
+            task.started_at = now
+            task.attempts += 1
+            ids.append(task.id)
         await db.commit()
-        return task.id
+        return ids
 
 
 async def execute_task(task_id: uuid.UUID) -> bool:
@@ -164,10 +439,24 @@ async def execute_task(task_id: uuid.UUID) -> bool:
         task = result.scalar_one_or_none()
         if not task:
             return False
+        _refresh_task_policy(task)
         payload = task.input_json or {}
 
     try:
-        result_payload, summary = await _dispatch_task(task_type=task.task_type, user_id=task.user_id, payload=payload)
+        result_payload, summary = await _dispatch_task(
+            task_id=task_id,
+            task_type=task.task_type,
+            user_id=task.user_id,
+            payload=payload,
+        )
+    except TaskCancelledError as exc:
+        logger.info("Agent task cancelled: %s", task_id)
+        return await _mark_task_cancelled(
+            task_id,
+            error_message=str(exc),
+            result_payload=exc.result_payload,
+            summary=exc.summary,
+        )
     except Exception as exc:
         logger.exception("Agent task failed: %s (%s)", task_id, exc)
         return await _mark_task_failure(task_id, str(exc))
@@ -186,13 +475,70 @@ async def _mark_task_success(task_id: uuid.UUID, *, result_payload: dict[str, An
             task.status = "cancelled"
             task.completed_at = now
             task.error_message = "Cancelled before results were applied."
+            task.approval_status = infer_approval_status(
+                requires_approval=task.requires_approval,
+                status=task.status,
+                approved_at=task.approved_at,
+            )
+            _task_event(task, "cancelled")
             await db.commit()
             return False
         task.status = "completed"
         task.summary = _truncate_summary(summary)
         task.result_json = result_payload
+        metadata = dict(task.metadata_json or {})
+        merged_provenance = merge_provenance(
+            metadata.get("provenance") if isinstance(metadata.get("provenance"), dict) else None,
+            result_payload.get("provenance") if isinstance(result_payload, dict) else None,
+        )
+        if merged_provenance:
+            metadata["provenance"] = merged_provenance
+            task.metadata_json = metadata
+            task.provenance_json = merged_provenance
+        if task.step_results_json:
+            task.checkpoint_json = _build_checkpoint(list(task.step_results_json), active_step_index=None)
+        task.approval_status = infer_approval_status(
+            requires_approval=task.requires_approval,
+            status=task.status,
+            approved_at=task.approved_at,
+        )
         task.error_message = None
         task.completed_at = now
+        await _sync_goal_after_task_success(db, task, result_payload)
+        _task_event(task, "completed")
+        await db.commit()
+        return True
+
+
+async def _mark_task_cancelled(
+    task_id: uuid.UUID,
+    *,
+    error_message: str,
+    result_payload: dict[str, Any] | None = None,
+    summary: str | None = None,
+) -> bool:
+    async with async_session() as db:
+        result = await db.execute(select(AgentTask).where(AgentTask.id == task_id))
+        task = result.scalar_one_or_none()
+        if not task:
+            return False
+        now = _utcnow()
+        task.status = "cancelled"
+        task.error_message = error_message
+        task.summary = _truncate_summary(summary) or task.summary
+        if result_payload is not None:
+            task.result_json = result_payload
+            result_provenance = result_payload.get("provenance") if isinstance(result_payload, dict) else None
+            task.provenance_json = merge_provenance(task.provenance_json, result_provenance)
+        if task.step_results_json:
+            task.checkpoint_json = _build_checkpoint(list(task.step_results_json), active_step_index=None)
+        task.approval_status = infer_approval_status(
+            requires_approval=task.requires_approval,
+            status=task.status,
+            approved_at=task.approved_at,
+        )
+        task.completed_at = now
+        _task_event(task, "cancelled")
         await db.commit()
         return True
 
@@ -203,69 +549,198 @@ async def _mark_task_failure(task_id: uuid.UUID, error_message: str) -> bool:
         task = result.scalar_one_or_none()
         if not task:
             return False
+        _refresh_task_policy(task)
         now = _utcnow()
         task.error_message = error_message
         task.completed_at = None
         if task.cancel_requested_at is not None:
             task.status = "cancelled"
             task.completed_at = now
+            _task_event(task, "cancelled")
         elif task.attempts < max(task.max_attempts, 1):
-            task.status = "retrying"
+            task.status = "queued"
+            _task_event(task, "auto_retry_scheduled")
         else:
             task.status = "failed"
             task.completed_at = now
+            _task_event(task, "failed")
+        if task.step_results_json:
+            task.checkpoint_json = _build_checkpoint(list(task.step_results_json), active_step_index=None)
+        task.approval_status = infer_approval_status(
+            requires_approval=task.requires_approval,
+            status=task.status,
+            approved_at=task.approved_at,
+        )
         await db.commit()
         return True
 
 
-async def _dispatch_task(*, task_type: str, user_id: uuid.UUID, payload: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
-    async with async_session() as db:
-        if task_type == "weekly_prep":
-            from services.workflow.weekly_prep import run_weekly_prep
+async def _dispatch_task(
+    *,
+    task_id: uuid.UUID,
+    task_type: str,
+    user_id: uuid.UUID,
+    payload: dict[str, Any],
+) -> tuple[dict[str, Any], str | None]:
+    with _force_container_sandbox():
+        async with async_session() as db:
+            if task_type == "weekly_prep":
+                from services.workflow.weekly_prep import run_weekly_prep
 
-            result = await run_weekly_prep(db, user_id)
-            return result, (result.get("plan", "") or "Weekly plan generated.")[:300]
+                result = await run_weekly_prep(db, user_id)
+                result["provenance"] = merge_provenance(
+                    build_provenance(
+                        workflow="weekly_prep",
+                        generated=True,
+                        source_labels=["workflow", "generated"],
+                        scheduler_trigger=str(payload.get("trigger") or "") or None,
+                    ),
+                    result.get("provenance") if isinstance(result, dict) else None,
+                )
+                return result, (result.get("plan", "") or "Weekly plan generated.")[:300]
 
-        if task_type == "exam_prep":
-            from services.workflow.exam_prep import run_exam_prep
+            if task_type == "exam_prep":
+                from services.workflow.exam_prep import run_exam_prep
 
-            course_id = _normalize_uuid(payload.get("course_id"))
-            if not course_id:
-                raise ValueError("exam_prep requires course_id")
-            result = await run_exam_prep(
-                db,
-                user_id,
-                course_id,
-                payload.get("exam_topic"),
-                int(payload.get("days_until_exam") or 7),
-            )
-            return result, (result.get("plan", "") or "Exam prep plan generated.")[:300]
+                course_id = _normalize_uuid(payload.get("course_id"))
+                if not course_id:
+                    raise ValueError("exam_prep requires course_id")
+                result = await run_exam_prep(
+                    db,
+                    user_id,
+                    course_id,
+                    payload.get("exam_topic"),
+                    int(payload.get("days_until_exam") or 7),
+                )
+                return result, (result.get("plan", "") or "Exam prep plan generated.")[:300]
 
-        if task_type == "wrong_answer_review":
-            from services.workflow.wrong_answer_review import run_wrong_answer_review
+            if task_type == "wrong_answer_review":
+                from services.workflow.wrong_answer_review import run_wrong_answer_review
 
-            result = await run_wrong_answer_review(db, user_id, _normalize_uuid(payload.get("course_id")))
-            return result, (result.get("review", "") or "Wrong-answer review generated.")[:300]
+                result = await run_wrong_answer_review(db, user_id, _normalize_uuid(payload.get("course_id")))
+                return result, (result.get("review", "") or "Wrong-answer review generated.")[:300]
 
-        if task_type == "assignment_analysis":
-            from services.workflow.assignment_analysis import run_assignment_analysis
+            if task_type == "assignment_analysis":
+                from services.workflow.assignment_analysis import run_assignment_analysis
 
-            assignment_id = _normalize_uuid(payload.get("assignment_id"))
-            if not assignment_id:
-                raise ValueError("assignment_analysis requires assignment_id")
-            result = await run_assignment_analysis(db, user_id, assignment_id)
-            if result.get("error"):
-                raise ValueError(str(result["error"]))
-            return result, (result.get("analysis", "") or "Assignment analysis generated.")[:300]
+                assignment_id = _normalize_uuid(payload.get("assignment_id"))
+                if not assignment_id:
+                    raise ValueError("assignment_analysis requires assignment_id")
+                result = await run_assignment_analysis(db, user_id, assignment_id)
+                if result.get("error"):
+                    raise ValueError(str(result["error"]))
+                return result, (result.get("analysis", "") or "Assignment analysis generated.")[:300]
 
-        if task_type == "multi_step":
-            return await _run_multi_step_plan(db, user_id, payload)
+            if task_type == "multi_step":
+                return await _run_multi_step_plan(db, task_id, user_id, payload, async_session)
 
-        raise ValueError(f"Unsupported task_type: {task_type}")
+            if task_type == "code_execution":
+                from services.agent.code_execution import CodeExecutionAgent
+
+                code = str(payload.get("code") or "")
+                if not code.strip():
+                    raise ValueError("code_execution requires non-empty code")
+                agent = CodeExecutionAgent()
+                safe, reason = agent._validate_code(code)
+                if not safe:
+                    raise ValueError(reason)
+                result = await asyncio.to_thread(agent._execute_safe, code)
+                if not result.get("success"):
+                    raise ValueError(result.get("error") or "Code execution failed")
+                summary = f"Executed code in {result.get('backend', 'unknown')} sandbox"
+                return result, summary
+
+            raise ValueError(f"Unsupported task_type: {task_type}")
+
+
+def _build_plan_progress(
+    steps: list[dict[str, Any]],
+    *,
+    results: list[dict[str, Any]] | None = None,
+    active_step_index: int | None = None,
+) -> list[dict[str, Any]]:
+    result_map = {item["step_index"]: item for item in (results or [])}
+    progress: list[dict[str, Any]] = []
+    for step in steps:
+        step_index = step["step_index"]
+        result = result_map.get(step_index)
+        status = "pending"
+        if result is not None:
+            status = "completed" if result.get("success") else "failed"
+            if result.get("summary", "").startswith("Skipped"):
+                status = "skipped"
+        elif active_step_index == step_index:
+            status = "running"
+        progress.append(
+            {
+                "step_index": step_index,
+                "step_type": step.get("step_type", "unknown"),
+                "title": step.get("title", f"Step {step_index + 1}"),
+                "status": status,
+                "depends_on": step.get("depends_on", []),
+                "summary": result.get("summary") if result else None,
+                "agent": result.get("agent") if result else step.get("agent"),
+            }
+        )
+    return progress
+
+
+def _build_plan_result_snapshot(
+    steps: list[dict[str, Any]],
+    results: list[dict[str, Any]],
+    *,
+    active_step_index: int | None = None,
+) -> dict[str, Any]:
+    payload = _build_plan_result_payload(steps, results)
+    if active_step_index is not None:
+        payload["active_step_index"] = active_step_index
+    return payload
+
+
+async def _persist_plan_progress(
+    db: AsyncSession,
+    task_id: uuid.UUID,
+    steps: list[dict[str, Any]],
+    *,
+    results: list[dict[str, Any]] | None = None,
+    active_step_index: int | None = None,
+) -> None:
+    result = await db.execute(select(AgentTask).where(AgentTask.id == task_id))
+    task = result.scalar_one_or_none()
+    if not task:
+        return
+    metadata = dict(task.metadata_json or {})
+    metadata["plan_progress"] = _build_plan_progress(
+        steps,
+        results=results,
+        active_step_index=active_step_index,
+    )
+    metadata["active_step_index"] = active_step_index
+    task.metadata_json = metadata
+    if results is not None:
+        task.result_json = _build_plan_result_snapshot(
+            steps,
+            results,
+            active_step_index=active_step_index,
+        )
+        task.step_results_json = results
+        task.checkpoint_json = _build_checkpoint(results, active_step_index=active_step_index)
+        task.provenance_json = merge_provenance(task.provenance_json, _merge_step_provenance(results))
+    await db.commit()
+
+
+async def _cancel_requested(db: AsyncSession, task_id: uuid.UUID) -> bool:
+    result = await db.execute(select(AgentTask).where(AgentTask.id == task_id))
+    task = result.scalar_one_or_none()
+    return bool(task and task.cancel_requested_at is not None)
 
 
 async def _run_multi_step_plan(
-    db: AsyncSession, user_id: uuid.UUID, payload: dict[str, Any]
+    db: AsyncSession,
+    task_id: uuid.UUID,
+    user_id: uuid.UUID,
+    payload: dict[str, Any],
+    db_factory,
 ) -> tuple[dict[str, Any], str | None]:
     """Execute a multi-step plan created by TaskPlanner."""
     from services.agent.task_planner import execute_plan_step
@@ -275,11 +750,28 @@ async def _run_multi_step_plan(
     if not steps or not course_id:
         raise ValueError("multi_step requires 'steps' and 'course_id' in input_json")
 
-    results: list[dict] = []
-    completed = 0
-    failed = 0
+    task_result = await db.execute(select(AgentTask).where(AgentTask.id == task_id))
+    task = task_result.scalar_one_or_none()
+    persisted_steps = (task.step_results_json if task else None) or ((task.result_json or {}) if task else {}).get("steps")
+    results: list[dict[str, Any]] = _coerce_step_results(persisted_steps)
+
+    await _persist_plan_progress(db, task_id, steps, results=results, active_step_index=None)
 
     for step in steps:
+        if any(result["step_index"] == step["step_index"] for result in results):
+            continue
+        if await _cancel_requested(db, task_id):
+            raise TaskCancelledError(
+                result_payload=_build_plan_result_payload(steps, results),
+                summary=_build_plan_summary(steps, results),
+            )
+        await _persist_plan_progress(
+            db,
+            task_id,
+            steps,
+            results=results,
+            active_step_index=step["step_index"],
+        )
         # Check dependencies are met
         deps = step.get("depends_on", [])
         dep_ok = all(
@@ -290,48 +782,69 @@ async def _run_multi_step_plan(
             results.append({
                 "step_index": step["step_index"],
                 "step_type": step.get("step_type", "unknown"),
+                "title": step.get("title", f"Step {step['step_index'] + 1}"),
                 "success": False,
+                "input_message": step.get("description") or step.get("title", ""),
+                "tool_calls": [],
                 "output": "",
+                "raw_output": "",
                 "summary": "Skipped — dependency not met.",
+                "error": "dependency_not_met",
+                "verifier": None,
+                "provenance": None,
             })
-            failed += 1
+            await _persist_plan_progress(db, task_id, steps, results=results, active_step_index=None)
             continue
 
-        step_result = await execute_plan_step(step, results, user_id, course_id, db)
+        step_result = await execute_plan_step(step, results, user_id, course_id, db, db_factory)
         results.append(step_result)
-        if step_result.get("success"):
-            completed += 1
-        else:
-            failed += 1
+        await _persist_plan_progress(db, task_id, steps, results=results, active_step_index=None)
+        if await _cancel_requested(db, task_id):
+            raise TaskCancelledError(
+                result_payload=_build_plan_result_payload(steps, results),
+                summary=_build_plan_summary(steps, results),
+            )
 
-    summary_parts = [f"{completed}/{len(steps)} steps completed"]
-    if failed:
-        summary_parts.append(f"{failed} failed")
-    return {
-        "steps": results,
-        "completed": completed,
-        "failed": failed,
-        "total": len(steps),
-    }, "; ".join(summary_parts)
+    payload = _build_plan_result_payload(steps, results)
+    return payload, _build_plan_summary(steps, results)
 
 
 async def drain_once() -> bool:
-    task_id = await _claim_next_task()
-    if not task_id:
+    """Claim and execute a single task.  Kept for backward compatibility."""
+    ids = await _claim_pending_tasks(1)
+    if not ids:
         return False
-    await execute_task(task_id)
+    await execute_task(ids[0])
     return True
+
+
+async def _execute_with_semaphore(task_id: uuid.UUID) -> None:
+    """Execute a single task while holding the worker semaphore."""
+    assert _worker_semaphore is not None
+    async with _worker_semaphore:
+        await execute_task(task_id)
 
 
 async def _run_loop() -> None:
     assert _stop_event is not None
+    assert _worker_semaphore is not None
+    max_concurrency = settings.activity_engine_max_concurrency
+
     while not _stop_event.is_set():
         try:
-            processed = await drain_once()
+            # Claim up to max_concurrency tasks in one batch.
+            ids = await _claim_pending_tasks(max_concurrency)
         except Exception:
-            logger.exception("Agent task engine loop failed")
-            processed = False
-        timeout = POLL_INTERVAL_SECONDS if processed else IDLE_INTERVAL_SECONDS
+            logger.exception("Activity engine: failed to claim tasks")
+            ids = []
+
+        if ids:
+            for task_id in ids:
+                t = asyncio.create_task(_execute_with_semaphore(task_id))
+                _inflight_tasks.add(t)
+                t.add_done_callback(_inflight_tasks.discard)
+
+        timeout = POLL_INTERVAL_SECONDS if ids else IDLE_INTERVAL_SECONDS
         try:
             await asyncio.wait_for(_stop_event.wait(), timeout=timeout)
         except asyncio.TimeoutError:
@@ -339,23 +852,34 @@ async def _run_loop() -> None:
 
 
 def start_activity_engine() -> None:
-    global _worker_task, _stop_event
+    global _worker_task, _stop_event, _worker_semaphore
     if _worker_task and not _worker_task.done():
         return
     _stop_event = asyncio.Event()
+    _worker_semaphore = asyncio.Semaphore(settings.activity_engine_max_concurrency)
     _worker_task = asyncio.create_task(_run_loop())
-    logger.info("Activity engine started")
+    logger.info(
+        "Activity engine started (max_concurrency=%d)",
+        settings.activity_engine_max_concurrency,
+    )
 
 
 async def stop_activity_engine() -> None:
-    global _worker_task, _stop_event
+    global _worker_task, _stop_event, _worker_semaphore
     if not _worker_task:
         return
     if _stop_event is not None:
         _stop_event.set()
     try:
+        # Wait for the polling loop to exit.
         await _worker_task
     finally:
         _worker_task = None
         _stop_event = None
-        logger.info("Activity engine stopped")
+    # Drain any in-flight concurrent tasks that were already dispatched.
+    if _inflight_tasks:
+        logger.info("Waiting for %d in-flight task(s) to finish…", len(_inflight_tasks))
+        await asyncio.gather(*_inflight_tasks, return_exceptions=True)
+    _inflight_tasks.clear()
+    _worker_semaphore = None
+    logger.info("Activity engine stopped")

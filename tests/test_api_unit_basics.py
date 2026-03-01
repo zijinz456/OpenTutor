@@ -1,5 +1,6 @@
 import asyncio
 import uuid
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from pathlib import Path
@@ -7,11 +8,14 @@ from pathlib import Path
 import pytest
 from fastapi import HTTPException
 
+from libs.exceptions import NotFoundError, ValidationError
 from routers.chat import _build_session_title, _resolve_chat_session
+from routers.goals import get_next_action
 from routers.preferences import _normalize_preference_value
 from routers.upload import _validate_url
 from routers.wrong_answers import derive_question, diagnose_from_pair
 from routers.workflows import _raise_if_service_error
+from services.auth.dependency import get_current_user
 from services.llm.local_config import get_llm_runtime_config, update_llm_runtime_config
 from services.llm import router as llm_router
 from services.preference.scene import DEFAULT_SCENE, detect_scene
@@ -33,13 +37,13 @@ def test_detect_scene_supports_cn_and_en_keywords():
 def test_workflow_service_error_mapping():
     _raise_if_service_error({})
 
-    with pytest.raises(HTTPException) as not_found:
+    with pytest.raises(NotFoundError) as not_found:
         _raise_if_service_error({"error": "Assignment not found"})
-    assert not_found.value.status_code == 404
+    assert not_found.value.status == 404
 
-    with pytest.raises(HTTPException) as bad_request:
+    with pytest.raises(ValidationError) as bad_request:
         _raise_if_service_error({"error": "Invalid input"})
-    assert bad_request.value.status_code == 400
+    assert bad_request.value.status == 422
 
 
 def test_llm_router_falls_back_to_mock_without_keys(monkeypatch):
@@ -125,6 +129,64 @@ def test_build_session_title_trims_and_compacts_whitespace():
     assert title == "this is a long first message"
 
 
+class _ScalarResult:
+    def __init__(self, value):
+        self._value = value
+
+    def scalar_one_or_none(self):
+        return self._value
+
+
+@pytest.mark.asyncio
+async def test_get_next_action_prefers_active_goal_next_action(monkeypatch):
+    user = SimpleNamespace(id=uuid.uuid4())
+    course_id = uuid.uuid4()
+    goal = SimpleNamespace(
+        id=uuid.uuid4(),
+        title="Pass the final",
+        next_action="Review chapter 3 weak points tonight.",
+        target_date=datetime.now(timezone.utc),
+    )
+    db = MagicMock()
+    db.execute = AsyncMock(return_value=_ScalarResult(goal))
+    monkeypatch.setattr("routers.goals.get_course_or_404", AsyncMock())
+
+    result = await get_next_action(course_id=course_id, user=user, db=db)
+
+    assert result.source == "manual"
+    assert result.goal_id == str(goal.id)
+    assert "Review chapter 3 weak points tonight." in result.recommended_action
+
+
+@pytest.mark.asyncio
+async def test_get_next_action_falls_back_to_failed_task(monkeypatch):
+    user = SimpleNamespace(id=uuid.uuid4())
+    course_id = uuid.uuid4()
+    failed_task = SimpleNamespace(
+        id=uuid.uuid4(),
+        goal_id=None,
+        title="Queued exam prep",
+        task_type="exam_prep",
+        status="failed",
+    )
+    db = MagicMock()
+    db.execute = AsyncMock(
+        side_effect=[
+            _ScalarResult(None),  # active goal
+            _ScalarResult(None),  # next assignment
+            _ScalarResult(failed_task),  # failed task
+        ]
+    )
+    monkeypatch.setattr("routers.goals.get_course_or_404", AsyncMock())
+    monkeypatch.setattr("routers.goals.predict_forgetting", AsyncMock(return_value={"predictions": []}))
+
+    result = await get_next_action(course_id=course_id, user=user, db=db)
+
+    assert result.source == "task_failure"
+    assert result.goal_id is None
+    assert result.suggested_task_type == "exam_prep"
+
+
 def test_validate_url_blocks_private_dns_resolution(monkeypatch):
     monkeypatch.setattr(
         "routers.upload.socket.getaddrinfo",
@@ -133,11 +195,11 @@ def test_validate_url_blocks_private_dns_resolution(monkeypatch):
         ],
     )
 
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(ValidationError) as exc:
         _validate_url("https://example.com/notes")
 
-    assert exc.value.status_code == 400
-    assert "Internal URLs" in exc.value.detail
+    assert exc.value.status == 422
+    assert "Internal URLs" in exc.value.message
 
 
 def test_validate_url_allows_public_dns_resolution(monkeypatch):
@@ -149,6 +211,27 @@ def test_validate_url_allows_public_dns_resolution(monkeypatch):
     )
 
     assert _validate_url("https://example.com/notes") == "https://example.com/notes"
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_commits_local_user_creation(monkeypatch):
+    monkeypatch.setattr("services.auth.dependency.settings.auth_enabled", False, raising=False)
+    monkeypatch.setattr("services.auth.dependency.settings.deployment_mode", "single_user", raising=False)
+
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = None
+    db = MagicMock()
+    db.execute = AsyncMock(return_value=result)
+    db.add = MagicMock()
+    db.commit = AsyncMock()
+    db.refresh = AsyncMock()
+
+    user = await get_current_user(db=db, credentials=None)
+
+    assert user.name == "Owner"
+    db.add.assert_called_once()
+    db.commit.assert_awaited_once()
+    db.refresh.assert_awaited_once_with(user)
 
 
 @pytest.mark.asyncio

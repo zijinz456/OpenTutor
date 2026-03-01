@@ -1,0 +1,42 @@
+# Virtual environments
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Node
+node_modules/
+.next/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Git
+.git/
+.gitignore
+
+# Tests
+tests/
+playwright-report/
+test-results/
+
+# Docs
+docs/
+*.md
+!README.md
+
+# Dev files
+.env
+.env.local
+.claude/
+scripts/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Uploads (runtime data, not build-time)
+uploads/

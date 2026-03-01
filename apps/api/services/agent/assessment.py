@@ -60,7 +60,7 @@ class AssessmentAgent(ReActMixin, BaseAgent):
         "Present results clearly with specific numbers and actionable suggestions."
     )
     model_preference = "large"
-    react_tools = ["get_mastery_report", "list_wrong_answers", "lookup_progress"]
+    react_tools = ["get_mastery_report", "lookup_progress", "list_recent_tasks"]
 
     async def _build_assessment_data(
         self, ctx: AgentContext, db: AsyncSession,

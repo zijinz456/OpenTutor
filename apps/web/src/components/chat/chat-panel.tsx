@@ -1,7 +1,8 @@
 "use client";
 
+import Image from "next/image";
 import { useRef, useEffect, useState, useCallback } from "react";
-import { Download, ImagePlus, MessageSquarePlus, Send, X } from "lucide-react";
+import { CheckCircle2, Clock3, Download, ImagePlus, MessageSquarePlus, Send, Workflow, X, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -18,6 +19,7 @@ import {
 } from "@/lib/api";
 import { toast } from "sonner";
 import { MarkdownRenderer } from "@/components/course/markdown-renderer";
+import { ProvenanceBadges } from "@/components/provenance-badges";
 
 /**
  * Chat Panel — AI conversation with SSE streaming.
@@ -42,7 +44,9 @@ function ExplainableTrace({ metadata }: { metadata: ChatMessageMetadata }) {
     provenance.scene_switch?.reason ||
     provenance.preference_details?.length ||
     provenance.content_refs?.length ||
-    provenance.tool_names?.length,
+    provenance.tool_names?.length ||
+    metadata.verifier ||
+    metadata.task_link,
   );
 
   if (!hasDetails) return null;
@@ -95,6 +99,22 @@ function ExplainableTrace({ metadata }: { metadata: ChatMessageMetadata }) {
           <div>
             <p className="font-medium text-foreground/80">Tools used</p>
             <p>{provenance.tool_names.join(", ")}</p>
+          </div>
+        )}
+        {metadata.verifier && (
+          <div>
+            <p className="font-medium text-foreground/80">Verifier</p>
+            <p>
+              {metadata.verifier.status}: {metadata.verifier.message}
+            </p>
+          </div>
+        )}
+        {metadata.task_link && (
+          <div>
+            <p className="font-medium text-foreground/80">Background task</p>
+            <p>
+              {metadata.task_link.task_type} · {metadata.task_link.status} · {metadata.task_link.task_id}
+            </p>
           </div>
         )}
       </div>
@@ -159,20 +179,12 @@ function MessageBubble({
           <div className="mt-2 flex flex-wrap gap-1.5">
             {message.metadata.agent && <Badge variant="outline">{message.metadata.agent}</Badge>}
             {message.metadata.intent && <Badge variant="outline">{message.metadata.intent}</Badge>}
-            {typeof message.metadata.provenance?.content_count === "number" && message.metadata.provenance.content_count > 0 && (
-              <Badge variant="outline">course {message.metadata.provenance.content_count}</Badge>
-            )}
-            {typeof message.metadata.provenance?.memory_count === "number" && message.metadata.provenance.memory_count > 0 && (
-              <Badge variant="outline">memory {message.metadata.provenance.memory_count}</Badge>
-            )}
-            {typeof message.metadata.provenance?.tool_count === "number" && message.metadata.provenance.tool_count > 0 && (
-              <Badge variant="outline">tools {message.metadata.provenance.tool_count}</Badge>
-            )}
             {typeof message.metadata.tokens === "number" && message.metadata.tokens > 0 && (
               <Badge variant="outline">{message.metadata.tokens} tok</Badge>
             )}
           </div>
         )}
+        {!isUser && <ProvenanceBadges provenance={message.metadata?.provenance} compact />}
         {!isUser && message.metadata && <ExplainableTrace metadata={message.metadata} />}
         {!isUser && generatedQuestions.length > 0 && (
           <div className="mt-3 flex items-center justify-between gap-2 border-t pt-2">
@@ -210,6 +222,7 @@ export function ChatPanel({ courseId, activeTab, scene }: ChatPanelProps) {
     messages,
     isStreaming,
     isLoadingSessions,
+    error: chatError,
     toolStatus,
     sendMessage,
     setCourseContext,
@@ -219,6 +232,7 @@ export function ChatPanel({ courseId, activeTab, scene }: ChatPanelProps) {
     startNewSession,
     sessionIds,
     sessionsByCourse,
+    activePlan,
   } = useChatStore();
   const [input, setInput] = useState("");
   const [imageAttachments, setImageAttachments] = useState<ImageAttachment[]>([]);
@@ -331,6 +345,47 @@ export function ChatPanel({ courseId, activeTab, scene }: ChatPanelProps) {
 
       {/* Messages */}
       <ScrollArea className="flex-1 p-3" ref={scrollRef}>
+        {activePlan && activePlan.steps.length > 0 && (
+          <div className="mb-3 rounded-lg border border-primary/20 bg-primary/5 p-3 text-sm">
+            <div className="flex items-start gap-2">
+              <Workflow className="mt-0.5 h-4 w-4 text-primary" />
+              <div className="min-w-0 flex-1">
+                <p className="font-medium text-foreground">Background plan running</p>
+                {activePlan.message && (
+                  <p className="mt-1 text-xs text-muted-foreground">{activePlan.message}</p>
+                )}
+                <div className="mt-2 space-y-1.5">
+                  {activePlan.steps.map((step) => {
+                    const Icon =
+                      step.status === "completed"
+                        ? CheckCircle2
+                        : step.status === "failed"
+                          ? XCircle
+                          : Clock3;
+                    const colorClass =
+                      step.status === "completed"
+                        ? "text-green-600"
+                        : step.status === "failed"
+                          ? "text-red-600"
+                          : "text-muted-foreground";
+                    return (
+                      <div key={`${activePlan.taskId}-${step.step_index}`} className="flex items-start gap-2 text-xs">
+                        <Icon className={`mt-0.5 h-3.5 w-3.5 ${colorClass}`} />
+                        <div className="min-w-0 flex-1">
+                          <p className="font-medium text-foreground/90">{step.title}</p>
+                          <p className="text-muted-foreground">
+                            {step.status}
+                            {step.summary ? ` • ${step.summary}` : ""}
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
         {messages.length === 0 && (
           <div className="flex items-center justify-center h-full min-h-[200px]">
             <div className="text-center">
@@ -356,6 +411,13 @@ export function ChatPanel({ courseId, activeTab, scene }: ChatPanelProps) {
         ))}
       </ScrollArea>
 
+      {/* Streaming / connection error */}
+      {chatError && !isStreaming && (
+        <div className="flex items-center gap-2 px-3 py-2 text-xs text-destructive bg-destructive/10 border-t">
+          <span>Error: {chatError}</span>
+        </div>
+      )}
+
       {/* Tool status indicator (ReAct agent tool execution) */}
       {toolStatus && (
         <div className="flex items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground bg-muted/50 border-t">
@@ -377,9 +439,12 @@ export function ChatPanel({ courseId, activeTab, scene }: ChatPanelProps) {
           <div className="flex gap-2 mb-2 flex-wrap">
             {imageAttachments.map((img, i) => (
               <div key={i} className="relative group">
-                <img
+                <Image
                   src={`data:${img.media_type};base64,${img.data}`}
                   alt={img.filename || "attachment"}
+                  width={64}
+                  height={64}
+                  unoptimized
                   className="h-16 w-16 object-cover rounded-md border"
                 />
                 <button

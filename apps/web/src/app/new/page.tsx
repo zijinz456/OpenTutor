@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
@@ -20,7 +20,7 @@ import {
   Loader,
   FolderPlus,
 } from "lucide-react";
-import { uploadFile, scrapeUrl } from "@/lib/api";
+import { IngestionJobSummary, listIngestionJobs, uploadFile, scrapeUrl } from "@/lib/api";
 import { useCourseStore } from "@/store/course";
 
 type Mode = "upload" | "url" | "both";
@@ -35,6 +35,74 @@ interface FileItem {
 interface ParseStep {
   label: string;
   status: "waiting" | "active" | "done";
+}
+
+const PARSE_STEPS: { key: string; label: string }[] = [
+  { key: "uploaded", label: "Uploads registered" },
+  { key: "extracting", label: "Extracting content" },
+  { key: "classifying", label: "Classifying materials" },
+  { key: "dispatching", label: "Building workspace artifacts" },
+  { key: "embedding", label: "Building semantic index" },
+];
+
+const PHASE_ORDER = {
+  uploaded: 0,
+  extracting: 1,
+  classifying: 2,
+  dispatching: 3,
+  embedding: 4,
+  completed: 5,
+  failed: 5,
+} as const;
+
+function getPhaseRank(status: string) {
+  return PHASE_ORDER[status as keyof typeof PHASE_ORDER] ?? -1;
+}
+
+function deriveParseSteps(
+  jobs: IngestionJobSummary[],
+  isSubmittingContent: boolean,
+  noSourcesSubmitted: boolean,
+): ParseStep[] {
+  if (noSourcesSubmitted) {
+    return PARSE_STEPS.map((step) => ({ label: step.label, status: "done" }));
+  }
+  if (!jobs.length) {
+    return PARSE_STEPS.map((step, index) => ({
+      label: step.label,
+      status: isSubmittingContent && index === 0 ? "active" : "waiting",
+    }));
+  }
+
+  return PARSE_STEPS.map((step, index) => {
+    const hasCurrent = jobs.some((job) => job.status === step.key);
+    const hasReachedLater = jobs.some((job) => getPhaseRank(job.status) > index);
+    const hasReachedCurrent = jobs.some((job) => getPhaseRank(job.status) >= index);
+
+    let status: ParseStep["status"] = "waiting";
+    if (hasCurrent) {
+      status = "active";
+    } else if (hasReachedLater || (hasReachedCurrent && jobs.every((job) => getPhaseRank(job.status) >= index || job.status === "failed"))) {
+      status = "done";
+    }
+    return { label: step.label, status };
+  });
+}
+
+function deriveParseProgress(
+  jobs: IngestionJobSummary[],
+  isSubmittingContent: boolean,
+  noSourcesSubmitted: boolean,
+) {
+  if (noSourcesSubmitted) return 100;
+  if (!jobs.length) return isSubmittingContent ? 10 : 0;
+  return Math.max(
+    5,
+    Math.min(
+      100,
+      Math.round(jobs.reduce((sum, job) => sum + (job.progress_percent ?? 0), 0) / jobs.length),
+    ),
+  );
 }
 
 const FEATURE_CARDS = [
@@ -60,19 +128,18 @@ export default function NewProjectPage() {
   const [nlInput, setNlInput] = useState("");
   const [createdCourseId, setCreatedCourseId] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
-
-  // Parsing state
-  const [parseSteps, setParseSteps] = useState<ParseStep[]>([
-    { label: "Files converted", status: "waiting" },
-    { label: "Content tree built", status: "waiting" },
-    { label: "Scraping URL content...", status: "waiting" },
-    { label: "Generate AI summaries", status: "waiting" },
-    { label: "Index for search", status: "waiting" },
-  ]);
-  const [parseProgress, setParseProgress] = useState(0);
+  const [ingestionJobs, setIngestionJobs] = useState<IngestionJobSummary[]>([]);
+  const [isSubmittingContent, setIsSubmittingContent] = useState(false);
+  const [noSourcesSubmitted, setNoSourcesSubmitted] = useState(false);
   const [parseLogs, setParseLogs] = useState<{ text: string; color: string }[]>([]);
-  const [parseDone, setParseDone] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const seenJobStatesRef = useRef<Record<string, string>>({});
+
+  const parseSteps = deriveParseSteps(ingestionJobs, isSubmittingContent, noSourcesSubmitted);
+  const parseProgress = deriveParseProgress(ingestionJobs, isSubmittingContent, noSourcesSubmitted);
+  const hasCompletedJob = ingestionJobs.some((job) => job.status === "completed");
+  const allJobsFailed = ingestionJobs.length > 0 && ingestionJobs.every((job) => job.status === "failed");
+  const canContinueToFeatures = noSourcesSubmitted || hasCompletedJob;
 
   const formatSize = (bytes: number) => {
     if (bytes < 1024) return bytes + " B";
@@ -128,23 +195,79 @@ export default function NewProjectPage() {
     setFiles((prev) => [...prev, ...newFiles]);
   }, []);
 
-  // Start parsing: create course, upload files, scrape URL
-  const startParsing = useCallback(async () => {
-    setStep("parsing");
-    setParseProgress(0);
-    setParseLogs([]);
-    setParseDone(false);
-    setParseSteps((s) => s.map((ps) => ({ ...ps, status: "waiting" as const })));
+  useEffect(() => {
+    if (step !== "parsing" || !createdCourseId || noSourcesSubmitted) {
+      return;
+    }
+
+    let cancelled = false;
 
     const addLog = (text: string, color: string) => {
       setParseLogs((prev) => [...prev, { text, color }]);
     };
+
+    const pollJobs = async () => {
+      try {
+        const jobs = await listIngestionJobs(createdCourseId);
+        if (cancelled) return;
+
+        setIngestionJobs(jobs);
+
+        for (const job of jobs) {
+          const stateKey = `${job.status}:${job.embedding_status}:${job.error_message ?? ""}`;
+          if (seenJobStatesRef.current[job.id] === stateKey) {
+            continue;
+          }
+          seenJobStatesRef.current[job.id] = stateKey;
+
+          const label = job.filename || "Untitled source";
+          if (job.error_message) {
+            addLog(`${new Date().toLocaleTimeString()}  ${label}: ${job.error_message}`, "text-red-500");
+          } else if (job.phase_label) {
+            addLog(`${new Date().toLocaleTimeString()}  ${label}: ${job.phase_label}`, "text-gray-500");
+          }
+        }
+      } catch (error) {
+        if (!cancelled) {
+          addLog(
+            `${new Date().toLocaleTimeString()}  Failed to refresh ingestion status: ${(error as Error).message}`,
+            "text-red-500",
+          );
+        }
+      }
+    };
+
+    void pollJobs();
+    const timer = window.setInterval(() => {
+      void pollJobs();
+    }, 2000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [createdCourseId, noSourcesSubmitted, step]);
+
+  // Start parsing: create course, upload files, scrape URL
+  const startParsing = useCallback(async () => {
+    setStep("parsing");
+    setIngestionJobs([]);
+    setParseLogs([]);
+    setIsSubmittingContent(true);
+    setNoSourcesSubmitted(false);
+    seenJobStatesRef.current = {};
+
+    const addLog = (text: string, color: string) => {
+      setParseLogs((prev) => [...prev, { text, color }]);
+    };
+    let nextCourseId: string | null = null;
 
     try {
       // Create the course
       addLog(`${new Date().toLocaleTimeString()}  Creating project "${projectName || "Untitled"}"...`, "text-gray-400");
       const description = nlInput.trim() || undefined;
       const course = await addCourse(projectName.trim() || "Untitled Project", description);
+      nextCourseId = course.id;
       setCreatedCourseId(course.id);
 
       // Persist feature toggles and auto-scrape preference for workspace
@@ -153,65 +276,51 @@ export default function NewProjectPage() {
         localStorage.setItem(`course_autoscrape_${course.id}`, "true");
       }
       addLog(`${new Date().toLocaleTimeString()}  Project created`, "text-green-500");
-
-      // Step 1: Convert files
-      setParseSteps((s) => s.map((ps, i) => ({ ...ps, status: i === 0 ? "active" : ps.status })));
-      setParseProgress(10);
+      const hasSources = files.length > 0 || (url.trim() && (mode === "url" || mode === "both"));
+      if (!hasSources) {
+        setNoSourcesSubmitted(true);
+        addLog(
+          `${new Date().toLocaleTimeString()}  No files or URLs submitted. You can continue and add content later.`,
+          "text-gray-500",
+        );
+        return;
+      }
 
       if (files.length > 0) {
         for (const f of files) {
-          addLog(`${new Date().toLocaleTimeString()}  Converting ${f.name}...`, "text-gray-400");
+          addLog(`${new Date().toLocaleTimeString()}  Uploading ${f.name}...`, "text-gray-400");
           try {
-            await uploadFile(course.id, f.file);
-            addLog(`${new Date().toLocaleTimeString()}  ${f.name} converted`, "text-green-500");
+            const result = await uploadFile(course.id, f.file);
+            addLog(
+              `${new Date().toLocaleTimeString()}  ${f.name}: ${result.nodes_created} nodes queued`,
+              "text-green-500",
+            );
           } catch (err) {
             addLog(`${new Date().toLocaleTimeString()}  Failed: ${f.name} — ${(err as Error).message}`, "text-red-500");
           }
         }
       }
 
-      setParseSteps((s) => s.map((ps, i) => ({ ...ps, status: i === 0 ? "done" : i === 1 ? "active" : ps.status })));
-      setParseProgress(30);
-
-      // Step 2: Content tree
-      addLog(`${new Date().toLocaleTimeString()}  Building content tree...`, "text-gray-400");
-      await fetchContentTree(course.id);
-      addLog(`${new Date().toLocaleTimeString()}  Content tree built`, "text-green-500");
-
-      setParseSteps((s) => s.map((ps, i) => ({ ...ps, status: i <= 1 ? "done" : i === 2 ? "active" : ps.status })));
-      setParseProgress(50);
-
       // Step 3: Scrape URL
       if (url.trim() && (mode === "url" || mode === "both")) {
         addLog(`${new Date().toLocaleTimeString()}  Fetching ${url}...`, "text-gray-400");
         try {
-          await scrapeUrl(course.id, url.trim());
-          addLog(`${new Date().toLocaleTimeString()}  URL content scraped successfully`, "text-green-500");
+          const result = await scrapeUrl(course.id, url.trim());
+          addLog(
+            `${new Date().toLocaleTimeString()}  URL content accepted: ${result.nodes_created} nodes queued`,
+            "text-green-500",
+          );
         } catch (err) {
           addLog(`${new Date().toLocaleTimeString()}  Scrape failed: ${(err as Error).message}`, "text-red-500");
         }
-      } else {
-        addLog(`${new Date().toLocaleTimeString()}  No URL to scrape, skipping`, "text-gray-400");
       }
-
-      setParseSteps((s) => s.map((ps, i) => ({ ...ps, status: i <= 2 ? "done" : i === 3 ? "active" : ps.status })));
-      setParseProgress(75);
-
-      // Step 4: AI summaries (done server-side during upload)
-      addLog(`${new Date().toLocaleTimeString()}  AI summaries generated (server-side)`, "text-green-500");
-
-      setParseSteps((s) => s.map((ps, i) => ({ ...ps, status: i <= 3 ? "done" : i === 4 ? "active" : ps.status })));
-      setParseProgress(90);
-
-      // Step 5: Search index (done server-side during upload)
-      addLog(`${new Date().toLocaleTimeString()}  Search index built (server-side)`, "text-green-500");
-      addLog(`${new Date().toLocaleTimeString()}  All tasks complete!`, "text-green-500");
-
-      setParseSteps((s) => s.map((ps) => ({ ...ps, status: "done" })));
-      setParseProgress(100);
-      setParseDone(true);
     } catch (err) {
       addLog(`${new Date().toLocaleTimeString()}  Error: ${(err as Error).message}`, "text-red-500");
+    } finally {
+      setIsSubmittingContent(false);
+      if (nextCourseId) {
+        void fetchContentTree(nextCourseId).catch(() => undefined);
+      }
     }
   }, [addCourse, autoScrape, features, fetchContentTree, files, mode, nlInput, projectName, url]);
 
@@ -443,9 +552,11 @@ export default function NewProjectPage() {
                 Processing — {projectName || "New Project"}
               </span>
               <div className="flex-1" />
-              <div className="flex items-center gap-1.5 px-2.5 h-6 bg-green-50 rounded">
-                <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
-                <span className="text-[11px] font-semibold text-green-600">Active</span>
+              <div className={`flex items-center gap-1.5 px-2.5 h-6 rounded ${allJobsFailed ? "bg-red-50" : "bg-green-50"}`}>
+                <div className={`w-1.5 h-1.5 rounded-full ${allJobsFailed ? "bg-red-500" : "bg-green-500"}`} />
+                <span className={`text-[11px] font-semibold ${allJobsFailed ? "text-red-600" : "text-green-600"}`}>
+                  {allJobsFailed ? "Needs attention" : "Active"}
+                </span>
               </div>
             </div>
             {url && (
@@ -458,11 +569,16 @@ export default function NewProjectPage() {
             <div className="flex-1 p-6 bg-gray-50 flex flex-col gap-4 overflow-y-auto">
               <h2 className="text-xl font-bold text-gray-900">Processing your materials...</h2>
               <p className="text-sm text-gray-600 leading-relaxed">
-                Agent is analyzing your uploaded files and URLs to build a structured learning experience.
+                Progress now comes directly from backend ingestion jobs. If you enter early, the workspace will keep updating while imports finish.
               </p>
               {files.length > 0 && (
                 <div className="p-3 px-4 bg-yellow-50 border border-yellow-200 rounded-md text-sm text-yellow-800 leading-relaxed">
                   Processing {files.length} file{files.length > 1 ? "s" : ""}: {files.map((f) => f.name).join(", ")}
+                </div>
+              )}
+              {allJobsFailed && (
+                <div className="p-3 px-4 bg-red-50 border border-red-200 rounded-md text-sm text-red-700 leading-relaxed">
+                  All ingestion jobs failed. Review the processing log for the backend error details, then go back and retry.
                 </div>
               )}
             </div>
@@ -471,7 +587,7 @@ export default function NewProjectPage() {
           {/* Parsing Sidebar (right) */}
           <div className="w-[340px] border-l bg-white flex flex-col shrink-0">
             <div className="h-11 px-4 bg-gray-50 border-b flex items-center gap-2 shrink-0">
-              <Loader className={`w-4 h-4 text-indigo-600 ${!parseDone ? "animate-spin" : ""}`} />
+              <Loader className={`w-4 h-4 text-indigo-600 ${!canContinueToFeatures ? "animate-spin" : ""}`} />
               <span className="font-semibold text-[13px] text-gray-900" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Parsing Progress</span>
             </div>
             <div className="flex-1 p-4 flex flex-col gap-4 overflow-y-auto">
@@ -488,7 +604,7 @@ export default function NewProjectPage() {
               <div className="flex flex-col gap-1.5">
                 <div className="w-full h-1.5 bg-gray-100 rounded-full">
                   <div
-                    className="h-1.5 bg-indigo-600 rounded-full transition-all duration-1000"
+                    className="h-1.5 bg-indigo-600 rounded-full transition-all duration-500"
                     style={{ width: `${parseProgress}%` }}
                   />
                 </div>
@@ -540,15 +656,26 @@ export default function NewProjectPage() {
 
               <div className="flex-1" />
 
-              {parseDone && (
-                <button
-                  onClick={() => setStep("features")}
-                  data-testid="continue-to-features"
-                  className="w-full h-11 bg-indigo-600 text-white rounded-lg flex items-center justify-center gap-2 font-semibold text-sm hover:bg-indigo-700"
-                >
-                  Continue to Features <ArrowRight className="w-3.5 h-3.5" />
-                </button>
-              )}
+              <div className="flex flex-col gap-2">
+                {createdCourseId && (
+                  <button
+                    onClick={enterWorkspace}
+                    data-testid="enter-now"
+                    className="w-full h-11 border border-gray-200 text-gray-700 rounded-lg flex items-center justify-center gap-2 font-semibold text-sm hover:border-gray-300"
+                  >
+                    Enter now
+                  </button>
+                )}
+                {canContinueToFeatures && (
+                  <button
+                    onClick={() => setStep("features")}
+                    data-testid="continue-to-features"
+                    className="w-full h-11 bg-indigo-600 text-white rounded-lg flex items-center justify-center gap-2 font-semibold text-sm hover:bg-indigo-700"
+                  >
+                    Continue to Features <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>

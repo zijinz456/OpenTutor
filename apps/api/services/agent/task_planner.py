@@ -158,58 +158,72 @@ async def execute_plan_step(
     user_id: uuid.UUID,
     course_id: uuid.UUID,
     db: AsyncSession,
+    db_factory,
 ) -> dict:
     """Execute a single plan step using the appropriate agent.
 
-    Returns a result dict with {output, summary, success}.
+    Returns a result dict with structured execution metadata for persistence.
     """
-    from services.agent.state import AgentContext, IntentType
-
     step_type = step["step_type"]
-    agent_name = step.get("agent", "teaching")
 
     # Build a context for the sub-agent
     context_message = _build_step_message(step, previous_results)
 
-    # Map agent name to intent
-    agent_intent_map = {
-        "teaching": IntentType.LEARN,
-        "exercise": IntentType.QUIZ,
-        "planning": IntentType.PLAN,
-        "review": IntentType.REVIEW,
-        "assessment": IntentType.ASSESS,
-        "curriculum": IntentType.CURRICULUM,
-    }
-    intent = agent_intent_map.get(agent_name, IntentType.GENERAL)
-
-    ctx = AgentContext(
-        user_id=user_id,
-        course_id=course_id,
-        user_message=context_message,
-        intent=intent,
-    )
-
-    # Get the agent and execute
-    from services.agent.orchestrator import get_agent
-    agent = get_agent(intent)
-
     try:
-        ctx = await agent.run(ctx, db)
+        from services.agent.orchestrator import run_agent_turn
+
+        history = [
+            {
+                "role": "assistant",
+                "content": prev["summary"],
+            }
+            for prev in previous_results
+            if prev.get("success") and prev.get("summary")
+        ]
+        ctx = await run_agent_turn(
+            user_id=user_id,
+            course_id=course_id,
+            message=context_message,
+            db=db,
+            db_factory=db_factory,
+            history=history,
+        )
+        success = ctx.phase.value != "failed" and not ctx.error and bool(ctx.response.strip())
+        envelope = ctx.metadata.get("turn_envelope") if isinstance(ctx.metadata.get("turn_envelope"), dict) else None
+        verifier = envelope.get("verifier") if envelope else ctx.metadata.get("verifier")
+        provenance = envelope.get("provenance") if envelope else ctx.metadata.get("provenance")
+        tool_calls = envelope.get("tool_calls") if envelope else ctx.tool_calls
         return {
             "step_index": step["step_index"],
             "step_type": step_type,
-            "success": True,
+            "title": step.get("title", f"Step {step['step_index'] + 1}"),
+            "agent": ctx.delegated_agent,
+            "intent": ctx.intent.value,
+            "success": success,
+            "input_message": context_message,
+            "tool_calls": tool_calls if isinstance(tool_calls, list) else [],
             "output": ctx.response[:2000],
-            "summary": ctx.response[:300],
+            "raw_output": ctx.response,
+            "summary": (ctx.response or ctx.error or "Step completed.")[:300],
+            "error": ctx.error,
+            "verifier": verifier if isinstance(verifier, dict) else None,
+            "provenance": provenance if isinstance(provenance, dict) else None,
         }
     except Exception as e:
         logger.error("Plan step %s failed: %s", step_type, e)
         return {
             "step_index": step["step_index"],
             "step_type": step_type,
+            "title": step.get("title", f"Step {step['step_index'] + 1}"),
             "success": False,
+            "input_message": context_message,
+            "tool_calls": [],
             "output": "",
+            "raw_output": "",
             "summary": f"Step failed: {e}",
+            "error": str(e),
+            "verifier": None,
+            "provenance": None,
         }
 
 

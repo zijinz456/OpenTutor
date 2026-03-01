@@ -23,15 +23,22 @@ async def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
 ) -> User:
     """Resolve the current user from JWT or fall back to local user."""
-    if not settings.auth_enabled:
-        # Backward-compatible: return local user
+    if settings.deployment_mode == "single_user" and not settings.auth_enabled:
+        # Explicit single-user deployment mode.
         result = await db.execute(select(User).limit(1))
         user = result.scalar_one_or_none()
         if not user:
-            user = User(name="Local User")
+            user = User(name="Owner")
             db.add(user)
-            await db.flush()
+            await db.commit()
+            await db.refresh(user)
         return user
+
+    if not settings.auth_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AUTH_ENABLED must be true when DEPLOYMENT_MODE is multi_user",
+        )
 
     if not credentials:
         raise HTTPException(

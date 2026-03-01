@@ -30,6 +30,25 @@ export interface Course {
   name: string;
   description: string | null;
   created_at: string;
+  updated_at?: string | null;
+  file_count?: number;
+  content_node_count?: number;
+  active_goal_count?: number;
+  pending_task_count?: number;
+  pending_approval_count?: number;
+  last_agent_activity_at?: string | null;
+  last_scene_id?: string | null;
+}
+
+export interface CourseOverviewCard extends Course {
+  updated_at: string | null;
+  file_count: number;
+  content_node_count: number;
+  active_goal_count: number;
+  pending_task_count: number;
+  pending_approval_count: number;
+  last_agent_activity_at: string | null;
+  last_scene_id: string | null;
 }
 
 export interface HealthStatus {
@@ -66,6 +85,10 @@ export interface LlmConnectionTestResult {
 
 export async function listCourses(): Promise<Course[]> {
   return request("/courses/");
+}
+
+export async function listCourseOverview(): Promise<CourseOverviewCard[]> {
+  return request("/courses/overview");
 }
 
 export async function getHealthStatus(): Promise<HealthStatus> {
@@ -265,6 +288,7 @@ export interface ChatContentReference {
 
 export interface ChatProvenance {
   scene?: string;
+  workflow?: string;
   scene_resolution?: ChatSceneExplanation;
   scene_switch?: ChatSceneExplanation;
   preferences_applied?: string[];
@@ -277,6 +301,10 @@ export interface ChatProvenance {
   tool_count?: number;
   tool_names?: string[];
   action_count?: number;
+  generated?: boolean;
+  user_input?: boolean;
+  source_labels?: string[];
+  scheduler_trigger?: string;
 }
 
 export interface ChatMessageMetadata {
@@ -286,12 +314,39 @@ export interface ChatMessageMetadata {
   actions?: ChatAction[];
   reflection?: Record<string, unknown> | null;
   provenance?: ChatProvenance | null;
+  verifier?: {
+    status: "pass" | "repaired" | "failed";
+    code: string;
+    message: string;
+  } | null;
+  task_link?: {
+    task_id: string;
+    task_type: string;
+    status: string;
+  } | null;
+}
+
+export interface PlanStepProgress {
+  step_index: number;
+  step_type: string;
+  title: string;
+  status: "pending" | "running" | "completed" | "failed" | "skipped" | string;
+  depends_on?: number[];
+  summary?: string | null;
+  agent?: string | null;
+}
+
+export interface PlanProgressEvent {
+  taskId: string;
+  steps: PlanStepProgress[];
+  message?: string;
 }
 
 export type StreamEvent =
   | { type: "content"; content: string }
   | { type: "action"; action: ChatAction }
   | { type: "status"; phase: string; intent?: string; confidence?: number; agent?: string }
+  | { type: "plan_step"; task: PlanProgressEvent }
   | { type: "replace"; content: string }
   | { type: "tool_status"; status: "running" | "complete"; tool: string }
   | { type: "done"; sessionId?: string; agent?: string; intent?: string; tokens?: number; metadata?: ChatMessageMetadata };
@@ -391,6 +446,15 @@ export async function* streamChat(
           confidence: data.confidence,
           agent: data.agent,
         };
+      } else if (resolvedEvent === "plan_step") {
+        yield {
+          type: "plan_step",
+          task: {
+            taskId: data.task_id,
+            steps: data.steps ?? [],
+            message: data.message,
+          },
+        };
       } else if (resolvedEvent === "replace" && data.content) {
         yield { type: "replace", content: data.content };
       } else if (resolvedEvent === "tool_status") {
@@ -412,6 +476,8 @@ export async function* streamChat(
             tokens: data.tokens,
             actions: data.actions,
             provenance: data.provenance,
+            verifier: data.verifier,
+            task_link: data.task_link,
             reflection: data.reflection,
           },
         };
@@ -897,6 +963,12 @@ export async function reviewFlashcard(
   });
 }
 
+export async function getDueFlashcards(
+  courseId: string,
+): Promise<{ cards: Flashcard[]; due_count: number; total_batches: number }> {
+  return request(`/flashcards/due/${courseId}`);
+}
+
 export interface KnowledgeGraphNode {
   id: string;
   label: string;
@@ -978,8 +1050,14 @@ export interface IngestionJobSummary {
   source_type: string;
   category: string | null;
   status: string;
+  phase_label: string | null;
+  progress_percent: number;
+  nodes_created: number;
+  embedding_status: "pending" | "running" | "completed" | "failed";
+  error_message: string | null;
   dispatched_to: Record<string, number> | null;
   created_at: string | null;
+  updated_at: string | null;
 }
 
 export async function getFilesByCourseId(courseId: string): Promise<UploadedCourseFile[]> {
@@ -1039,8 +1117,19 @@ export interface AgentTask {
   id: string;
   user_id: string;
   course_id: string | null;
+  goal_id: string | null;
   task_type: string;
-  status: string;
+  status:
+    | "pending_approval"
+    | "queued"
+    | "running"
+    | "cancel_requested"
+    | "cancelled"
+    | "failed"
+    | "completed"
+    | "resuming"
+    | "rejected"
+    | string;
   title: string;
   summary: string | null;
   source: string;
@@ -1051,12 +1140,28 @@ export interface AgentTask {
   attempts: number;
   max_attempts: number;
   requires_approval: boolean;
+  task_kind: "read_only" | "content_mutation" | "notification" | "external_side_effect" | string;
+  risk_level: "low" | "medium" | "high" | string;
+  approval_status: "not_required" | "pending" | "approved" | "rejected" | string;
+  checkpoint_json: Record<string, unknown> | null;
+  step_results: Array<Record<string, unknown>>;
+  provenance: Record<string, unknown> | null;
   approved_at: string | null;
   started_at: string | null;
   cancel_requested_at: string | null;
   created_at: string | null;
   updated_at: string | null;
   completed_at: string | null;
+}
+
+export interface NextActionResponse {
+  course_id: string;
+  goal_id: string | null;
+  title: string;
+  reason: string;
+  source: "deadline" | "task_failure" | "forgetting_risk" | "recent_goal" | "manual" | string;
+  recommended_action: string;
+  suggested_task_type: string | null;
 }
 
 export async function listAgentTasks(courseId?: string): Promise<AgentTask[]> {
@@ -1068,6 +1173,7 @@ export async function submitAgentTask(body: {
   task_type: string;
   title: string;
   course_id?: string;
+  goal_id?: string;
   summary?: string;
   input_json?: Record<string, unknown>;
   metadata_json?: Record<string, unknown>;
@@ -1085,12 +1191,86 @@ export async function approveAgentTask(taskId: string): Promise<AgentTask> {
   return request(`/tasks/${taskId}/approve`, { method: "POST" });
 }
 
+export async function rejectAgentTask(taskId: string): Promise<AgentTask> {
+  return request(`/tasks/${taskId}/reject`, { method: "POST" });
+}
+
 export async function cancelAgentTask(taskId: string): Promise<AgentTask> {
   return request(`/tasks/${taskId}/cancel`, { method: "POST" });
 }
 
+export async function resumeAgentTask(taskId: string): Promise<AgentTask> {
+  return request(`/tasks/${taskId}/resume`, { method: "POST" });
+}
+
 export async function retryAgentTask(taskId: string): Promise<AgentTask> {
   return request(`/tasks/${taskId}/retry`, { method: "POST" });
+}
+
+export interface StudyGoal {
+  id: string;
+  user_id: string;
+  course_id: string | null;
+  title: string;
+  objective: string;
+  success_metric: string | null;
+  current_milestone: string | null;
+  next_action: string | null;
+  status: string;
+  confidence: string | null;
+  target_date: string | null;
+  metadata_json: Record<string, unknown> | null;
+  linked_task_count: number;
+  created_at: string | null;
+  updated_at: string | null;
+  completed_at: string | null;
+}
+
+export async function listStudyGoals(courseId?: string, status?: string): Promise<StudyGoal[]> {
+  const params = new URLSearchParams();
+  if (courseId) params.set("course_id", courseId);
+  if (status) params.set("status", status);
+  const query = params.toString();
+  return request(`/goals/${query ? `?${query}` : ""}`);
+}
+
+export async function getNextAction(courseId: string): Promise<NextActionResponse> {
+  return request(`/goals/${courseId}/next-action`);
+}
+
+export async function createStudyGoal(body: {
+  title: string;
+  objective: string;
+  course_id?: string;
+  success_metric?: string;
+  current_milestone?: string;
+  next_action?: string;
+  status?: string;
+  confidence?: string;
+  target_date?: string;
+  metadata_json?: Record<string, unknown>;
+}): Promise<StudyGoal> {
+  return request("/goals/", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function updateStudyGoal(goalId: string, body: Partial<{
+  title: string;
+  objective: string;
+  success_metric: string;
+  current_milestone: string;
+  next_action: string;
+  status: string;
+  confidence: string;
+  target_date: string | null;
+  metadata_json: Record<string, unknown> | null;
+}>): Promise<StudyGoal> {
+  return request(`/goals/${goalId}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
 }
 
 export interface PreferenceSignal {
@@ -1109,4 +1289,68 @@ export interface PreferenceSignal {
 export async function listPreferenceSignals(courseId?: string): Promise<PreferenceSignal[]> {
   const query = courseId ? `?course_id=${courseId}` : "";
   return request(`/preferences/signals${query}`);
+}
+
+// ── Push Notifications ──
+
+export interface VapidKeyResponse {
+  public_key: string;
+}
+
+export async function getVapidKey(): Promise<VapidKeyResponse> {
+  return request("/notifications/push/vapid-key");
+}
+
+export async function subscribePush(body: {
+  endpoint: string;
+  p256dh_key: string;
+  auth_key: string;
+  user_agent: string;
+}): Promise<void> {
+  return request("/notifications/push/subscribe", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function unsubscribePush(body: { endpoint: string }): Promise<void> {
+  return request("/notifications/push/unsubscribe", {
+    method: "DELETE",
+    body: JSON.stringify(body),
+  });
+}
+
+// ── Learning Templates ──
+
+export interface LearningTemplate {
+  id: string;
+  name: string;
+  description?: string;
+  config: Record<string, unknown>;
+}
+
+export async function listTemplates(): Promise<LearningTemplate[]> {
+  return request("/progress/templates");
+}
+
+export async function applyTemplate(templateId: string): Promise<void> {
+  return request("/progress/templates/apply", {
+    method: "POST",
+    body: JSON.stringify({ template_id: templateId }),
+  });
+}
+
+// ── NL Preference Parsing ──
+
+export interface NLPreferenceResult {
+  dimension: string | null;
+  value: string | null;
+  label: string | null;
+}
+
+export async function parseNLPreference(text: string): Promise<NLPreferenceResult> {
+  return request("/preferences/parse-nl", {
+    method: "POST",
+    body: JSON.stringify({ text }),
+  });
 }

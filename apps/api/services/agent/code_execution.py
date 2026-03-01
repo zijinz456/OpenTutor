@@ -13,6 +13,7 @@ Provides safe execution of student code snippets with:
 """
 
 import asyncio
+from contextvars import ContextVar
 import json
 import logging
 import os
@@ -25,10 +26,31 @@ from typing import AsyncIterator
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config import settings
 from services.agent.base import BaseAgent
 from services.agent.state import AgentContext, TaskPhase
 
 logger = logging.getLogger(__name__)
+
+_sandbox_backend_override: ContextVar[str | None] = ContextVar("sandbox_backend_override", default=None)
+
+
+def get_effective_sandbox_backend() -> str:
+    backend = _sandbox_backend_override.get() or settings.code_sandbox_backend
+    if backend == "process":
+        if os.environ.get("PYTEST_CURRENT_TEST") or os.environ.get("ALLOW_INSECURE_PROCESS_SANDBOX") == "true":
+            return backend
+        logger.warning("Process sandbox requested outside test/dev override; forcing container backend.")
+        return "container"
+    return backend
+
+
+def push_sandbox_backend_override(backend: str):
+    return _sandbox_backend_override.set(backend)
+
+
+def pop_sandbox_backend_override(token) -> None:
+    _sandbox_backend_override.reset(token)
 
 
 class CodeExecutionAgent(BaseAgent):
@@ -89,6 +111,11 @@ class CodeExecutionAgent(BaseAgent):
         for pattern in self.BLOCKED_PATTERNS:
             if re.search(pattern, code):
                 return False, f"Blocked: pattern '{pattern}' is not allowed for safety"
+        # Enforce module whitelist: reject any import not in ALLOWED_MODULES
+        for m in re.finditer(r"^\s*(?:import|from)\s+(\w+)", code, re.MULTILINE):
+            module_name = m.group(1)
+            if module_name not in self.ALLOWED_MODULES:
+                return False, f"Module '{module_name}' is not in the allowed list for safe execution"
         # Check code length
         if len(code) > 5000:
             return False, "Code too long (max 5000 characters)"
@@ -97,7 +124,7 @@ class CodeExecutionAgent(BaseAgent):
             return False, "Potential infinite loop detected (while True without break)"
         return True, "OK"
 
-    def _execute_safe(self, code: str) -> dict:
+    def _execute_in_process_sandbox(self, code: str) -> dict:
         """Execute code in an isolated subprocess with resource limits."""
         runner_path = Path(__file__).with_name("sandbox_runner.py")
         payload = json.dumps({"code": code})
@@ -110,7 +137,7 @@ class CodeExecutionAgent(BaseAgent):
                     input=payload,
                     text=True,
                     capture_output=True,
-                    timeout=self.MAX_EXECUTION_TIME,
+                    timeout=settings.code_sandbox_timeout_seconds,
                     cwd=tempdir,
                     env=env,
                     check=False,
@@ -119,13 +146,15 @@ class CodeExecutionAgent(BaseAgent):
                 return {
                     "success": False,
                     "output": "",
-                    "error": f"Execution timed out after {self.MAX_EXECUTION_TIME} seconds",
+                    "error": f"Execution timed out after {settings.code_sandbox_timeout_seconds} seconds",
+                    "backend": "process",
                 }
             except Exception as e:
                 return {
                     "success": False,
                     "output": "",
                     "error": f"{type(e).__name__}: {e}",
+                    "backend": "process",
                 }
 
         raw = (completed.stdout or "").strip()
@@ -146,7 +175,28 @@ class CodeExecutionAgent(BaseAgent):
             "success": bool(parsed.get("success")),
             "output": str(parsed.get("output", ""))[:2000],
             "error": str(parsed.get("error", ""))[:500],
+            "backend": "process",
         }
+
+    def _execute_safe(self, code: str) -> dict:
+        """Execute code in the configured sandbox backend."""
+        from services.agent.container_sandbox import (
+            ContainerSandboxUnavailable,
+            execute_in_container,
+        )
+
+        runner_path = Path(__file__).with_name("sandbox_runner.py")
+        backend = get_effective_sandbox_backend()
+
+        if backend in {"auto", "container"}:
+            try:
+                return execute_in_container(code, runner_path=runner_path)
+            except ContainerSandboxUnavailable as exc:
+                if backend == "container":
+                    return {"success": False, "output": "", "error": str(exc), "backend": "container"}
+                logger.info("Container sandbox unavailable, falling back to process sandbox: %s", exc)
+
+        return self._execute_in_process_sandbox(code)
 
     async def execute(self, ctx: AgentContext, db: AsyncSession) -> AgentContext:
         """Extract code, validate, execute, then generate explanation."""
@@ -158,6 +208,7 @@ class CodeExecutionAgent(BaseAgent):
                 result = await asyncio.to_thread(self._execute_safe, code)
                 ctx.metadata["code_result"] = result
                 ctx.metadata["code_snippet"] = code
+                ctx.metadata["sandbox_backend"] = result.get("backend")
             else:
                 ctx.metadata["code_result"] = {"success": False, "output": "", "error": reason}
                 ctx.metadata["code_snippet"] = code
@@ -191,6 +242,7 @@ class CodeExecutionAgent(BaseAgent):
                 result = await asyncio.to_thread(self._execute_safe, code)
                 ctx.metadata["code_result"] = result
                 ctx.metadata["code_snippet"] = code
+                ctx.metadata["sandbox_backend"] = result.get("backend")
             else:
                 ctx.metadata["code_result"] = {"success": False, "output": "", "error": reason}
                 ctx.metadata["code_snippet"] = code

@@ -1,4 +1,4 @@
-"""Multi-Agent architecture for OpenTutor.
+"""Multi-Agent architecture for OpenTutor Zenus.
 
 Orchestrator + Specialist Agent pattern inspired by:
 - MetaGPT Role + Action model

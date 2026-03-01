@@ -4,7 +4,7 @@ import uuid
 from typing import Optional
 from datetime import datetime
 
-from sqlalchemy import String, DateTime, ForeignKey, Text, Float, func
+from sqlalchemy import Index, String, DateTime, ForeignKey, Text, Float, func
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -18,6 +18,9 @@ class UserPreference(Base):
     """
 
     __tablename__ = "user_preferences"
+    __table_args__ = (
+        Index("ix_user_preference_user", "user_id"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))

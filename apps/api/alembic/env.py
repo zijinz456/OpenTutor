@@ -14,10 +14,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from database import Base
 from models import *  # noqa: F401, F403 — register all models
+from config import settings as app_settings
 
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
+
+# Use DATABASE_URL from app config (environment / .env) instead of hardcoded alembic.ini value
+config.set_main_option("sqlalchemy.url", app_settings.database_url)
 
 target_metadata = Base.metadata
 

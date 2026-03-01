@@ -9,6 +9,9 @@ jobs:
   checks:
     name: Backend + Frontend Checks
     runs-on: ubuntu-latest
+    env:
+      DISABLE_RATE_LIMIT: "1"
+      CODE_SANDBOX_BACKEND: process
 
     steps:
       - name: Checkout
@@ -28,7 +31,20 @@ jobs:
           pip install pytest
 
       - name: Run API unit tests
-        run: python -m pytest tests/test_api_unit_basics.py tests/test_services.py -q
+        run: python -m pytest tests/test_api_unit_basics.py tests/test_services.py tests/test_agent_runtime_regressions.py tests/test_code_execution_agent.py tests/test_eval_regressions.py tests/test_ingestion_regressions.py tests/test_canvas_parser.py tests/test_canvas_router_unit.py tests/test_scrape_services.py tests/test_scrape_router_unit.py -q
+
+      - name: Run Offline Regression Benchmark
+        working-directory: apps/api
+        run: |
+          python - <<'PY'
+          import asyncio, json, sys
+          from services.evaluation.benchmark_runner import run_regression_benchmark
+
+          result = asyncio.run(run_regression_benchmark())
+          print(json.dumps(result, indent=2))
+          if not result["passed"]:
+              sys.exit(1)
+          PY
 
       - name: Compile API sources
         run: python -m compileall apps/api
@@ -76,6 +92,8 @@ jobs:
       DATABASE_URL: postgresql+asyncpg://opentutor:opentutor_dev@127.0.0.1:5432/opentutor
       API_BASE: http://127.0.0.1:8004
       STRICT_LLM: "1"
+      DISABLE_RATE_LIMIT: "1"
+      CODE_SANDBOX_BACKEND: process
 
     steps:
       - name: Checkout
@@ -94,40 +112,7 @@ jobs:
           pip install -r apps/api/requirements.txt
 
       - name: Prepare database
-        run: |
-          python - <<'PY'
-          import asyncio, asyncpg
-
-          async def main():
-              conn = await asyncpg.connect(
-                  host="127.0.0.1",
-                  port=5432,
-                  user="postgres",
-                  password="postgres",
-                  database="postgres",
-                  timeout=10,
-              )
-              role_exists = await conn.fetchval("SELECT 1 FROM pg_roles WHERE rolname='opentutor'")
-              if not role_exists:
-                  await conn.execute("CREATE ROLE opentutor WITH LOGIN PASSWORD 'opentutor_dev'")
-              db_exists = await conn.fetchval("SELECT 1 FROM pg_database WHERE datname='opentutor'")
-              if not db_exists:
-                  await conn.execute("CREATE DATABASE opentutor OWNER opentutor")
-              await conn.close()
-
-              conn2 = await asyncpg.connect(
-                  host="127.0.0.1",
-                  port=5432,
-                  user="postgres",
-                  password="postgres",
-                  database="opentutor",
-                  timeout=10,
-              )
-              await conn2.execute("CREATE EXTENSION IF NOT EXISTS vector")
-              await conn2.close()
-
-          asyncio.run(main())
-          PY
+        run: python scripts/setup_ci_db.py
 
       - name: Prepare upload fixture
         run: |
@@ -150,6 +135,47 @@ jobs:
           cd apps/api
           python -m pytest ../../tests/test_api_integration.py -v --timeout=30
 
+      - name: Run API regression benchmark gate
+        run: |
+          course_resp=$(curl -sS -X POST http://127.0.0.1:8004/api/courses/ \
+            -H 'Content-Type: application/json' \
+            --data '{"name":"Regression Eval Course","description":"fixture"}')
+          echo "$course_resp" > /tmp/opentutor_eval_course.json
+          python - <<'PY'
+          import json
+          course = json.load(open("/tmp/opentutor_eval_course.json"))
+          open("/tmp/opentutor_eval_course_id.txt", "w", encoding="utf-8").write(course["id"])
+          PY
+          COURSE_ID=$(cat /tmp/opentutor_eval_course_id.txt)
+          curl -sS -X POST http://127.0.0.1:8004/api/content/upload \
+            -F "course_id=$COURSE_ID" \
+            -F "file=@/tmp/opentutor_upload_test.md;type=text/markdown" \
+            > /tmp/opentutor_eval_upload.json
+          python - <<'PY'
+          import json
+          course_id = open("/tmp/opentutor_eval_course_id.txt", encoding="utf-8").read().strip()
+          payload = {
+              "course_id": course_id,
+              "retrieval_queries": [
+                  {
+                      "query": "topic A notes",
+                      "keywords": ["Topic A", "Unit 1"],
+                  }
+              ],
+          }
+          json.dump(payload, open("/tmp/opentutor_regression_payload.json", "w", encoding="utf-8"))
+          PY
+          curl -sS -X POST http://127.0.0.1:8004/api/eval/regression \
+            -H 'Content-Type: application/json' \
+            --data @/tmp/opentutor_regression_payload.json > /tmp/opentutor_regression.json
+          cat /tmp/opentutor_regression.json
+          python - <<'PY'
+          import json, sys
+          data = json.load(open("/tmp/opentutor_regression.json"))
+          if not data.get("passed"):
+              sys.exit(1)
+          PY
+
       - name: Run strict smoke test
         run: |
           API_BASE=http://127.0.0.1:8004 \
@@ -164,7 +190,7 @@ jobs:
           cat /tmp/opentutor_api.log || true
 
   e2e-ui:
-    name: Browser E2E
+    name: Browser E2E (All Specs)
     runs-on: ubuntu-latest
     needs: api-smoke
 
@@ -186,6 +212,7 @@ jobs:
     env:
       DATABASE_URL: postgresql+asyncpg://opentutor:opentutor_dev@127.0.0.1:5432/opentutor
       PYTHON_BIN: python
+      DISABLE_RATE_LIMIT: "1"
 
     steps:
       - name: Checkout
@@ -204,40 +231,7 @@ jobs:
           pip install -r apps/api/requirements.txt
 
       - name: Prepare database
-        run: |
-          python - <<'PY'
-          import asyncio, asyncpg
-
-          async def main():
-              conn = await asyncpg.connect(
-                  host="127.0.0.1",
-                  port=5432,
-                  user="postgres",
-                  password="postgres",
-                  database="postgres",
-                  timeout=10,
-              )
-              role_exists = await conn.fetchval("SELECT 1 FROM pg_roles WHERE rolname='opentutor'")
-              if not role_exists:
-                  await conn.execute("CREATE ROLE opentutor WITH LOGIN PASSWORD 'opentutor_dev'")
-              db_exists = await conn.fetchval("SELECT 1 FROM pg_database WHERE datname='opentutor'")
-              if not db_exists:
-                  await conn.execute("CREATE DATABASE opentutor OWNER opentutor")
-              await conn.close()
-
-              conn2 = await asyncpg.connect(
-                  host="127.0.0.1",
-                  port=5432,
-                  user="postgres",
-                  password="postgres",
-                  database="opentutor",
-                  timeout=10,
-              )
-              await conn2.execute("CREATE EXTENSION IF NOT EXISTS vector")
-              await conn2.close()
-
-          asyncio.run(main())
-          PY
+        run: python scripts/setup_ci_db.py
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -258,8 +252,8 @@ jobs:
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
 
-      - name: Run browser E2E
-        run: npx playwright test tests/e2e/course-flow.spec.ts --project=chromium --reporter=github
+      - name: Run browser E2E (all specs)
+        run: npx playwright test --project=chromium --reporter=github --ignore-snapshots
 
       - name: Upload Playwright report
         if: always()
@@ -340,40 +334,7 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Prepare database
-        run: |
-          python - <<'PY'
-          import asyncio, asyncpg
-
-          async def main():
-              conn = await asyncpg.connect(
-                  host="127.0.0.1",
-                  port=5432,
-                  user="postgres",
-                  password="postgres",
-                  database="postgres",
-                  timeout=10,
-              )
-              role_exists = await conn.fetchval("SELECT 1 FROM pg_roles WHERE rolname='opentutor'")
-              if not role_exists:
-                  await conn.execute("CREATE ROLE opentutor WITH LOGIN PASSWORD 'opentutor_dev'")
-              db_exists = await conn.fetchval("SELECT 1 FROM pg_database WHERE datname='opentutor'")
-              if not db_exists:
-                  await conn.execute("CREATE DATABASE opentutor OWNER opentutor")
-              await conn.close()
-
-              conn2 = await asyncpg.connect(
-                  host="127.0.0.1",
-                  port=5432,
-                  user="postgres",
-                  password="postgres",
-                  database="opentutor",
-                  timeout=10,
-              )
-              await conn2.execute("CREATE EXTENSION IF NOT EXISTS vector")
-              await conn2.close()
-
-          asyncio.run(main())
-          PY
+        run: python scripts/setup_ci_db.py
 
       - name: Start API
         run: |

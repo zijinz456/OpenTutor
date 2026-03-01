@@ -43,19 +43,20 @@ INTENT_RULES: list[tuple[IntentType, re.Pattern, float]] = [
     # Quiz / Exercise
     (IntentType.QUIZ, re.compile(
         r"(出题|出几道|练习|quiz|exercise|test\s+me|给我出|做题|"
-        r"generate\s+(quiz|question|problem)|来道题)", re.IGNORECASE
+        r"generate\s+(quiz|question|questions|problem|practice\s+questions)|"
+        r"generate\s+\d+\s+practice\s+questions|来道题)", re.IGNORECASE
     ), 0.90),
 
     # Study plan
     (IntentType.PLAN, re.compile(
         r"(学习计划|study\s+plan|复习计划|review\s+schedule|安排|plan\s+for|"
-        r"how\s+should\s+I\s+study|帮我规划)", re.IGNORECASE
+        r"how\s+should\s+I\s+study|帮我规划|study\s+schedule|schedule\s+for\s+finals|create\s+a\s+study\s+schedule)", re.IGNORECASE
     ), 0.90),
 
     # Error review / analysis
     (IntentType.REVIEW, re.compile(
         r"(错因|为什么错|wrong|mistake|error\s+analysis|错题|review\s+my|"
-        r"what\s+did\s+I\s+get\s+wrong|分析一下|哪里错了)", re.IGNORECASE
+        r"what\s+did\s+I\s+get\s+wrong|哪里错了|错了什么|做错了什么)", re.IGNORECASE
     ), 0.85),
 
     # Code execution / programming (before LEARN to catch code-related queries first)
@@ -69,7 +70,7 @@ INTENT_RULES: list[tuple[IntentType, re.Pattern, float]] = [
     (IntentType.CURRICULUM, re.compile(
         r"(课程结构|知识图谱|大纲|syllabus|curriculum|前置知识|prerequisite|"
         r"知识点关系|topic\s+hierarchy|course\s+structure|章节|学习路径|"
-        r"learning\s+path|依赖关系|dependency)", re.IGNORECASE
+        r"learning\s+path|依赖关系|dependency|这门课.*结构|课程.*结构)", re.IGNORECASE
     ), 0.85),
 
     # Learning assessment / progress report

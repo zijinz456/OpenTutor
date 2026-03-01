@@ -4,6 +4,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from libs.exceptions import ConflictError, PermissionDeniedError
+
 from database import get_db
 from models.user import User
 from schemas.auth import RegisterRequest, LoginRequest, RefreshRequest, TokenResponse, UserResponse
@@ -19,7 +21,7 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
     # Check email uniqueness
     result = await db.execute(select(User).where(User.email == body.email))
     if result.scalar_one_or_none():
-        raise HTTPException(status_code=409, detail="Email already registered")
+        raise ConflictError("Email already registered")
 
     user = User(
         name=body.name,
@@ -43,7 +45,7 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
     if not verify_password(body.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     if not user.is_active:
-        raise HTTPException(status_code=403, detail="Account disabled")
+        raise PermissionDeniedError("Account disabled")
 
     return TokenResponse(
         access_token=create_access_token(str(user.id)),

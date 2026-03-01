@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException
+from libs.exceptions import NotFoundError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -80,7 +81,7 @@ async def create_scrape_source(
         select(Course).where(Course.id == body.course_id, Course.user_id == user.id)
     )
     if not course_result.scalar_one_or_none():
-        raise HTTPException(status_code=404, detail="Course not found")
+        raise NotFoundError("Course")
 
     source = ScrapeSource(
         user_id=user.id,
@@ -115,7 +116,7 @@ async def update_scrape_source(
     )
     source = result.scalar_one_or_none()
     if not source:
-        raise HTTPException(status_code=404, detail="Scrape source not found")
+        raise NotFoundError("Scrape source")
 
     updates = body.model_dump(exclude_unset=True)
 
@@ -157,7 +158,7 @@ async def delete_scrape_source(
     )
     source = result.scalar_one_or_none()
     if not source:
-        raise HTTPException(status_code=404, detail="Scrape source not found")
+        raise NotFoundError("Scrape source")
     await db.delete(source)
     await db.commit()
 
@@ -177,7 +178,7 @@ async def scrape_now(
     )
     source = result.scalar_one_or_none()
     if not source:
-        raise HTTPException(status_code=404, detail="Scrape source not found")
+        raise NotFoundError("Scrape source")
 
     from services.scraper.runner import _scrape_single
 
@@ -289,7 +290,7 @@ async def validate_auth_session(
     )
     auth_session = result.scalar_one_or_none()
     if not auth_session:
-        raise HTTPException(status_code=404, detail="Auth session not found")
+        raise NotFoundError("Auth session")
 
     from playwright.async_api import async_playwright
 

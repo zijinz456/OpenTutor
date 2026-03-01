@@ -7,7 +7,7 @@ import json
 import re
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +17,7 @@ from models.ingestion import WrongAnswer
 from models.practice import PracticeProblem
 from models.user import User
 from services.auth.dependency import get_current_user
+from libs.exceptions import NotFoundError
 from services.practice.annotation import build_practice_problem
 
 router = APIRouter()
@@ -145,7 +146,7 @@ async def retry_wrong_answer(
     )
     wa = result.scalar_one_or_none()
     if not wa:
-        raise HTTPException(status_code=404, detail="Wrong answer not found")
+        raise NotFoundError("Wrong answer")
 
     is_correct = False
     if wa.correct_answer:
@@ -191,7 +192,7 @@ async def derive_question(
     )
     row = result.one_or_none()
     if not row:
-        raise HTTPException(status_code=404, detail="Wrong answer not found")
+        raise NotFoundError("Wrong answer")
 
     wa, problem = row
 
@@ -361,7 +362,7 @@ async def diagnose_from_pair(
     )
     wa = wa_result.scalar_one_or_none()
     if not wa:
-        raise HTTPException(status_code=404, detail="Wrong answer not found")
+        raise NotFoundError("Wrong answer")
 
     if wa.diagnosis:
         return {
@@ -380,7 +381,7 @@ async def diagnose_from_pair(
     )
     diag_problem = diag_result.scalar_one_or_none()
     if not diag_problem:
-        raise HTTPException(status_code=404, detail="No diagnostic pair found. Call /derive first.")
+        raise NotFoundError("Diagnostic pair")
 
     # Check if student has attempted both
     from models.practice import PracticeResult

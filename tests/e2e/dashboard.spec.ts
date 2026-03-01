@@ -8,7 +8,7 @@ import { skipOnboarding, createCourse } from "./helpers/test-utils";
  *   - Header with OpenTutor branding, settings icon, analytics icon
  *   - Title "Your Courses" (en) / "你的课程" (zh)
  *   - Big indigo create button -> /new
- *   - Course card grid with initials, name, date, "0 files" fallback
+ *   - Course card grid with initials, name, updated date, and real file/task counts
  *   - Empty state with Brain icon when no courses
  *   - Loading text while fetching
  */
@@ -102,11 +102,11 @@ test.describe("Dashboard", () => {
     await expect(page.getByText("QP").first()).toBeVisible({ timeout: 15_000 });
   });
 
-  test("course card shows creation date", async ({ page }) => {
+  test("course card shows updated date", async ({ page }) => {
     const uid = Date.now();
     await createCourse(page, `DateCheck ${uid}`);
     await page.goto("/");
-    await expect(page.getByText("Created:", { exact: false }).first()).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("Updated:", { exact: false }).first()).toBeVisible({ timeout: 15_000 });
   });
 
   test("course card shows '0 files' description fallback", async ({ page }) => {
