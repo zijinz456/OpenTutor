@@ -32,19 +32,19 @@ class RoutingEvalResult:
 
 # Golden test cases for intent routing
 GOLDEN_ROUTING_CASES = [
-    RoutingEvalCase("什么是微积分？", "learn"),
-    RoutingEvalCase("帮我出几道练习题", "quiz"),
-    RoutingEvalCase("制定一个学习计划", "plan"),
-    RoutingEvalCase("我上次错了什么？", "review"),
-    RoutingEvalCase("把笔记格式改成列表", "preference"),
+    RoutingEvalCase("What is calculus?", "learn"),
+    RoutingEvalCase("Give me some practice problems", "quiz"),
+    RoutingEvalCase("Create a study plan for me", "plan"),
+    RoutingEvalCase("What did I get wrong last time?", "review"),
+    RoutingEvalCase("Change the note format to a list", "preference"),
     RoutingEvalCase("What is the derivative of x^2?", "learn"),
     RoutingEvalCase("Generate 5 practice questions on Chapter 3", "quiz"),
     RoutingEvalCase("Create a study schedule for finals", "plan"),
     RoutingEvalCase("Review my wrong answers from last week", "review"),
-    RoutingEvalCase("切换到考试模式", "scene_switch"),
-    RoutingEvalCase("运行这段Python代码", "code"),
-    RoutingEvalCase("分析一下这门课的结构", "curriculum"),
-    RoutingEvalCase("评估一下我的学习进度", "assess"),
+    RoutingEvalCase("Switch to exam mode", "scene_switch"),
+    RoutingEvalCase("Run this Python code", "code"),
+    RoutingEvalCase("Analyze the structure of this course", "curriculum"),
+    RoutingEvalCase("Evaluate my learning progress", "assess"),
     RoutingEvalCase("Hello", "general"),
     RoutingEvalCase("Thanks for helping me!", "general"),
 ]

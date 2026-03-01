@@ -194,6 +194,11 @@ async def load_context(
             "features": scene_policy.features,
             "reason": scene_policy.reason,
             "switch_recommended": scene_policy.switch_recommended,
+            "expected_benefit": scene_policy.expected_benefit,
+            "reversible_action": scene_policy.reversible_action,
+            "layout_policy": scene_policy.layout_policy,
+            "reasoning_policy": scene_policy.reasoning_policy,
+            "workflow_policy": scene_policy.workflow_policy,
         }
         if original_scene == "study_session":
             ctx.scene = scene_policy.scene_id
@@ -203,6 +208,10 @@ async def load_context(
                 "matched_text": None,
                 "reason": scene_policy.reason,
                 "confidence": round(scene_policy.confidence, 3),
+                "expected_benefit": scene_policy.expected_benefit,
+                "layout_policy": scene_policy.layout_policy,
+                "reasoning_policy": scene_policy.reasoning_policy,
+                "workflow_policy": scene_policy.workflow_policy,
             }
         else:
             ctx.metadata["scene_resolution"] = {
@@ -212,6 +221,10 @@ async def load_context(
                 "reason": "Scene provided by the caller or course context.",
                 "policy_recommendation": scene_policy.scene_id,
                 "policy_confidence": round(scene_policy.confidence, 3),
+                "expected_benefit": scene_policy.expected_benefit,
+                "layout_policy": scene_policy.layout_policy,
+                "reasoning_policy": scene_policy.reasoning_policy,
+                "workflow_policy": scene_policy.workflow_policy,
             }
         if scene_policy.switch_recommended:
             ctx.metadata.setdefault(
@@ -221,6 +234,8 @@ async def load_context(
                     "target_scene": scene_policy.scene_id,
                     "reason": scene_policy.reason,
                     "policy_confidence": round(scene_policy.confidence, 3),
+                    "expected_benefit": scene_policy.expected_benefit,
+                    "reversible_action": scene_policy.reversible_action,
                 },
             )
     except Exception as exc:

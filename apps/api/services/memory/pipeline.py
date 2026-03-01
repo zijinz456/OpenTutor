@@ -232,7 +232,10 @@ async def consolidate_memories(
     - Category-based organization (memU pattern)
     - Importance-weighted recency decay
     """
-    query = select(ConversationMemory).where(ConversationMemory.user_id == user_id)
+    query = select(ConversationMemory).where(
+        ConversationMemory.user_id == user_id,
+        ConversationMemory.dismissed_at.is_(None),
+    )
     if course_id:
         query = query.where(ConversationMemory.course_id == course_id)
     query = query.order_by(ConversationMemory.created_at.desc())
@@ -420,6 +423,7 @@ async def _vector_memory_search(
     filters = [
         "user_id = :user_id",
         "embedding IS NOT NULL",
+        "dismissed_at IS NULL",
     ]
     if course_id:
         filters.append("course_id = :course_id")
@@ -474,6 +478,7 @@ async def _bm25_memory_search(
     filters = [
         "user_id = :user_id",
         "search_vector IS NOT NULL",
+        "dismissed_at IS NULL",
         "search_vector @@ plainto_tsquery('simple', :query)",
     ]
     if course_id:
@@ -516,7 +521,10 @@ async def _bm25_memory_search(
     search_words = query.lower().split()[:5]
     base_query = (
         select(ConversationMemory)
-        .where(ConversationMemory.user_id == user_id)
+        .where(
+            ConversationMemory.user_id == user_id,
+            ConversationMemory.dismissed_at.is_(None),
+        )
     )
     if course_id:
         base_query = base_query.where(ConversationMemory.course_id == course_id)

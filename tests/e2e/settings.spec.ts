@@ -6,7 +6,7 @@ import { skipOnboarding } from "./helpers/test-utils";
  *
  * The settings page at /settings includes:
  *   - Back button (ArrowLeft icon) -> /
- *   - Language section:  English and 中文 buttons, toast on change
+ *   - Language section:  English button, toast on change
  *   - Appearance section:  Light, Dark, System buttons
  *   - Learning Templates section:  loads from /api/progress/templates, Apply button
  */
@@ -50,11 +50,9 @@ test.describe("Settings", () => {
 
   // ---- language section -------------------------------------------------
 
-  test("language section shows English and Chinese buttons", async ({ page }) => {
+  test("language section shows English button", async ({ page }) => {
     await page.goto("/settings");
     await expect(page.getByRole("button", { name: "English" })).toBeVisible();
-    // The Chinese button uses the literal character text
-    await expect(page.getByRole("button", { name: "中文" })).toBeVisible();
   });
 
   test("clicking English shows English toast", async ({ page }) => {
@@ -63,10 +61,10 @@ test.describe("Settings", () => {
     await expect(page.getByText("Switched to English")).toBeVisible({ timeout: 15_000 });
   });
 
-  test("clicking Chinese shows Chinese toast", async ({ page }) => {
+  test("clicking English language button confirms selection", async ({ page }) => {
     await page.goto("/settings");
-    await page.getByRole("button", { name: "中文" }).click();
-    await expect(page.getByText("已切换到中文")).toBeVisible({ timeout: 15_000 });
+    await page.getByRole("button", { name: "English" }).click();
+    await expect(page.getByText("Switched to English")).toBeVisible({ timeout: 15_000 });
   });
 
   // ---- appearance section -----------------------------------------------

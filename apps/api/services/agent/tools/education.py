@@ -1,7 +1,7 @@
 """Built-in education-domain tools for ReAct agent loop.
 
 These tools give agents factual access to student data, course content,
-and code execution. They are the "开箱即用" defaults that non-technical
+and code execution. They are the "out-of-the-box" defaults that non-technical
 users get automatically.
 
 Each tool:

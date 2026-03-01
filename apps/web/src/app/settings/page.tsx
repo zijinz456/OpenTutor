@@ -129,7 +129,7 @@ export default function SettingsPage() {
   const handleLocaleChange = (newLocale: Locale) => {
     setLocale(newLocale);
     setLocaleState(newLocale);
-    toast.success(newLocale === "zh" ? "已切换到中文" : "Switched to English");
+    toast.success("Switched to English");
   };
 
   const handleApplyTemplate = async (templateId: string) => {
@@ -417,9 +417,6 @@ export default function SettingsPage() {
           <div className="flex gap-2">
             <Button variant={locale === "en" ? "default" : "outline"} size="sm" onClick={() => handleLocaleChange("en")}>
               English
-            </Button>
-            <Button variant={locale === "zh" ? "default" : "outline"} size="sm" onClick={() => handleLocaleChange("zh")}>
-              中文
             </Button>
           </div>
         </section>

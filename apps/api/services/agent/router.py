@@ -22,68 +22,72 @@ logger = logging.getLogger(__name__)
 INTENT_RULES: list[tuple[IntentType, re.Pattern, float]] = [
     # Layout actions (highest priority — direct UI control)
     (IntentType.LAYOUT, re.compile(
-        r"(放大|缩小|全屏|布局|layout|resize|maximize|minimize|expand|collapse|"
-        r"set_layout|换个布局)", re.IGNORECASE
+        r"(layout|resize|maximize|minimize|expand|collapse|"
+        r"set_layout|change\s+layout|zoom\s+in|zoom\s+out|fullscreen)", re.IGNORECASE
     ), 0.95),
 
     # v3: Scene switch signals (high priority — goal/mode change)
     (IntentType.SCENE_SWITCH, re.compile(
-        r"(准备考试|开始复习|考前冲刺|要考试了|有考试|prepare\s+for\s+exam|"
-        r"exam\s+prep|start\s+review|做作业|写作业|这个作业|this\s+assignment|"
-        r"homework\s+help|错题专练|复习错题|review\s+mistakes|"
-        r"切换到|switch\s+to\s+.*(mode|模式)|整理笔记|organize\s+notes)", re.IGNORECASE
+        r"(prepare\s+for\s+(an?\s+)?exam|get\s+ready\s+for\s+(an?\s+)?exam|"
+        r"exam\s+prep|start\s+review(ing)?|"
+        r"do\s+(my\s+)?homework|work\s+on\s+(my\s+)?homework|this\s+assignment|"
+        r"homework\s+help|error\s+drill|review\s+mistakes|"
+        r"switch\s+to\s+.*mode|organize\s+(my\s+)?notes)", re.IGNORECASE
     ), 0.90),
 
     # Explicit preference changes
     (IntentType.PREFERENCE, re.compile(
-        r"(太长了|太短了|换成|改成|我喜欢|我不喜欢|我偏好|prefer|switch\s+to|"
+        r"(prefer|switch\s+to|i\s+like|i\s+don'?t\s+like|i\s+prefer|"
         r"change\s+to|too\s+(long|short|detailed|brief)|make\s+it)", re.IGNORECASE
     ), 0.90),
 
     # Quiz / Exercise
     (IntentType.QUIZ, re.compile(
-        r"(出题|出几道|练习|quiz|exercise|test\s+me|给我出|做题|"
+        r"(quiz|exercise|test\s+me|practice|"
         r"generate\s+(quiz|question|questions|problem|practice\s+questions)|"
-        r"generate\s+\d+\s+practice\s+questions|来道题)", re.IGNORECASE
+        r"generate\s+\d+\s+practice\s+questions|give\s+me\s+(a\s+)?question)", re.IGNORECASE
     ), 0.90),
 
     # Study plan
     (IntentType.PLAN, re.compile(
-        r"(学习计划|study\s+plan|复习计划|review\s+schedule|安排|plan\s+for|"
-        r"how\s+should\s+I\s+study|帮我规划|study\s+schedule|schedule\s+for\s+finals|create\s+a\s+study\s+schedule)", re.IGNORECASE
+        r"(study\s+plan|review\s+schedule|plan\s+for|schedule|"
+        r"how\s+should\s+I\s+study|help\s+me\s+plan|study\s+schedule|"
+        r"schedule\s+for\s+finals|create\s+a\s+study\s+schedule)", re.IGNORECASE
     ), 0.90),
 
     # Error review / analysis
     (IntentType.REVIEW, re.compile(
-        r"(错因|为什么错|wrong|mistake|error\s+analysis|错题|review\s+my|"
-        r"what\s+did\s+I\s+get\s+wrong|哪里错了|错了什么|做错了什么)", re.IGNORECASE
+        r"(wrong|mistake|error\s+analysis|review\s+my|"
+        r"what\s+did\s+I\s+get\s+wrong|where\s+did\s+I\s+go\s+wrong|"
+        r"why\s+(is|was)\s+(it|this)\s+wrong|what\s+went\s+wrong)", re.IGNORECASE
     ), 0.85),
 
     # Code execution / programming (before LEARN to catch code-related queries first)
     (IntentType.CODE, re.compile(
-        r"(运行|执行|run\s+(this|my|the)\s+code|debug|编程|代码|```python|"
-        r"代码执行|code\s+execution|写个程序|write\s+a?\s*program|帮我跑|"
-        r"这段代码|this\s+code|compile|编译)", re.IGNORECASE
+        r"(run\s+(this|my|the)\s+code|debug|programming|code|```python|"
+        r"code\s+execution|write\s+a?\s*program|run\s+this|"
+        r"this\s+code|compile)", re.IGNORECASE
     ), 0.90),
 
     # Course structure / curriculum analysis
     (IntentType.CURRICULUM, re.compile(
-        r"(课程结构|知识图谱|大纲|syllabus|curriculum|前置知识|prerequisite|"
-        r"知识点关系|topic\s+hierarchy|course\s+structure|章节|学习路径|"
-        r"learning\s+path|依赖关系|dependency|这门课.*结构|课程.*结构)", re.IGNORECASE
+        r"(course\s+structure|knowledge\s+graph|outline|syllabus|curriculum|"
+        r"prerequisite|topic\s+hierarchy|chapter|learning\s+path|"
+        r"dependency|topic\s+relationship)", re.IGNORECASE
     ), 0.85),
 
     # Learning assessment / progress report
     (IntentType.ASSESS, re.compile(
-        r"(评估|assessment|我的进度|学习报告|progress\s+report|report|"
-        r"薄弱|weak\s+area|学习情况|how\s+am\s+I\s+doing|考试准备度|"
-        r"exam\s+readiness|掌握情况|mastery)", re.IGNORECASE
+        r"(assessment|my\s+progress|progress\s+report|report|"
+        r"weak\s+area|how\s+am\s+I\s+doing|"
+        r"exam\s+readiness|mastery|learning\s+status)", re.IGNORECASE
     ), 0.85),
 
     # Learning / knowledge questions (broadest, lowest priority)
     (IntentType.LEARN, re.compile(
-        r"(什么是|解释|explain|what\s+is|how\s+does|why\s+does|define|概念|"
-        r"tell\s+me\s+about|帮我理解|teach\s+me|不懂|不太明白|clarify)", re.IGNORECASE
+        r"(explain|what\s+is|how\s+does|why\s+does|define|concept|"
+        r"tell\s+me\s+about|help\s+me\s+understand|teach\s+me|"
+        r"don'?t\s+understand|clarify)", re.IGNORECASE
     ), 0.80),
 ]
 

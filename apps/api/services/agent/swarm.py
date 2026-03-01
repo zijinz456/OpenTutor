@@ -3,8 +3,8 @@
 Detects when a user request benefits from multiple specialist agents
 running in parallel, and returns a SwarmPlan describing the fan-out.
 
-Patterns are matched via keyword heuristics (Chinese + English) against
-the user message and the classified intent/scene context.  This avoids
+Patterns are matched via keyword heuristics against the user message
+and the classified intent/scene context.  This avoids
 an extra LLM call for pattern detection; only novel multi-agent combos
 would need LLM-based planning in the future.
 """
@@ -127,20 +127,20 @@ SWARM_PATTERNS: dict[str, dict] = {
 
 
 # ── Keyword Detection Patterns ──
-# Each tuple: (compiled regex, weight) — Chinese and English keywords
+# Each tuple: (compiled regex, weight) — English keywords
 
 _EXAM_KEYWORDS = re.compile(
-    r"(考试|期末|期中|备考|复习计划|exam|test|final|midterm|prepare\s+for)",
+    r"(exam|test|final|midterm|prepare\s+for|review\s+plan)",
     re.IGNORECASE,
 )
 
 _PRACTICE_KEYWORDS = re.compile(
-    r"(练习|出题|并出题|做题|quiz|practice|exercise|问题|题目|generate\s+questions)",
+    r"(practice|quiz|exercise|problem|question|generate\s+questions)",
     re.IGNORECASE,
 )
 
 _NEXT_STEP_KEYWORDS = re.compile(
-    r"(接下来|下一步|改进|提升|improve|next|plan|what\s+should\s+i|how\s+to\s+improve)",
+    r"(next\s+step|improve|next|plan|what\s+should\s+i|how\s+to\s+improve)",
     re.IGNORECASE,
 )
 

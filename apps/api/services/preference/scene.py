@@ -17,21 +17,22 @@ from services.agent.state import SceneName
 # Maps to canonical v3 scene IDs used by scene_behavior.py and tool_loader.py
 SCENE_PATTERNS: list[tuple[str, re.Pattern]] = [
     (SceneName.EXAM_PREP, re.compile(
-        r"(exam|test|midterm|final|quiz\s+prep|复习|考试|期末|期中|考前|冲刺)", re.IGNORECASE
+        r"(exam|test|midterm|final|quiz\s+prep|review\s+for|prepare\s+for|cram|last[-\s]?minute)", re.IGNORECASE
     )),
     (SceneName.REVIEW_DRILL, re.compile(
-        r"(错题|wrong\s+answer|mistake|review\s+mistake|错因|error\s+analysis|纠错)", re.IGNORECASE
+        r"(wrong\s+answer|mistake|review\s+mistake|error\s+cause|error\s+analysis|correct\s+error)", re.IGNORECASE
     )),
     (SceneName.ASSIGNMENT, re.compile(
-        r"(homework|assignment|problem\s+set|作业|题目|练习)", re.IGNORECASE
+        r"(homework|assignment|problem\s+set|exercise|question|practice\s+problem)", re.IGNORECASE
     )),
     (SceneName.NOTE_ORGANIZE, re.compile(
-        r"(organize\s+notes|整理笔记|笔记整理|note\s+summary|归纳|总结笔记)", re.IGNORECASE
+        r"(organize\s+(my\s+)?notes|note\s+organization|note\s+summary|summarize\s+(my\s+)?notes|compile\s+notes)",
+        re.IGNORECASE,
     )),
     (SceneName.STUDY_SESSION, re.compile(
-        r"(read|chapter|textbook|阅读|课本|教材|章节|lecture|slide|课件|讲义|"
-        r"what\s+is|explain|define|concept|什么是|解释|概念|定义|"
-        r"solve|calculate|prove|derive|how\s+to|解题|计算|证明|推导)", re.IGNORECASE
+        r"(read|chapter|textbook|reading|coursebook|material|section|lecture|slide|courseware|handout|"
+        r"what\s+is|explain|define|concept|definition|"
+        r"solve|calculate|prove|derive|how\s+to)", re.IGNORECASE
     )),
 ]
 

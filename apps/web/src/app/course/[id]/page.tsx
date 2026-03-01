@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from "react";
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from "react";
 import dynamic from "next/dynamic";
 import { useParams } from "next/navigation";
 import {
@@ -14,6 +14,7 @@ import {
   X,
   ClipboardCheck,
   CalendarDays,
+  BrainCircuit,
 } from "lucide-react";
 import {
   ResizablePanelGroup,
@@ -33,16 +34,19 @@ import { KnowledgeGraph } from "@/components/course/knowledge-graph";
 import { ReviewPanel } from "@/components/course/review-panel";
 import { StudyPlanPanel } from "@/components/course/study-plan-panel";
 import { ActivityPanel } from "@/components/course/activity-panel";
+import { LearningProfilePanel } from "@/components/course/learning-profile-panel";
 import { NLTuningFAB } from "@/components/course/nl-tuning-fab";
+import { AutoGenBanner } from "@/components/course/auto-gen-banner";
 import { ActivityBar } from "@/components/workspace/activity-bar";
 import { StatusBar } from "@/components/workspace/status-bar";
 import { useGroupRef } from "react-resizable-panels";
-import { getFilesByCourseId, getFileUrl, getCourseProgress, listAgentTasks, type ChatAction, type SwitchResult } from "@/lib/api";
+import { getFilesByCourseId, getFileUrl, getCourseProgress, type ChatAction, type SwitchResult } from "@/lib/api";
 import { SceneSelector } from "@/components/scene/scene-selector";
 import { PreferenceConfirmDialog } from "@/components/preference/preference-confirm-dialog";
 import { useSceneStore } from "@/store/scene";
 import { toast } from "sonner";
 import { ErrorBoundary } from "@/components/error-boundary";
+import { useActivityPolling } from "@/hooks/use-activity-polling";
 
 const PdfViewer = dynamic(
   () => import("@/components/course/pdf-viewer").then((mod) => mod.PdfViewer),
@@ -57,7 +61,7 @@ const LAYOUT_PRESETS = {
   fullNotes: { pdf: 10, notes: 70, quiz: 10, chat: 10 },
 } as const;
 
-const RIGHT_TAB_TYPES = ["quiz", "flashcards", "progress", "graph", "review", "plan", "activity"] as const;
+const RIGHT_TAB_TYPES = ["quiz", "flashcards", "progress", "graph", "review", "plan", "activity", "profile"] as const;
 type LayoutPreset = keyof typeof LAYOUT_PRESETS;
 type RightTab = (typeof RIGHT_TAB_TYPES)[number];
 type HiddenPanelId = "pdf" | "notes" | "quiz" | "chat";
@@ -70,6 +74,7 @@ const RIGHT_TAB_META: Record<RightTab, { label: string; icon: ComponentType<{ cl
   review: { label: "Review", icon: ClipboardCheck },
   plan: { label: "Plan", icon: CalendarDays },
   activity: { label: "Activity", icon: Layers },
+  profile: { label: "Profile", icon: BrainCircuit },
 };
 
 function isRightTab(value: string): value is RightTab {
@@ -80,6 +85,7 @@ function getActivityItemForRightTab(tab: RightTab): string {
   if (tab === "progress" || tab === "graph") return "progress";
   if (tab === "plan") return "chat";
   if (tab === "activity") return "activity";
+  if (tab === "profile") return "profile";
   return "practice";
 }
 
@@ -93,7 +99,8 @@ export default function CoursePage() {
   const { activeCourse, setActiveCourse, courses, fetchCourses, contentTree } =
     useCourseStore();
   const { setOnAction } = useChatStore();
-  const { activeScene, sceneConfig, switchScene: doSwitchScene } = useSceneStore();
+  const { activeScene, sceneConfig, scenes, switchScene: doSwitchScene } = useSceneStore();
+  const { tasks, goals, nextAction } = useActivityPolling(courseId, 5000);
 
   const [uploadOpen, setUploadOpen] = useState(false);
   const [rightTab, setRightTab] = useState<RightTab>("quiz");
@@ -152,20 +159,26 @@ export default function CoursePage() {
       .catch(() => { /* no progress yet */ });
   }, [courseId]);
 
+  const activeGoal = useMemo(
+    () => goals.find((goal) => goal.status === "active") ?? null,
+    [goals],
+  );
+  const activeTask = useMemo(
+    () =>
+      tasks.find((task) => ["pending_approval", "queued", "running", "resuming", "cancel_requested"].includes(task.status)) ?? null,
+    [tasks],
+  );
+  const sceneLabel = useMemo(() => {
+    const matchedScene = scenes.find((scene) => scene.scene_id === activeScene);
+    return matchedScene?.display_name || sceneConfig?.display_name || activeScene;
+  }, [activeScene, sceneConfig?.display_name, scenes]);
+
   useEffect(() => {
-    let cancelled = false;
-    let timer: number | null = null;
-
-    const pollTaskFocus = async () => {
-      try {
-        const tasks = await listAgentTasks(courseId);
-        if (cancelled) return;
-        const hasActiveTask = tasks.some((task) =>
-          ["pending_approval", "queued", "running", "resuming", "cancel_requested"].includes(task.status),
-        );
-
-        if (hasActiveTask && !hadActiveTaskRef.current) {
-          hadActiveTaskRef.current = true;
+    const hasActiveTask = Boolean(activeTask);
+    if (hasActiveTask && !hadActiveTaskRef.current) {
+      hadActiveTaskRef.current = true;
+      queueMicrotask(() => {
+        startTransition(() => {
           setRightTab("activity");
           setActivityItem("activity");
           setHiddenPanels((prev) => {
@@ -173,28 +186,12 @@ export default function CoursePage() {
             next.delete("quiz");
             return next;
           });
-        } else if (!hasActiveTask) {
-          hadActiveTaskRef.current = false;
-        }
-      } catch {
-        if (!cancelled) {
-          hadActiveTaskRef.current = false;
-        }
-      }
-    };
-
-    void pollTaskFocus();
-    timer = window.setInterval(() => {
-      void pollTaskFocus();
-    }, 5000);
-
-    return () => {
-      cancelled = true;
-      if (timer) {
-        window.clearInterval(timer);
-      }
-    };
-  }, [courseId]);
+        });
+      });
+    } else if (!hasActiveTask) {
+      hadActiveTaskRef.current = false;
+    }
+  }, [activeTask]);
 
   const applyPreset = useCallback((preset: LayoutPreset) => {
     panelGroupRef.current?.setLayout(LAYOUT_PRESETS[preset]);
@@ -360,6 +357,14 @@ export default function CoursePage() {
         return next;
       });
       applyPreset("chatFocused");
+    } else if (item === "profile") {
+      setRightTab("profile");
+      setHiddenPanels((prev) => {
+        const next = new Set(prev);
+        next.delete("quiz");
+        return next;
+      });
+      applyPreset("notesFocused");
     }
   }, [applyPreset]);
 
@@ -404,11 +409,27 @@ export default function CoursePage() {
             <div className="ml-auto">
               <SceneSelector
                 courseId={courseId}
+                activeTab={!hiddenPanels.has("quiz") ? rightTab : activityItem}
                 getCurrentUiState={buildWorkspaceState}
                 onSwitch={(_sceneId, result) => applySceneResult(result)}
               />
             </div>
           </div>
+
+          <StatusBar
+            courseName={activeCourse?.name || "Loading..."}
+            chapterName={contentTree.length > 0 ? contentTree[0]?.title : undefined}
+            studyTime={studyTime}
+            activeGoalTitle={activeGoal?.title}
+            activeTaskTitle={activeTask?.title}
+            sceneLabel={sceneLabel}
+            nextActionTitle={nextAction?.title}
+          />
+
+          <AutoGenBanner
+            courseId={courseId}
+            onQuizReady={() => { setRightTab("quiz"); setHiddenPanels((p) => { const n = new Set(p); n.delete("quiz"); return n; }); }}
+          />
 
           <div className="flex flex-1 overflow-hidden relative">
             <button
@@ -475,7 +496,10 @@ export default function CoursePage() {
                               variant={rightTab === tab ? "secondary" : "ghost"}
                               size="sm"
                               className="text-xs h-7 px-2"
-                              onClick={() => setRightTab(tab)}
+                              onClick={() => {
+                                setRightTab(tab);
+                                setActivityItem(getActivityItemForRightTab(tab));
+                              }}
                             >
                               <Icon className="h-3 w-3 mr-1" />
                               {meta.label}
@@ -495,6 +519,7 @@ export default function CoursePage() {
                         {rightTab === "review" && <ReviewPanel courseId={courseId} />}
                         {rightTab === "plan" && <StudyPlanPanel courseId={courseId} />}
                         {rightTab === "activity" && <ActivityPanel courseId={courseId} />}
+                        {rightTab === "profile" && <LearningProfilePanel courseId={courseId} />}
                       </ErrorBoundary>
                     </div>
                   </ResizablePanel>
@@ -543,12 +568,6 @@ export default function CoursePage() {
           )}
         </div>
       </div>
-
-      <StatusBar
-        courseName={activeCourse?.name || "Loading..."}
-        chapterName={contentTree.length > 0 ? contentTree[0]?.title : undefined}
-        studyTime={studyTime}
-      />
 
       <UploadDialog
         open={uploadOpen}

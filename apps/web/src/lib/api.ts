@@ -272,6 +272,11 @@ export interface ChatSceneExplanation {
   target_scene?: string;
   matched_keywords?: string[];
   reason?: string;
+  expected_benefit?: string;
+  reversible_action?: string;
+  layout_policy?: string;
+  reasoning_policy?: string;
+  workflow_policy?: string;
 }
 
 export interface ChatPreferenceDetail {
@@ -538,7 +543,39 @@ export interface Preference {
   source: string;
   confidence: number;
   course_id: string | null;
+  dismissed_at?: string | null;
+  dismissal_reason?: string | null;
   updated_at: string;
+}
+
+export interface MemoryProfileItem {
+  id: string;
+  summary: string;
+  memory_type: string;
+  category: string | null;
+  importance: number;
+  access_count: number;
+  source_message: string | null;
+  metadata_json: Record<string, unknown> | null;
+  created_at: string | null;
+  updated_at: string | null;
+  dismissed_at?: string | null;
+  dismissal_reason?: string | null;
+}
+
+export interface LearningProfile {
+  preferences: Preference[];
+  dismissed_preferences: Preference[];
+  signals: PreferenceSignal[];
+  dismissed_signals: PreferenceSignal[];
+  memories: MemoryProfileItem[];
+  dismissed_memories: MemoryProfileItem[];
+  summary: {
+    strength_areas: string[];
+    weak_areas: string[];
+    recurring_errors: string[];
+    inferred_habits: string[];
+  };
 }
 
 export interface ResolvedPreferences {
@@ -548,6 +585,11 @@ export interface ResolvedPreferences {
 
 export async function listPreferences(): Promise<Preference[]> {
   return request("/preferences/");
+}
+
+export async function getLearningProfile(courseId?: string): Promise<LearningProfile> {
+  const params = courseId ? `?course_id=${courseId}` : "";
+  return request(`/preferences/profile${params}`);
 }
 
 export async function setPreference(
@@ -574,6 +616,65 @@ export async function resolvePreferences(courseId?: string): Promise<ResolvedPre
   return request(`/preferences/resolve${params}`);
 }
 
+export async function updatePreferenceItem(
+  preferenceId: string,
+  body: Partial<{ value: string; scope: string; source: string; scene_type: string | null }>,
+): Promise<Preference> {
+  return request(`/preferences/${preferenceId}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function dismissPreferenceItem(preferenceId: string, reason?: string): Promise<Preference> {
+  return request(`/preferences/${preferenceId}/dismiss`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export async function restorePreferenceItem(preferenceId: string): Promise<Preference> {
+  return request(`/preferences/${preferenceId}/restore`, {
+    method: "POST",
+  });
+}
+
+export async function dismissPreferenceSignal(signalId: string, reason?: string): Promise<PreferenceSignal> {
+  return request(`/preferences/signals/${signalId}/dismiss`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export async function restorePreferenceSignal(signalId: string): Promise<PreferenceSignal> {
+  return request(`/preferences/signals/${signalId}/restore`, {
+    method: "POST",
+  });
+}
+
+export async function updateMemoryItem(
+  memoryId: string,
+  body: Partial<{ summary: string; category: string | null }>,
+): Promise<MemoryProfileItem> {
+  return request(`/preferences/memories/${memoryId}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function dismissMemoryItem(memoryId: string, reason?: string): Promise<MemoryProfileItem> {
+  return request(`/preferences/memories/${memoryId}/dismiss`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export async function restoreMemoryItem(memoryId: string): Promise<MemoryProfileItem> {
+  return request(`/preferences/memories/${memoryId}/restore`, {
+    method: "POST",
+  });
+}
+
 // ── Scenes ──
 
 export interface SceneConfig {
@@ -584,6 +685,9 @@ export interface SceneConfig {
   workflow: string;
   ai_behavior: Record<string, unknown>;
   preferences: Record<string, string> | null;
+  layout_policy?: string;
+  reasoning_policy?: string;
+  workflow_policy?: string;
 }
 
 export interface ActiveSceneResult {
@@ -607,12 +711,34 @@ export interface SwitchResult {
   };
 }
 
+export interface SceneRecommendation {
+  scene_id: string;
+  confidence: number;
+  switch_recommended: boolean;
+  reason: string;
+  scores: Record<string, number>;
+  features: Record<string, unknown>;
+  expected_benefit?: string;
+  reversible_action?: string;
+  layout_policy?: string;
+  reasoning_policy?: string;
+  workflow_policy?: string;
+}
+
 export async function listScenes(): Promise<SceneConfig[]> {
   return request("/scenes/");
 }
 
 export async function getActiveScene(courseId: string): Promise<ActiveSceneResult> {
   return request(`/scenes/${courseId}/active`);
+}
+
+export async function recommendScene(courseId: string, activeTab?: string, message?: string): Promise<SceneRecommendation> {
+  const params = new URLSearchParams();
+  if (message) params.set("message", message);
+  if (activeTab) params.set("active_tab", activeTab);
+  const query = params.toString();
+  return request(`/scenes/${courseId}/recommend${query ? `?${query}` : ""}`);
 }
 
 export async function switchScene(
@@ -1284,6 +1410,8 @@ export interface PreferenceSignal {
     user_message?: string;
   } | null;
   created_at: string | null;
+  dismissed_at?: string | null;
+  dismissal_reason?: string | null;
 }
 
 export async function listPreferenceSignals(courseId?: string): Promise<PreferenceSignal[]> {

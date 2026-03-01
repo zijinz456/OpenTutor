@@ -83,7 +83,7 @@ class CurriculumAgent(ReActMixin, BaseAgent):
         )
 
         # Extract graph entities if the user asks about prerequisites or knowledge graph
-        graph_keywords = ("知识图谱", "prerequisite", "前置知识", "关系图", "依赖", "knowledge graph")
+        graph_keywords = ("knowledge graph", "prerequisite", "dependency", "relationship graph", "topic relationship")
         if any(kw in ctx.user_message.lower() for kw in graph_keywords):
             try:
                 from services.knowledge.graph_memory import extract_graph_entities, store_graph_entities

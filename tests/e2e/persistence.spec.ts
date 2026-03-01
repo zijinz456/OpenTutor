@@ -35,18 +35,18 @@ test.describe("Persistence", () => {
     await skipOnboarding(page);
     await page.goto("/settings");
 
-    // Switch to Chinese
-    await page.getByRole("button", { name: "中文" }).click();
-    await expect(page.getByText("已切换到中文")).toBeVisible({ timeout: 15_000 });
+    // Click English to set locale
+    await page.getByRole("button", { name: "English" }).click();
+    await expect(page.getByText("Switched to English")).toBeVisible({ timeout: 15_000 });
 
     // Check localStorage
     const locale = await page.evaluate(() => localStorage.getItem("opentutor-locale"));
-    expect(locale).toBe("zh");
+    expect(locale).toBe("en");
 
     // Reload and verify
     await page.reload();
     const localeAfterReload = await page.evaluate(() => localStorage.getItem("opentutor-locale"));
-    expect(localeAfterReload).toBe("zh");
+    expect(localeAfterReload).toBe("en");
   });
 
   // ---- theme preference -------------------------------------------------

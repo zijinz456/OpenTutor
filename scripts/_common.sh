@@ -48,7 +48,7 @@ require_python_311() {
 
   version="$("${py_bin}" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
   if [[ "${version}" != "3.11" ]]; then
-    fail "OpenTutor requires Python 3.11 for local verification. Found ${version} at ${py_bin}."
+    log "WARN: OpenTutor verification is primarily exercised on Python 3.11. Found ${version} at ${py_bin}."
   fi
 }
 

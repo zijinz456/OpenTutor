@@ -6,7 +6,7 @@ import { skipOnboarding, createCourse } from "./helpers/test-utils";
  *
  * The dashboard at / shows:
  *   - Header with OpenTutor branding, settings icon, analytics icon
- *   - Title "Your Courses" (en) / "你的课程" (zh)
+ *   - Title "Your Courses"
  *   - Big indigo create button -> /new
  *   - Course card grid with initials, name, updated date, and real file/task counts
  *   - Empty state with Brain icon when no courses
@@ -73,7 +73,7 @@ test.describe("Dashboard", () => {
     });
     await page.goto("/");
     // The loading text uses i18n general.loading key - check for any loading indicator
-    const loadingIndicator = page.getByText("Loading").or(page.getByText("加载中"));
+    const loadingIndicator = page.getByText("Loading");
     await expect(loadingIndicator.first()).toBeVisible({ timeout: 5_000 });
   });
 

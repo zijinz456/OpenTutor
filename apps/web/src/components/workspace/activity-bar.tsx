@@ -1,6 +1,6 @@
 "use client";
 
-import { Home, FileText, Pencil, MessageCircle, BarChart2, Settings, Workflow } from "lucide-react";
+import { BrainCircuit, Home, FileText, Pencil, MessageCircle, BarChart2, Settings, Workflow } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 interface ActivityBarProps {
@@ -14,6 +14,7 @@ const TOP_ITEMS = [
   { id: "chat", icon: MessageCircle, title: "Chat" },
   { id: "progress", icon: BarChart2, title: "Progress" },
   { id: "activity", icon: Workflow, title: "Activity" },
+  { id: "profile", icon: BrainCircuit, title: "Profile" },
 ];
 
 export function ActivityBar({ activeItem, onItemClick }: ActivityBarProps) {

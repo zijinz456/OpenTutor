@@ -1,4 +1,4 @@
-"""Scene system models — v3 场景切换系统.
+"""Scene system models — v3 scene switching system.
 
 Supports preset + custom scenes with UI state snapshots and switch logging.
 Each course has an active_scene that drives preference cascade, AI behavior, and Tab layout.

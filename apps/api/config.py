@@ -9,6 +9,7 @@ class Settings(BaseSettings):
 
     # Database
     database_url: str = "postgresql+asyncpg://opentutor:REDACTED_DEV_PASSWORD@localhost:5432/opentutor"
+    redis_url: str = "redis://localhost:6379/0"
 
     # LLM — primary provider selection
     llm_provider: str = "openai"  # openai | anthropic | deepseek | ollama | openrouter | gemini | groq | vllm | lmstudio | textgenwebui | custom

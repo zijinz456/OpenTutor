@@ -307,50 +307,33 @@ run_verify() {
   require_python_311 "${PY_BIN}"
   [[ -f "${UPLOAD_FILE}" ]] || fail "Upload fixture not found: ${UPLOAD_FILE}"
 
+  CURRENT_CHECK="Stack readiness wait"
   step "Waiting for local stack"
   wait_for_url "API health" "${API_BASE}/health" "${WAIT_TIMEOUT_SECONDS}"
   wait_for_url "Web app" "${WEB_BASE_URL}" "${WAIT_TIMEOUT_SECONDS}"
+  record_ok "API and web became ready"
 
-  step "Smoke test"
-  API_BASE="${API_HOST}" \
-  UPLOAD_FILE="${UPLOAD_FILE}" \
-  SCRAPE_URL="${SCRAPE_URL}" \
-  STRICT_LLM="${STRICT_LLM:-0}" \
-  bash "${ROOT_DIR}/scripts/smoke_test.sh"
-
-  step "Regression benchmark"
-  API_BASE="${API_BASE}" \
-  UPLOAD_FILE="${UPLOAD_FILE}" \
-  PYTHON_BIN="${PY_BIN}" \
-  bash "${ROOT_DIR}/scripts/run_regression_benchmark.sh"
-
-  step "DB-backed integration tests"
-  "${PY_BIN}" -m pytest tests/test_api_integration.py -q
+  run_reported "Smoke test" bash -lc "API_BASE='${API_HOST}' UPLOAD_FILE='${UPLOAD_FILE}' SCRAPE_URL='${SCRAPE_URL}' STRICT_LLM='${STRICT_LLM:-0}' bash '${ROOT_DIR}/scripts/smoke_test.sh'"
+  run_reported "Regression benchmark" bash -lc "API_BASE='${API_BASE}' UPLOAD_FILE='${UPLOAD_FILE}' PYTHON_BIN='${PY_BIN}' bash '${ROOT_DIR}/scripts/run_regression_benchmark.sh'"
+  run_reported "DB-backed integration tests" "${PY_BIN}" -m pytest tests/test_api_integration.py -q
 
   if (( run_all_e2e )); then
-    step "Playwright E2E suite"
+    run_reported "Playwright E2E suite" bash -lc "PLAYWRIGHT_USE_EXISTING_SERVER=1 PLAYWRIGHT_BASE_URL='${WEB_BASE_URL}' PLAYWRIGHT_API_URL='${API_BASE}' npx playwright test --project='${PLAYWRIGHT_PROJECT}'"
   else
-    step "Playwright E2E course flow"
     e2e_targets=(tests/e2e/course-flow.spec.ts)
+    run_reported "Playwright E2E course flow" bash -lc "PLAYWRIGHT_USE_EXISTING_SERVER=1 PLAYWRIGHT_BASE_URL='${WEB_BASE_URL}' PLAYWRIGHT_API_URL='${API_BASE}' npx playwright test ${e2e_targets[*]} --project='${PLAYWRIGHT_PROJECT}'"
   fi
-
-  PLAYWRIGHT_USE_EXISTING_SERVER=1 \
-  PLAYWRIGHT_BASE_URL="${WEB_BASE_URL}" \
-  PLAYWRIGHT_API_URL="${API_BASE}" \
-  npx playwright test "${e2e_targets[@]}" --project="${PLAYWRIGHT_PROJECT}"
 
   if (( run_real_llm )); then
     has_real_llm_env || fail "--with-real-llm requires at least one real LLM API key in the environment"
 
-    step "Real LLM API validation"
-    API_BASE="${API_HOST}" bash "${ROOT_DIR}/scripts/llm_integration_test.sh"
-
-    step "Real LLM browser validation"
-    PLAYWRIGHT_USE_EXISTING_SERVER=1 \
-    PLAYWRIGHT_BASE_URL="${WEB_BASE_URL}" \
-    PLAYWRIGHT_API_URL="${API_BASE}" \
-    npx playwright test tests/e2e/llm-real.spec.ts --project="${PLAYWRIGHT_PROJECT}"
+    run_reported "Real LLM API validation" bash -lc "API_BASE='${API_HOST}' bash '${ROOT_DIR}/scripts/llm_integration_test.sh'"
+    run_reported "Real LLM browser validation" bash -lc "PLAYWRIGHT_USE_EXISTING_SERVER=1 PLAYWRIGHT_BASE_URL='${WEB_BASE_URL}' PLAYWRIGHT_API_URL='${API_BASE}' npx playwright test tests/e2e/llm-real.spec.ts --project='${PLAYWRIGHT_PROJECT}'"
   fi
+
+  log ""
+  log "Report written to ${REPORT_FILE}"
+  log "JSON report written to ${REPORT_JSON_FILE}"
 }
 
 command="${1:-help}"

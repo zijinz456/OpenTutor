@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config import settings
 from libs.exceptions import AppError, NotFoundError, PermissionDeniedError, ValidationError
 from database import get_db, async_session
+from models.content import CourseContentTree
 from models.ingestion import IngestionJob
 from models.user import User
 from services.ingestion.pipeline import _set_job_phase
@@ -100,8 +101,62 @@ def _load_scrape_fixture_html(url: str) -> str | None:
 router = APIRouter()
 
 
-async def _background_embed(course_id: uuid.UUID, job_id: uuid.UUID):
-    """Fire-and-forget: compute embeddings for newly ingested content."""
+async def _background_auto_generate(course_id: uuid.UUID, user_id: uuid.UUID):
+    """Fire-and-forget: auto-generate starter quiz + flashcards after ingestion.
+
+    Runs after embedding completes. Best-effort — failures are logged but
+    do not block the user.
+    """
+    # Quiz: extract up to 5 questions from course content
+    try:
+        async with async_session() as db:
+            from services.parser.quiz import extract_questions
+            result = await db.execute(
+                select(CourseContentTree)
+                .where(CourseContentTree.course_id == course_id)
+                .where(CourseContentTree.content.isnot(None))
+            )
+            nodes = result.scalars().all()
+            problems = []
+            for node in nodes[:10]:
+                if node.content and len(node.content) > 100:
+                    node_problems = await extract_questions(
+                        node.content, node.title, course_id, node.id,
+                    )
+                    problems.extend(node_problems)
+                    if len(problems) >= 5:
+                        break
+            for p in problems[:5]:
+                db.add(p)
+            await db.commit()
+            logger.info("Auto-generated %d starter quiz questions for course %s", min(len(problems), 5), course_id)
+    except Exception as e:
+        logger.debug("Auto-generate quiz failed (best-effort): %s", e)
+
+    # Flashcards: generate 10 cards
+    try:
+        async with async_session() as db:
+            from services.spaced_repetition.flashcards import generate_flashcards
+            from services.generated_assets import save_generated_asset
+            cards = await generate_flashcards(db, course_id, None, 10)
+            if cards:
+                await save_generated_asset(
+                    db,
+                    user_id=user_id,
+                    course_id=course_id,
+                    asset_type="flashcards",
+                    title="Auto-generated starter set",
+                    content={"cards": cards},
+                    metadata={"count": len(cards), "auto_generated": True},
+                )
+                await db.commit()
+                logger.info("Auto-generated %d starter flashcards for course %s", len(cards), course_id)
+    except Exception as e:
+        logger.debug("Auto-generate flashcards failed (best-effort): %s", e)
+
+
+async def _background_embed(course_id: uuid.UUID, job_id: uuid.UUID, user_id: uuid.UUID | None = None):
+    """Fire-and-forget: compute embeddings, then auto-generate starter assets."""
     try:
         from services.embedding.content import embed_course_content
         async with async_session() as db:
@@ -142,6 +197,11 @@ async def _background_embed(course_id: uuid.UUID, job_id: uuid.UUID):
         except Exception:
             logger.debug("Failed to persist embedding failure for job %s", job_id, exc_info=True)
         logger.debug(f"Background embedding failed: {e}")
+        return  # Don't auto-generate if embedding failed
+
+    # After successful embedding, auto-generate starter quiz + flashcards
+    if user_id:
+        asyncio.create_task(_background_auto_generate(course_id, user_id))
 
 
 @router.post("/upload")
@@ -198,9 +258,9 @@ async def upload_file(
     if job.status == "failed":
         raise AppError(job.error_message or "Ingestion failed")
 
-    # Fire background embedding computation
+    # Fire background embedding + auto-generation
     if (job.dispatched_to or {}).get("content_tree", 0) > 0:
-        asyncio.create_task(_background_embed(cid, job.id))
+        asyncio.create_task(_background_embed(cid, job.id, user_id=user.id))
 
     return {
         "status": "ok",
@@ -244,9 +304,9 @@ async def scrape_url(
     if job.status == "failed":
         raise AppError(job.error_message or "Scrape failed")
 
-    # Fire background embedding computation
+    # Fire background embedding + auto-generation
     if (job.dispatched_to or {}).get("content_tree", 0) > 0:
-        asyncio.create_task(_background_embed(cid, job.id))
+        asyncio.create_task(_background_embed(cid, job.id, user_id=user.id))
 
     return {
         "status": "ok",

@@ -37,9 +37,13 @@ pip-log.txt
 # Claude Code
 .claude/
 
-# Personal planning docs (Chinese)
-OpenTutor代码分析.md
-项目规划文档.md
+# Test artifacts
+test-results/
+playwright-report/
+tmp/
+
+# Temporary directories
+sessions/
 
 # Lock files (regenerated on install)
 package-lock.json

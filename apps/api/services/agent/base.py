@@ -282,6 +282,15 @@ class BaseAgent(ABC):
         # v3: Scene-aware behavior rules
         scene_section = get_scene_with_tab_context(ctx.scene, ctx.active_tab, ctx.tab_context)
         parts.append(f"\n## Scene Policy\n{scene_section}")
+        policy_meta = ctx.metadata.get("scene_policy") or {}
+        if policy_meta:
+            parts.append(
+                "\n## Scene Strategy\n"
+                f"- layout_policy: {policy_meta.get('layout_policy', 'balanced_exploration')}\n"
+                f"- reasoning_policy: {policy_meta.get('reasoning_policy', 'broad_then_deep')}\n"
+                f"- workflow_policy: {policy_meta.get('workflow_policy', 'interactive_tutoring')}\n"
+                f"- expected_benefit: {policy_meta.get('expected_benefit', 'Keep the workspace aligned to the goal.')}"
+            )
 
         # Preference injection
         if ctx.preferences:
