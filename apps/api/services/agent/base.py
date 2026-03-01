@@ -60,6 +60,50 @@ class BaseAgent(ABC):
         """Agent-specific execution logic. Subclasses must implement."""
         ...
 
+    async def delegate(
+        self,
+        target_agent_name: str,
+        sub_message: str,
+        ctx: AgentContext,
+        db: AsyncSession,
+    ) -> str:
+        """Delegate a sub-task to another specialist agent.
+
+        Returns the sub-agent's response text. The delegation is tracked
+        in ctx.metadata for observability.
+        """
+        from services.agent.orchestrator import AGENT_REGISTRY
+
+        target = AGENT_REGISTRY.get(target_agent_name)
+        if not target:
+            logger.warning("Delegation target '%s' not found", target_agent_name)
+            return f"[delegation failed: unknown agent '{target_agent_name}']"
+
+        # Create a sub-context preserving identity but with new message
+        sub_ctx = AgentContext(
+            user_id=ctx.user_id,
+            course_id=ctx.course_id,
+            user_message=sub_message,
+            preferences=ctx.preferences,
+            content_docs=ctx.content_docs,
+            memories=ctx.memories,
+            scene=ctx.scene,
+        )
+
+        logger.info("Agent '%s' delegating to '%s'", self.name, target_agent_name)
+        sub_ctx = await target.run(sub_ctx, db)
+
+        # Track delegation chain
+        delegations = ctx.metadata.setdefault("delegations", [])
+        delegations.append({
+            "from": self.name,
+            "to": target_agent_name,
+            "message": sub_message[:200],
+            "response_length": len(sub_ctx.response),
+        })
+
+        return sub_ctx.response
+
     async def stream(self, ctx: AgentContext, db: AsyncSession) -> AsyncIterator[str]:
         """Stream response chunks for SSE. Default: run then yield full response."""
         ctx = await self.run(ctx, db)

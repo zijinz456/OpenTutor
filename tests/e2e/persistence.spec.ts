@@ -82,14 +82,21 @@ test.describe("Persistence", () => {
   // ---- removing onboarding flag -----------------------------------------
 
   test("removing onboarding flag triggers redirect", async ({ page }) => {
-    await skipOnboarding(page);
+    // Do NOT use skipOnboarding here — we need full control over localStorage.
+    // First, manually set the flag and visit dashboard.
+    await page.addInitScript(() => {
+      localStorage.setItem("opentutor_onboarded", "true");
+    });
     await page.goto("/");
     await expect(page).toHaveURL("/", { timeout: 15_000 });
 
-    // Remove the flag and navigate to dashboard again
+    // Now create a fresh context without the initScript and without the flag
     await page.evaluate(() => localStorage.removeItem("opentutor_onboarded"));
-    await page.goto("/");
-    await expect(page).toHaveURL(/\/onboarding/, { timeout: 15_000 });
+    // Remove the addInitScript by creating a new page context
+    const newPage = await page.context().newPage();
+    await newPage.goto("/");
+    await expect(newPage).toHaveURL(/\/onboarding/, { timeout: 15_000 });
+    await newPage.close();
   });
 
   // ---- course features --------------------------------------------------
@@ -130,7 +137,7 @@ test.describe("Persistence", () => {
     await expect(page).toHaveURL(/\/course\//);
 
     const url = page.url();
-    const match = url.match(/\/course\/(\d+)/);
+    const match = url.match(/\/course\/([^/?#]+)/);
     const courseId = match ? match[1] : "";
     expect(courseId).toBeTruthy();
 
@@ -163,7 +170,7 @@ test.describe("Persistence", () => {
     await expect(page).toHaveURL(/\/course\//);
 
     const url = page.url();
-    const match = url.match(/\/course\/(\d+)/);
+    const match = url.match(/\/course\/([^/?#]+)/);
     const courseId = match ? match[1] : "";
     expect(courseId).toBeTruthy();
 

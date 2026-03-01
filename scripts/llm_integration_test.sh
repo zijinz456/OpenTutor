@@ -7,10 +7,13 @@ TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-60}"
 OPENAI_KEY="${OPENAI_API_KEY:-}"
 ANTHROPIC_KEY="${ANTHROPIC_API_KEY:-}"
 DEEPSEEK_KEY="${DEEPSEEK_API_KEY:-}"
+OPENROUTER_KEY="${OPENROUTER_API_KEY:-}"
+GEMINI_KEY="${GEMINI_API_KEY:-}"
+GROQ_KEY="${GROQ_API_KEY:-}"
 
-if [[ -z "${OPENAI_KEY}" && -z "${ANTHROPIC_KEY}" && -z "${DEEPSEEK_KEY}" ]]; then
+if [[ -z "${OPENAI_KEY}" && -z "${ANTHROPIC_KEY}" && -z "${DEEPSEEK_KEY}" && -z "${OPENROUTER_KEY}" && -z "${GEMINI_KEY}" && -z "${GROQ_KEY}" ]]; then
   echo "FAIL: No real LLM key in environment."
-  echo "Set one of OPENAI_API_KEY / ANTHROPIC_API_KEY / DEEPSEEK_API_KEY and rerun."
+  echo "Set one of OPENAI_API_KEY / ANTHROPIC_API_KEY / DEEPSEEK_API_KEY / OPENROUTER_API_KEY / GEMINI_API_KEY / GROQ_API_KEY and rerun."
   exit 2
 fi
 

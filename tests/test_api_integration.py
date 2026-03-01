@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from main import app
 from config import settings
 from database import get_db, Base
+from models.preference import PreferenceSignal
 
 TEST_EMAIL = f"test-{uuid.uuid4().hex[:8]}@opentutor.dev"
 
@@ -48,12 +49,15 @@ async def client():
             yield session
 
     app.dependency_overrides[get_db] = _override_get_db
+    app.state.test_session_factory = test_session_factory
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
 
     app.dependency_overrides.pop(get_db, None)
+    if hasattr(app.state, "test_session_factory"):
+        delattr(app.state, "test_session_factory")
     async with test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
         await conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
@@ -236,6 +240,8 @@ async def test_chat_session_history_persists_and_restores(client, monkeypatch):
                     "intent": "learn",
                     "session_id": str(kwargs["session_id"]),
                     "tokens": 42,
+                    "actions": [{"action": "set_layout_preset", "value": "quizFocused"}],
+                    "provenance": {"content_count": 1, "memory_count": 0, "tool_count": 0},
                 }
             ),
         }
@@ -264,6 +270,28 @@ async def test_chat_session_history_persists_and_restores(client, monkeypatch):
     assert [message["role"] for message in messages] == ["user", "assistant"]
     assert messages[0]["content"] == "Explain limits"
     assert messages[1]["content"] == "Tutor answer"
+    assert messages[1]["metadata_json"]["agent"] == "teaching"
+    assert messages[1]["metadata_json"]["provenance"]["content_count"] == 1
+    assert messages[1]["metadata_json"]["actions"][0]["action"] == "set_layout_preset"
+
+
+@pytest.mark.asyncio
+async def test_weekly_prep_creates_agent_task(client, monkeypatch):
+    async def fake_run_weekly_prep(_db, _user_id):
+        return {"plan": "## Weekly Plan\n- Monday: review graphs"}
+
+    monkeypatch.setattr("services.workflow.weekly_prep.run_weekly_prep", fake_run_weekly_prep)
+
+    resp = await client.get("/api/workflows/weekly-prep")
+    assert resp.status_code == 200
+    assert "Weekly Plan" in resp.json()["plan"]
+
+    tasks_resp = await client.get("/api/tasks/")
+    assert tasks_resp.status_code == 200
+    tasks = tasks_resp.json()
+    assert len(tasks) == 1
+    assert tasks[0]["task_type"] == "weekly_prep"
+    assert tasks[0]["status"] == "completed"
 
 
 @pytest.mark.asyncio
@@ -429,6 +457,123 @@ async def test_save_generated_flashcards_and_study_plans(client):
     plan_list = await client.get(f"/api/workflows/study-plans/{course_id}")
     assert plan_list.status_code == 200
     assert plan_list.json()[0]["title"] == "Exam Plan"
+
+
+@pytest.mark.asyncio
+async def test_agent_task_submit_approve_and_drain(client, monkeypatch):
+    import services.activity.engine as activity_engine
+
+    create_resp = await client.post("/api/courses/", json={"name": "Async Course", "description": "queue"})
+    assert create_resp.status_code == 201
+    course_id = create_resp.json()["id"]
+
+    async def fake_exam_prep(db, user_id, course_id, exam_topic=None, days_until_exam=7):
+        _ = (db, user_id, course_id, exam_topic, days_until_exam)
+        return {"course": "Async Course", "plan": "Queued plan"}
+
+    monkeypatch.setattr("services.workflow.exam_prep.run_exam_prep", fake_exam_prep)
+    monkeypatch.setattr(activity_engine, "async_session", app.state.test_session_factory)
+
+    submit_resp = await client.post(
+        "/api/tasks/submit",
+        json={
+            "task_type": "exam_prep",
+            "title": "Queued exam prep",
+            "course_id": course_id,
+            "input_json": {"course_id": course_id, "days_until_exam": 5},
+            "requires_approval": True,
+            "max_attempts": 2,
+        },
+    )
+    assert submit_resp.status_code == 201
+    task_id = submit_resp.json()["id"]
+    assert submit_resp.json()["status"] == "awaiting_approval"
+
+    approve_resp = await client.post(f"/api/tasks/{task_id}/approve")
+    assert approve_resp.status_code == 200
+    assert approve_resp.json()["status"] == "queued"
+
+    processed = await activity_engine.drain_once()
+    assert processed is True
+
+    tasks_resp = await client.get(f"/api/tasks/?course_id={course_id}")
+    assert tasks_resp.status_code == 200
+    tasks = tasks_resp.json()
+    assert tasks[0]["id"] == task_id
+    assert tasks[0]["status"] == "completed"
+    assert tasks[0]["result_json"]["plan"] == "Queued plan"
+
+
+@pytest.mark.asyncio
+async def test_agent_task_cancel_and_retry(client, monkeypatch):
+    import services.activity.engine as activity_engine
+
+    async def fake_weekly_prep(db, user_id):
+        _ = (db, user_id)
+        return {"plan": "Rebuilt weekly plan"}
+
+    monkeypatch.setattr("services.workflow.weekly_prep.run_weekly_prep", fake_weekly_prep)
+    monkeypatch.setattr(activity_engine, "async_session", app.state.test_session_factory)
+
+    create_resp = await client.post("/api/courses/", json={"name": "Retry Course", "description": "queue"})
+    assert create_resp.status_code == 201
+
+    submit_resp = await client.post(
+        "/api/tasks/submit",
+        json={
+            "task_type": "weekly_prep",
+            "title": "Queued weekly prep",
+            "max_attempts": 1,
+        },
+    )
+    assert submit_resp.status_code == 201
+    task_id = submit_resp.json()["id"]
+    assert submit_resp.json()["status"] == "queued"
+
+    cancel_resp = await client.post(f"/api/tasks/{task_id}/cancel")
+    assert cancel_resp.status_code == 200
+    assert cancel_resp.json()["status"] == "cancelled"
+
+    retry_resp = await client.post(f"/api/tasks/{task_id}/retry")
+    assert retry_resp.status_code == 200
+    assert retry_resp.json()["status"] == "queued"
+
+    processed = await activity_engine.drain_once()
+    assert processed is True
+
+    tasks_resp = await client.get("/api/tasks/")
+    assert tasks_resp.status_code == 200
+    assert tasks_resp.json()[0]["status"] == "completed"
+    assert tasks_resp.json()[0]["result_json"]["plan"] == "Rebuilt weekly plan"
+
+
+@pytest.mark.asyncio
+async def test_list_preference_signals(client):
+    create_resp = await client.post("/api/courses/", json={"name": "Preference Course", "description": "signals"})
+    assert create_resp.status_code == 201
+    course_id = create_resp.json()["id"]
+
+    async with app.state.test_session_factory() as session:
+        result = await session.execute(text("SELECT id FROM users LIMIT 1"))
+        user_id = result.scalar_one()
+        session.add(
+            PreferenceSignal(
+                user_id=user_id,
+                course_id=uuid.UUID(course_id),
+                signal_type="explicit",
+                dimension="detail_level",
+                value="concise",
+                context={"evidence": "Make it shorter", "user_message": "Please keep it concise"},
+            )
+        )
+        await session.commit()
+
+    resp = await client.get(f"/api/preferences/signals?course_id={course_id}")
+    assert resp.status_code == 200
+    signals = resp.json()
+    assert len(signals) == 1
+    assert signals[0]["dimension"] == "detail_level"
+    assert signals[0]["context"]["evidence"] == "Make it shorter"
 
 
 # ── Cleanup ──

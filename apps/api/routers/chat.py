@@ -84,13 +84,19 @@ async def _persist_chat_turn(
     session: ChatSession,
     user_message: str,
     assistant_message: str,
+    assistant_metadata: dict | None = None,
 ) -> None:
     if not assistant_message.strip():
         return
     db.add_all(
         [
             ChatMessageLog(session_id=session.id, role="user", content=user_message),
-            ChatMessageLog(session_id=session.id, role="assistant", content=assistant_message),
+            ChatMessageLog(
+                session_id=session.id,
+                role="assistant",
+                content=assistant_message,
+                metadata_json=assistant_metadata,
+            ),
         ]
     )
     session.updated_at = datetime.now(timezone.utc)
@@ -172,6 +178,7 @@ async def get_chat_session_messages(
                 "id": str(message.id),
                 "role": message.role,
                 "content": message.content,
+                "metadata_json": message.metadata_json,
                 "created_at": message.created_at.isoformat() if message.created_at else None,
             }
             for message in messages
@@ -182,6 +189,12 @@ async def get_chat_session_messages(
 @router.post("/")
 async def chat_stream(body: ChatRequest, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """Stream chat response using multi-agent orchestrator via SSE."""
+    from middleware.security import detect_prompt_injection, sanitize_user_input
+
+    body.message = sanitize_user_input(body.message)
+    if detect_prompt_injection(body.message):
+        logger.warning("Prompt injection detected from user %s: %.100s", user.id, body.message)
+
     course = await get_course_or_404(db, body.course_id, user_id=user.id)
 
     resolved_scene = body.scene or course.active_scene
@@ -198,6 +211,7 @@ async def chat_stream(body: ChatRequest, user: User = Depends(get_current_user),
     async def event_generator():
         assistant_chunks: list[str] = []
         assistant_content = ""
+        assistant_metadata: dict | None = None
         try:
             async for event in orchestrate_stream(
                 user_id=user.id,
@@ -211,6 +225,7 @@ async def chat_stream(body: ChatRequest, user: User = Depends(get_current_user),
                 active_tab=body.active_tab or "",
                 tab_context=body.tab_context,
                 scene=resolved_scene,
+                images=[img.model_dump() for img in body.images] if body.images else None,
             ):
                 if event.get("event") == "message":
                     try:
@@ -220,6 +235,19 @@ async def chat_stream(body: ChatRequest, user: User = Depends(get_current_user),
                     if payload.get("content"):
                         assistant_chunks.append(payload["content"])
                         assistant_content = "".join(assistant_chunks)
+                elif event.get("event") == "done":
+                    try:
+                        payload = json.loads(event["data"])
+                    except (KeyError, json.JSONDecodeError, TypeError):
+                        payload = {}
+                    assistant_metadata = {
+                        "agent": payload.get("agent"),
+                        "intent": payload.get("intent"),
+                        "tokens": payload.get("tokens"),
+                        "provenance": payload.get("provenance"),
+                        "actions": payload.get("actions", []),
+                        "reflection": payload.get("reflection"),
+                    }
                 elif event.get("event") == "replace":
                     try:
                         payload = json.loads(event["data"])
@@ -227,7 +255,7 @@ async def chat_stream(body: ChatRequest, user: User = Depends(get_current_user),
                         payload = {}
                     assistant_content = payload.get("content", assistant_content)
                 yield event
-            await _persist_chat_turn(db, session, body.message, assistant_content)
+            await _persist_chat_turn(db, session, body.message, assistant_content, assistant_metadata)
         except Exception as e:
             logger.error("Orchestrator error: %s", e, exc_info=True)
             yield {"event": "error", "data": json.dumps({"error": str(e)})}

@@ -22,48 +22,64 @@ from sqlalchemy import select, func
 from database import async_session
 from models.user import User
 from models.progress import LearningProgress
+from models.notification import Notification
 
 logger = logging.getLogger(__name__)
 
 scheduler = AsyncIOScheduler()
 
-# In-memory notification store (replace with DB table in production)
-_notifications: list[dict] = []
+# SSE subscribers: user_id → list of asyncio.Queue
+_sse_subscribers: dict[str, list] = {}
 
 
-def get_notifications(user_id: uuid.UUID | None = None, unread_only: bool = True) -> list[dict]:
-    """Get pending notifications, optionally filtered by user."""
-    results = _notifications
-    if user_id:
-        results = [n for n in results if n.get("user_id") == str(user_id)]
-    if unread_only:
-        results = [n for n in results if not n.get("read")]
-    return results
+def subscribe_sse(user_id: uuid.UUID):
+    """Create an SSE subscription queue for a user."""
+    import asyncio
+    queue: asyncio.Queue = asyncio.Queue()
+    key = str(user_id)
+    _sse_subscribers.setdefault(key, []).append(queue)
+    return queue
 
 
-def mark_notification_read(notification_id: str) -> bool:
-    for n in _notifications:
-        if n["id"] == notification_id:
-            n["read"] = True
-            return True
-    return False
+def unsubscribe_sse(user_id: uuid.UUID, queue):
+    """Remove an SSE subscription."""
+    key = str(user_id)
+    subs = _sse_subscribers.get(key, [])
+    if queue in subs:
+        subs.remove(queue)
 
 
-def _push_notification(user_id: uuid.UUID, title: str, body: str, category: str = "reminder"):
-    notif = {
-        "id": str(uuid.uuid4()),
-        "user_id": str(user_id),
+async def _push_notification(user_id: uuid.UUID, title: str, body: str, category: str = "reminder", course_id: uuid.UUID | None = None):
+    """Persist notification to DB and push to SSE subscribers."""
+    async with async_session() as db:
+        notif = Notification(
+            user_id=user_id,
+            course_id=course_id,
+            title=title,
+            body=body,
+            category=category,
+        )
+        db.add(notif)
+        await db.commit()
+        await db.refresh(notif)
+
+    logger.info("Notification pushed: [%s] %s — %s", category, title, body[:80])
+
+    # Push to SSE subscribers
+    import json
+    payload = json.dumps({
+        "id": str(notif.id),
         "title": title,
         "body": body,
         "category": category,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "read": False,
-    }
-    _notifications.append(notif)
-    # Keep only last 200 notifications in memory
-    if len(_notifications) > 200:
-        _notifications.pop(0)
-    logger.info("Notification pushed: [%s] %s — %s", category, title, body[:80])
+        "created_at": notif.created_at.isoformat() if notif.created_at else None,
+    })
+    key = str(user_id)
+    for queue in _sse_subscribers.get(key, []):
+        try:
+            queue.put_nowait(payload)
+        except Exception:
+            pass
 
 
 async def weekly_prep_job():
@@ -171,6 +187,71 @@ async def memory_consolidation_job():
         )
 
 
+async def inactivity_alert_job():
+    """Inactivity alert — remind users who haven't studied for 3+ days."""
+    logger.info("Checking for inactive users...")
+    from datetime import timedelta
+    threshold = datetime.now(timezone.utc) - timedelta(days=3)
+
+    async with async_session() as db:
+        from models.ingestion import StudySession
+        # Find users whose most recent study session is older than threshold
+        result = await db.execute(select(User))
+        users = result.scalars().all()
+
+        for user in users:
+            session_result = await db.execute(
+                select(StudySession)
+                .where(StudySession.user_id == user.id)
+                .order_by(StudySession.started_at.desc())
+                .limit(1)
+            )
+            last_session = session_result.scalar_one_or_none()
+            if last_session and last_session.started_at and last_session.started_at < threshold:
+                days_inactive = (datetime.now(timezone.utc) - last_session.started_at).days
+                await _push_notification(
+                    user.id,
+                    "We miss you!",
+                    f"It's been {days_inactive} days since your last study session. "
+                    f"Even 10 minutes of review can help retain what you've learned!",
+                    category="inactivity",
+                )
+
+
+async def daily_suggestion_job():
+    """Daily suggestion — push personalised study recommendation based on forgetting curve."""
+    logger.info("Running daily suggestion job...")
+    async with async_session() as db:
+        result = await db.execute(select(User))
+        users = result.scalars().all()
+        now = datetime.now(timezone.utc)
+
+        for user in users:
+            try:
+                # Find knowledge points with lowest retrievability
+                urgent = await db.execute(
+                    select(LearningProgress)
+                    .where(
+                        LearningProgress.user_id == user.id,
+                        LearningProgress.fsrs_reps > 0,
+                        LearningProgress.next_review_at <= now,
+                    )
+                    .order_by(LearningProgress.next_review_at.asc())
+                    .limit(5)
+                )
+                due_items = urgent.scalars().all()
+                if due_items:
+                    await _push_notification(
+                        user.id,
+                        f"{len(due_items)} topics need review today",
+                        "Your spaced repetition schedule suggests reviewing these topics "
+                        "before they fade from memory. Start a quick review session!",
+                        category="fsrs_review",
+                    )
+            except Exception as e:
+                logger.error("Daily suggestion failed for user %s: %s", user.id, e)
+
+
 def start_scheduler():
     """Start the APScheduler with all configured jobs."""
     # Weekly prep: every Monday at 8:00 AM
@@ -206,6 +287,24 @@ def start_scheduler():
         trigger=IntervalTrigger(hours=6),
         id="memory_consolidation",
         name="Memory Consolidation (dedup + decay + categorize)",
+        replace_existing=True,
+    )
+
+    # Inactivity alert: daily at 10:00 AM
+    scheduler.add_job(
+        inactivity_alert_job,
+        trigger=CronTrigger(hour=10, minute=0),
+        id="inactivity_alert",
+        name="Inactivity Alert (3+ days)",
+        replace_existing=True,
+    )
+
+    # Daily suggestion: every day at 9:00 AM
+    scheduler.add_job(
+        daily_suggestion_job,
+        trigger=CronTrigger(hour=9, minute=0),
+        id="daily_suggestion",
+        name="Daily Forgetting-Curve Suggestion",
         replace_existing=True,
     )
 

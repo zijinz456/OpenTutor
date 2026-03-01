@@ -20,6 +20,7 @@ from database import get_db
 from models.user import User
 from services.auth.dependency import get_current_user
 from services.course_access import get_course_or_404
+from services.activity.tasks import create_task
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -74,6 +75,15 @@ async def semester_init(body: SemesterInitRequest, user: User = Depends(get_curr
 
     try:
         result = await run_semester_init(db, user.id, body.semester_name, body.courses)
+        await create_task(
+            db,
+            user_id=user.id,
+            task_type="semester_init",
+            title=f"Initialized {body.semester_name}",
+            summary=f"Created {len(result.get('courses', []))} courses and generated a semester plan.",
+            source="workflow",
+            result_json=result,
+        )
         await db.commit()
         return result
     except HTTPException:
@@ -89,7 +99,18 @@ async def weekly_prep(user: User = Depends(get_current_user), db: AsyncSession =
     from services.workflow.weekly_prep import run_weekly_prep
 
     try:
-        return await run_weekly_prep(db, user.id)
+        result = await run_weekly_prep(db, user.id)
+        await create_task(
+            db,
+            user_id=user.id,
+            task_type="weekly_prep",
+            title="Generated weekly prep plan",
+            summary=(result.get("plan", "") or "Weekly plan generated.")[:300],
+            source="workflow",
+            result_json=result,
+        )
+        await db.commit()
+        return result
     except Exception as e:
         logger.exception("WF-2 failed: user_id=%s", user.id)
         raise HTTPException(status_code=500, detail="Weekly prep failed") from e
@@ -103,6 +124,18 @@ async def assignment_analysis(body: AssignmentAnalysisRequest, user: User = Depe
     try:
         result = await run_assignment_analysis(db, user.id, body.assignment_id)
         _raise_if_service_error(result)
+        await create_task(
+            db,
+            user_id=user.id,
+            course_id=uuid.UUID(result["course_id"]) if result.get("course_id") else None,
+            task_type="assignment_analysis",
+            title=f"Analyzed assignment: {result.get('title', 'Assignment')}",
+            summary=(result.get("analysis", "") or "Assignment analysis generated.")[:300],
+            source="workflow",
+            metadata_json={"assignment_id": result.get("assignment_id")},
+            result_json=result,
+        )
+        await db.commit()
         return result
     except HTTPException:
         raise
@@ -125,7 +158,20 @@ async def wrong_answer_review(
     from services.workflow.wrong_answer_review import run_wrong_answer_review
 
     try:
-        return await run_wrong_answer_review(db, user.id, course_id)
+        result = await run_wrong_answer_review(db, user.id, course_id)
+        await create_task(
+            db,
+            user_id=user.id,
+            course_id=course_id,
+            task_type="wrong_answer_review",
+            title="Generated wrong-answer review",
+            summary=(result.get("review", "") or "Wrong-answer review generated.")[:300],
+            source="workflow",
+            metadata_json={"wrong_answer_count": result.get("wrong_answer_count", 0)},
+            result_json=result,
+        )
+        await db.commit()
+        return result
     except Exception as e:
         logger.exception("WF-5 failed: user_id=%s course_id=%s", user.id, course_id)
         raise HTTPException(status_code=500, detail="Wrong-answer review failed") from e
@@ -158,9 +204,22 @@ async def exam_prep(body: ExamPrepRequest, user: User = Depends(get_current_user
     from services.workflow.exam_prep import run_exam_prep
 
     try:
-        return await run_exam_prep(
+        result = await run_exam_prep(
             db, user.id, body.course_id, body.exam_topic, body.days_until_exam
         )
+        await create_task(
+            db,
+            user_id=user.id,
+            course_id=body.course_id,
+            task_type="exam_prep",
+            title="Generated exam prep plan",
+            summary=(result.get("plan", "") or "Exam prep plan generated.")[:300],
+            source="workflow",
+            metadata_json={"days_until_exam": body.days_until_exam, "exam_topic": body.exam_topic},
+            result_json=result,
+        )
+        await db.commit()
+        return result
     except Exception as e:
         logger.exception(
             "WF-6 failed: user_id=%s course_id=%s days_until_exam=%d",

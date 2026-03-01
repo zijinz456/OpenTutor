@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { skipOnboarding, createCourseWithContent } from "./helpers/test-utils";
+import { skipOnboarding, createCourseWithContent, expectGeneratedNotes } from "./helpers/test-utils";
 
 test.describe.serial("Notes Panel", () => {
   test.beforeEach(async ({ page }) => {
@@ -81,13 +81,11 @@ test.describe.serial("Notes Panel", () => {
     await expect(preview).toContainText("AI note preview", { timeout: 15_000 });
   });
 
-  test("preview shows mock LLM response", async ({ page }) => {
+  test("preview shows generated notes content", async ({ page }) => {
     await createCourseWithContent(page);
     await expect(page.getByTestId("notes-panel")).toBeVisible({ timeout: 30_000 });
     await page.getByTestId("notes-generate").click();
-    await expect(page.getByTestId("notes-preview")).toContainText("No LLM API key configured", {
-      timeout: 30_000,
-    });
+    await expectGeneratedNotes(page);
   });
 
   test("Save New button saves notes and shows toast", async ({ page }) => {

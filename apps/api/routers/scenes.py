@@ -54,6 +54,7 @@ class SwitchSceneResponse(BaseModel):
     tab_layout: list[dict] | None = None
     init_actions: list[dict] = []
     message: str | None = None
+    explanation: dict | None = None
 
 
 class CreateSceneRequest(BaseModel):

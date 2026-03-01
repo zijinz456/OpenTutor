@@ -12,7 +12,9 @@ import {
   streamChat,
   type ChatAction,
   type ChatHistoryMessage,
+  type ChatMessageMetadata,
   type ChatSessionSummary,
+  type ImageAttachment,
 } from "@/lib/api";
 
 export interface ChatMessage {
@@ -20,12 +22,14 @@ export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   timestamp: Date;
+  metadata?: ChatMessageMetadata | null;
 }
 
 export interface SendMessageOptions {
   activeTab?: string;
   tabContext?: Record<string, unknown>;
   scene?: string;
+  images?: ImageAttachment[];
 }
 
 interface ChatState {
@@ -115,6 +119,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         role: message.role,
         content: message.content,
         timestamp: message.created_at ? new Date(message.created_at) : new Date(),
+        metadata: message.metadata_json ?? null,
       }));
       set((s) => ({
         activeCourseId: courseId,
@@ -196,6 +201,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         sessionId: get().sessionIds[courseId],
         history,
         signal: controller.signal,
+        images: options?.images,
       })) {
         if (event.type === "content") {
           set((s) => ({
@@ -233,6 +239,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
           }));
         } else if (event.type === "done" && event.sessionId) {
           set((s) => ({
+            messages: s.messages.map((m) =>
+              m.id === assistantMsg.id ? { ...m, metadata: event.metadata ?? m.metadata ?? null } : m,
+            ),
+            messagesByCourse: {
+              ...s.messagesByCourse,
+              [courseId]: (s.messagesByCourse[courseId] ?? []).map((m) =>
+                m.id === assistantMsg.id ? { ...m, metadata: event.metadata ?? m.metadata ?? null } : m,
+              ),
+            },
             sessionIds: {
               ...s.sessionIds,
               [courseId]: event.sessionId!,

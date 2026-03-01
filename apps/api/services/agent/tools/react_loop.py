@@ -22,14 +22,14 @@ from typing import Any, AsyncIterator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.agent.state import AgentContext, TaskPhase
-from services.agent.tools.base import ToolRegistry, get_tool_registry
+from services.agent.tools.base import MAX_TOOL_RESULT_CHARS, ToolRegistry, get_tool_registry
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MAX_ITERATIONS = 3
+DEFAULT_MAX_ITERATIONS = 5
 
-# Consistent truncation for tool results passed back to the LLM conversation
-_TOOL_RESULT_CONTEXT_CHARS = 4000
+# Use the same truncation limit as base.py for consistency
+_TOOL_RESULT_CONTEXT_CHARS = MAX_TOOL_RESULT_CHARS
 
 # Text-mode parsing patterns (HelloAgents ReActAgent pattern)
 # Simple pattern for initial detection (actual parsing uses _find_balanced_bracket)
@@ -182,7 +182,7 @@ async def react_stream(
     if not tools:
         # No tools available — direct answer (no ReAct)
         full = ""
-        async for chunk in client.stream_chat(system_prompt, user_message):
+        async for chunk in client.stream_chat(system_prompt, user_message, images=ctx.images or None):
             full += chunk
             yield {"type": "answer", "content": chunk}
         ctx.response = full
@@ -221,9 +221,15 @@ async def _react_function_calling(
     """ReAct loop using native LLM function calling."""
     tool_schemas = [t.to_openai_schema() for t in tools]
 
+    # Build multimodal user content when images are attached
+    user_content: str | list = user_message
+    if ctx.images:
+        from services.llm.router import _build_openai_user_content
+        user_content = _build_openai_user_content(user_message, ctx.images)
+
     messages = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_message},
+        {"role": "user", "content": user_content},
     ]
     call_history: set[str] = set()  # Loop detection (O(1) lookup)
 

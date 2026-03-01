@@ -32,8 +32,71 @@ export interface Course {
   created_at: string;
 }
 
+export interface HealthStatus {
+  status: string;
+  version: string;
+  llm_providers: string[];
+  llm_primary: string | null;
+  llm_required: boolean;
+  llm_available: boolean;
+  llm_status: "configuration_required" | "mock_fallback" | "degraded" | "ready";
+  llm_provider_health: Record<string, boolean>;
+}
+
+export interface LlmRuntimeProviderStatus {
+  provider: string;
+  has_key: boolean;
+  masked_key: string | null;
+}
+
+export interface LlmRuntimeConfig {
+  provider: string;
+  model: string;
+  llm_required: boolean;
+  providers: LlmRuntimeProviderStatus[];
+}
+
+export interface LlmConnectionTestResult {
+  provider: string;
+  model: string;
+  ok: boolean;
+  response_preview: string;
+  usage: Record<string, number>;
+}
+
 export async function listCourses(): Promise<Course[]> {
   return request("/courses/");
+}
+
+export async function getHealthStatus(): Promise<HealthStatus> {
+  return request("/health");
+}
+
+export async function getLlmRuntimeConfig(): Promise<LlmRuntimeConfig> {
+  return request("/preferences/runtime/llm");
+}
+
+export async function updateLlmRuntimeConfig(body: {
+  provider?: string;
+  model?: string;
+  llm_required?: boolean;
+  provider_keys?: Record<string, string>;
+}): Promise<LlmRuntimeConfig> {
+  return request("/preferences/runtime/llm", {
+    method: "PUT",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function testLlmRuntimeConnection(body: {
+  provider: string;
+  model?: string;
+  api_key?: string;
+}): Promise<LlmConnectionTestResult> {
+  return request("/preferences/runtime/llm/test", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 }
 
 export async function createCourse(name: string, description?: string): Promise<Course> {
@@ -174,7 +237,55 @@ export interface PersistedChatMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
+  metadata_json?: ChatMessageMetadata | null;
   created_at: string | null;
+}
+
+export interface ChatSceneExplanation {
+  scene?: string;
+  mode?: string;
+  matched_text?: string | null;
+  current_scene?: string;
+  target_scene?: string;
+  matched_keywords?: string[];
+  reason?: string;
+}
+
+export interface ChatPreferenceDetail {
+  dimension: string;
+  value: string;
+  source: string;
+}
+
+export interface ChatContentReference {
+  title?: string;
+  source_type?: string;
+  preview?: string;
+}
+
+export interface ChatProvenance {
+  scene?: string;
+  scene_resolution?: ChatSceneExplanation;
+  scene_switch?: ChatSceneExplanation;
+  preferences_applied?: string[];
+  preference_sources?: Record<string, string>;
+  preference_details?: ChatPreferenceDetail[];
+  content_count?: number;
+  content_titles?: string[];
+  content_refs?: ChatContentReference[];
+  memory_count?: number;
+  tool_count?: number;
+  tool_names?: string[];
+  action_count?: number;
+}
+
+export interface ChatMessageMetadata {
+  agent?: string;
+  intent?: string;
+  tokens?: number;
+  actions?: ChatAction[];
+  reflection?: Record<string, unknown> | null;
+  provenance?: ChatProvenance | null;
 }
 
 export type StreamEvent =
@@ -183,7 +294,13 @@ export type StreamEvent =
   | { type: "status"; phase: string; intent?: string; confidence?: number; agent?: string }
   | { type: "replace"; content: string }
   | { type: "tool_status"; status: "running" | "complete"; tool: string }
-  | { type: "done"; sessionId?: string; agent?: string; intent?: string; tokens?: number };
+  | { type: "done"; sessionId?: string; agent?: string; intent?: string; tokens?: number; metadata?: ChatMessageMetadata };
+
+export interface ImageAttachment {
+  data: string;       // base64-encoded
+  media_type: string; // "image/png" | "image/jpeg" | "image/webp"
+  filename?: string;
+}
 
 export interface ChatStreamOptions {
   courseId: string;
@@ -194,6 +311,7 @@ export interface ChatStreamOptions {
   sessionId?: string;
   history?: ChatHistoryMessage[];
   signal?: AbortSignal;
+  images?: ImageAttachment[];
 }
 
 export async function* streamChat(
@@ -217,6 +335,7 @@ export async function* streamChat(
       scene: opts.scene,
       session_id: opts.sessionId,
       history: opts.history ?? [],
+      images: opts.images ?? [],
     }),
     signal: opts.signal,
   });
@@ -287,6 +406,14 @@ export async function* streamChat(
           agent: data.agent,
           intent: data.intent,
           tokens: data.tokens,
+          metadata: {
+            agent: data.agent,
+            intent: data.intent,
+            tokens: data.tokens,
+            actions: data.actions,
+            provenance: data.provenance,
+            reflection: data.reflection,
+          },
         };
       } else if (resolvedEvent === "error" && data.error) {
         throw new Error(data.error);
@@ -407,6 +534,11 @@ export interface SwitchResult {
   tab_layout?: Array<{ type: string; position: number }>;
   init_actions: Array<{ type: string; action: string; message: string }>;
   message?: string;
+  explanation?: {
+    workflow?: string;
+    recommended_tabs?: string[];
+    reason?: string;
+  };
 }
 
 export async function listScenes(): Promise<SceneConfig[]> {
@@ -664,6 +796,51 @@ export async function getLearningOverview(): Promise<LearningOverview> {
   return request("/progress/overview");
 }
 
+export interface TrendDataPoint {
+  date: string;
+  study_minutes: number;
+  quiz_total: number;
+  quiz_correct: number;
+  accuracy: number | null;
+}
+
+export interface LearningTrends {
+  days: number;
+  trend: TrendDataPoint[];
+  current_mastery?: number;
+  course_id?: string;
+}
+
+export async function getGlobalTrends(days = 30): Promise<LearningTrends> {
+  return request(`/progress/trends?days=${days}`);
+}
+
+export async function getCourseTrends(courseId: string, days = 30): Promise<LearningTrends> {
+  return request(`/progress/courses/${courseId}/trends?days=${days}`);
+}
+
+// ── Memory Stats ──
+
+export interface MemoryStats {
+  total: number;
+  by_type: Record<string, number>;
+  avg_importance: number;
+  needs_consolidation: boolean;
+  oldest_days: number;
+  uncategorized: number;
+  merged_count: number;
+}
+
+export async function getMemoryStats(courseId?: string): Promise<MemoryStats> {
+  const params = courseId ? `?course_id=${courseId}` : "";
+  return request(`/progress/memory-stats${params}`);
+}
+
+export async function triggerConsolidation(courseId?: string): Promise<Record<string, number>> {
+  const params = courseId ? `?course_id=${courseId}` : "";
+  return request(`/progress/memory-consolidate${params}`, { method: "POST" });
+}
+
 export interface Flashcard {
   id: string;
   front: string;
@@ -744,6 +921,38 @@ export async function getKnowledgeGraph(
   return request(`/progress/courses/${courseId}/knowledge-graph`);
 }
 
+// ── Learning Path Optimization ──
+
+export interface LearningPathNode {
+  id: string;
+  name: string;
+  description: string | null;
+  mastery: number;
+  estimated_minutes: number;
+  priority: number;
+  on_critical_path: boolean;
+  depth: number;
+  prerequisites: string[];
+}
+
+export interface LearningPath {
+  path: LearningPathNode[];
+  critical_path: { id: string; name: string; mastery: number; estimated_minutes: number }[];
+  critical_path_minutes: number;
+  parallel_groups: { id: string; name: string }[][];
+  total_estimated_minutes: number;
+  skipped_mastered: number;
+  total_knowledge_points: number;
+  cycle_detected: boolean;
+}
+
+export async function getOptimizedLearningPath(
+  courseId: string,
+  skipMastered = true,
+): Promise<LearningPath> {
+  return request(`/progress/courses/${courseId}/learning-path?skip_mastered=${skipMastered}`);
+}
+
 export async function getWrongAnswerReview(
   courseId: string,
 ): Promise<{ review: string; wrong_answer_count: number; wrong_answer_ids: string[] }> {
@@ -763,8 +972,22 @@ export interface UploadedCourseFile {
   created_at: string | null;
 }
 
+export interface IngestionJobSummary {
+  id: string;
+  filename: string;
+  source_type: string;
+  category: string | null;
+  status: string;
+  dispatched_to: Record<string, number> | null;
+  created_at: string | null;
+}
+
 export async function getFilesByCourseId(courseId: string): Promise<UploadedCourseFile[]> {
   return request(`/content/files/by-course/${courseId}`);
+}
+
+export async function listIngestionJobs(courseId: string): Promise<IngestionJobSummary[]> {
+  return request(`/content/jobs/${courseId}`);
 }
 
 // Preserve the existing misspelled export until all call sites are migrated.
@@ -810,4 +1033,80 @@ export async function saveStudyPlan(
 
 export async function listStudyPlanBatches(courseId: string): Promise<GeneratedAssetBatchSummary[]> {
   return request(`/workflows/study-plans/${courseId}`);
+}
+
+export interface AgentTask {
+  id: string;
+  user_id: string;
+  course_id: string | null;
+  task_type: string;
+  status: string;
+  title: string;
+  summary: string | null;
+  source: string;
+  input_json: Record<string, unknown> | null;
+  metadata_json: Record<string, unknown> | null;
+  result_json: Record<string, unknown> | null;
+  error_message: string | null;
+  attempts: number;
+  max_attempts: number;
+  requires_approval: boolean;
+  approved_at: string | null;
+  started_at: string | null;
+  cancel_requested_at: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  completed_at: string | null;
+}
+
+export async function listAgentTasks(courseId?: string): Promise<AgentTask[]> {
+  const query = courseId ? `?course_id=${courseId}` : "";
+  return request(`/tasks/${query}`);
+}
+
+export async function submitAgentTask(body: {
+  task_type: string;
+  title: string;
+  course_id?: string;
+  summary?: string;
+  input_json?: Record<string, unknown>;
+  metadata_json?: Record<string, unknown>;
+  source?: string;
+  requires_approval?: boolean;
+  max_attempts?: number;
+}): Promise<AgentTask> {
+  return request("/tasks/submit", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function approveAgentTask(taskId: string): Promise<AgentTask> {
+  return request(`/tasks/${taskId}/approve`, { method: "POST" });
+}
+
+export async function cancelAgentTask(taskId: string): Promise<AgentTask> {
+  return request(`/tasks/${taskId}/cancel`, { method: "POST" });
+}
+
+export async function retryAgentTask(taskId: string): Promise<AgentTask> {
+  return request(`/tasks/${taskId}/retry`, { method: "POST" });
+}
+
+export interface PreferenceSignal {
+  id: string;
+  dimension: string;
+  value: string;
+  signal_type: string;
+  course_id: string | null;
+  context: {
+    evidence?: string;
+    user_message?: string;
+  } | null;
+  created_at: string | null;
+}
+
+export async function listPreferenceSignals(courseId?: string): Promise<PreferenceSignal[]> {
+  const query = courseId ? `?course_id=${courseId}` : "";
+  return request(`/preferences/signals${query}`);
 }

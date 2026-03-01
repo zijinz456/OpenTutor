@@ -32,6 +32,7 @@ import { ProgressPanel } from "@/components/course/progress-panel";
 import { KnowledgeGraph } from "@/components/course/knowledge-graph";
 import { ReviewPanel } from "@/components/course/review-panel";
 import { StudyPlanPanel } from "@/components/course/study-plan-panel";
+import { ActivityPanel } from "@/components/course/activity-panel";
 import { NLTuningFAB } from "@/components/course/nl-tuning-fab";
 import { ActivityBar } from "@/components/workspace/activity-bar";
 import { StatusBar } from "@/components/workspace/status-bar";
@@ -41,6 +42,7 @@ import { SceneSelector } from "@/components/scene/scene-selector";
 import { PreferenceConfirmDialog } from "@/components/preference/preference-confirm-dialog";
 import { useSceneStore } from "@/store/scene";
 import { toast } from "sonner";
+import { ErrorBoundary } from "@/components/error-boundary";
 
 const PdfViewer = dynamic(
   () => import("@/components/course/pdf-viewer").then((mod) => mod.PdfViewer),
@@ -55,7 +57,7 @@ const LAYOUT_PRESETS = {
   fullNotes: { pdf: 10, notes: 70, quiz: 10, chat: 10 },
 } as const;
 
-const RIGHT_TAB_TYPES = ["quiz", "flashcards", "progress", "graph", "review", "plan"] as const;
+const RIGHT_TAB_TYPES = ["quiz", "flashcards", "progress", "graph", "review", "plan", "activity"] as const;
 type LayoutPreset = keyof typeof LAYOUT_PRESETS;
 type RightTab = (typeof RIGHT_TAB_TYPES)[number];
 type HiddenPanelId = "pdf" | "notes" | "quiz" | "chat";
@@ -67,6 +69,7 @@ const RIGHT_TAB_META: Record<RightTab, { label: string; icon: ComponentType<{ cl
   graph: { label: "Graph", icon: Network },
   review: { label: "Review", icon: ClipboardCheck },
   plan: { label: "Plan", icon: CalendarDays },
+  activity: { label: "Activity", icon: Layers },
 };
 
 function isRightTab(value: string): value is RightTab {
@@ -76,6 +79,7 @@ function isRightTab(value: string): value is RightTab {
 function getActivityItemForRightTab(tab: RightTab): string {
   if (tab === "progress" || tab === "graph") return "progress";
   if (tab === "plan") return "chat";
+  if (tab === "activity") return "activity";
   return "practice";
 }
 
@@ -213,6 +217,9 @@ export default function CoursePage() {
     if (result.message) {
       toast.message(result.message);
     }
+    if (result.explanation?.reason) {
+      toast.message(result.explanation.reason);
+    }
   }, [applyWorkspaceLayout]);
 
   const togglePanel = useCallback((panelId: HiddenPanelId) => {
@@ -286,6 +293,14 @@ export default function CoursePage() {
         return next;
       });
       applyPreset("quizFocused");
+    } else if (item === "activity") {
+      setRightTab("activity");
+      setHiddenPanels((prev) => {
+        const next = new Set(prev);
+        next.delete("quiz");
+        return next;
+      });
+      applyPreset("chatFocused");
     }
   }, [applyPreset]);
 
@@ -363,7 +378,7 @@ export default function CoursePage() {
                           <X className="w-3.5 h-3.5" />
                         </button>
                       </div>
-                      <PdfViewer fileUrl={pdfFileUrl} fileName={pdfFileName} />
+                      <ErrorBoundary><PdfViewer fileUrl={pdfFileUrl} fileName={pdfFileName} /></ErrorBoundary>
                     </div>
                   </ResizablePanel>
                   <ResizableHandle withHandle />
@@ -381,7 +396,7 @@ export default function CoursePage() {
                           <X className="w-3.5 h-3.5" />
                         </button>
                       </div>
-                      <NotesPanel courseId={courseId} contentTree={contentTree} />
+                      <ErrorBoundary><NotesPanel courseId={courseId} contentTree={contentTree} /></ErrorBoundary>
                     </div>
                   </ResizablePanel>
                   <ResizableHandle withHandle />
@@ -413,12 +428,15 @@ export default function CoursePage() {
                           <X className="w-3.5 h-3.5" />
                         </button>
                       </div>
-                      {rightTab === "quiz" && <QuizPanel courseId={courseId} />}
-                      {rightTab === "flashcards" && <FlashcardPanel courseId={courseId} />}
-                      {rightTab === "progress" && <ProgressPanel courseId={courseId} />}
-                      {rightTab === "graph" && <KnowledgeGraph courseId={courseId} />}
-                      {rightTab === "review" && <ReviewPanel courseId={courseId} />}
-                      {rightTab === "plan" && <StudyPlanPanel courseId={courseId} />}
+                      <ErrorBoundary>
+                        {rightTab === "quiz" && <QuizPanel courseId={courseId} />}
+                        {rightTab === "flashcards" && <FlashcardPanel courseId={courseId} />}
+                        {rightTab === "progress" && <ProgressPanel courseId={courseId} />}
+                        {rightTab === "graph" && <KnowledgeGraph courseId={courseId} />}
+                        {rightTab === "review" && <ReviewPanel courseId={courseId} />}
+                        {rightTab === "plan" && <StudyPlanPanel courseId={courseId} />}
+                        {rightTab === "activity" && <ActivityPanel courseId={courseId} />}
+                      </ErrorBoundary>
                     </div>
                   </ResizablePanel>
                   <ResizableHandle withHandle />
@@ -435,7 +453,7 @@ export default function CoursePage() {
                         <X className="w-3.5 h-3.5" />
                       </button>
                     </div>
-                    <ChatPanel courseId={courseId} activeTab={activityItem} scene={activeScene} />
+                    <ErrorBoundary><ChatPanel courseId={courseId} activeTab={activityItem} scene={activeScene} /></ErrorBoundary>
                   </div>
                 </ResizablePanel>
               )}

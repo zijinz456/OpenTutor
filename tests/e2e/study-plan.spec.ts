@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { skipOnboarding, createCourseWithContent, switchScene } from "./helpers/test-utils";
+import { skipOnboarding, createCourseWithContent, switchScene, expectGeneratedStudyPlan } from "./helpers/test-utils";
 
 test.describe.serial("Study Plan Panel", () => {
   test.beforeEach(async ({ page }) => {
@@ -59,14 +59,12 @@ test.describe.serial("Study Plan Panel", () => {
     await expect(content).not.toBeEmpty();
   });
 
-  test("plan shows mock LLM response", async ({ page }) => {
+  test("plan shows generated content", async ({ page }) => {
     await createCourseWithContent(page);
     await switchScene(page, "exam_prep");
     await expect(page.getByTestId("study-plan-panel")).toBeVisible({ timeout: 15_000 });
     await page.getByTestId("study-plan-generate").click();
-    await expect(page.getByTestId("study-plan-content")).toContainText("No LLM API key configured", {
-      timeout: 30_000,
-    });
+    await expectGeneratedStudyPlan(page);
   });
 
   test("Save New button saves plan and shows toast", async ({ page }) => {
@@ -102,9 +100,7 @@ test.describe.serial("Study Plan Panel", () => {
     // Regenerate a second plan
     await page.getByTestId("study-plan-days-input").fill("3");
     await page.getByTestId("study-plan-generate").click();
-    await expect(page.getByTestId("study-plan-content")).toContainText(/Your message was|No LLM API key/, {
-      timeout: 30_000,
-    });
+    await expectGeneratedStudyPlan(page);
     // "Replace Latest" button should now be visible
     await expect(page.getByRole("button", { name: "Replace Latest" })).toBeVisible({ timeout: 15_000 });
   });

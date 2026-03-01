@@ -148,6 +148,179 @@ async def get_learning_overview(
     }
 
 
+# ── Time-Series Analytics ──
+
+
+@router.get("/courses/{course_id}/trends")
+async def get_learning_trends(
+    course_id: uuid.UUID,
+    days: int = 30,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get daily learning trends for charts: mastery, study time, quiz accuracy."""
+    from datetime import datetime, timedelta, timezone
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+    # Study sessions by day
+    session_result = await db.execute(
+        select(StudySession)
+        .where(
+            StudySession.user_id == user.id,
+            StudySession.course_id == course_id,
+            StudySession.started_at >= cutoff,
+        )
+        .order_by(StudySession.started_at)
+    )
+    sessions = session_result.scalars().all()
+
+    # Progress snapshots — use updated_at to approximate daily mastery
+    progress_result = await db.execute(
+        select(LearningProgress)
+        .where(
+            LearningProgress.user_id == user.id,
+            LearningProgress.course_id == course_id,
+        )
+    )
+    progress_rows = progress_result.scalars().all()
+
+    # Quiz results by day
+    from models.practice import PracticeResult
+    quiz_result = await db.execute(
+        select(PracticeResult)
+        .where(
+            PracticeResult.user_id == user.id,
+            PracticeResult.created_at >= cutoff,
+        )
+        .order_by(PracticeResult.created_at)
+    )
+    quiz_rows = quiz_result.scalars().all()
+
+    # Build daily buckets
+    daily: dict[str, dict] = {}
+    for i in range(days):
+        d = (datetime.now(timezone.utc) - timedelta(days=days - 1 - i)).strftime("%Y-%m-%d")
+        daily[d] = {"date": d, "study_minutes": 0, "quiz_total": 0, "quiz_correct": 0}
+
+    for s in sessions:
+        if s.started_at:
+            d = s.started_at.strftime("%Y-%m-%d")
+            if d in daily:
+                daily[d]["study_minutes"] += s.duration_minutes or 0
+
+    for q in quiz_rows:
+        if q.created_at:
+            d = q.created_at.strftime("%Y-%m-%d")
+            if d in daily:
+                daily[d]["quiz_total"] += 1
+                if q.is_correct:
+                    daily[d]["quiz_correct"] += 1
+
+    # Compute running average mastery
+    current_mastery = (
+        sum(p.mastery_score for p in progress_rows) / len(progress_rows)
+        if progress_rows else 0.0
+    )
+
+    trend_data = sorted(daily.values(), key=lambda x: x["date"])
+    for entry in trend_data:
+        entry["accuracy"] = (
+            round(entry["quiz_correct"] / entry["quiz_total"] * 100, 1)
+            if entry["quiz_total"] > 0 else None
+        )
+
+    return {
+        "course_id": str(course_id),
+        "days": days,
+        "current_mastery": round(current_mastery * 100, 1),
+        "trend": trend_data,
+    }
+
+
+@router.get("/trends")
+async def get_global_trends(
+    days: int = 30,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get global daily learning trends across all courses."""
+    from datetime import datetime, timedelta, timezone
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+    session_result = await db.execute(
+        select(StudySession)
+        .where(StudySession.user_id == user.id, StudySession.started_at >= cutoff)
+        .order_by(StudySession.started_at)
+    )
+    sessions = session_result.scalars().all()
+
+    from models.practice import PracticeResult
+    quiz_result = await db.execute(
+        select(PracticeResult)
+        .where(PracticeResult.user_id == user.id, PracticeResult.created_at >= cutoff)
+        .order_by(PracticeResult.created_at)
+    )
+    quiz_rows = quiz_result.scalars().all()
+
+    daily: dict[str, dict] = {}
+    for i in range(days):
+        d = (datetime.now(timezone.utc) - timedelta(days=days - 1 - i)).strftime("%Y-%m-%d")
+        daily[d] = {"date": d, "study_minutes": 0, "quiz_total": 0, "quiz_correct": 0}
+
+    for s in sessions:
+        if s.started_at:
+            d = s.started_at.strftime("%Y-%m-%d")
+            if d in daily:
+                daily[d]["study_minutes"] += s.duration_minutes or 0
+
+    for q in quiz_rows:
+        if q.created_at:
+            d = q.created_at.strftime("%Y-%m-%d")
+            if d in daily:
+                daily[d]["quiz_total"] += 1
+                if q.is_correct:
+                    daily[d]["quiz_correct"] += 1
+
+    trend_data = sorted(daily.values(), key=lambda x: x["date"])
+    for entry in trend_data:
+        entry["accuracy"] = (
+            round(entry["quiz_correct"] / entry["quiz_total"] * 100, 1)
+            if entry["quiz_total"] > 0 else None
+        )
+
+    return {"days": days, "trend": trend_data}
+
+
+# ── Memory Stats Endpoint ──
+
+
+@router.get("/memory-stats")
+async def get_memory_stats_endpoint(
+    course_id: uuid.UUID | None = None,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get memory health statistics (type distribution, importance, consolidation status)."""
+    from services.agent.memory_agent import get_memory_stats
+
+    return await get_memory_stats(db, user.id, course_id)
+
+
+@router.post("/memory-consolidate")
+async def trigger_consolidation(
+    course_id: uuid.UUID | None = None,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Manually trigger memory consolidation (dedup + decay + categorize + merge)."""
+    from services.agent.memory_agent import run_full_consolidation
+
+    result = await run_full_consolidation(db, user.id, course_id)
+    return result
+
+
 # ── Template Endpoints ──
 
 
@@ -183,6 +356,21 @@ async def seed_templates(db: AsyncSession = Depends(get_db)):
     return {"seeded": count}
 
 
+# ── Forgetting Forecast Endpoint ──
+
+
+@router.get("/courses/{course_id}/forgetting-forecast")
+async def get_forgetting_forecast(
+    course_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Predict when each knowledge point will be forgotten (FSRS retrievability)."""
+    from services.spaced_repetition.forgetting_forecast import predict_forgetting
+
+    return await predict_forgetting(db, user.id, course_id)
+
+
 # ── Knowledge Graph Endpoint ──
 
 
@@ -196,3 +384,19 @@ async def get_knowledge_graph(
     from services.knowledge.graph import build_knowledge_graph
 
     return await build_knowledge_graph(db, course_id, user.id)
+
+
+# ── Learning Path Optimization Endpoint ──
+
+
+@router.get("/courses/{course_id}/learning-path")
+async def get_optimized_learning_path(
+    course_id: uuid.UUID,
+    skip_mastered: bool = True,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get optimized learning path (topo sort + critical path + mastery-aware prioritization)."""
+    from services.knowledge.path_optimizer import optimize_learning_path
+
+    return await optimize_learning_path(db, course_id, user.id, skip_mastered)

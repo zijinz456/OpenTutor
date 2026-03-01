@@ -296,8 +296,13 @@ jobs:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
       DATABASE_URL: postgresql+asyncpg://opentutor:REDACTED_DEV_PASSWORD@127.0.0.1:5432/opentutor
       API_BASE: http://127.0.0.1:8004
+      LLM_REQUIRED: "1"
+      PYTHON_BIN: python
 
     steps:
       - name: Checkout
@@ -314,6 +319,25 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r apps/api/requirements.txt
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: |
+            package-lock.json
+            apps/web/package-lock.json
+
+      - name: Install Playwright runner deps
+        run: npm ci
+
+      - name: Install Web dependencies
+        working-directory: apps/web
+        run: npm ci
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
 
       - name: Prepare database
         run: |
@@ -354,13 +378,16 @@ jobs:
       - name: Start API
         run: |
           cd apps/api
-          python -m uvicorn main:app --host 127.0.0.1 --port 8004 > /tmp/opentutor_api.log 2>&1 &
+          LLM_REQUIRED=1 python -m uvicorn main:app --host 127.0.0.1 --port 8004 > /tmp/opentutor_api.log 2>&1 &
           echo $! > /tmp/opentutor_api.pid
           sleep 3
           curl -f http://127.0.0.1:8004/api/health
 
       - name: Run real LLM integration test
         run: bash scripts/llm_integration_test.sh
+
+      - name: Run real LLM browser E2E
+        run: npx playwright test tests/e2e/llm-real.spec.ts --project=chromium --reporter=github
 
       - name: Dump API log on failure
         if: failure()

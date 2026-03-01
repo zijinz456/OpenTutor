@@ -8,18 +8,22 @@ Borrows from:
 
 Runs as a background task (OpenClaw Queue Lane: cron lane) for:
 1. Real-time Flush: save important memories during long sessions
-2. Periodic Consolidation: dedup + decay + categorize
-3. FSRS Decay: update spaced repetition scores
+2. Periodic Consolidation: dedup + decay + categorize + merge
+3. Session Episodic Summary: create session-level episode memories
+4. Auto-consolidation: trigger after every N messages
 """
 
+import json
 import logging
 import uuid
+from collections import Counter
+from datetime import datetime, timezone
 
-from sqlalchemy import select, func
+from sqlalchemy import select, func, case, literal_column
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.memory import ConversationMemory
-from services.memory.pipeline import consolidate_memories
+from models.memory import ConversationMemory, MEMCELL_TYPES
+from services.memory.pipeline import consolidate_memories, generate_embedding
 from services.llm.router import get_llm_client
 
 logger = logging.getLogger(__name__)
@@ -168,3 +172,204 @@ async def run_full_consolidation(
         **categorization_result,
         "total_memories": total_memories,
     }
+
+
+# ── Session Episodic Summary ──
+
+SESSION_SUMMARY_PROMPT = """Summarize this learning session into a single episodic memory.
+
+Focus on:
+- What topics were covered
+- Key breakthroughs or struggles
+- Overall session quality and student engagement
+
+Session messages (last {count} exchanges):
+{messages}
+
+Output a single paragraph (50-100 words) capturing the essence of this session.
+If the session is too trivial (e.g., just greetings), return NONE."""
+
+
+async def create_session_episodic_memory(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    course_id: uuid.UUID | None,
+    session_messages: list[dict],
+) -> ConversationMemory | None:
+    """Create a session-level episodic memory summarizing an entire learning session.
+
+    Called when a chat session ends or when the user starts a new session.
+    This creates a high-level "episode" memory that captures the full session context,
+    complementing the atomic MemCells extracted per turn.
+    """
+    if len(session_messages) < 4:  # Need at least 2 exchanges
+        return None
+
+    # Build message text
+    msg_text = "\n".join(
+        f"{'Student' if m.get('role') == 'user' else 'Tutor'}: {m.get('content', '')[:200]}"
+        for m in session_messages[-20:]  # Last 20 messages max
+    )
+
+    client = get_llm_client()
+    try:
+        result, _ = await client.extract(
+            "You are a learning session summarizer. Output a brief summary or NONE.",
+            SESSION_SUMMARY_PROMPT.format(count=len(session_messages), messages=msg_text),
+        )
+        result = result.strip()
+        if not result or result.upper().startswith("NONE"):
+            return None
+
+        embedding = await generate_embedding(result)
+        memory = ConversationMemory(
+            user_id=user_id,
+            course_id=course_id,
+            summary=result,
+            memory_type="episode",
+            embedding=embedding,
+            importance=0.7,  # Episodes are high-value
+            source_message=f"[Session: {len(session_messages)} messages]",
+            metadata_json={
+                "source": "session_episodic",
+                "message_count": len(session_messages),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+        db.add(memory)
+        await db.flush()
+
+        # Update BM25 search vector
+        from sqlalchemy import text
+        await db.execute(
+            text("""
+                UPDATE conversation_memories
+                SET search_vector = to_tsvector('simple', :summary)
+                WHERE id = :id
+            """),
+            {"summary": memory.summary, "id": str(memory.id)},
+        )
+        await db.flush()
+        logger.info("Session episodic memory created for user %s", user_id)
+        return memory
+
+    except Exception as e:
+        logger.warning("Session episodic summary failed: %s", e)
+        return None
+
+
+# ── Memory Statistics ──
+
+async def get_memory_stats(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    course_id: uuid.UUID | None = None,
+) -> dict:
+    """Get memory health statistics for the analytics dashboard.
+
+    Returns type distribution, age stats, importance distribution,
+    and consolidation health indicators.
+    """
+    base_filter = [ConversationMemory.user_id == user_id]
+    if course_id:
+        base_filter.append(ConversationMemory.course_id == course_id)
+
+    # Total count
+    total_q = await db.execute(
+        select(func.count(ConversationMemory.id)).where(*base_filter)
+    )
+    total = total_q.scalar() or 0
+
+    if total == 0:
+        return {
+            "total": 0,
+            "by_type": {},
+            "avg_importance": 0,
+            "needs_consolidation": False,
+            "oldest_days": 0,
+            "uncategorized": 0,
+            "merged_count": 0,
+        }
+
+    # Count by type
+    type_q = await db.execute(
+        select(ConversationMemory.memory_type, func.count(ConversationMemory.id))
+        .where(*base_filter)
+        .group_by(ConversationMemory.memory_type)
+    )
+    by_type = {row[0]: row[1] for row in type_q.fetchall()}
+
+    # Average importance
+    imp_q = await db.execute(
+        select(func.avg(ConversationMemory.importance)).where(*base_filter)
+    )
+    avg_importance = round(float(imp_q.scalar() or 0), 3)
+
+    # Uncategorized count
+    uncat_q = await db.execute(
+        select(func.count(ConversationMemory.id))
+        .where(*base_filter, ConversationMemory.category.is_(None))
+    )
+    uncategorized = uncat_q.scalar() or 0
+
+    # Oldest memory age in days
+    oldest_q = await db.execute(
+        select(func.min(ConversationMemory.created_at)).where(*base_filter)
+    )
+    oldest = oldest_q.scalar()
+    now = datetime.now(timezone.utc)
+    oldest_days = int((now - oldest).total_seconds() / 86400) if oldest else 0
+
+    # Merged memories count (those with merge_count > 1 in metadata)
+    # We can approximate from metadata_json but for now count all
+    all_mems_q = await db.execute(
+        select(ConversationMemory.metadata_json)
+        .where(*base_filter)
+        .where(ConversationMemory.metadata_json.isnot(None))
+    )
+    merged_count = sum(
+        1 for row in all_mems_q.scalars().all()
+        if isinstance(row, dict) and row.get("merge_count", 1) > 1
+    )
+
+    # Consolidation health: suggest if > 100 memories or > 30% uncategorized
+    needs_consolidation = total > 100 or (uncategorized / total > 0.3 if total else False)
+
+    return {
+        "total": total,
+        "by_type": by_type,
+        "avg_importance": avg_importance,
+        "needs_consolidation": needs_consolidation,
+        "oldest_days": oldest_days,
+        "uncategorized": uncategorized,
+        "merged_count": merged_count,
+    }
+
+
+# ── Auto-consolidation Trigger ──
+
+# Track message counts per user to trigger consolidation
+_message_counters: dict[str, int] = {}
+AUTO_CONSOLIDATE_EVERY = 20  # Run consolidation every N messages
+
+
+async def maybe_auto_consolidate(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    course_id: uuid.UUID | None = None,
+) -> dict | None:
+    """Check if auto-consolidation should run based on message count.
+
+    Called during post-processing. Returns consolidation results if triggered,
+    None otherwise.
+    """
+    key = str(user_id)
+    _message_counters[key] = _message_counters.get(key, 0) + 1
+
+    if _message_counters[key] >= AUTO_CONSOLIDATE_EVERY:
+        _message_counters[key] = 0
+        logger.info("Auto-consolidation triggered for user %s (every %d messages)", user_id, AUTO_CONSOLIDATE_EVERY)
+        result = await run_full_consolidation(db, user_id, course_id)
+        return result
+
+    return None

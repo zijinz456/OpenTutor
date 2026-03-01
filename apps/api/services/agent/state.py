@@ -62,6 +62,7 @@ class AgentContext:
     # Input
     user_message: str = ""
     conversation_history: list[dict] = field(default_factory=list)
+    images: list[dict] = field(default_factory=list)  # [{"data": base64, "media_type": str}]
 
     # Tab / Scene context (v3)
     active_tab: str = ""
@@ -77,6 +78,9 @@ class AgentContext:
     preference_sources: dict[str, str] = field(default_factory=dict)
     content_docs: list[dict] = field(default_factory=list)
     memories: list[dict] = field(default_factory=list)
+
+    # Adaptive difficulty (populated during context loading for QUIZ intent)
+    difficulty_guidance: str | None = None
 
     # Execution state (OpenAkita TaskState pattern)
     phase: TaskPhase = TaskPhase.IDLE

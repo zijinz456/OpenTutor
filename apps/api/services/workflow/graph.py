@@ -55,6 +55,7 @@ async def node_classify_intent(state: StudyState) -> dict:
 
 async def node_load_context(state: StudyState) -> dict:
     from services.agent.orchestrator import build_agent_context, load_context
+    from services.agent.state import IntentType
 
     ctx = build_agent_context(
         user_id=state["user_id"],

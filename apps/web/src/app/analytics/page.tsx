@@ -1,22 +1,76 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ArrowLeft, BarChart3, BookOpen, BrainCircuit, Loader2 } from "lucide-react";
+import { ArrowLeft, BarChart3, BookOpen, BrainCircuit, Clock, Database, Loader2, RefreshCw, Target } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { getLearningOverview, type LearningOverview } from "@/lib/api";
+import {
+  getLearningOverview,
+  getGlobalTrends,
+  getMemoryStats,
+  triggerConsolidation,
+  type LearningOverview,
+  type LearningTrends,
+  type TrendDataPoint,
+  type MemoryStats,
+} from "@/lib/api";
+import {
+  AreaChart,
+  Area,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
+  Legend,
+} from "recharts";
+
+const GAP_COLORS: Record<string, string> = {
+  fundamental_gap: "#ef4444",
+  transfer_gap: "#f59e0b",
+  trap_vulnerability: "#8b5cf6",
+  mastered: "#22c55e",
+};
+
+const ERROR_COLORS = ["#ef4444", "#f59e0b", "#3b82f6", "#8b5cf6", "#6b7280"];
 
 export default function AnalyticsPage() {
   const router = useRouter();
   const [overview, setOverview] = useState<LearningOverview | null>(null);
+  const [trends, setTrends] = useState<LearningTrends | null>(null);
+  const [memStats, setMemStats] = useState<MemoryStats | null>(null);
   const [loading, setLoading] = useState(true);
+  const [consolidating, setConsolidating] = useState(false);
 
   useEffect(() => {
-    getLearningOverview()
-      .then(setOverview)
+    Promise.all([getLearningOverview(), getGlobalTrends(30), getMemoryStats()])
+      .then(([ov, tr, ms]) => {
+        setOverview(ov);
+        setTrends(tr);
+        setMemStats(ms);
+      })
+      .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
+
+  const handleConsolidate = async () => {
+    setConsolidating(true);
+    try {
+      await triggerConsolidation();
+      const ms = await getMemoryStats();
+      setMemStats(ms);
+    } catch {
+      // ignore
+    } finally {
+      setConsolidating(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -27,20 +81,35 @@ export default function AnalyticsPage() {
   }
 
   const gapEntries = Object.entries(overview?.gap_type_breakdown ?? {}).sort((a, b) => b[1] - a[1]);
-  const diagnosisEntries = Object.entries(overview?.diagnosis_breakdown ?? {}).sort((a, b) => b[1] - a[1]);
   const errorEntries = Object.entries(overview?.error_category_breakdown ?? {}).sort((a, b) => b[1] - a[1]);
   const totalMinutes = overview?.total_study_minutes ?? 0;
+  const trendData = trends?.trend ?? [];
+
+  // Pie chart data for gap types
+  const gapPieData = gapEntries.map(([name, value]) => ({
+    name: name.replaceAll("_", " "),
+    value,
+    color: GAP_COLORS[name] || "#6b7280",
+  }));
+
+  // Pie chart data for error categories
+  const errorPieData = errorEntries.map(([name, value], i) => ({
+    name: name.replaceAll("_", " "),
+    value,
+    color: ERROR_COLORS[i % ERROR_COLORS.length],
+  }));
 
   return (
     <div className="min-h-screen bg-background">
       <header className="border-b px-6 py-3 flex items-center gap-3">
-        <Button variant="ghost" size="icon" onClick={() => router.push("/")}>
+        <Button variant="ghost" size="icon" onClick={() => router.push("/")} title="Back to dashboard">
           <ArrowLeft className="h-4 w-4" />
         </Button>
         <h1 className="text-lg font-semibold">Learning Analytics</h1>
       </header>
 
-      <div className="max-w-5xl mx-auto p-6 space-y-6" data-testid="analytics-page">
+      <div className="max-w-6xl mx-auto p-6 space-y-6" data-testid="analytics-page">
+        {/* Key Metrics */}
         <div className="grid md:grid-cols-4 gap-4">
           <MetricCard
             icon={<BookOpen className="h-4 w-4" />}
@@ -48,28 +117,195 @@ export default function AnalyticsPage() {
             value={String(overview?.total_courses ?? 0)}
           />
           <MetricCard
-            icon={<BarChart3 className="h-4 w-4" />}
+            icon={<Target className="h-4 w-4" />}
             label="Average Mastery"
             value={`${((overview?.average_mastery ?? 0) * 100).toFixed(0)}%`}
           />
           <MetricCard
-            icon={<BrainCircuit className="h-4 w-4" />}
+            icon={<Clock className="h-4 w-4" />}
             label="Study Time"
             value={totalMinutes >= 60 ? `${Math.floor(totalMinutes / 60)}h ${totalMinutes % 60}m` : `${totalMinutes}m`}
           />
           <MetricCard
-            icon={<BarChart3 className="h-4 w-4" />}
-            label="Diagnosed Errors"
-            value={String(diagnosisEntries.reduce((sum, [, count]) => sum + count, 0))}
+            icon={<BrainCircuit className="h-4 w-4" />}
+            label="Quiz Questions"
+            value={String(trendData.reduce((sum, d) => sum + d.quiz_total, 0))}
           />
         </div>
 
-        <div className="grid lg:grid-cols-3 gap-4">
-          <BreakdownCard title="Gap Types" entries={gapEntries} />
-          <BreakdownCard title="Diagnoses" entries={diagnosisEntries} />
-          <BreakdownCard title="Error Categories" entries={errorEntries} />
+        {/* Charts Row */}
+        <div className="grid lg:grid-cols-2 gap-6">
+          {/* Study Activity Area Chart */}
+          <section className="rounded-xl border bg-card p-4">
+            <h2 className="font-medium mb-4">Daily Study Time (last 30 days)</h2>
+            <div className="h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={trendData}>
+                  <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+                  <XAxis
+                    dataKey="date"
+                    tick={{ fontSize: 11 }}
+                    tickFormatter={(v) => String(v).slice(5)}
+                  />
+                  <YAxis tick={{ fontSize: 11 }} />
+                  <Tooltip
+                    labelFormatter={(v) => String(v)}
+                    formatter={(value) => [`${value} min`, "Study Time"]}
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="study_minutes"
+                    stroke="hsl(var(--primary))"
+                    fill="hsl(var(--primary))"
+                    fillOpacity={0.2}
+                    strokeWidth={2}
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </section>
+
+          {/* Quiz Accuracy Bar Chart */}
+          <section className="rounded-xl border bg-card p-4">
+            <h2 className="font-medium mb-4">Quiz Activity (last 30 days)</h2>
+            <div className="h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={trendData}>
+                  <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+                  <XAxis
+                    dataKey="date"
+                    tick={{ fontSize: 11 }}
+                    tickFormatter={(v) => String(v).slice(5)}
+                  />
+                  <YAxis tick={{ fontSize: 11 }} />
+                  <Tooltip
+                    labelFormatter={(v) => String(v)}
+                    formatter={(value, name) => [
+                      value,
+                      name === "quiz_correct" ? "Correct" : "Total",
+                    ]}
+                  />
+                  <Bar dataKey="quiz_total" fill="#94a3b8" name="quiz_total" radius={[2, 2, 0, 0]} />
+                  <Bar dataKey="quiz_correct" fill="#22c55e" name="quiz_correct" radius={[2, 2, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </section>
         </div>
 
+        {/* Pie Charts Row */}
+        <div className="grid lg:grid-cols-2 gap-6">
+          {/* Gap Type Distribution */}
+          <section className="rounded-xl border bg-card p-4">
+            <h2 className="font-medium mb-4">Knowledge Gap Distribution</h2>
+            {gapPieData.length > 0 ? (
+              <div className="h-56">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={gapPieData}
+                      dataKey="value"
+                      nameKey="name"
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={50}
+                      outerRadius={80}
+                      label={({ name, percent }) =>
+                        `${name ?? ""} ${((percent ?? 0) * 100).toFixed(0)}%`
+                      }
+                    >
+                      {gapPieData.map((entry, i) => (
+                        <Cell key={i} fill={entry.color} />
+                      ))}
+                    </Pie>
+                    <Tooltip />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground py-8 text-center">No gap data yet</p>
+            )}
+          </section>
+
+          {/* Error Category Distribution */}
+          <section className="rounded-xl border bg-card p-4">
+            <h2 className="font-medium mb-4">Error Category Breakdown</h2>
+            {errorPieData.length > 0 ? (
+              <div className="h-56">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={errorPieData}
+                      dataKey="value"
+                      nameKey="name"
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={50}
+                      outerRadius={80}
+                      label={({ name, percent }) =>
+                        `${name ?? ""} ${((percent ?? 0) * 100).toFixed(0)}%`
+                      }
+                    >
+                      {errorPieData.map((entry, i) => (
+                        <Cell key={i} fill={entry.color} />
+                      ))}
+                    </Pie>
+                    <Tooltip />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground py-8 text-center">No error data yet</p>
+            )}
+          </section>
+        </div>
+
+        {/* Memory Health */}
+        {memStats && memStats.total > 0 && (
+          <section className="rounded-xl border bg-card p-4">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="font-medium">Memory Health</h2>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleConsolidate}
+                disabled={consolidating}
+              >
+                {consolidating ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <RefreshCw className="h-3 w-3 mr-1" />}
+                Consolidate
+              </Button>
+            </div>
+            <div className="grid sm:grid-cols-4 gap-4">
+              <div className="text-center">
+                <div className="text-2xl font-semibold">{memStats.total}</div>
+                <div className="text-xs text-muted-foreground">Total Memories</div>
+              </div>
+              <div className="text-center">
+                <div className="text-2xl font-semibold">{(memStats.avg_importance * 100).toFixed(0)}%</div>
+                <div className="text-xs text-muted-foreground">Avg Importance</div>
+              </div>
+              <div className="text-center">
+                <div className="text-2xl font-semibold">{memStats.merged_count}</div>
+                <div className="text-xs text-muted-foreground">Merged</div>
+              </div>
+              <div className="text-center">
+                <div className="text-2xl font-semibold">{memStats.uncategorized}</div>
+                <div className="text-xs text-muted-foreground">Uncategorized</div>
+              </div>
+            </div>
+            {Object.keys(memStats.by_type).length > 0 && (
+              <div className="mt-4 flex flex-wrap gap-2">
+                {Object.entries(memStats.by_type).map(([type, count]) => (
+                  <Badge key={type} variant="secondary" className="capitalize">
+                    {type}: {count}
+                  </Badge>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
+
+        {/* Course Summaries */}
         <section className="rounded-xl border bg-card" data-testid="analytics-course-summaries">
           <div className="px-4 py-3 border-b">
             <h2 className="font-medium">Course Summaries</h2>
@@ -120,22 +356,5 @@ function MetricCard({ icon, label, value }: { icon: React.ReactNode; label: stri
       </div>
       <div className="text-2xl font-semibold">{value}</div>
     </div>
-  );
-}
-
-function BreakdownCard({ title, entries }: { title: string; entries: Array<[string, number]> }) {
-  return (
-    <section className="rounded-xl border bg-card p-4" data-testid={`analytics-breakdown-${title.toLowerCase().replace(/\s+/g, "-")}`}>
-      <h2 className="font-medium mb-3">{title}</h2>
-      <div className="flex flex-wrap gap-2">
-        {entries.length > 0 ? entries.map(([label, count]) => (
-          <Badge key={label} variant="secondary" className="capitalize">
-            {label.replaceAll("_", " ")}: {count}
-          </Badge>
-        )) : (
-          <span className="text-sm text-muted-foreground">No data yet</span>
-        )}
-      </div>
-    </section>
   );
 }

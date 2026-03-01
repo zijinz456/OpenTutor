@@ -61,10 +61,14 @@ docker compose up -d
 # Frontend:    http://localhost:3000
 ```
 
+The default compose stack now starts `db`, `redis`, `api`, and `web`, and the
+API container auto-creates tables, seeds built-in system data, and runs the
+background activity engine so queued agent tasks can execute automatically.
+
 ### Manual Setup
 
 ```bash
-# Prerequisites: PostgreSQL 16 with pgvector, Redis, Python 3.12+, Node.js 20+
+# Prerequisites: PostgreSQL 17 with pgvector, Redis, Python 3.11 (tiktoken requires <3.14), Node.js 20+
 
 # Database
 docker compose up -d db redis   # or install PostgreSQL + pgvector + Redis manually
@@ -84,9 +88,9 @@ npm run dev                  # http://localhost:3000
 
 ### Prerequisites
 - Docker + Docker Compose (for Docker setup)
-- Python 3.12+ (for manual setup)
+- Python 3.11 (for manual setup — tiktoken requires <3.14)
 - Node.js 20+ (for frontend)
-- PostgreSQL 16 with pgvector extension
+- PostgreSQL 17 with pgvector extension
 - Redis 7+
 - At least one LLM API key (OpenAI / Anthropic / DeepSeek / Ollama)
 

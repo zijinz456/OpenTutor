@@ -378,6 +378,210 @@ class RunCodeTool(Tool):
         )
 
 
+# ── Tool 6: check_prerequisites ──
+
+
+class CheckPrerequisitesTool(Tool):
+    """Check if the student has mastered prerequisite knowledge points."""
+
+    name = "check_prerequisites"
+    description = (
+        "Check if the student has mastered the prerequisites for a given topic. "
+        "Returns which prerequisites are met and which have gaps."
+    )
+    domain = "education"
+
+    def get_parameters(self) -> list[ToolParameter]:
+        return [
+            ToolParameter(
+                name="topic",
+                type="string",
+                description="The topic to check prerequisites for.",
+                required=True,
+            ),
+        ]
+
+    async def run(self, parameters: dict[str, Any], ctx: Any, db: AsyncSession) -> ToolResult:
+        from models.content import CourseContentTree, KnowledgePoint
+        from models.progress import LearningProgress
+
+        topic = parameters.get("topic", "").strip()
+        if not topic:
+            return ToolResult(success=False, output="", error="No topic provided.")
+
+        try:
+            # Find knowledge points matching the topic
+            kp_result = await db.execute(
+                select(KnowledgePoint)
+                .where(
+                    KnowledgePoint.course_id == ctx.course_id,
+                    KnowledgePoint.name.ilike(f"%{topic}%"),
+                )
+                .limit(5)
+            )
+            kps = kp_result.scalars().all()
+
+            if not kps:
+                return ToolResult(success=True, output=f"No knowledge points found matching '{topic}'.")
+
+            lines = []
+            for kp in kps:
+                deps = kp.dependencies or []
+                if not deps:
+                    lines.append(f"- {kp.name}: No prerequisites listed.")
+                    continue
+
+                # Check mastery of each prerequisite
+                for dep_id in deps:
+                    dep_result = await db.execute(
+                        select(KnowledgePoint).where(KnowledgePoint.id == dep_id)
+                    )
+                    dep_kp = dep_result.scalar_one_or_none()
+                    dep_name = dep_kp.name if dep_kp else str(dep_id)[:8]
+
+                    prog_result = await db.execute(
+                        select(LearningProgress).where(
+                            LearningProgress.user_id == ctx.user_id,
+                            LearningProgress.course_id == ctx.course_id,
+                            LearningProgress.content_node_id == dep_id,
+                        )
+                    )
+                    prog = prog_result.scalar_one_or_none()
+                    mastery = prog.mastery_score if prog else 0.0
+                    status = "OK" if mastery >= 0.6 else "GAP"
+                    lines.append(f"- Prereq for '{kp.name}': {dep_name} — mastery={mastery:.0%} [{status}]")
+
+            return ToolResult(success=True, output=f"Prerequisites check:\n" + "\n".join(lines))
+
+        except Exception as e:
+            logger.error("check_prerequisites failed: %s", e)
+            return ToolResult(success=False, output="", error=str(e))
+
+
+# ── Tool 7: suggest_related_topics ──
+
+
+class SuggestRelatedTopicsTool(Tool):
+    """Suggest related topics based on knowledge graph connections."""
+
+    name = "suggest_related_topics"
+    description = (
+        "Find topics related to a given concept based on the course knowledge graph. "
+        "Useful for expanding learning or finding connections."
+    )
+    domain = "education"
+
+    def get_parameters(self) -> list[ToolParameter]:
+        return [
+            ToolParameter(
+                name="topic",
+                type="string",
+                description="The topic to find related concepts for.",
+                required=True,
+            ),
+        ]
+
+    async def run(self, parameters: dict[str, Any], ctx: Any, db: AsyncSession) -> ToolResult:
+        from models.content import KnowledgePoint
+
+        topic = parameters.get("topic", "").strip()
+        if not topic:
+            return ToolResult(success=False, output="", error="No topic provided.")
+
+        try:
+            # Find the knowledge point
+            result = await db.execute(
+                select(KnowledgePoint)
+                .where(
+                    KnowledgePoint.course_id == ctx.course_id,
+                    KnowledgePoint.name.ilike(f"%{topic}%"),
+                )
+                .limit(3)
+            )
+            kps = result.scalars().all()
+
+            if not kps:
+                return ToolResult(success=True, output=f"No knowledge points found matching '{topic}'.")
+
+            # Find all KPs that share dependencies or are dependents
+            all_related_ids = set()
+            for kp in kps:
+                if kp.dependencies:
+                    all_related_ids.update(kp.dependencies)
+
+            # Also find KPs that depend on these
+            for kp in kps:
+                dep_result = await db.execute(
+                    select(KnowledgePoint).where(
+                        KnowledgePoint.course_id == ctx.course_id,
+                    )
+                )
+                all_kps = dep_result.scalars().all()
+                for other in all_kps:
+                    if other.dependencies and kp.id in (other.dependencies or []):
+                        all_related_ids.add(other.id)
+
+            # Load names
+            lines = []
+            for rid in list(all_related_ids)[:10]:
+                r = await db.execute(select(KnowledgePoint).where(KnowledgePoint.id == rid))
+                related = r.scalar_one_or_none()
+                if related:
+                    lines.append(f"- {related.name}")
+
+            if not lines:
+                return ToolResult(success=True, output=f"No related topics found for '{topic}' in the knowledge graph.")
+
+            return ToolResult(
+                success=True,
+                output=f"Related topics for '{topic}':\n" + "\n".join(lines),
+            )
+
+        except Exception as e:
+            logger.error("suggest_related_topics failed: %s", e)
+            return ToolResult(success=False, output="", error=str(e))
+
+
+# ── Tool 8: get_forgetting_forecast ──
+
+
+class GetForgettingForecastTool(Tool):
+    """Get forgetting curve predictions for the student."""
+
+    name = "get_forgetting_forecast"
+    description = (
+        "Predict which topics the student is about to forget based on FSRS spaced repetition data. "
+        "Returns topics sorted by urgency (most at-risk first)."
+    )
+    domain = "education"
+
+    def get_parameters(self) -> list[ToolParameter]:
+        return []
+
+    async def run(self, parameters: dict[str, Any], ctx: Any, db: AsyncSession) -> ToolResult:
+        try:
+            from services.spaced_repetition.forgetting_forecast import predict_forgetting
+
+            forecast = await predict_forgetting(db, ctx.user_id, ctx.course_id)
+            predictions = forecast.get("predictions", [])
+
+            if not predictions:
+                return ToolResult(success=True, output="No spaced repetition data available yet.")
+
+            lines = [f"Forgetting forecast ({forecast['total_items']} items, {forecast['urgent_count']} urgent):"]
+            for p in predictions[:10]:
+                lines.append(
+                    f"- {p['title']}: retrievability={p['current_retrievability']:.0%}, "
+                    f"drops in {p['days_until_threshold']:.0f} days [{p['urgency']}]"
+                )
+
+            return ToolResult(success=True, output="\n".join(lines))
+
+        except Exception as e:
+            logger.error("get_forgetting_forecast failed: %s", e)
+            return ToolResult(success=False, output="", error=str(e))
+
+
 # ── Registry Helper ──
 
 
@@ -389,4 +593,7 @@ def get_builtin_tools() -> list[Tool]:
         ListWrongAnswersTool(),
         GetMasteryReportTool(),
         RunCodeTool(),
+        CheckPrerequisitesTool(),
+        SuggestRelatedTopicsTool(),
+        GetForgettingForecastTool(),
     ]

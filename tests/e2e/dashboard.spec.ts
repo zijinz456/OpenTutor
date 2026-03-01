@@ -80,66 +80,67 @@ test.describe("Dashboard", () => {
   // ---- course card after creation ---------------------------------------
 
   test("course card appears after creating a course", async ({ page }) => {
-    await createCourse(page, "Dashboard Test Course");
-    // Navigate back to dashboard
+    const uid = Date.now();
+    await createCourse(page, `DashCard ${uid}`);
     await page.goto("/");
-    await expect(page.getByText("Dashboard Test Course")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText(`DashCard ${uid}`)).toBeVisible({ timeout: 15_000 });
   });
 
   test("clicking course card navigates to workspace", async ({ page }) => {
-    const courseId = await createCourse(page, "Click Test Course");
+    const uid = Date.now();
+    const courseId = await createCourse(page, `ClickNav ${uid}`);
     await page.goto("/");
-    await page.getByText("Click Test Course").click();
+    await page.getByText(`ClickNav ${uid}`).click();
     await expect(page).toHaveURL(new RegExp(`/course/${courseId}`), { timeout: 15_000 });
   });
 
   test("course card shows initials from name", async ({ page }) => {
-    await createCourse(page, "Quantum Physics");
+    const uid = Date.now();
+    await createCourse(page, `Quantum Physics ${uid}`);
     await page.goto("/");
-    // Initials should be "QP"
-    await expect(page.getByText("QP")).toBeVisible({ timeout: 15_000 });
+    // Initials should be "QP" (first letters of first two words)
+    await expect(page.getByText("QP").first()).toBeVisible({ timeout: 15_000 });
   });
 
   test("course card shows creation date", async ({ page }) => {
-    await createCourse(page, "Date Check Course");
+    const uid = Date.now();
+    await createCourse(page, `DateCheck ${uid}`);
     await page.goto("/");
-    // The card shows "Created: <date>" -- verify at least one is present
     await expect(page.getByText("Created:", { exact: false }).first()).toBeVisible({ timeout: 15_000 });
   });
 
   test("course card shows '0 files' description fallback", async ({ page }) => {
-    await createCourse(page, "Empty Files Course");
+    const uid = Date.now();
+    await createCourse(page, `EmptyFiles ${uid}`);
     await page.goto("/");
     await expect(page.getByText("0 files").first()).toBeVisible({ timeout: 15_000 });
   });
 
   test("multiple courses render in grid", async ({ page }) => {
-    await createCourse(page, "Grid Course A");
+    const uid = Date.now();
+    await createCourse(page, `GridA ${uid}`);
     await page.goto("/new");
-    await createCourse(page, "Grid Course B");
+    await createCourse(page, `GridB ${uid}`);
     await page.goto("/");
-    await expect(page.getByText("Grid Course A")).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByText("Grid Course B")).toBeVisible({ timeout: 15_000 });
-    // The grid container uses CSS grid classes
+    await expect(page.getByText(`GridA ${uid}`)).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText(`GridB ${uid}`)).toBeVisible({ timeout: 15_000 });
     const grid = page.locator(".grid");
     await expect(grid).toBeVisible();
   });
 
   test("newly created course appears on dashboard", async ({ page }) => {
-    // Create a course first
-    await createCourse(page, "Brand New Course");
-    // Return to dashboard
+    const uid = Date.now();
+    await createCourse(page, `BrandNew ${uid}`);
     await page.goto("/");
-    await expect(page.getByText("Brand New Course")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText(`BrandNew ${uid}`)).toBeVisible({ timeout: 15_000 });
   });
 
   test("dashboard re-fetches courses on mount", async ({ page }) => {
-    await createCourse(page, "Refetch Course");
-    // Navigate to settings then back to dashboard
+    const uid = Date.now();
+    await createCourse(page, `Refetch ${uid}`);
     await page.goto("/settings");
     await expect(page).toHaveURL(/\/settings/, { timeout: 15_000 });
     await page.goto("/");
-    // The course should still appear (re-fetched on mount)
-    await expect(page.getByText("Refetch Course")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText(`Refetch ${uid}`)).toBeVisible({ timeout: 15_000 });
   });
 });
