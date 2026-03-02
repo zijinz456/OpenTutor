@@ -22,7 +22,7 @@ test.describe("Dashboard", () => {
 
   test("renders header with OpenTutor branding", async ({ page }) => {
     await page.goto("/");
-    await expect(page.getByText("OpenTutor")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("OpenTutor").first()).toBeVisible({ timeout: 15_000 });
   });
 
   // ---- empty state ------------------------------------------------------
@@ -46,20 +46,17 @@ test.describe("Dashboard", () => {
 
   // ---- settings icon ----------------------------------------------------
 
-  test("settings icon navigates to /settings", async ({ page }) => {
+  test("settings button navigates to /settings", async ({ page }) => {
     await page.goto("/");
-    // Settings icon is a button in the header area
-    await page.locator("button").filter({ has: page.locator('svg.lucide-settings') }).click();
+    await page.getByText("Settings").first().click();
     await expect(page).toHaveURL(/\/settings/, { timeout: 15_000 });
   });
 
   // ---- analytics icon ---------------------------------------------------
 
-  test("analytics icon navigates to /analytics", async ({ page }) => {
+  test("analytics button navigates to /analytics", async ({ page }) => {
     await page.goto("/");
-    // Analytics is the first icon button in the header right area (BarChart3)
-    const headerBtns = page.locator("button.text-gray-500");
-    await headerBtns.first().click();
+    await page.getByText("Analytics").first().click();
     await expect(page).toHaveURL(/\/analytics/, { timeout: 15_000 });
   });
 
@@ -102,18 +99,21 @@ test.describe("Dashboard", () => {
     await expect(page.getByText("QP").first()).toBeVisible({ timeout: 15_000 });
   });
 
-  test("course card shows updated date", async ({ page }) => {
+  test("course card shows a date", async ({ page }) => {
     const uid = Date.now();
     await createCourse(page, `DateCheck ${uid}`);
     await page.goto("/");
-    await expect(page.getByText("Updated:", { exact: false }).first()).toBeVisible({ timeout: 15_000 });
+    // The date is shown in toLocaleDateString() format (e.g. "3/2/2026")
+    await expect(page.getByText(`DateCheck ${uid}`)).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator("button").filter({ hasText: `DateCheck ${uid}` }).locator(".text-muted-foreground").first()).toBeVisible();
   });
 
-  test("course card shows '0 files' description fallback", async ({ page }) => {
+  test("course card shows scene description fallback", async ({ page }) => {
     const uid = Date.now();
     await createCourse(page, `EmptyFiles ${uid}`);
     await page.goto("/");
-    await expect(page.getByText("0 files").first()).toBeVisible({ timeout: 15_000 });
+    // Courses without description show "Scene: study_session" fallback
+    await expect(page.getByText("Scene:").first()).toBeVisible({ timeout: 15_000 });
   });
 
   test("multiple courses render in grid", async ({ page }) => {

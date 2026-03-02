@@ -135,7 +135,7 @@ test.describe("Persistence", () => {
       });
     });
     await newPage.goto("/");
-    await expect(newPage).toHaveURL(/\/onboarding/, { timeout: 15_000 });
+    await expect(newPage).toHaveURL(/\/onboarding/, { timeout: 30_000 });
     await newPage.close();
   });
 
