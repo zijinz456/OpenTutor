@@ -16,10 +16,15 @@ Another service is using port 5432 (PostgreSQL), 6379 (Redis), 8000 (API), or 30
 
 ```bash
 # Find what's using the port (example: 5432)
-lsof -i :5432
+lsof -i :5432                              # macOS / Linux
+# ss -tlnp | grep 5432                     # Linux alternative
+# Get-NetTCPConnection -LocalPort 5432     # Windows (PowerShell)
+# netstat -ano | findstr :5432             # Windows (Command Prompt)
 
 # Option 1: Stop the conflicting service
-brew services stop postgresql@17   # macOS Homebrew example
+brew services stop postgresql@17           # macOS
+# sudo systemctl stop postgresql           # Linux (systemd)
+# Stop-Service postgresql-x64-17           # Windows (PowerShell, run as admin)
 
 # Option 2: Change the port mapping in docker-compose.yml
 # e.g., "5433:5432" to expose PostgreSQL on 5433 instead
@@ -69,9 +74,11 @@ docker compose ps db
 # Manual setup — check if PostgreSQL is running
 pg_isready -h localhost -p 5432
 
-# macOS Homebrew
-brew services list | grep postgresql
-brew services start postgresql@17
+# Start PostgreSQL
+brew services start postgresql@17          # macOS
+# sudo systemctl start postgresql          # Linux (systemd)
+# sudo service postgresql start            # Linux (SysV init)
+# Start-Service postgresql-x64-17          # Windows (PowerShell, run as admin)
 ```
 
 ### "database opentutor does not exist"
@@ -257,6 +264,75 @@ brew install postgresql@17
 
 # Ubuntu
 sudo apt install libpq-dev
+
+# Windows — ensure PostgreSQL bin directory is in your PATH
+# Typically: C:\Program Files\PostgreSQL\16\bin
+```
+
+---
+
+## Windows-Specific Issues
+
+### "python3" or "python3.11" not recognized
+
+Windows uses `python` (not `python3`) and the `py` launcher:
+
+```powershell
+# Check available Python versions
+py --list
+
+# Use Python 3.11 specifically
+py -3.11 --version
+
+# Create venv with specific version
+py -3.11 -m venv apps\api\.venv
+```
+
+### PowerShell execution policy blocks quickstart.ps1
+
+```powershell
+# Allow scripts for current session only
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+
+# Or run directly with bypass
+powershell -ExecutionPolicy Bypass -File scripts\quickstart.ps1
+```
+
+### PostgreSQL service won't start
+
+```powershell
+# Check service status
+Get-Service postgresql*
+
+# Start the service (run PowerShell as Administrator)
+Start-Service postgresql-x64-16
+
+# Or use pg_ctl directly
+pg_ctl -D "C:\Program Files\PostgreSQL\16\data" start
+```
+
+### Docker Desktop: "docker.sock" not found
+
+Docker Desktop on Windows uses a named pipe instead of a Unix socket. Set in `.env`:
+
+```
+DOCKER_SOCK=//./pipe/docker_engine
+```
+
+Or avoid the issue entirely by using process-based sandbox:
+
+```
+CODE_SANDBOX_BACKEND=process
+```
+
+### npm install fails with node-gyp errors
+
+Install the Windows build tools:
+
+```powershell
+# Run PowerShell as Administrator
+npm install --global windows-build-tools
+# Or install Visual Studio Build Tools from https://visualstudio.microsoft.com/visual-cpp-build-tools/
 ```
 
 ---

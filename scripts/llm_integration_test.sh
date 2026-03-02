@@ -157,13 +157,13 @@ if [[ ! "$status" =~ ^2 ]]; then
   exit 1
 fi
 
-if rg -q "No LLM API key configured|local fallback response" "$TMP_DIR/chat.txt"; then
+if grep -Eq "No LLM API key configured|local fallback response" "$TMP_DIR/chat.txt"; then
   echo "FAIL: chat used mock fallback instead of real provider"
   head -c 500 "$TMP_DIR/chat.txt" || true
   exit 1
 fi
 
-if ! rg -q "event: message|event: done" "$TMP_DIR/chat.txt"; then
+if ! grep -Eq "event: message|event: done" "$TMP_DIR/chat.txt"; then
   echo "FAIL: chat stream did not contain expected SSE events"
   head -c 500 "$TMP_DIR/chat.txt" || true
   exit 1
@@ -180,7 +180,7 @@ if [[ ! "$status" =~ ^2 ]]; then
   exit 1
 fi
 
-if rg -q "No LLM API key configured|local fallback response" "$TMP_DIR/weekly.json"; then
+if grep -Eq "No LLM API key configured|local fallback response" "$TMP_DIR/weekly.json"; then
   echo "FAIL: weekly-prep used mock fallback instead of real provider"
   cat "$TMP_DIR/weekly.json" || true
   exit 1

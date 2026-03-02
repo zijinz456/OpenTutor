@@ -24,19 +24,46 @@ Open [http://localhost:3000](http://localhost:3000) once all services are health
 
 ## Quick Start (Local Development)
 
-> **Prerequisites:** Python 3.11, Node 20+, PostgreSQL 17 with pgvector extension, Redis 7+.
+> **Prerequisites:** Python 3.11, Node 20+, PostgreSQL 16+ with pgvector extension, Redis 7+ (optional).
+
+### One-command setup
+
+**macOS / Linux:**
+```bash
+git clone https://github.com/zijinz456/OpenTutor.git && cd OpenTutor
+bash scripts/quickstart.sh
+```
+
+**Windows (PowerShell):**
+```powershell
+git clone https://github.com/zijinz456/OpenTutor.git; cd OpenTutor
+.\scripts\quickstart.ps1
+```
+
+The script checks prerequisites, creates a virtualenv, sets up the database, runs migrations, installs frontend packages, and starts both servers. Works without an LLM API key (mock responses).
+
+### Platform-specific prerequisites
+
+| Tool | macOS | Ubuntu / Debian | Fedora | Windows |
+|------|-------|-----------------|--------|---------|
+| Python 3.11 | `brew install python@3.11` | `sudo apt install python3.11 python3.11-venv` | `sudo dnf install python3.11` | [python.org](https://www.python.org/downloads/) |
+| Node.js 20+ | `brew install node` | [nodesource.com](https://nodesource.com/) | `sudo dnf install nodejs` | [nodejs.org](https://nodejs.org/) |
+| PostgreSQL 16+ | `brew install postgresql@16` | `sudo apt install postgresql` | `sudo dnf install postgresql-server` | [postgresql.org](https://www.postgresql.org/download/windows/) |
+| pgvector | `brew install pgvector` | [build from source](https://github.com/pgvector/pgvector#linux) | [build from source](https://github.com/pgvector/pgvector#linux) | [pgvector Windows](https://github.com/pgvector/pgvector#windows) |
+
+### Manual setup (any platform)
 
 ```bash
 # Database
 createdb opentutor
 psql opentutor -c "CREATE EXTENSION IF NOT EXISTS vector;"
-redis-server
 
 # API
 cd apps/api
-python -m venv .venv && source .venv/bin/activate
+python3.11 -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-cp ../../.env.example .env   # edit .env with your API keys
+cp ../../.env.example .env       # edit .env with your API keys
 python -m alembic upgrade head
 uvicorn main:app --reload --port 8000
 

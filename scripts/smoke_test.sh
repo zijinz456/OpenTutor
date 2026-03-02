@@ -12,6 +12,7 @@ STRICT_LLM="${STRICT_LLM:-0}"
 PASS_COUNT=0
 WARN_COUNT=0
 FAIL_COUNT=0
+_RESP_SEQ=0
 
 TMP_DIR="$(create_temp_dir)"
 trap 'rm -rf "$TMP_DIR"' EXIT
@@ -37,7 +38,8 @@ api_call() {
   local path="$2"
   local body="${3:-}"
   local content_type="${4:-application/json}"
-  local out_file="$TMP_DIR/resp_$(date +%s%N).json"
+  _RESP_SEQ=$((_RESP_SEQ + 1))
+  local out_file="$TMP_DIR/resp_${_RESP_SEQ}.json"
   local url="${API_BASE}${path}"
   local status
 
