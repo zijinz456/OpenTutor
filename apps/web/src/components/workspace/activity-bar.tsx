@@ -1,7 +1,7 @@
 "use client";
 
-import { BrainCircuit, Home, FileText, Pencil, MessageCircle, BarChart2, Settings, Workflow } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { useT } from "@/lib/i18n-context";
 
 interface ActivityBarProps {
   activeItem: string;
@@ -9,56 +9,60 @@ interface ActivityBarProps {
   items?: Array<{ id: string; title: string }>;
 }
 
-const TOP_ITEMS = [
-  { id: "notes", icon: FileText, title: "Notes" },
-  { id: "practice", icon: Pencil, title: "Practice" },
-  { id: "chat", icon: MessageCircle, title: "Chat" },
-  { id: "progress", icon: BarChart2, title: "Progress" },
-  { id: "activity", icon: Workflow, title: "Activity" },
-  { id: "profile", icon: BrainCircuit, title: "Profile" },
+const ALL_ITEMS = [
+  { id: "notes", key: "course.notes" },
+  { id: "practice", key: "course.practice" },
+  { id: "chat", key: "course.chat" },
+  { id: "progress", key: "course.progress" },
+  { id: "activity", key: "course.activity" },
+  { id: "profile", key: "course.profile" },
 ];
 
 export function ActivityBar({ activeItem, onItemClick, items }: ActivityBarProps) {
   const router = useRouter();
-  const visibleItems = TOP_ITEMS.filter((item) =>
+  const t = useT();
+  const visibleItems = ALL_ITEMS.filter((item) =>
     items ? items.some((candidate) => candidate.id === item.id) : true,
   );
 
   return (
-    <div className="w-12 bg-[#1E1B4B] flex flex-col items-center py-3 gap-1 shrink-0">
+    <div className="w-[140px] bg-sidebar border-r border-sidebar-border flex flex-col py-3 px-2 gap-0.5 shrink-0">
       <button
+        type="button"
         onClick={() => router.push("/")}
-        className="w-10 h-10 rounded-lg flex items-center justify-center text-white/50 hover:text-white/80 transition-colors"
-        title="Home"
+        title={t("course.home")}
+        className="px-3 py-2 rounded-md text-xs text-sidebar-foreground/60 hover:text-sidebar-foreground hover:bg-sidebar-accent transition-colors text-left"
       >
-        <Home className="w-5 h-5" />
+        {t("course.home")}
       </button>
 
-      <div className="w-7 h-px bg-white/15 my-1" />
+      <div className="h-px bg-sidebar-border my-1.5" />
 
       {visibleItems.map((item) => (
         <button
+          type="button"
           key={item.id}
           onClick={() => onItemClick(item.id)}
-          className={`w-10 h-10 rounded-lg flex items-center justify-center transition-colors ${
+          title={t(item.key)}
+          className={`px-3 py-2 rounded-md text-xs font-medium transition-colors text-left ${
             activeItem === item.id
-              ? "bg-white/15 text-white"
-              : "text-white/50 hover:text-white/80"
+              ? "bg-sidebar-accent text-sidebar-accent-foreground"
+              : "text-sidebar-foreground/60 hover:text-sidebar-foreground hover:bg-sidebar-accent/50"
           }`}
-          title={item.title}
         >
-          <item.icon className="w-5 h-5" />
+          {t(item.key)}
         </button>
       ))}
 
       <div className="flex-1" />
 
       <button
+        type="button"
         onClick={() => router.push("/settings")}
-        className="w-10 h-10 rounded-lg flex items-center justify-center text-white/50 hover:text-white/80 transition-colors"
-        title="Settings"
+        title={t("course.settings")}
+        className="px-3 py-2 rounded-md text-xs text-sidebar-foreground/60 hover:text-sidebar-foreground hover:bg-sidebar-accent transition-colors text-left"
       >
-        <Settings className="w-5 h-5" />
+        {t("course.settings")}
       </button>
     </div>
   );

@@ -27,6 +27,11 @@ class CanvasLoginRequest(BaseModel):
     password: str
 
 
+class CanvasBrowserLoginRequest(BaseModel):
+    canvas_url: AnyHttpUrl
+    timeout_seconds: int = 300  # 5 minutes default
+
+
 class CanvasSyncRequest(BaseModel):
     canvas_url: AnyHttpUrl
     api_token: str | None = None
@@ -105,6 +110,124 @@ async def canvas_login(
         )
     await db.commit()
     return {"status": "ok", "message": "Canvas session saved"}
+
+
+@router.post("/browser-login")
+async def canvas_browser_login(
+    body: CanvasBrowserLoginRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Open a visible browser window for manual Canvas login.
+
+    Launches Playwright in headed (visible) mode so the user can complete
+    SSO/Okta/MFA authentication manually.  The endpoint blocks until the
+    user finishes logging in or the timeout is reached.  On success the
+    session cookies are saved for subsequent authenticated scraping.
+    """
+    import asyncio
+    import logging
+
+    from playwright.async_api import async_playwright
+    from routers.scrape import _default_session_name
+    from services.browser.session_manager import SessionManager
+
+    logger = logging.getLogger(__name__)
+
+    canvas_url = str(body.canvas_url).rstrip("/")
+    domain = urlparse(canvas_url).netloc
+    session_name = _default_session_name(user.id, domain)
+    timeout = min(body.timeout_seconds, 600)  # cap at 10 minutes
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=False)
+        context = await browser.new_context()
+        page = await context.new_page()
+
+        await page.goto(canvas_url, wait_until="domcontentloaded", timeout=30000)
+
+        # Poll until the user completes login or timeout expires.
+        # Success signals: URL returns to Canvas domain AND is no longer
+        # on an SSO / login page.
+        login_keywords = {"login", "auth", "okta", "sso", "saml", "adfs", "idp", "signin"}
+        canvas_success_paths = {"/dashboard", "/courses", "/profile", "/calendar", "/grades"}
+
+        success = False
+        elapsed = 0.0
+        poll_interval = 1.5
+
+        while elapsed < timeout:
+            await asyncio.sleep(poll_interval)
+            elapsed += poll_interval
+
+            try:
+                current_url = page.url.lower()
+            except Exception:
+                break  # browser was closed by user
+
+            parsed = urlparse(current_url)
+            path = parsed.path.rstrip("/")
+            host = parsed.netloc
+
+            # Must be back on the Canvas domain
+            if domain.lower() not in host:
+                continue
+
+            # Must NOT still be on a login/SSO page
+            path_parts = set(path.split("/"))
+            if path_parts & login_keywords:
+                continue
+
+            # Must be on a recognized Canvas page, or at least away from login
+            on_known_page = any(path.startswith(sp) for sp in canvas_success_paths)
+            not_on_login = "login" not in current_url
+            if on_known_page or (not_on_login and path != ""):
+                success = True
+                break
+
+        if success:
+            await SessionManager.save_state(context, session_name)
+            logger.info("Canvas browser login succeeded for %s", session_name)
+
+        await context.close()
+        await browser.close()
+
+    if not success:
+        raise PermissionDeniedError(
+            "Canvas login timed out or was cancelled. Please try again."
+        )
+
+    # Upsert AuthSession record
+    result = await db.execute(
+        select(AuthSession).where(
+            AuthSession.user_id == user.id,
+            AuthSession.session_name == session_name,
+        )
+    )
+    auth_session = result.scalar_one_or_none()
+    now = datetime.now(timezone.utc)
+    if auth_session:
+        auth_session.is_valid = True
+        auth_session.last_validated_at = now
+        auth_session.login_actions = None
+        auth_session.login_url = None
+        auth_session.check_url = canvas_url
+    else:
+        db.add(
+            AuthSession(
+                user_id=user.id,
+                domain=domain,
+                session_name=session_name,
+                auth_type="cookie",
+                is_valid=True,
+                last_validated_at=now,
+                login_actions=None,
+                login_url=None,
+                check_url=canvas_url,
+            )
+        )
+    await db.commit()
+    return {"status": "ok", "message": "Canvas session saved via browser login"}
 
 
 @router.post("/sync")

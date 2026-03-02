@@ -3,14 +3,15 @@
 import uuid
 
 from fastapi import APIRouter, Depends, Query, Request
-from pydantic import BaseModel
+from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
-from libs.exceptions import ConflictError, NotFoundError
+from libs.exceptions import ConflictError, NotFoundError, ValidationError
 from models.agent_task import AgentTask
 from models.user import User
+from schemas.task import AgentTaskResponse, SubmitTaskRequest, TaskFollowUpResponse, TaskReviewResponse
 from services.activity.engine import (
     TaskMutationError,
     approve_task,
@@ -27,50 +28,24 @@ from services.course_access import get_course_or_404
 router = APIRouter()
 
 
-class AgentTaskResponse(BaseModel):
-    id: str
-    user_id: str
-    course_id: str | None
-    goal_id: str | None
-    task_type: str
-    status: str
-    title: str
-    summary: str | None
-    source: str
-    input_json: dict | None
-    metadata_json: dict | None
-    result_json: dict | None
-    error_message: str | None
-    attempts: int
-    max_attempts: int
-    requires_approval: bool
-    task_kind: str
-    risk_level: str
-    approval_status: str
-    approval_reason: str | None
-    approval_action: str | None
-    checkpoint_json: dict | None
-    step_results: list[dict]
-    provenance: dict | None
-    approved_at: str | None
-    started_at: str | None
-    cancel_requested_at: str | None
-    created_at: str | None
-    updated_at: str | None
-    completed_at: str | None
+def _task_response(task: AgentTask) -> AgentTaskResponse:
+    return AgentTaskResponse(**serialize_task(task))
 
 
-class SubmitTaskRequest(BaseModel):
-    task_type: str
-    title: str
-    course_id: uuid.UUID | None = None
-    goal_id: uuid.UUID | None = None
-    summary: str | None = None
-    input_json: dict | None = None
-    metadata_json: dict | None = None
-    source: str = "workflow"
-    requires_approval: bool = False
-    max_attempts: int = 2
+def _completed_task_follow_up(task: AgentTask) -> TaskFollowUpResponse:
+    task_review_payload = (task.result_json or {}).get("task_review")
+    if not isinstance(task_review_payload, dict):
+        raise ConflictError("This task does not have a completion review yet.")
+
+    try:
+        task_review = TaskReviewResponse.model_validate(task_review_payload)
+    except PydanticValidationError as exc:
+        raise ValidationError(f"Invalid task review payload: {exc.errors()[0]['msg']}") from exc
+
+    follow_up = task_review.follow_up
+    if not follow_up.ready:
+        raise ConflictError("This task does not have a queueable follow-up.")
+    return follow_up
 
 
 @router.get("/", response_model=list[AgentTaskResponse])
@@ -86,7 +61,7 @@ async def list_tasks(
     query = query.order_by(AgentTask.created_at.desc()).limit(limit)
     result = await db.execute(query)
     tasks = result.scalars().all()
-    return [AgentTaskResponse(**serialize_task(task)) for task in tasks]
+    return [_task_response(task) for task in tasks]
 
 
 @router.post("/submit", response_model=AgentTaskResponse, status_code=201)
@@ -115,7 +90,7 @@ async def submit_agent_task(
     request.state.audit_action_kind = "task_submit_http"
     request.state.audit_task_id = str(task.id)
     request.state.approval_status = task.approval_status
-    return AgentTaskResponse(**serialize_task(task))
+    return _task_response(task)
 
 
 @router.post("/{task_id}/approve", response_model=AgentTaskResponse)
@@ -134,7 +109,7 @@ async def approve_agent_task(
     request.state.audit_action_kind = "task_approve_http"
     request.state.audit_task_id = str(task.id)
     request.state.approval_status = task.approval_status
-    return AgentTaskResponse(**serialize_task(task))
+    return _task_response(task)
 
 
 @router.post("/{task_id}/reject", response_model=AgentTaskResponse)
@@ -153,7 +128,7 @@ async def reject_agent_task(
     request.state.audit_action_kind = "task_reject_http"
     request.state.audit_task_id = str(task.id)
     request.state.approval_status = task.approval_status
-    return AgentTaskResponse(**serialize_task(task))
+    return _task_response(task)
 
 
 @router.post("/{task_id}/cancel", response_model=AgentTaskResponse)
@@ -172,7 +147,7 @@ async def cancel_agent_task(
     request.state.audit_action_kind = "task_cancel_http"
     request.state.audit_task_id = str(task.id)
     request.state.approval_status = task.approval_status
-    return AgentTaskResponse(**serialize_task(task))
+    return _task_response(task)
 
 
 @router.post("/{task_id}/resume", response_model=AgentTaskResponse)
@@ -191,7 +166,7 @@ async def resume_agent_task(
     request.state.audit_action_kind = "task_resume_http"
     request.state.audit_task_id = str(task.id)
     request.state.approval_status = task.approval_status
-    return AgentTaskResponse(**serialize_task(task))
+    return _task_response(task)
 
 
 @router.post("/{task_id}/retry", response_model=AgentTaskResponse)
@@ -210,7 +185,7 @@ async def retry_agent_task(
     request.state.audit_action_kind = "task_retry_http"
     request.state.audit_task_id = str(task.id)
     request.state.approval_status = task.approval_status
-    return AgentTaskResponse(**serialize_task(task))
+    return _task_response(task)
 
 
 @router.post("/{task_id}/follow-up", response_model=AgentTaskResponse)
@@ -227,22 +202,16 @@ async def queue_task_follow_up(
     if task.status != "completed":
         raise ConflictError("Follow-up can only be queued after a task completes.")
 
-    task_review = (task.result_json or {}).get("task_review")
-    if not isinstance(task_review, dict):
-        raise ConflictError("This task does not have a completion review yet.")
-
-    follow_up = task_review.get("follow_up")
-    if not isinstance(follow_up, dict) or not follow_up.get("ready"):
-        raise ConflictError("This task does not have a queueable follow-up.")
+    follow_up = _completed_task_follow_up(task)
 
     course_id = task.course_id
     if course_id:
         await get_course_or_404(db, course_id, user_id=user.id)
 
-    follow_up_task_type = str(follow_up.get("task_type") or "").strip()
-    follow_up_title = str(follow_up.get("title") or "").strip()
-    follow_up_summary = str(follow_up.get("summary") or "").strip() or None
-    input_json = dict(follow_up.get("input_json") or {})
+    follow_up_task_type = str(follow_up.task_type or "").strip()
+    follow_up_title = str(follow_up.title or "").strip()
+    follow_up_summary = str(follow_up.summary or "").strip() or None
+    input_json = dict(follow_up.input_json or {})
 
     if not follow_up_task_type or not follow_up_title:
         raise ConflictError("This task follow-up is incomplete and cannot be queued.")
@@ -252,7 +221,7 @@ async def queue_task_follow_up(
 
         if not course_id:
             raise ConflictError("Multi-step follow-up planning requires a course.")
-        plan_prompt = str(follow_up.get("plan_prompt") or follow_up_summary or follow_up_title).strip()
+        plan_prompt = str(follow_up.plan_prompt or follow_up_summary or follow_up_title).strip()
         steps = await create_plan(plan_prompt, user.id, course_id)
         input_json.update({
             "course_id": str(course_id),
@@ -276,7 +245,7 @@ async def queue_task_follow_up(
             "parent_task_id": str(task.id),
             "parent_task_title": task.title,
             "trigger": "completed_task_review",
-            "queue_label": follow_up.get("label"),
+            "queue_label": follow_up.label,
         },
         requires_approval=False,
         max_attempts=2,
@@ -284,4 +253,4 @@ async def queue_task_follow_up(
     request.state.audit_action_kind = "task_follow_up_http"
     request.state.audit_task_id = str(queued.id)
     request.state.approval_status = queued.approval_status
-    return AgentTaskResponse(**serialize_task(queued))
+    return _task_response(queued)

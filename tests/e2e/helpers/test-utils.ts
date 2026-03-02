@@ -227,7 +227,7 @@ export async function expectGeneratedStudyPlan(page: Page) {
  */
 export async function ensureRightPanelVisible(page: Page): Promise<void> {
   // Use a specific locator for the Quiz tab button (small button in tab bar, not the generate button)
-  const quizTab = page.getByRole("button", { name: "Quiz", exact: true }).first();
+  const quizTab = page.getByTestId("right-tab-quiz").last();
   const visible = await quizTab.isVisible({ timeout: 3_000 }).catch(() => false);
   if (!visible) {
     await page.locator('button[title="Practice"]').click();
@@ -235,8 +235,23 @@ export async function ensureRightPanelVisible(page: Page): Promise<void> {
   }
 }
 
+export async function openRightTab(page: Page, tab: string): Promise<void> {
+  const tabButton = page.getByTestId(`right-tab-${tab}`).last();
+  await expect(tabButton).toBeVisible({ timeout: 15_000 });
+  await tabButton.click({ force: true });
+}
+
 export function hasRealLlmEnv(): boolean {
   return getRealLlmProvider() !== null;
+}
+
+export function isLocalRealLlmProvider(): boolean {
+  const provider = getRealLlmProvider();
+  return provider ? !provider.requiresKey : false;
+}
+
+export function getRealLlmTimeoutMs(defaultTimeoutMs = 30_000): number {
+  return isLocalRealLlmProvider() ? Math.max(defaultTimeoutMs, 120_000) : defaultTimeoutMs;
 }
 
 export function getRealLlmProvider():

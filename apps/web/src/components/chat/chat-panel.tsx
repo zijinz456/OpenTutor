@@ -2,7 +2,6 @@
 
 import Image from "next/image";
 import { useRef, useEffect, useState, useCallback } from "react";
-import { AlertTriangle, BookOpen, CheckCircle2, Clock3, Download, FileText, ImagePlus, Layers, MessageSquarePlus, Send, SkipForward, Workflow, X, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -210,12 +209,12 @@ function MessageBubble({
                   onClick={() => handleSave(latestBatch.batch_id)}
                   disabled={saving}
                 >
-                  <Download className="h-4 w-4 mr-1" />
+                  <span className="mr-1 text-xs">Save</span>
                   {saving ? "Saving..." : "Replace Latest"}
                 </Button>
               )}
               <Button type="button" size="sm" variant="outline" onClick={() => handleSave()} disabled={saving}>
-                <Download className="h-4 w-4 mr-1" />
+                <span className="mr-1 text-xs">Save</span>
                 {saving ? "Saving..." : "Save New"}
               </Button>
             </div>
@@ -349,8 +348,7 @@ export function ChatPanel({ courseId, activeTab, scene }: ChatPanelProps) {
           onClick={() => startNewSession(courseId)}
           disabled={isStreaming}
         >
-          <MessageSquarePlus className="h-4 w-4 mr-2" />
-          New
+          + New
         </Button>
       </div>
 
@@ -359,7 +357,7 @@ export function ChatPanel({ courseId, activeTab, scene }: ChatPanelProps) {
         {activePlan && activePlan.steps.length > 0 && (
           <div className="mb-3 rounded-lg border border-primary/20 bg-primary/5 p-3 text-sm">
             <div className="flex items-start gap-2">
-              <Workflow className="mt-0.5 h-4 w-4 text-primary" />
+              <span className="mt-0.5 text-primary font-medium text-xs">Plan</span>
               <div className="min-w-0 flex-1">
                 <p className="font-medium text-foreground">Background plan running</p>
                 {activePlan.message && (
@@ -367,12 +365,12 @@ export function ChatPanel({ courseId, activeTab, scene }: ChatPanelProps) {
                 )}
                 <div className="mt-2 space-y-1.5">
                   {activePlan.steps.map((step) => {
-                    const Icon =
+                    const statusIndicator =
                       step.status === "completed"
-                        ? CheckCircle2
+                        ? "\u2713"
                         : step.status === "failed"
-                          ? XCircle
-                          : Clock3;
+                          ? "\u2717"
+                          : "\u2022";
                     const colorClass =
                       step.status === "completed"
                         ? "text-green-600"
@@ -381,12 +379,12 @@ export function ChatPanel({ courseId, activeTab, scene }: ChatPanelProps) {
                           : "text-muted-foreground";
                     return (
                       <div key={`${activePlan.taskId}-${step.step_index}`} className="flex items-start gap-2 text-xs">
-                        <Icon className={`mt-0.5 h-3.5 w-3.5 ${colorClass}`} />
+                        <span className={`mt-0.5 font-bold ${colorClass}`}>{statusIndicator}</span>
                         <div className="min-w-0 flex-1">
                           <p className="font-medium text-foreground/90">{step.title}</p>
                           <p className="text-muted-foreground">
                             {step.status}
-                            {step.summary ? ` • ${step.summary}` : ""}
+                            {step.summary ? ` \u2022 ${step.summary}` : ""}
                           </p>
                         </div>
                       </div>
@@ -426,30 +424,30 @@ export function ChatPanel({ courseId, activeTab, scene }: ChatPanelProps) {
       {chatError && !isStreaming && (
         <div className="border-t bg-destructive/5 px-3 py-3">
           <div className="flex items-start gap-2 text-sm">
-            <AlertTriangle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
+            <span className="text-destructive shrink-0 mt-0.5 font-bold text-xs">Warning</span>
             <div className="flex-1 min-w-0">
               <p className="font-medium text-destructive text-xs">
                 {useChatStore.getState().errorCategory === "rate_limit"
-                  ? "Rate limit reached — try again in a moment"
+                  ? "Rate limit reached -- try again in a moment"
                   : useChatStore.getState().errorCategory === "auth_error"
-                    ? "API key issue — check Settings"
+                    ? "API key issue -- check Settings"
                     : useChatStore.getState().errorCategory === "timeout"
-                      ? "Request timed out — try a shorter question"
+                      ? "Request timed out -- try a shorter question"
                       : "AI service temporarily unavailable"}
               </p>
               <p className="text-[11px] text-muted-foreground mt-1 truncate">{chatError}</p>
               <div className="flex gap-2 mt-2">
                 <Button type="button" variant="outline" size="sm" className="h-7 text-xs"
                   onClick={() => useChatStore.getState().onAction?.({ action: "set_layout_preset", value: "quizFocused" })}>
-                  <BookOpen className="h-3 w-3 mr-1" />Quiz
+                  Quiz
                 </Button>
                 <Button type="button" variant="outline" size="sm" className="h-7 text-xs"
                   onClick={() => useChatStore.getState().onAction?.({ action: "set_layout_preset", value: "quizFocused" })}>
-                  <Layers className="h-3 w-3 mr-1" />Flashcards
+                  Flashcards
                 </Button>
                 <Button type="button" variant="outline" size="sm" className="h-7 text-xs"
                   onClick={() => useChatStore.getState().onAction?.({ action: "set_layout_preset", value: "notesFocused" })}>
-                  <FileText className="h-3 w-3 mr-1" />Notes
+                  Notes
                 </Button>
               </div>
             </div>
@@ -490,9 +488,9 @@ export function ChatPanel({ courseId, activeTab, scene }: ChatPanelProps) {
                   type="button"
                   title="Remove image"
                   onClick={() => removeImage(i)}
-                  className="absolute -top-1.5 -right-1.5 bg-destructive text-destructive-foreground rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                  className="absolute -top-1.5 -right-1.5 bg-destructive text-destructive-foreground rounded-full w-4 h-4 flex items-center justify-center text-[10px] leading-none opacity-0 group-hover:opacity-100 transition-opacity"
                 >
-                  <X className="h-3 w-3" />
+                  x
                 </button>
               </div>
             ))}
@@ -516,7 +514,7 @@ export function ChatPanel({ courseId, activeTab, scene }: ChatPanelProps) {
             disabled={isStreaming || imageAttachments.length >= 4}
             title="Attach image"
           >
-            <ImagePlus className="h-4 w-4" />
+            <span className="text-xs">Img</span>
           </Button>
           <Textarea
             data-testid="chat-input"
@@ -540,7 +538,7 @@ export function ChatPanel({ courseId, activeTab, scene }: ChatPanelProps) {
             title={isStreaming ? "Interrupt and send" : "Send message"}
             variant={isStreaming ? "destructive" : "default"}
           >
-            {isStreaming ? <SkipForward className="h-4 w-4" /> : <Send className="h-4 w-4" />}
+            {isStreaming ? <span className="text-xs">{"\u25B6"}</span> : <span className="text-xs">Send</span>}
           </Button>
         </div>
       </div>

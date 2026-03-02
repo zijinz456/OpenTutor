@@ -3,37 +3,27 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import {
-  ArrowLeft,
-  ArrowRight,
-  Upload,
-  Globe,
-  Layers,
-  X,
-  FileText,
-  Pencil,
-  RotateCcw,
-  Calendar,
-  MessageCircle,
-  ChevronDown,
-  Check,
-  Lock,
-  Loader,
-  FolderPlus,
-} from "lucide-react";
-import {
   IngestionJobSummary,
   createScrapeSource,
   listIngestionJobs,
   uploadFile,
   scrapeUrl,
+  updateCourse,
   listAuthSessions,
-  canvasLogin,
+  canvasBrowserLogin,
   type CourseMetadata,
 } from "@/lib/api";
 import { useCourseStore } from "@/store/course";
 
 type Mode = "upload" | "url" | "both";
 type Step = "mode" | "upload" | "parsing" | "features";
+
+const STEP_LABELS: { key: Step; label: string }[] = [
+  { key: "mode", label: "Source" },
+  { key: "upload", label: "Content" },
+  { key: "parsing", label: "Parse" },
+  { key: "features", label: "Features" },
+];
 
 /* Canvas URL detection — ported from learning-agent-extension */
 const CANVAS_URL_PATTERNS = [
@@ -127,13 +117,37 @@ function deriveParseProgress(
   );
 }
 
-const FEATURE_CARDS: { id: string; label: string; description: string; icon: typeof FileText; iconBg: string; iconColor: string; enabled: boolean; phase?: string }[] = [
-  { id: "notes", label: "Organize Notes", description: "Restructure your materials into clean, organized notes in your preferred format.", icon: FileText, iconBg: "bg-indigo-50", iconColor: "text-indigo-600", enabled: true },
-  { id: "practice", label: "Practice Mode", description: "Generate practice questions from your materials. Interactive Q&A with instant feedback.", icon: Pencil, iconBg: "bg-indigo-50", iconColor: "text-indigo-600", enabled: true },
-  { id: "wrong_answer", label: "Wrong Answer Review", description: "Track, diagnose, and revisit incorrect answers from generated quizzes.", icon: RotateCcw, iconBg: "bg-amber-50", iconColor: "text-amber-600", enabled: true },
-  { id: "study_plan", label: "Study Plan", description: "Generate a personalized study plan with scheduled reviews.", icon: Calendar, iconBg: "bg-indigo-50", iconColor: "text-indigo-600", enabled: true },
-  { id: "free_qa", label: "Free Q&A", description: "Ask any question about your materials and get AI-powered answers with source references.", icon: MessageCircle, iconBg: "bg-indigo-50", iconColor: "text-indigo-600", enabled: true },
+const FEATURE_CARDS: { id: string; label: string; description: string; enabled: boolean; phase?: string }[] = [
+  { id: "notes", label: "Organize Notes", description: "Restructure your materials into clean, organized notes in your preferred format.", enabled: true },
+  { id: "practice", label: "Practice Mode", description: "Generate practice questions from your materials. Interactive Q&A with instant feedback.", enabled: true },
+  { id: "wrong_answer", label: "Wrong Answer Review", description: "Track, diagnose, and revisit incorrect answers from generated quizzes.", enabled: true },
+  { id: "study_plan", label: "Study Plan", description: "Generate a personalized study plan with scheduled reviews.", enabled: true },
+  { id: "free_qa", label: "Free Q&A", description: "Ask any question about your materials and get AI-powered answers with source references.", enabled: true },
 ];
+
+function StepIndicator({ currentStep }: { currentStep: Step }) {
+  const currentIndex = STEP_LABELS.findIndex((s) => s.key === currentStep);
+  return (
+    <div className="flex items-center gap-2 text-xs">
+      {STEP_LABELS.map((s, i) => (
+        <span key={s.key} className="flex items-center gap-2">
+          {i > 0 && <span className="text-muted-foreground">/</span>}
+          <span
+            className={
+              i < currentIndex
+                ? "text-brand font-medium"
+                : i === currentIndex
+                ? "text-foreground font-semibold"
+                : "text-muted-foreground"
+            }
+          >
+            {i + 1}. {s.label}
+          </span>
+        </span>
+      ))}
+    </div>
+  );
+}
 
 export default function NewProjectPage() {
   const router = useRouter();
@@ -145,7 +159,7 @@ export default function NewProjectPage() {
   const [url, setUrl] = useState("");
   const [autoScrape, setAutoScrape] = useState(true);
   const [features, setFeatures] = useState<Record<string, boolean>>({
-    notes: true, practice: true, study_plan: true, free_qa: true, wrong_answer: false,
+    notes: true, practice: true, study_plan: true, free_qa: true, wrong_answer: true,
   });
   const [nlInput, setNlInput] = useState("");
   const [createdCourseId, setCreatedCourseId] = useState<string | null>(null);
@@ -153,8 +167,6 @@ export default function NewProjectPage() {
   const [urlError, setUrlError] = useState<string | null>(null);
   const [isCanvasDetected, setIsCanvasDetected] = useState(false);
   const [showCanvasLogin, setShowCanvasLogin] = useState(false);
-  const [canvasUsername, setCanvasUsername] = useState("");
-  const [canvasPassword, setCanvasPassword] = useState("");
   const [canvasLogging, setCanvasLogging] = useState(false);
   const [canvasLoginError, setCanvasLoginError] = useState<string | null>(null);
   const [canvasSessionValid, setCanvasSessionValid] = useState(false);
@@ -275,16 +287,16 @@ export default function NewProjectPage() {
 
           const label = job.filename || "Untitled source";
           if (job.error_message) {
-            addLog(`${new Date().toLocaleTimeString()}  ${label}: ${job.error_message}`, "text-red-500");
+            addLog(`${new Date().toLocaleTimeString()}  ${label}: ${job.error_message}`, "text-destructive");
           } else if (job.phase_label) {
-            addLog(`${new Date().toLocaleTimeString()}  ${label}: ${job.phase_label}`, "text-gray-500");
+            addLog(`${new Date().toLocaleTimeString()}  ${label}: ${job.phase_label}`, "text-muted-foreground");
           }
         }
       } catch (error) {
         if (!cancelled) {
           addLog(
             `${new Date().toLocaleTimeString()}  Failed to refresh ingestion status: ${(error as Error).message}`,
-            "text-red-500",
+            "text-destructive",
           );
         }
       }
@@ -307,11 +319,9 @@ export default function NewProjectPage() {
     if (!trimmed) return;
 
     if (!isCanvasUrl(trimmed)) {
-      // Non-Canvas URL — nothing special to do, URL is already in state
       return;
     }
 
-    // Canvas URL detected — check if we already have a valid session for this domain
     try {
       const sessions = await listAuthSessions();
       const domain = new URL(trimmed).hostname;
@@ -326,32 +336,22 @@ export default function NewProjectPage() {
       // Auth session check failed — prompt login anyway
     }
 
-    // No valid session — open the Canvas login modal
+    // No valid session — open browser login
     setCanvasLoginError(null);
-    setCanvasUsername("");
-    setCanvasPassword("");
     setShowCanvasLogin(true);
-  }, [url]);
-
-  // Handle Canvas login form submission
-  const handleCanvasLoginSubmit = useCallback(async () => {
-    const trimmed = url.trim();
-    if (!trimmed || !canvasUsername || !canvasPassword) return;
-
     setCanvasLogging(true);
-    setCanvasLoginError(null);
 
+    // Immediately call browser-login which opens a visible browser window
     try {
-      await canvasLogin(trimmed, canvasUsername, canvasPassword);
+      await canvasBrowserLogin(trimmed);
       setCanvasSessionValid(true);
       setShowCanvasLogin(false);
-      setCanvasPassword("");
     } catch (err) {
-      setCanvasLoginError((err as Error).message || "Login failed");
+      setCanvasLoginError((err as Error).message || "Login failed or timed out");
     } finally {
       setCanvasLogging(false);
     }
-  }, [url, canvasUsername, canvasPassword]);
+  }, [url]);
 
   // Start parsing: create course, upload files, scrape URL
   const startParsing = useCallback(async () => {
@@ -376,51 +376,49 @@ export default function NewProjectPage() {
         },
       };
 
-      // Create the course
-      addLog(`${new Date().toLocaleTimeString()}  Creating project "${projectName || "Untitled"}"...`, "text-gray-400");
+      addLog(`${new Date().toLocaleTimeString()}  Creating project "${projectName || "Untitled"}"...`, "text-muted-foreground");
       const description = nlInput.trim() || undefined;
       const course = await addCourse(projectName.trim() || "Untitled Project", description, metadata);
       nextCourseId = course.id;
       setCreatedCourseId(course.id);
 
-      addLog(`${new Date().toLocaleTimeString()}  Project created`, "text-green-500");
+      addLog(`${new Date().toLocaleTimeString()}  Project created`, "text-success");
       const hasSources = files.length > 0 || (url.trim() && (mode === "url" || mode === "both"));
       if (!hasSources) {
         setNoSourcesSubmitted(true);
         addLog(
           `${new Date().toLocaleTimeString()}  No files or URLs submitted. You can continue and add content later.`,
-          "text-gray-500",
+          "text-muted-foreground",
         );
         return;
       }
 
       if (files.length > 0) {
         for (const f of files) {
-          addLog(`${new Date().toLocaleTimeString()}  Uploading ${f.name}...`, "text-gray-400");
+          addLog(`${new Date().toLocaleTimeString()}  Uploading ${f.name}...`, "text-muted-foreground");
           try {
             const result = await uploadFile(course.id, f.file);
             addLog(
               `${new Date().toLocaleTimeString()}  ${f.name}: ${result.nodes_created} nodes queued`,
-              "text-green-500",
+              "text-success",
             );
           } catch (err) {
-            addLog(`${new Date().toLocaleTimeString()}  Failed: ${f.name} — ${(err as Error).message}`, "text-red-500");
+            addLog(`${new Date().toLocaleTimeString()}  Failed: ${f.name} — ${(err as Error).message}`, "text-destructive");
           }
         }
       }
 
-      // Step 3: Scrape URL
       if (url.trim() && (mode === "url" || mode === "both")) {
         const urlIsCanvas = isCanvasUrl(url.trim());
         addLog(
           `${new Date().toLocaleTimeString()}  Fetching ${url}${urlIsCanvas ? " (Canvas LMS detected)" : ""}...`,
-          "text-gray-400",
+          "text-muted-foreground",
         );
         try {
           const result = await scrapeUrl(course.id, url.trim());
           addLog(
             `${new Date().toLocaleTimeString()}  URL content accepted: ${result.nodes_created} nodes queued`,
-            "text-green-500",
+            "text-success",
           );
           if (autoScrape) {
             await createScrapeSource({
@@ -433,22 +431,22 @@ export default function NewProjectPage() {
             });
             addLog(
               `${new Date().toLocaleTimeString()}  Auto-scrape enabled for this URL (every 24 hours)`,
-              "text-green-500",
+              "text-success",
             );
           }
         } catch (err) {
           const errMsg = (err as Error).message;
-          addLog(`${new Date().toLocaleTimeString()}  Scrape failed: ${errMsg}`, "text-red-500");
+          addLog(`${new Date().toLocaleTimeString()}  Scrape failed: ${errMsg}`, "text-destructive");
           if (urlIsCanvas && errMsg.includes("authentication")) {
             addLog(
-              `${new Date().toLocaleTimeString()}  Tip: Go to Settings → Canvas Login to authenticate, then retry.`,
-              "text-amber-500",
+              `${new Date().toLocaleTimeString()}  Tip: Go to Settings to authenticate, then retry.`,
+              "text-warning",
             );
           }
         }
       }
     } catch (err) {
-      addLog(`${new Date().toLocaleTimeString()}  Error: ${(err as Error).message}`, "text-red-500");
+      addLog(`${new Date().toLocaleTimeString()}  Error: ${(err as Error).message}`, "text-destructive");
     } finally {
       setIsSubmittingContent(false);
       if (nextCourseId) {
@@ -457,109 +455,120 @@ export default function NewProjectPage() {
     }
   }, [addCourse, autoScrape, features, fetchContentTree, files, mode, nlInput, projectName, url]);
 
-  const enterWorkspace = () => {
+  const enterWorkspace = async () => {
     if (!createdCourseId) return;
 
-    // Store the NL instruction so the workspace can send it as the first chat message
-    if (nlInput.trim()) {
-      localStorage.setItem(`course_init_prompt_${createdCourseId}`, nlInput.trim());
+    const metadata: CourseMetadata = {
+      workspace_features: features,
+      auto_scrape: {
+        enabled: Boolean(autoScrape && url.trim() && (mode === "url" || mode === "both")),
+        interval_hours: 24,
+      },
+    };
+
+    try {
+      await updateCourse(createdCourseId, { metadata });
+    } catch {
+      // The workspace still works even if metadata refresh fails
     }
 
-    // Persist feature toggles and auto-scrape preference
-    localStorage.setItem(`course_features_${createdCourseId}`, JSON.stringify(features));
-    if (mode === "both" || mode === "url") {
-      localStorage.setItem(`course_autoscrape_${createdCourseId}`, String(autoScrape));
+    if (nlInput.trim()) {
+      localStorage.setItem(`course_init_prompt_${createdCourseId}`, nlInput.trim());
     }
 
     router.push(`/course/${createdCourseId}`);
   };
 
   return (
-    <div className="min-h-screen bg-white">
-      {/* MODE SELECTION (Page 2 in ref) */}
+    <div className="min-h-screen bg-background">
+      {/* MODE SELECTION */}
       {step === "mode" && (
         <div className="h-screen flex items-center justify-center">
           <div className="w-[640px] flex flex-col gap-10 items-center animate-in fade-in duration-300">
             <div className="flex flex-col gap-3 items-center text-center">
-              <div className="w-14 h-14 bg-indigo-50 rounded-[14px] flex items-center justify-center">
-                <FolderPlus className="w-7 h-7 text-indigo-600" />
-              </div>
-              <h1 className="text-[32px] font-bold text-gray-900" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+              <StepIndicator currentStep="mode" />
+              <h1 className="text-[32px] font-bold text-foreground mt-4">
                 How would you like to add content?
               </h1>
-              <p className="text-[15px] text-gray-500 max-w-[480px] leading-relaxed">
+              <p className="text-[15px] text-muted-foreground max-w-[480px] leading-relaxed">
                 Choose how you want to bring learning materials into your new project.
               </p>
             </div>
 
             <div className="flex gap-4 w-full">
-              {[
-                { key: "upload" as Mode, icon: Upload, iconBg: "bg-indigo-50", iconColor: "text-indigo-600", label: "Upload Documents", desc: "Upload PDF, PPT, DOCX files from your computer" },
-                { key: "url" as Mode, icon: Globe, iconBg: "bg-green-50", iconColor: "text-green-600", label: "Scrape from URL", desc: "Auto-fetch content from course websites and pages" },
-                { key: "both" as Mode, icon: Layers, iconBg: "bg-violet-50", iconColor: "text-violet-600", label: "Both", desc: "Upload files and scrape URLs together" },
-              ].map((m) => (
+              {([
+                { key: "upload" as Mode, label: "Upload Documents", desc: "Upload PDF, PPT, DOCX files from your computer" },
+                { key: "url" as Mode, label: "Scrape from URL", desc: "Auto-fetch content from course websites and pages" },
+                { key: "both" as Mode, label: "Both", desc: "Upload files and scrape URLs together" },
+              ]).map((m) => (
                 <button
+                  type="button"
                   key={m.key}
                   onClick={() => setMode(m.key)}
                   data-testid={`mode-option-${m.key}`}
+                  aria-pressed={mode === m.key}
+                  data-selected={mode === m.key ? "true" : "false"}
                   className={`flex-1 flex flex-col items-center justify-center gap-3.5 p-7 rounded-[10px] transition-all ${
                     mode === m.key
-                      ? "border-2 border-indigo-600 bg-indigo-50"
-                      : "border border-gray-200 hover:border-gray-300"
+                      ? "border-2 border-brand bg-brand-muted"
+                      : "border border-border hover:border-foreground/20"
                   }`}
                 >
-                  <div className={`w-12 h-12 ${m.iconBg} rounded-xl flex items-center justify-center`}>
-                    <m.icon className={`w-6 h-6 ${m.iconColor}`} />
-                  </div>
-                  <span className="font-semibold text-base text-gray-900" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+                  <span className="font-semibold text-base text-foreground">
                     {m.label}
                   </span>
-                  <span className="text-[13px] text-gray-400 text-center leading-snug">{m.desc}</span>
+                  <span className="text-[13px] text-muted-foreground text-center leading-snug">{m.desc}</span>
                 </button>
               ))}
             </div>
 
             <div className="flex justify-between w-full mt-2">
               <button
+                type="button"
                 onClick={() => router.push("/")}
-                className="h-11 px-6 border border-gray-200 rounded-lg flex items-center gap-1.5 text-gray-500 font-medium text-sm hover:border-gray-300"
+                className="h-11 px-6 border border-border rounded-lg flex items-center gap-1.5 text-muted-foreground font-medium text-sm hover:border-foreground/20"
               >
-                <ArrowLeft className="w-3.5 h-3.5" /> Back to Projects
+                &larr; Back to Projects
               </button>
               <button
+                type="button"
                 onClick={() => setStep("upload")}
                 data-testid="mode-continue"
-                className="h-11 px-7 bg-indigo-600 text-white rounded-lg flex items-center gap-2 font-semibold text-sm hover:bg-indigo-700"
+                className="h-11 px-7 bg-brand text-brand-foreground rounded-lg flex items-center gap-2 font-semibold text-sm hover:opacity-90"
               >
-                Continue <ArrowRight className="w-3.5 h-3.5" />
+                Continue &rarr;
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* UPLOAD FORM (Page 3 in ref) */}
+      {/* UPLOAD FORM */}
       {step === "upload" && (
         <div className="max-w-4xl mx-auto p-12 flex flex-col gap-8 animate-in fade-in duration-300">
           {/* Top nav */}
           <div className="flex items-center gap-3">
-            <button onClick={() => setStep("mode")} className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700">
-              <ArrowLeft className="w-[18px] h-[18px]" /> Back
+            <button type="button" onClick={() => setStep("mode")} className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">
+              &larr; Back
             </button>
-            <div className="w-px h-4 bg-gray-200" />
-            <span className="font-semibold text-sm text-gray-900" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Create New Project</span>
+            <div className="w-px h-4 bg-border" />
+            <span className="font-semibold text-sm text-foreground">Create New Project</span>
             <div className="flex-1" />
-            <span className="px-2 py-1 bg-indigo-50 text-indigo-600 text-[11px] font-medium rounded">
+            <StepIndicator currentStep="upload" />
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="px-2 py-1 bg-brand-muted text-brand text-[11px] font-medium rounded">
               {mode === "upload" ? "Upload Documents" : mode === "url" ? "Scrape from URL" : "Both: Upload + URL"}
             </span>
           </div>
 
           {/* Project Name */}
           <div className="flex flex-col gap-2">
-            <label className="font-semibold text-sm text-gray-900" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Project Name</label>
+            <label className="font-semibold text-sm text-foreground">Project Name</label>
             <input
               data-testid="project-name-input"
-              className={`w-full h-11 px-4 border rounded-lg bg-white text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-600/20 focus:border-indigo-600 ${nameError ? "border-red-400" : "border-gray-200"}`}
+              className={`w-full h-11 px-4 border rounded-lg bg-background text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-brand/20 focus:border-brand ${nameError ? "border-destructive" : "border-border"}`}
               value={projectName}
               onChange={(e) => {
                 setProjectName(e.target.value);
@@ -575,12 +584,12 @@ export default function NewProjectPage() {
           {/* Upload Section */}
           {(mode === "upload" || mode === "both") && (
             <div className="flex flex-col gap-3">
-              <h3 className="text-base font-semibold text-gray-900" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Upload Learning Materials</h3>
+              <h3 className="text-base font-semibold text-foreground">Upload Learning Materials</h3>
               <div
                 className={`w-full h-40 border-2 border-dashed rounded-lg flex flex-col items-center justify-center gap-3 cursor-pointer transition-colors ${
                   dragging
-                    ? "border-indigo-600 bg-indigo-50"
-                    : "border-gray-200 bg-gray-50 hover:border-indigo-600 hover:bg-indigo-50"
+                    ? "border-brand bg-brand-muted"
+                    : "border-border bg-muted hover:border-brand hover:bg-brand-muted"
                 }`}
                 onClick={() => fileInputRef.current?.click()}
                 onDragOver={handleDragOver}
@@ -588,11 +597,10 @@ export default function NewProjectPage() {
                 onDragLeave={handleDragLeave}
                 onDrop={handleDrop}
               >
-                <Upload className={`w-8 h-8 ${dragging ? "text-indigo-600" : "text-gray-400"}`} />
-                <span className={`text-sm ${dragging ? "text-indigo-600 font-medium" : "text-gray-500"}`}>
+                <span className={`text-sm ${dragging ? "text-brand font-medium" : "text-muted-foreground"}`}>
                   {dragging ? "Drop files here" : "Drag files here, or click to browse"}
                 </span>
-                <span className="text-xs text-gray-400">Supports PDF, PPT, DOCX</span>
+                <span className="text-xs text-muted-foreground">Supports PDF, PPT, DOCX</span>
               </div>
               <input
                 ref={fileInputRef}
@@ -600,18 +608,18 @@ export default function NewProjectPage() {
                 type="file"
                 accept=".pdf,.pptx,.ppt,.docx,.doc,.html,.htm,.txt,.md"
                 multiple
+                title="Upload learning materials"
                 className="hidden"
                 onChange={handleFileAdd}
               />
               {files.length > 0 && (
                 <div className="flex flex-col gap-2">
                   {files.map((f, idx) => (
-                    <div key={idx} className="flex items-center gap-3 px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-lg">
-                      <FileText className="w-4 h-4 text-indigo-600" />
-                      <span className="text-[13px] flex-1 text-gray-900">{f.name}</span>
-                      <span className="text-xs text-gray-400">{f.size}</span>
-                      <button onClick={() => removeFile(idx)}>
-                        <X className="w-3.5 h-3.5 text-gray-400 hover:text-gray-700" />
+                    <div key={idx} className="flex items-center gap-3 px-4 py-2.5 bg-muted border border-border rounded-lg">
+                      <span className="text-[13px] flex-1 text-foreground">{f.name}</span>
+                      <span className="text-xs text-muted-foreground">{f.size}</span>
+                      <button type="button" onClick={() => removeFile(idx)} className="text-xs text-muted-foreground hover:text-foreground">
+                        x
                       </button>
                     </div>
                   ))}
@@ -623,10 +631,10 @@ export default function NewProjectPage() {
           {/* URL Section */}
           {(mode === "url" || mode === "both") && (
             <div className="flex flex-col gap-3">
-              <h3 className="text-base font-semibold text-gray-900" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Add URL</h3>
+              <h3 className="text-base font-semibold text-foreground">Add URL</h3>
               <div className="flex gap-2">
                 <input
-                  className={`flex-1 h-11 px-4 border rounded-lg bg-white text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-600/20 focus:border-indigo-600 ${urlError ? "border-red-400" : "border-gray-200"}`}
+                  className={`flex-1 h-11 px-4 border rounded-lg bg-background text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-brand/20 focus:border-brand ${urlError ? "border-destructive" : "border-border"}`}
                   placeholder="https://professor-site.edu/cs101/"
                   value={url}
                   onChange={(e) => {
@@ -636,11 +644,12 @@ export default function NewProjectPage() {
                   onBlur={() => validateUrl(url)}
                 />
                 <button
+                  type="button"
                   onClick={handleAddUrl}
-                  className={`h-11 px-5 text-white rounded-lg font-semibold text-sm ${
+                  className={`h-11 px-5 text-brand-foreground rounded-lg font-semibold text-sm ${
                     isCanvasDetected && !canvasSessionValid
-                      ? "bg-amber-500 hover:bg-amber-600"
-                      : "bg-indigo-600 hover:bg-indigo-700"
+                      ? "bg-warning hover:opacity-90"
+                      : "bg-brand hover:opacity-90"
                   }`}
                 >
                   {isCanvasDetected && !canvasSessionValid ? "Login & Add" : "Add"}
@@ -648,13 +657,13 @@ export default function NewProjectPage() {
               </div>
               {urlError && <p className="text-xs text-destructive mt-1">{urlError}</p>}
               {isCanvasDetected && !urlError && canvasSessionValid && (
-                <div className="p-3 px-4 bg-green-50 border border-green-200 rounded-md text-sm text-green-800 leading-relaxed">
-                  <span className="font-semibold">Canvas LMS — authenticated.</span>{" "}
+                <div className="p-3 px-4 bg-success-muted border border-success/30 rounded-md text-sm text-success leading-relaxed">
+                  <span className="font-semibold">Canvas LMS -- authenticated.</span>{" "}
                   Your Canvas session is active. Content will be fetched with your credentials.
                 </div>
               )}
               {isCanvasDetected && !urlError && !canvasSessionValid && (
-                <div className="p-3 px-4 bg-amber-50 border border-amber-200 rounded-md text-sm text-amber-800 leading-relaxed">
+                <div className="p-3 px-4 bg-warning-muted border border-warning/30 rounded-md text-sm text-warning leading-relaxed">
                   <span className="font-semibold">Canvas LMS detected.</span>{" "}
                   This URL requires authentication. Click <span className="font-medium">&quot;Login &amp; Add&quot;</span> to sign in with your university credentials.
                 </div>
@@ -665,359 +674,358 @@ export default function NewProjectPage() {
           {/* Auto-Scrape Settings */}
           {(mode === "url" || mode === "both") && (
             <div className="flex flex-col gap-4">
-              <h3 className="text-base font-semibold text-gray-900" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Auto-Scrape Settings</h3>
-              <p className="text-[13px] text-gray-500">Automatically fetch updates from added URLs on a schedule.</p>
+              <h3 className="text-base font-semibold text-foreground">Auto-Scrape Settings</h3>
+              <p className="text-[13px] text-muted-foreground">Automatically fetch updates from added URLs on a schedule.</p>
               <div className="flex items-center gap-3">
                 <button
+                  type="button"
+                  title="Toggle auto-scrape"
                   onClick={() => setAutoScrape(!autoScrape)}
-                  className={`w-11 h-6 rounded-full relative transition-colors ${autoScrape ? "bg-indigo-600" : "bg-gray-300"}`}
+                  className={`w-11 h-6 rounded-full relative transition-colors ${autoScrape ? "bg-brand" : "bg-muted-foreground/30"}`}
                 >
-                  <div className={`w-[18px] h-[18px] bg-white rounded-full absolute top-[3px] transition-all ${autoScrape ? "right-[3px]" : "left-[3px]"}`} />
+                  <div className={`w-[18px] h-[18px] bg-background rounded-full absolute top-[3px] transition-all ${autoScrape ? "right-[3px]" : "left-[3px]"}`} />
                 </button>
-                <span className="text-sm text-gray-900">Enable periodic auto-scraping</span>
+                <span className="text-sm text-foreground">Enable periodic auto-scraping</span>
               </div>
               <div className="flex items-center gap-3">
-                <span className="text-sm text-gray-500">Frequency:</span>
-                <div className="flex items-center gap-2 px-3.5 h-10 border border-gray-200 rounded-md bg-white">
-                  <span className="text-[13px] text-gray-900">Every 24 hours</span>
-                  <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
+                <span className="text-sm text-muted-foreground">Frequency:</span>
+                <div className="flex items-center gap-2 px-3.5 h-10 border border-border rounded-md bg-background">
+                  <span className="text-[13px] text-foreground">Every 24 hours</span>
                 </div>
               </div>
               <div className="flex items-center gap-3">
-                <div className="w-[18px] h-[18px] rounded-[3px] bg-indigo-600 flex items-center justify-center shrink-0">
-                  <Check className="w-3 h-3 text-white" />
+                <div className="w-[18px] h-[18px] rounded-[3px] bg-brand flex items-center justify-center shrink-0">
+                  <span className="text-[10px] text-brand-foreground font-bold">{"\u2713"}</span>
                 </div>
-                <span className="text-sm text-gray-900">Remind me when login session expires</span>
+                <span className="text-sm text-foreground">Remind me when login session expires</span>
               </div>
             </div>
           )}
 
-          <div className="w-full h-px bg-gray-200" />
+          <div className="w-full h-px bg-border" />
 
           <div className="flex justify-end gap-4">
-            <button onClick={() => setStep("mode")} className="h-11 px-6 border border-gray-200 rounded-lg text-gray-500 font-medium text-sm hover:border-gray-300">
+            <button type="button" onClick={() => setStep("mode")} className="h-11 px-6 border border-border rounded-lg text-muted-foreground font-medium text-sm hover:border-foreground/20">
               Cancel
             </button>
             <button
+              type="button"
               onClick={startParsing}
               data-testid="start-parsing"
               disabled={hasUploadErrors}
-              className={`h-11 px-7 text-white rounded-lg flex items-center gap-2 font-semibold text-sm ${hasUploadErrors ? "bg-indigo-400 cursor-not-allowed" : "bg-indigo-600 hover:bg-indigo-700"}`}
+              className={`h-11 px-7 text-brand-foreground rounded-lg flex items-center gap-2 font-semibold text-sm ${hasUploadErrors ? "bg-brand/50 cursor-not-allowed" : "bg-brand hover:opacity-90"}`}
             >
-              Start Parsing <ArrowRight className="w-4 h-4" />
+              Start Parsing &rarr;
             </button>
           </div>
         </div>
       )}
 
-      {/* PARSING PROGRESS (Page 4 in ref) */}
+      {/* PARSING PROGRESS */}
       {step === "parsing" && (
-        <div className="h-screen flex animate-in fade-in duration-300">
-          {/* Browser Preview (left) */}
-          <div className="flex-1 flex flex-col bg-white">
-            <div className="h-12 px-5 bg-gray-50 border-b flex items-center gap-3 shrink-0">
-              <Globe className="w-[18px] h-[18px] text-indigo-600" />
-              <span className="font-semibold text-sm text-gray-900" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
-                Processing — {projectName || "New Project"}
+        <div className="h-screen flex flex-col animate-in fade-in duration-300">
+          {/* Top bar */}
+          <div className="h-12 px-6 bg-muted border-b border-border flex items-center gap-4 shrink-0">
+            <span className="font-semibold text-sm text-foreground">
+              Processing -- {projectName || "New Project"}
+            </span>
+            <div className="flex-1" />
+            <StepIndicator currentStep="parsing" />
+            <div className={`flex items-center gap-1.5 px-2.5 h-6 rounded ${allJobsFailed ? "bg-destructive/10" : "bg-success-muted"}`}>
+              <div className={`w-1.5 h-1.5 rounded-full ${allJobsFailed ? "bg-destructive" : "bg-success"}`} />
+              <span className={`text-[11px] font-semibold ${allJobsFailed ? "text-destructive" : "text-success"}`}>
+                {allJobsFailed ? "Needs attention" : "Active"}
               </span>
-              <div className="flex-1" />
-              <div className={`flex items-center gap-1.5 px-2.5 h-6 rounded ${allJobsFailed ? "bg-red-50" : "bg-green-50"}`}>
-                <div className={`w-1.5 h-1.5 rounded-full ${allJobsFailed ? "bg-red-500" : "bg-green-500"}`} />
-                <span className={`text-[11px] font-semibold ${allJobsFailed ? "text-red-600" : "text-green-600"}`}>
-                  {allJobsFailed ? "Needs attention" : "Active"}
-                </span>
-              </div>
-            </div>
-            {url && (
-              <div className="h-9 px-3 bg-white border-b flex items-center gap-2">
-                <Lock className="w-3 h-3 text-green-500" />
-                <span className="text-xs text-gray-500 flex-1">{url}</span>
-                <Loader className="w-3.5 h-3.5 text-gray-400 animate-spin" />
-              </div>
-            )}
-            <div className="flex-1 p-6 bg-gray-50 flex flex-col gap-4 overflow-y-auto">
-              <h2 className="text-xl font-bold text-gray-900">Processing your materials...</h2>
-              <p className="text-sm text-gray-600 leading-relaxed">
-                Progress now comes directly from backend ingestion jobs. If you enter early, the workspace will keep updating while imports finish.
-              </p>
-              {files.length > 0 && (
-                <div className="p-3 px-4 bg-yellow-50 border border-yellow-200 rounded-md text-sm text-yellow-800 leading-relaxed">
-                  Processing {files.length} file{files.length > 1 ? "s" : ""}: {files.map((f) => f.name).join(", ")}
-                </div>
-              )}
-              {allJobsFailed && (
-                <div className="p-3 px-4 bg-red-50 border border-red-200 rounded-md text-sm text-red-700 leading-relaxed">
-                  All ingestion jobs failed. Review the processing log for the backend error details, then go back and retry.
-                </div>
-              )}
             </div>
           </div>
 
-          {/* Parsing Sidebar (right) */}
-          <div className="w-[340px] border-l bg-white flex flex-col shrink-0">
-            <div className="h-11 px-4 bg-gray-50 border-b flex items-center gap-2 shrink-0">
-              <Loader className={`w-4 h-4 text-indigo-600 ${!canContinueToFeatures ? "animate-spin" : ""}`} />
-              <span className="font-semibold text-[13px] text-gray-900" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Parsing Progress</span>
-            </div>
-            <div className="flex-1 p-4 flex flex-col gap-4 overflow-y-auto">
-              <div className="flex flex-col gap-1.5">
-                <span className="font-semibold text-sm text-gray-900" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
-                  {projectName || "New Project"}
-                </span>
-                <span className="text-xs text-gray-400">
-                  {files.length} file{files.length !== 1 ? "s" : ""}{url ? " + 1 URL source" : ""}
-                </span>
-              </div>
-
-              {/* Progress bar */}
-              <div className="flex flex-col gap-1.5">
-                <div className="w-full h-1.5 bg-gray-100 rounded-full">
-                  <div
-                    className="h-1.5 bg-indigo-600 rounded-full transition-all duration-500"
-                    style={{ width: `${parseProgress}%` }}
-                  />
+          <div className="flex flex-1 min-h-0">
+            {/* Main content (left) */}
+            <div className="flex-1 flex flex-col bg-background">
+              {url && (
+                <div className="h-9 px-4 bg-muted border-b border-border flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground flex-1 truncate">{url}</span>
+                  {!canContinueToFeatures && <span className="text-xs text-muted-foreground animate-pulse">loading...</span>}
                 </div>
-                <span className="text-xs font-medium text-indigo-600">{parseProgress}% complete</span>
-              </div>
-
-              {/* Steps */}
-              <div className="flex flex-col gap-3">
-                {parseSteps.map((ps, idx) => (
-                  <div key={idx} className="flex items-center gap-2">
-                    <div
-                      className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 ${
-                        ps.status === "done"
-                          ? "bg-green-500"
-                          : ps.status === "active"
-                          ? "bg-indigo-600"
-                          : "border border-gray-200"
-                      }`}
-                    >
-                      {ps.status === "done" && <Check className="w-[11px] h-[11px] text-white" />}
-                      {ps.status === "active" && <Loader className="w-[11px] h-[11px] text-white animate-spin" />}
-                    </div>
-                    <span
-                      className={`text-xs ${
-                        ps.status === "done"
-                          ? "text-gray-900 font-medium"
-                          : ps.status === "active"
-                          ? "text-indigo-600 font-semibold"
-                          : "text-gray-400"
-                      }`}
-                    >
-                      {ps.label}
-                    </span>
+              )}
+              <div className="flex-1 p-6 bg-muted/50 flex flex-col gap-4 overflow-y-auto">
+                <h2 className="text-xl font-bold text-foreground">Processing your materials...</h2>
+                <p className="text-sm text-muted-foreground leading-relaxed">
+                  Progress now comes directly from backend ingestion jobs. If you enter early, the workspace will keep updating while imports finish.
+                </p>
+                {files.length > 0 && (
+                  <div className="p-3 px-4 bg-warning-muted border border-warning/30 rounded-md text-sm text-warning leading-relaxed">
+                    Processing {files.length} file{files.length > 1 ? "s" : ""}: {files.map((f) => f.name).join(", ")}
                   </div>
-                ))}
+                )}
+                {allJobsFailed && (
+                  <div className="p-3 px-4 bg-destructive/10 border border-destructive/30 rounded-md text-sm text-destructive leading-relaxed">
+                    All ingestion jobs failed. Review the processing log for the backend error details, then go back and retry.
+                  </div>
+                )}
               </div>
+            </div>
 
-              <div className="w-full h-px bg-gray-200" />
-
-              {/* Scrape Log */}
-              <div className="flex flex-col gap-2">
-                <span className="text-xs font-semibold text-gray-500">Processing Log</span>
-                {parseLogs.map((log, idx) => (
-                  <span key={idx} className={`text-[11px] font-mono ${log.color}`}>
-                    {log.text}
+            {/* Parsing Sidebar (right) */}
+            <div className="w-[340px] border-l border-border bg-background flex flex-col shrink-0">
+              <div className="h-11 px-4 bg-muted border-b border-border flex items-center gap-2 shrink-0">
+                {!canContinueToFeatures && <span className="text-xs text-brand animate-pulse">...</span>}
+                <span className="font-semibold text-[13px] text-foreground">Parsing Progress</span>
+              </div>
+              <div className="flex-1 p-4 flex flex-col gap-4 overflow-y-auto">
+                <div className="flex flex-col gap-1.5">
+                  <span className="font-semibold text-sm text-foreground">
+                    {projectName || "New Project"}
                   </span>
-                ))}
-              </div>
+                  <span className="text-xs text-muted-foreground">
+                    {files.length} file{files.length !== 1 ? "s" : ""}{url ? " + 1 URL source" : ""}
+                  </span>
+                </div>
 
-              <div className="flex-1" />
+                {/* Progress bar */}
+                <div className="flex flex-col gap-1.5">
+                  <div className="w-full h-1.5 bg-muted rounded-full">
+                    <div
+                      className="h-1.5 bg-brand rounded-full transition-all duration-500"
+                      style={{ width: `${parseProgress}%` }}
+                    />
+                  </div>
+                  <span className="text-xs font-medium text-brand">{parseProgress}% complete</span>
+                </div>
 
-              <div className="flex flex-col gap-2">
-                {createdCourseId && (
-                  <button
-                    onClick={enterWorkspace}
-                    data-testid="enter-now"
-                    className="w-full h-11 border border-gray-200 text-gray-700 rounded-lg flex items-center justify-center gap-2 font-semibold text-sm hover:border-gray-300"
-                  >
-                    Enter now
-                  </button>
-                )}
-                {canContinueToFeatures && (
-                  <button
-                    onClick={() => setStep("features")}
-                    data-testid="continue-to-features"
-                    className="w-full h-11 bg-indigo-600 text-white rounded-lg flex items-center justify-center gap-2 font-semibold text-sm hover:bg-indigo-700"
-                  >
-                    Continue to Features <ArrowRight className="w-3.5 h-3.5" />
-                  </button>
-                )}
+                {/* Steps */}
+                <div className="flex flex-col gap-3">
+                  {parseSteps.map((ps, idx) => (
+                    <div key={idx} className="flex items-center gap-2">
+                      <div
+                        className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 ${
+                          ps.status === "done"
+                            ? "bg-success"
+                            : ps.status === "active"
+                            ? "bg-brand"
+                            : "border border-border"
+                        }`}
+                      >
+                        {ps.status === "done" && <span className="text-[10px] text-success-foreground font-bold">{"\u2713"}</span>}
+                        {ps.status === "active" && <span className="text-[10px] text-brand-foreground animate-pulse font-bold">...</span>}
+                      </div>
+                      <span
+                        className={`text-xs ${
+                          ps.status === "done"
+                            ? "text-foreground font-medium"
+                            : ps.status === "active"
+                            ? "text-brand font-semibold"
+                            : "text-muted-foreground"
+                        }`}
+                      >
+                        {ps.label}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="w-full h-px bg-border" />
+
+                {/* Processing Log */}
+                <div className="flex flex-col gap-2">
+                  <span className="text-xs font-semibold text-muted-foreground">Processing Log</span>
+                  {parseLogs.map((log, idx) => (
+                    <span key={idx} className={`text-[11px] font-mono ${log.color}`}>
+                      {log.text}
+                    </span>
+                  ))}
+                </div>
+
+                <div className="flex-1" />
+
+                <div className="flex flex-col gap-2">
+                  {createdCourseId && (
+                    <button
+                      type="button"
+                      onClick={enterWorkspace}
+                      data-testid="enter-now"
+                      className="w-full h-11 border border-border text-foreground rounded-lg flex items-center justify-center gap-2 font-semibold text-sm hover:border-foreground/20"
+                    >
+                      Enter now
+                    </button>
+                  )}
+                  {canContinueToFeatures && (
+                    <button
+                      type="button"
+                      onClick={() => setStep("features")}
+                      data-testid="continue-to-features"
+                      className="w-full h-11 bg-brand text-brand-foreground rounded-lg flex items-center justify-center gap-2 font-semibold text-sm hover:opacity-90"
+                    >
+                      Continue to Features &rarr;
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* FEATURE SELECTION (Page 5 in ref) */}
+      {/* FEATURE SELECTION */}
       {step === "features" && (
         <div className="max-w-4xl mx-auto p-12 flex flex-col gap-8 animate-in fade-in duration-300">
           {/* Top nav */}
           <div className="flex items-center gap-3">
-            <button onClick={() => setStep("parsing")} className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700">
-              <ArrowLeft className="w-[18px] h-[18px]" /> Back
+            <button type="button" onClick={() => setStep("parsing")} className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">
+              &larr; Back
             </button>
-            <div className="w-px h-4 bg-gray-200" />
-            <span className="font-semibold text-sm text-gray-900" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+            <div className="w-px h-4 bg-border" />
+            <span className="font-semibold text-sm text-foreground">
               {projectName || "New Project"}
             </span>
+            <div className="flex-1" />
+            <StepIndicator currentStep="features" />
           </div>
 
           <div className="flex flex-col gap-2">
-            <h1 className="text-[28px] font-bold text-gray-900" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+            <h1 className="text-[28px] font-bold text-foreground">
               What should Agent do for you?
             </h1>
-            <p className="text-[15px] text-gray-500">Select the features you want to enable for this project. You can change these later.</p>
+            <p className="text-[15px] text-muted-foreground">Select the features you want to enable for this project. You can change these later.</p>
           </div>
 
-          {/* Feature Cards — 2-column grid */}
+          {/* Feature Cards -- 2-column grid */}
           <div className="grid grid-cols-2 gap-4">
             {FEATURE_CARDS.map((card) => (
               <button
+                type="button"
                 key={card.id}
                 onClick={() => toggleFeature(card.id)}
+                aria-pressed={features[card.id]}
+                data-selected={features[card.id] ? "true" : "false"}
                 className={`p-5 rounded-xl flex flex-col gap-3 text-left transition-all ${
                   features[card.id]
-                    ? "border-2 border-indigo-600"
-                    : "border border-gray-200"
+                    ? "border-2 border-brand"
+                    : "border border-border"
                 } ${card.phase ? "opacity-60 cursor-default" : "hover:shadow-md"}`}
               >
                 <div className="flex items-center gap-2.5 w-full">
-                  <div className={`w-9 h-9 ${card.iconBg} rounded-lg flex items-center justify-center shrink-0`}>
-                    <card.icon className={`w-[18px] h-[18px] ${card.iconColor}`} />
-                  </div>
-                  <span className="font-semibold text-base text-gray-900 flex-1" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+                  <span className="font-semibold text-base text-foreground flex-1">
                     {card.label}
                   </span>
                   {card.phase && (
-                    <span className="h-[22px] px-2 bg-amber-50 rounded text-[11px] font-semibold text-amber-600 flex items-center">
+                    <span className="h-[22px] px-2 bg-warning-muted rounded text-[11px] font-semibold text-warning flex items-center">
                       {card.phase}
                     </span>
                   )}
                   <div
                     className={`w-[22px] h-[22px] rounded flex items-center justify-center shrink-0 ml-auto ${
-                      features[card.id] ? "bg-indigo-600" : "border-2 border-gray-200"
+                      features[card.id] ? "bg-brand" : "border-2 border-border"
                     }`}
                   >
-                    {features[card.id] && <Check className="w-3.5 h-3.5 text-white" />}
+                    {features[card.id] && <span className="text-[10px] text-brand-foreground font-bold">{"\u2713"}</span>}
                   </div>
                 </div>
-                <p className="text-[13px] text-gray-500">{card.description}</p>
+                <p className="text-[13px] text-muted-foreground">{card.description}</p>
               </button>
             ))}
           </div>
 
           {/* NL Input */}
           <div className="flex flex-col gap-2.5">
-            <span className="font-semibold text-[15px] text-gray-900" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+            <span className="font-semibold text-[15px] text-foreground">
               Anything else you&apos;d like to tell Agent?
             </span>
             <textarea
-              className="w-full h-20 p-3 border border-gray-200 rounded-lg bg-white resize-none text-[13px] text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-600/20 focus:border-indigo-600"
+              className="w-full h-20 p-3 border border-border rounded-lg bg-background resize-none text-[13px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-brand/20 focus:border-brand"
               placeholder='e.g. "Use bullet points for notes", "Focus on algorithms", "Explain in simple terms"...'
               value={nlInput}
               onChange={(e) => setNlInput(e.target.value)}
             />
           </div>
 
-          <div className="w-full h-px bg-gray-200" />
+          <div className="w-full h-px bg-border" />
 
           <div className="flex justify-end gap-4">
-            <button onClick={() => setStep("parsing")} className="h-11 px-6 border border-gray-200 rounded-lg text-gray-500 font-medium text-sm hover:border-gray-300">
+            <button type="button" onClick={() => setStep("parsing")} className="h-11 px-6 border border-border rounded-lg text-muted-foreground font-medium text-sm hover:border-foreground/20">
               Back
             </button>
             <button
+              type="button"
               onClick={enterWorkspace}
               data-testid="enter-workspace"
-              className="h-11 px-7 bg-indigo-600 text-white rounded-lg flex items-center gap-2 font-semibold text-sm hover:bg-indigo-700"
+              className="h-11 px-7 bg-brand text-brand-foreground rounded-lg flex items-center gap-2 font-semibold text-sm hover:opacity-90"
             >
-              Enter Workspace <ArrowRight className="w-4 h-4" />
+              Enter Workspace &rarr;
             </button>
           </div>
         </div>
       )}
-      {/* Canvas Login Modal */}
+
+      {/* Canvas Browser Login Modal */}
       {showCanvasLogin && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="w-[420px] bg-white rounded-xl shadow-2xl p-6 flex flex-col gap-5 animate-in fade-in zoom-in-95 duration-200">
+          <div className="w-[420px] bg-card rounded-xl shadow-2xl p-6 flex flex-col gap-5 animate-in fade-in zoom-in-95 duration-200">
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-bold text-gray-900" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+              <h2 className="text-lg font-bold text-foreground">
                 Canvas Login
               </h2>
-              <button
-                onClick={() => setShowCanvasLogin(false)}
-                title="Close"
-                className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-100"
-              >
-                <X className="w-4 h-4 text-gray-500" />
-              </button>
+              {!canvasLogging && (
+                <button
+                  type="button"
+                  onClick={() => setShowCanvasLogin(false)}
+                  title="Close"
+                  className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground"
+                >
+                  x
+                </button>
+              )}
             </div>
 
-            <p className="text-sm text-gray-500 leading-relaxed">
-              Sign in with your university credentials to access Canvas course content.
-            </p>
-
-            <div className="flex flex-col gap-3">
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-medium text-gray-600">Canvas URL</label>
-                <div className="h-10 px-3 flex items-center border border-gray-200 rounded-lg bg-gray-50 text-sm text-gray-500 truncate">
-                  {url.trim()}
-                </div>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-medium text-gray-600">Username / Email</label>
-                <input
-                  className="h-10 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-600/20 focus:border-indigo-600"
-                  placeholder="student@university.edu"
-                  value={canvasUsername}
-                  onChange={(e) => setCanvasUsername(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleCanvasLoginSubmit()}
-                  autoFocus
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-medium text-gray-600">Password</label>
-                <input
-                  type="password"
-                  className="h-10 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-600/20 focus:border-indigo-600"
-                  placeholder="••••••••"
-                  value={canvasPassword}
-                  onChange={(e) => setCanvasPassword(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleCanvasLoginSubmit()}
-                />
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-medium text-muted-foreground">Canvas URL</label>
+              <div className="h-10 px-3 flex items-center border border-border rounded-lg bg-muted text-sm text-muted-foreground truncate">
+                {url.trim()}
               </div>
             </div>
+
+            {canvasLogging && (
+              <div className="flex flex-col items-center gap-4 py-6">
+                <div className="w-10 h-10 border-3 border-brand border-t-transparent rounded-full animate-spin" />
+                <p className="text-sm font-medium text-foreground">
+                  A browser window has opened
+                </p>
+                <p className="text-[13px] text-muted-foreground text-center leading-relaxed">
+                  Please complete your university login (Okta / SSO / MFA) in the browser window.
+                  This dialog will close automatically once login is detected.
+                </p>
+              </div>
+            )}
 
             {canvasLoginError && (
-              <div className="p-3 bg-red-50 border border-red-200 rounded-md text-sm text-red-700">
+              <div className="p-3 bg-destructive/10 border border-destructive/30 rounded-md text-sm text-destructive">
                 {canvasLoginError}
               </div>
             )}
 
-            <div className="flex justify-end gap-3">
-              <button
-                onClick={() => setShowCanvasLogin(false)}
-                className="h-10 px-5 border border-gray-200 rounded-lg text-sm font-medium text-gray-600 hover:border-gray-300"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleCanvasLoginSubmit}
-                disabled={canvasLogging || !canvasUsername || !canvasPassword}
-                className={`h-10 px-5 rounded-lg text-sm font-semibold text-white flex items-center gap-2 ${
-                  canvasLogging || !canvasUsername || !canvasPassword
-                    ? "bg-indigo-400 cursor-not-allowed"
-                    : "bg-indigo-600 hover:bg-indigo-700"
-                }`}
-              >
-                {canvasLogging && <Loader className="w-4 h-4 animate-spin" />}
-                {canvasLogging ? "Signing in..." : "Sign in"}
-              </button>
-            </div>
+            {!canvasLogging && canvasLoginError && (
+              <div className="flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowCanvasLogin(false)}
+                  className="h-10 px-5 border border-border rounded-lg text-sm font-medium text-muted-foreground hover:border-foreground/20"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleAddUrl}
+                  className="h-10 px-5 rounded-lg text-sm font-semibold text-brand-foreground bg-brand hover:opacity-90"
+                >
+                  Retry
+                </button>
+              </div>
+            )}
 
-            <p className="text-[11px] text-gray-400 leading-relaxed">
-              Your credentials are used once to establish a browser session and are not stored.
+            <p className="text-[11px] text-muted-foreground leading-relaxed">
+              {canvasLogging
+                ? "Your session cookies will be saved locally after login. No passwords are stored."
+                : "Login timed out or was cancelled. Click Retry to open the browser again."}
             </p>
           </div>
         </div>

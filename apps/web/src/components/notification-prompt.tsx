@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Bell, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useNotificationStore } from "@/store/notifications";
 
@@ -55,15 +54,15 @@ export function NotificationPrompt() {
 
   return (
     <div className="flex items-center gap-2 px-3 py-2 bg-primary/5 border-b text-xs">
-      <Bell className="h-3.5 w-3.5 text-primary shrink-0" />
+      <span className="text-primary shrink-0 text-sm font-medium" aria-hidden="true">Notifications</span>
       <span className="flex-1 text-foreground/80">
         Enable notifications to get flashcard review reminders at the right time.
       </span>
       <Button type="button" variant="default" size="sm" className="h-6 text-xs px-2" onClick={handleEnable} disabled={subscribing}>
         {subscribing ? "Enabling..." : "Enable"}
       </Button>
-      <button type="button" onClick={handleDismiss} className="text-muted-foreground hover:text-foreground" title="Dismiss">
-        <X className="h-3.5 w-3.5" />
+      <button type="button" onClick={handleDismiss} className="text-muted-foreground hover:text-foreground text-sm leading-none" title="Dismiss">
+        x
       </button>
     </div>
   );

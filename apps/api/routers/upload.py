@@ -25,6 +25,7 @@ from libs.exceptions import AppError, NotFoundError, PermissionDeniedError, Vali
 from database import get_db, async_session
 from models.content import CourseContentTree
 from models.ingestion import IngestionJob
+from models import scrape as models_scrape
 from models.user import User
 from services.ingestion.pipeline import _set_job_phase
 from services.ingestion.pipeline import run_ingestion_pipeline
@@ -48,6 +49,10 @@ def _validate_url(url: str) -> str:
     hostname = parsed.hostname
     if not hostname:
         raise ValidationError("Invalid URL")
+
+    # Allow the deterministic local scrape fixture host before DNS resolution.
+    if settings.scrape_fixture_dir and hostname.lower() == "opentutor-e2e.local":
+        return url
 
     # Block internal/private IPs
     try:
@@ -273,6 +278,89 @@ async def upload_file(
     }
 
 
+def _derive_filename(url: str) -> str:
+    """Derive a meaningful filename from a URL.
+
+    For Canvas URLs, produces "Canvas Course 250590" instead of just "250590".
+    For generic URLs, uses the last path segment or domain name.
+    """
+    from services.scraper.canvas_detector import detect_canvas_url
+
+    canvas_info = detect_canvas_url(url)
+    if canvas_info.is_canvas:
+        return canvas_info.friendly_name
+
+    parsed = urlparse(url)
+    # Try last non-empty path segment
+    segments = [s for s in parsed.path.split("/") if s]
+    if segments:
+        return segments[-1]
+    # Fallback to domain
+    return parsed.hostname or "webpage"
+
+
+async def _fetch_canvas_with_auth(
+    url: str,
+    user_id: uuid.UUID,
+    db: AsyncSession,
+) -> str | None:
+    """Attempt auth-aware fetch for Canvas URLs.
+
+    Looks up an existing auth session for the Canvas domain, then uses
+    the browser cascade with that session. Returns HTML or None.
+    """
+    from services.scraper.canvas_detector import detect_canvas_url
+
+    canvas_info = detect_canvas_url(url)
+    if not canvas_info.is_canvas:
+        return None
+
+    # Look up existing auth session for this Canvas domain
+    result = await db.execute(
+        select(models_scrape.AuthSession).where(
+            models_scrape.AuthSession.user_id == user_id,
+            models_scrape.AuthSession.domain == canvas_info.domain,
+            models_scrape.AuthSession.is_valid == True,  # noqa: E712
+        )
+    )
+    auth_session = result.scalar_one_or_none()
+
+    if not auth_session:
+        # Also try finding a ScrapeSource with auth for this domain
+        src_result = await db.execute(
+            select(models_scrape.ScrapeSource).where(
+                models_scrape.ScrapeSource.user_id == user_id,
+                models_scrape.ScrapeSource.auth_domain == canvas_info.domain,
+                models_scrape.ScrapeSource.requires_auth == True,  # noqa: E712
+            )
+        )
+        scrape_source = src_result.scalar_one_or_none()
+        if scrape_source and scrape_source.session_name:
+            # Use the scrape source's session
+            try:
+                from services.browser.automation import cascade_fetch
+                html = await cascade_fetch(
+                    url, require_auth=True, session_name=scrape_source.session_name,
+                )
+                if html and len(html) > 200:
+                    return html
+            except Exception as e:
+                logger.debug("Canvas auth fetch via ScrapeSource failed: %s", e)
+        return None
+
+    # Use the auth session
+    session_name = auth_session.session_name
+    try:
+        from services.browser.automation import cascade_fetch
+        html = await cascade_fetch(url, require_auth=True, session_name=session_name)
+        if html and len(html) > 200:
+            return html
+    except Exception as e:
+        logger.debug("Canvas auth fetch via AuthSession failed: %s", e)
+
+    return None
+
+
 @router.post("/url")
 async def scrape_url(
     url: str = Form(...),
@@ -280,7 +368,11 @@ async def scrape_url(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Scrape a URL → ingestion pipeline → content tree."""
+    """Scrape a URL → ingestion pipeline → content tree.
+
+    For Canvas LMS URLs, automatically detects the platform and attempts
+    auth-aware fetching using saved browser sessions.
+    """
     fixture_html = _load_scrape_fixture_html(url)
     if fixture_html is None:
         _validate_url(url)
@@ -291,18 +383,50 @@ async def scrape_url(
 
     await get_course_or_404(db, cid, user_id=user.id)
 
+    # Detect Canvas URL and attempt auth-aware fetch
+    from services.scraper.canvas_detector import detect_canvas_url
+
+    canvas_info = detect_canvas_url(url)
+    pre_fetched = fixture_html
+    requires_auth = False
+
+    if canvas_info.is_canvas and fixture_html is None:
+        requires_auth = True
+        logger.info("Canvas URL detected: %s (course_id=%s, page=%s)",
+                     canvas_info.domain, canvas_info.course_id, canvas_info.page_type)
+        auth_html = await _fetch_canvas_with_auth(url, user.id, db)
+        if auth_html:
+            pre_fetched = auth_html
+            logger.info("Canvas auth fetch succeeded for %s", url)
+        else:
+            logger.warning(
+                "Canvas auth fetch failed for %s — no valid session found. "
+                "Falling back to unauthenticated scrape (will likely fail).",
+                url,
+            )
+
+    filename = _derive_filename(url)
+
     job = await run_ingestion_pipeline(
         db=db,
         user_id=user.id,
         url=url,
-        filename=url.split("/")[-1] or "webpage",
+        filename=filename,
         course_id=cid,
-        pre_fetched_html=fixture_html,
+        pre_fetched_html=pre_fetched,
     )
     await db.commit()
 
     if job.status == "failed":
-        raise AppError(job.error_message or "Scrape failed")
+        # Give a more helpful error for Canvas URLs that need auth
+        error_msg = job.error_message or "Scrape failed"
+        if requires_auth and not pre_fetched:
+            error_msg = (
+                f"Canvas URL requires authentication. "
+                f"Please login to {canvas_info.domain} first via Settings → Canvas Login, "
+                f"then retry. Original error: {error_msg}"
+            )
+        raise AppError(error_msg)
 
     # Fire background embedding + auto-generation
     if (job.dispatched_to or {}).get("content_tree", 0) > 0:
@@ -315,6 +439,8 @@ async def scrape_url(
         "category": job.content_category,
         "nodes_created": (job.dispatched_to or {}).get("content_tree", 0),
         "course_id": str(cid),
+        "is_canvas": canvas_info.is_canvas,
+        "canvas_auth_used": requires_auth and pre_fetched is not None,
     }
 
 

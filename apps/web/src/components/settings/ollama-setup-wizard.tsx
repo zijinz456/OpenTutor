@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { CheckCircle2, Loader2, Server, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getOllamaModels, updateLlmRuntimeConfig, type OllamaModel } from "@/lib/api";
 import { toast } from "sonner";
@@ -68,7 +67,7 @@ export function OllamaSetupWizard({ onComplete }: OllamaSetupWizardProps) {
   return (
     <div className="rounded-lg border bg-card p-4 space-y-4">
       <div className="flex items-center gap-2 text-sm font-medium">
-        <Server className="w-4 h-4 text-primary" />
+        <span className="text-primary" aria-hidden="true">Server</span>
         Ollama Setup
       </div>
 
@@ -84,12 +83,12 @@ export function OllamaSetupWizard({ onComplete }: OllamaSetupWizardProps) {
             placeholder="http://localhost:11434"
           />
           <Button size="sm" onClick={() => void handleDetect()} disabled={detecting}>
-            {detecting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Detect"}
+            {detecting ? <span className="animate-pulse">...</span> : "Detect"}
           </Button>
         </div>
         {detected === false && (
           <div className="flex items-center gap-1.5 text-xs text-red-600">
-            <XCircle className="w-3.5 h-3.5" />
+            <span aria-hidden="true">&#x2717;</span>
             <span>
               Cannot connect to Ollama. Make sure it&apos;s running.{" "}
               <a href="https://ollama.com/download" target="_blank" rel="noopener noreferrer" className="underline">
@@ -100,7 +99,7 @@ export function OllamaSetupWizard({ onComplete }: OllamaSetupWizardProps) {
         )}
         {detected === true && models.length === 0 && (
           <div className="flex items-center gap-1.5 text-xs text-amber-600">
-            <CheckCircle2 className="w-3.5 h-3.5" />
+            <span aria-hidden="true">&#x2713;</span>
             <span>
               Ollama is running but no models found. Run{" "}
               <code className="bg-muted px-1 rounded">ollama pull llama3.2</code>{" "}
@@ -133,7 +132,7 @@ export function OllamaSetupWizard({ onComplete }: OllamaSetupWizardProps) {
           </div>
           {step === "select" && (
             <Button size="sm" onClick={() => void handleConfirm()} disabled={saving || !selectedModel}>
-              {saving ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : null}
+              {saving ? <span className="animate-pulse mr-1">...</span> : null}
               Activate Ollama
             </Button>
           )}
@@ -143,7 +142,7 @@ export function OllamaSetupWizard({ onComplete }: OllamaSetupWizardProps) {
       {/* Step 3: Confirmation */}
       {step === "confirm" && (
         <div className="flex items-center gap-1.5 text-xs text-green-600">
-          <CheckCircle2 className="w-3.5 h-3.5" />
+          <span aria-hidden="true">&#x2713;</span>
           <span>Ollama is now your active AI provider using <strong>{selectedModel}</strong>.</span>
         </div>
       )}

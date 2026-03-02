@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect } from "react";
-import { Bell, BellOff, AlertTriangle, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
@@ -42,8 +41,7 @@ export function PushSubscriptionManager() {
     return (
       <div className="rounded-lg border p-4 space-y-2">
         <div className="flex items-center gap-2">
-          <BellOff className="h-4 w-4 text-muted-foreground" />
-          <span className="text-sm font-medium">Push Notifications</span>
+          <span className="text-muted-foreground text-sm">Notifications</span>
           <Badge variant="secondary">Not supported</Badge>
         </div>
         <p className="text-sm text-muted-foreground">
@@ -57,12 +55,9 @@ export function PushSubscriptionManager() {
     <div className="rounded-lg border p-4 space-y-3">
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
-          {isSubscribed ? (
-            <Bell className="h-4 w-4" />
-          ) : (
-            <BellOff className="h-4 w-4 text-muted-foreground" />
-          )}
-          <span className="text-sm font-medium">Push Notifications</span>
+          <span className={`text-sm ${isSubscribed ? "text-foreground" : "text-muted-foreground"}`}>
+            Notifications
+          </span>
           {isSubscribed && <Badge variant="default">Enabled</Badge>}
           {!isSubscribed && pushPermission === "denied" && (
             <Badge variant="destructive">Blocked</Badge>
@@ -76,7 +71,7 @@ export function PushSubscriptionManager() {
         >
           {subscribing ? (
             <>
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              <span className="animate-pulse">...</span>
               {isSubscribed ? "Disabling..." : "Enabling..."}
             </>
           ) : isSubscribed ? (
@@ -95,7 +90,7 @@ export function PushSubscriptionManager() {
 
       {pushPermission === "denied" && (
         <div className="flex items-start gap-2 rounded-md bg-destructive/10 px-3 py-2">
-          <AlertTriangle className="h-4 w-4 text-destructive mt-0.5 shrink-0" />
+          <span className="text-destructive mt-0.5 shrink-0 font-bold text-xs">Warning</span>
           <p className="text-xs text-destructive">
             Notification permission is blocked. To enable push notifications, update your browser&apos;s site notification settings and reload this page.
           </p>

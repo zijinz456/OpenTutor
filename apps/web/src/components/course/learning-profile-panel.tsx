@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { BrainCircuit, Pencil, RotateCcw, ShieldBan, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -159,7 +158,7 @@ export function LearningProfilePanel({ courseId }: LearningProfilePanelProps) {
   };
 
   if (loading && !profile) {
-    return <div className="flex-1 p-4 text-sm text-muted-foreground">Loading learning profile…</div>;
+    return <div className="flex-1 p-4 text-sm text-muted-foreground">Loading learning profile...</div>;
   }
 
   if (!profile) {
@@ -171,7 +170,6 @@ export function LearningProfilePanel({ courseId }: LearningProfilePanelProps) {
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2 text-sm">
-            <BrainCircuit className="h-4 w-4 text-primary" />
             Learning Profile
           </CardTitle>
           <CardDescription>
@@ -189,7 +187,6 @@ export function LearningProfilePanel({ courseId }: LearningProfilePanelProps) {
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2 text-sm">
-            <Sparkles className="h-4 w-4 text-primary" />
             Active Preferences
           </CardTitle>
           <CardDescription>These preferences currently influence prompts and workspace behavior.</CardDescription>
@@ -234,7 +231,6 @@ export function LearningProfilePanel({ courseId }: LearningProfilePanelProps) {
                   </>
                 ) : (
                   <Button size="sm" variant="outline" onClick={() => beginPreferenceEdit(preference)}>
-                    <Pencil className="mr-1 h-4 w-4" />
                     Edit
                   </Button>
                 )}
@@ -250,7 +246,6 @@ export function LearningProfilePanel({ courseId }: LearningProfilePanelProps) {
                   }
                   disabled={busyKey === `pref-dismiss:${preference.id}`}
                 >
-                  <ShieldBan className="mr-1 h-4 w-4" />
                   Dismiss
                 </Button>
               </div>
@@ -317,7 +312,6 @@ export function LearningProfilePanel({ courseId }: LearningProfilePanelProps) {
                   </>
                 ) : (
                   <Button size="sm" variant="outline" onClick={() => beginMemoryEdit(memory)}>
-                    <Pencil className="mr-1 h-4 w-4" />
                     Edit
                   </Button>
                 )}
@@ -333,7 +327,6 @@ export function LearningProfilePanel({ courseId }: LearningProfilePanelProps) {
                   }
                   disabled={busyKey === `memory-dismiss:${memory.id}`}
                 >
-                  <ShieldBan className="mr-1 h-4 w-4" />
                   Dismiss
                 </Button>
               </div>
@@ -378,7 +371,6 @@ export function LearningProfilePanel({ courseId }: LearningProfilePanelProps) {
                   }
                   disabled={busyKey === `signal-dismiss:${signal.id}`}
                 >
-                  <ShieldBan className="mr-1 h-4 w-4" />
                   Dismiss
                 </Button>
               </div>
@@ -417,7 +409,6 @@ export function LearningProfilePanel({ courseId }: LearningProfilePanelProps) {
                       }
                       disabled={busyKey === `pref-restore:${preference.id}`}
                     >
-                      <RotateCcw className="mr-1 h-4 w-4" />
                       Restore
                     </Button>
                   </div>
@@ -451,7 +442,6 @@ export function LearningProfilePanel({ courseId }: LearningProfilePanelProps) {
                       }
                       disabled={busyKey === `memory-restore:${memory.id}`}
                     >
-                      <RotateCcw className="mr-1 h-4 w-4" />
                       Restore
                     </Button>
                   </div>
@@ -486,7 +476,6 @@ export function LearningProfilePanel({ courseId }: LearningProfilePanelProps) {
                       }
                       disabled={busyKey === `signal-restore:${signal.id}`}
                     >
-                      <RotateCcw className="mr-1 h-4 w-4" />
                       Restore
                     </Button>
                   </div>

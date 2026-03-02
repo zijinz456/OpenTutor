@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { Loader2, ChevronLeft, ChevronRight, CheckCircle, XCircle, Sparkles, Keyboard } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -146,7 +145,7 @@ export function QuizPanel({ courseId }: QuizPanelProps) {
   if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center">
-        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        <span className="text-sm animate-pulse text-muted-foreground">...</span>
       </div>
     );
   }
@@ -160,12 +159,11 @@ export function QuizPanel({ courseId }: QuizPanelProps) {
           <Button onClick={handleExtract} disabled={extracting} size="sm">
             {extracting ? (
               <>
-                <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                <span className="animate-pulse mr-1">...</span>
                 {t("quiz.generating")}
               </>
             ) : (
               <>
-                <Sparkles className="h-4 w-4 mr-1" />
                 {t("quiz.generate")}
               </>
             )}
@@ -197,10 +195,10 @@ export function QuizPanel({ courseId }: QuizPanelProps) {
               variant="outline"
               className={
                 accuracy >= 80
-                  ? "border-green-500 text-green-600"
+                  ? "border-success text-success"
                   : accuracy >= 50
-                    ? "border-yellow-500 text-yellow-600"
-                    : "border-red-500 text-red-600"
+                    ? "border-warning text-warning"
+                    : "border-destructive text-destructive"
               }
             >
               {accuracy}%
@@ -234,8 +232,8 @@ export function QuizPanel({ courseId }: QuizPanelProps) {
               let optionClass =
                 "w-full text-left px-3 py-2 rounded-md border text-sm transition-colors ";
               if (result) {
-                if (isCorrect) optionClass += "border-green-500 bg-green-50 dark:bg-green-950";
-                else if (isWrong) optionClass += "border-red-500 bg-red-50 dark:bg-red-950";
+                if (isCorrect) optionClass += "border-success bg-success-muted";
+                else if (isWrong) optionClass += "border-destructive bg-destructive/10";
                 else optionClass += "border-border opacity-60";
               } else if (isSelected) {
                 optionClass += "border-primary bg-primary/5";
@@ -261,10 +259,10 @@ export function QuizPanel({ courseId }: QuizPanelProps) {
                     )}
                   </span>
                   {result && isCorrect && (
-                    <CheckCircle className="inline h-4 w-4 ml-2 text-green-600" />
+                    <span className="inline ml-2 text-success font-bold">{"\u2713"}</span>
                   )}
                   {result && isWrong && (
-                    <XCircle className="inline h-4 w-4 ml-2 text-red-600" />
+                    <span className="inline ml-2 text-destructive font-bold">{"\u2717"}</span>
                   )}
                 </button>
               );
@@ -291,11 +289,10 @@ export function QuizPanel({ courseId }: QuizPanelProps) {
       {/* Navigation */}
       <div className="border-t px-3 py-2 flex items-center justify-between">
         <Button variant="ghost" size="sm" onClick={handlePrev} disabled={currentIndex === 0}>
-          <ChevronLeft className="h-4 w-4 mr-1" />
+          <span className="mr-1">{"\u2190"}</span>
           {t("quiz.prev")}
         </Button>
         <div className="flex items-center gap-1 text-[10px] text-muted-foreground/40">
-          <Keyboard className="h-3 w-3" />
           1-{optionKeys.length} select &middot; &larr;&rarr; navigate
         </div>
         <Button
@@ -305,7 +302,7 @@ export function QuizPanel({ courseId }: QuizPanelProps) {
           disabled={currentIndex >= problems.length - 1}
         >
           {t("quiz.next")}
-          <ChevronRight className="h-4 w-4 ml-1" />
+          <span className="ml-1">{"\u2192"}</span>
         </Button>
       </div>
     </div>

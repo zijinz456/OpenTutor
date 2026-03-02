@@ -8,9 +8,7 @@ test.describe("Analytics Page", () => {
 
   test("navigates to /analytics from dashboard", async ({ page }) => {
     await page.goto("/");
-    // Analytics is the first icon button in the header right area
-    const headerBtns = page.locator("button.text-gray-500");
-    await headerBtns.first().click();
+    await page.getByRole("button", { name: /analytics|nav\.analytics/i }).click();
     await expect(page).toHaveURL("/analytics");
   });
 

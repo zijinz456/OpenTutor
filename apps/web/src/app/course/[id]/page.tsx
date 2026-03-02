@@ -5,14 +5,6 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
-  FileText,
-  MessageSquare,
-  BookOpen,
-  Layers,
-  Upload,
-  X,
-} from "lucide-react";
-import {
   ResizablePanelGroup,
   ResizablePanel,
   ResizableHandle,
@@ -28,8 +20,7 @@ import { AgentFocusStrip } from "@/components/course/agent-focus-strip";
 import { NLTuningFAB } from "@/components/course/nl-tuning-fab";
 import { AutoGenBanner } from "@/components/course/auto-gen-banner";
 import { ActivityBar } from "@/components/workspace/activity-bar";
-import { StatusBar } from "@/components/workspace/status-bar";
-import { getFilesByCourseId, getFileUrl, getCourseProgress, queueNextAction as queueNextActionRequest } from "@/lib/api";
+import { getFilesByCourseId, getFileUrl, queueNextAction as queueNextActionRequest } from "@/lib/api";
 import { SceneSelector } from "@/components/scene/scene-selector";
 import { PreferenceConfirmDialog } from "@/components/preference/preference-confirm-dialog";
 import { useSceneStore } from "@/store/scene";
@@ -37,8 +28,8 @@ import { toast } from "sonner";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { useActivityPolling } from "@/hooks/use-activity-polling";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { NotificationPrompt } from "@/components/notification-prompt";
 import { ExamPrepButton } from "@/components/course/exam-prep-button";
+import { useLocale, useT } from "@/lib/i18n-context";
 import {
   getDefaultMobileTab,
   isRightTabEnabled,
@@ -65,8 +56,6 @@ function TabLoadingPlaceholder() {
   );
 }
 
-/* Dynamically import heavy tab components that are behind tabs (not visible on initial render).
-   The default visible tab is "quiz" (QuizPanel), so it stays statically imported. */
 const FlashcardPanel = dynamic(
   () => import("@/components/course/flashcard-panel").then((mod) => mod.FlashcardPanel),
   { ssr: false, loading: () => <TabLoadingPlaceholder /> },
@@ -105,13 +94,39 @@ function getPracticeLandingTab(features: ReturnType<typeof resolveWorkspaceFeatu
   return "progress";
 }
 
+function getRightTabLabel(tab: RightTab, t: (key: string) => string) {
+  if (tab === "quiz") return t("course.quiz");
+  if (tab === "flashcards") return t("course.cards");
+  if (tab === "progress") return t("course.stats");
+  if (tab === "graph") return t("course.graph");
+  if (tab === "review") return t("course.review");
+  if (tab === "plan") return t("course.plan");
+  if (tab === "activity") return t("course.activity");
+  return t("course.profile");
+}
+
+/* ---- Shared panel header ---- */
+function PanelHeader({ title, onClose, actions }: { title: string; onClose: () => void; actions?: React.ReactNode }) {
+  return (
+    <div className="border-b px-3 py-2 flex items-center gap-2 shrink-0 bg-muted/50">
+      <span className="text-xs font-medium text-foreground flex-1 truncate">{title}</span>
+      {actions}
+      <button type="button" onClick={onClose} className="text-muted-foreground hover:text-foreground text-xs">
+        x
+      </button>
+    </div>
+  );
+}
+
 export default function CoursePage() {
   const params = useParams();
   const courseId = params.id as string;
   const isMobile = useIsMobile();
+  const t = useT();
+  const { locale } = useLocale();
 
   const { activeCourse, setActiveCourse, courses, fetchCourses, contentTree } = useCourseStore();
-  const { activeScene, scenes } = useSceneStore();
+  const { activeScene } = useSceneStore();
   const { tasks, goals, nextAction, refresh } = useActivityPolling(courseId, 5000);
 
   const workspaceFeatures = useMemo(
@@ -132,16 +147,16 @@ export default function CoursePage() {
   const availableActivityItems = useMemo(
     () =>
       [
-        workspaceFeatures.notes ? { id: "notes", title: "Notes" } : null,
+        workspaceFeatures.notes ? { id: "notes", title: t("course.notes") } : null,
         (workspaceFeatures.practice || workspaceFeatures.wrong_answer || workspaceFeatures.study_plan)
-          ? { id: "practice", title: "Practice" }
+          ? { id: "practice", title: t("course.practice") }
           : null,
-        workspaceFeatures.free_qa ? { id: "chat", title: "Chat" } : null,
-        { id: "progress", title: "Progress" },
-        { id: "activity", title: "Activity" },
-        { id: "profile", title: "Profile" },
+        workspaceFeatures.free_qa ? { id: "chat", title: t("course.chat") } : null,
+        { id: "progress", title: t("course.progress") },
+        { id: "activity", title: t("course.activity") },
+        { id: "profile", title: t("course.profile") },
       ].filter((item): item is { id: string; title: string } => Boolean(item)),
-    [workspaceFeatures],
+    [t, workspaceFeatures],
   );
   const layout = useWorkspaceLayout(courseId, workspaceFeatures);
 
@@ -149,7 +164,6 @@ export default function CoursePage() {
   const [mobileTab, setMobileTab] = useState<"chat" | "notes" | "practice" | "pdf">("chat");
   const [pdfFileUrl, setPdfFileUrl] = useState<string | undefined>();
   const [pdfFileName, setPdfFileName] = useState<string | undefined>();
-  const [studyTime, setStudyTime] = useState("0m");
   const [queueingNextAction, setQueueingNextAction] = useState(false);
 
   useEffect(() => {
@@ -168,6 +182,7 @@ export default function CoursePage() {
     const alreadyConsumed = sessionStorage.getItem(consumedKey) === "true";
     if (initPrompt && !alreadyConsumed) {
       sessionStorage.setItem(consumedKey, "true");
+      localStorage.removeItem(promptKey);
       const timer = setTimeout(() => {
         void useChatStore.getState().sendMessage(courseId, initPrompt);
       }, 500);
@@ -185,13 +200,6 @@ export default function CoursePage() {
           setPdfFileUrl(getFileUrl(pdf.job_id || pdf.id));
           setPdfFileName(pdf.filename || pdf.file_name);
         }
-      })
-      .catch(() => {});
-
-    getCourseProgress(courseId)
-      .then((progress) => {
-        const minutes = progress.total_study_minutes;
-        setStudyTime(minutes >= 60 ? `${Math.floor(minutes / 60)}h ${minutes % 60}m` : `${minutes}m`);
       })
       .catch(() => {});
   }, [courseId]);
@@ -224,10 +232,6 @@ export default function CoursePage() {
       ) ?? null,
     [tasks],
   );
-  const sceneLabel = useMemo(() => {
-    const matched = scenes.find((scene) => scene.scene_id === activeScene);
-    return matched?.display_name || activeScene;
-  }, [activeScene, scenes]);
 
   useEffect(() => {
     layout.setActiveTaskTracked(activeTask);
@@ -250,41 +254,35 @@ export default function CoursePage() {
     setQueueingNextAction(true);
     try {
       const task = await queueNextActionRequest(courseId);
-      toast.success(`Queued ${task.title}`);
+      toast.success(locale === "zh" ? `${t("course.queueSuccess")}：${task.title}` : `${t("course.queueSuccess")}: ${task.title}`);
       openActivityCockpit();
       await refresh();
     } catch (error) {
-      toast.error((error as Error).message || "Failed to queue next action");
+      toast.error((error as Error).message || t("course.queueError"));
     } finally {
       setQueueingNextAction(false);
     }
-  }, [courseId, nextAction, openActivityCockpit, refresh]);
+  }, [courseId, locale, nextAction, openActivityCockpit, refresh, t]);
 
   const breadcrumbs = useMemo(
     () => [
-      { label: activeCourse?.name || "Course", href: "/" },
-      ...(contentTree.length > 0 ? [{ label: contentTree[0]?.title || "Chapter" }] : []),
+      { label: activeCourse?.name || t("nav.courses"), href: "/" },
+      ...(contentTree.length > 0 ? [{ label: contentTree[0]?.title || t("course.chapter") }] : []),
     ],
-    [activeCourse?.name, contentTree],
+    [activeCourse?.name, contentTree, t],
   );
 
   const mobileTabs = useMemo(
     () =>
       [
-        workspaceFeatures.free_qa ? { id: "chat" as const, icon: MessageSquare, label: "Chat" } : null,
-        workspaceFeatures.notes ? { id: "notes" as const, icon: FileText, label: "Notes" } : null,
-        availableRightTabs.length > 0 ? { id: "practice" as const, icon: BookOpen, label: "Practice" } : null,
-        { id: "pdf" as const, icon: Layers, label: "PDF" },
+        workspaceFeatures.free_qa ? { id: "chat" as const, label: t("course.chat") } : null,
+        workspaceFeatures.notes ? { id: "notes" as const, label: t("course.notes") } : null,
+        availableRightTabs.length > 0 ? { id: "practice" as const, label: t("course.practice") } : null,
+        { id: "pdf" as const, label: t("course.pdf") },
       ].filter(
-        (
-          tab,
-        ): tab is {
-          id: "chat" | "notes" | "practice" | "pdf";
-          icon: typeof MessageSquare;
-          label: string;
-        } => Boolean(tab),
+        (tab): tab is { id: "chat" | "notes" | "practice" | "pdf"; label: string } => Boolean(tab),
       ),
-    [availableRightTabs.length, workspaceFeatures.free_qa, workspaceFeatures.notes],
+    [availableRightTabs.length, t, workspaceFeatures.free_qa, workspaceFeatures.notes],
   );
 
   const hiddenPanels = useMemo(
@@ -328,11 +326,10 @@ export default function CoursePage() {
   const rightTabBar = (
     <div className="border-b px-1 py-1 flex items-center gap-0.5 shrink-0 bg-muted/50 overflow-x-auto">
       {availableRightTabs.map((tab) => {
-        const meta = RIGHT_TAB_META[tab];
-        const Icon = meta.icon;
         return (
           <Button
             key={tab}
+            data-testid={`right-tab-${tab}`}
             variant={layout.rightTab === tab ? "secondary" : "ghost"}
             size="sm"
             className="text-xs h-7 px-2"
@@ -340,20 +337,20 @@ export default function CoursePage() {
               layout.setRightTab(tab);
             }}
           >
-            <Icon className="h-3 w-3 mr-1" />
-            {meta.label}
+            {getRightTabLabel(tab, t)}
           </Button>
         );
       })}
     </div>
   );
 
+  /* ---- Mobile layout ---- */
   if (isMobile) {
     return (
       <div className="h-screen flex flex-col bg-background">
         <div className="h-11 px-3 bg-muted/50 border-b flex items-center gap-2 shrink-0">
           <Link href="/" className="text-xs font-medium text-primary truncate max-w-[40%]">
-            {activeCourse?.name || "Course"}
+            {activeCourse?.name || t("nav.courses")}
           </Link>
           <div className="ml-auto flex items-center gap-2">
             {workspaceFeatures.study_plan && (
@@ -373,9 +370,8 @@ export default function CoursePage() {
               type="button"
               onClick={() => setUploadOpen(true)}
               className="h-7 px-2 rounded-md bg-background border border-border text-xs font-medium"
-              title="Upload"
             >
-              <Upload className="w-3.5 h-3.5" />
+              {t("course.upload")}
             </button>
           </div>
         </div>
@@ -383,7 +379,6 @@ export default function CoursePage() {
         {workspaceFeatures.practice && (
           <AutoGenBanner courseId={courseId} onQuizReady={() => openPractice("quiz")} />
         )}
-        <NotificationPrompt />
 
         <div className="flex-1 overflow-hidden">
           {workspaceFeatures.free_qa && mobileTab === "chat" && (
@@ -415,11 +410,10 @@ export default function CoursePage() {
               key={tab.id}
               type="button"
               onClick={() => setMobileTab(tab.id)}
-              className={`flex-1 flex flex-col items-center gap-0.5 py-2 text-[10px] transition-colors ${
+              className={`flex-1 flex flex-col items-center gap-0.5 py-2 text-[10px] font-medium transition-colors ${
                 mobileTab === tab.id ? "text-primary" : "text-muted-foreground"
               }`}
             >
-              <tab.icon className="w-5 h-5" />
               {tab.label}
             </button>
           ))}
@@ -429,6 +423,7 @@ export default function CoursePage() {
     );
   }
 
+  /* ---- Desktop layout ---- */
   return (
     <div className="h-screen flex flex-col bg-background">
       <div className="flex flex-1 overflow-hidden">
@@ -438,7 +433,8 @@ export default function CoursePage() {
           items={availableActivityItems}
         />
         <div className="flex flex-col flex-1 overflow-hidden">
-          <div className="h-9 px-4 bg-muted/50 border-b flex items-center gap-2 shrink-0">
+          {/* Top bar: breadcrumb + controls + upload */}
+          <div className="h-10 px-4 bg-muted/50 border-b flex items-center gap-2 shrink-0">
             {breadcrumbs.map((item, idx) => (
               <span key={idx} className="flex items-center gap-2">
                 {idx > 0 && <span className="text-muted-foreground text-xs">/</span>}
@@ -464,19 +460,18 @@ export default function CoursePage() {
                 getCurrentUiState={layout.buildWorkspaceState}
                 onSwitch={(_id, result) => layout.applySceneResult(result)}
               />
+              <button
+                type="button"
+                onClick={() => setUploadOpen(true)}
+                data-testid="workspace-upload-trigger"
+                className="h-7 px-3 rounded-md bg-background border border-border text-xs font-medium text-foreground hover:border-primary hover:text-primary"
+              >
+                {t("course.upload")}
+              </button>
             </div>
           </div>
 
-          <StatusBar
-            courseName={activeCourse?.name || "Loading..."}
-            chapterName={contentTree[0]?.title}
-            studyTime={studyTime}
-            activeGoalTitle={activeGoal?.title}
-            activeTaskTitle={activeTask?.title}
-            sceneLabel={sceneLabel}
-            nextActionTitle={nextAction?.title}
-          />
-
+          {/* Collapsible agent focus strip */}
           <AgentFocusStrip
             activeGoalTitle={activeGoal?.title}
             activeTaskTitle={activeTask?.title}
@@ -489,31 +484,15 @@ export default function CoursePage() {
           {workspaceFeatures.practice && (
             <AutoGenBanner courseId={courseId} onQuizReady={() => openPractice("quiz")} />
           )}
-          <NotificationPrompt />
 
-          <div className="flex flex-1 overflow-hidden relative">
-            <button
-              onClick={() => setUploadOpen(true)}
-              data-testid="workspace-upload-trigger"
-              className="absolute top-3 right-3 z-20 h-9 px-3 rounded-md bg-background border border-border shadow-sm flex items-center gap-1.5 text-xs font-medium text-foreground hover:border-primary hover:text-primary"
-              title="Upload materials"
-            >
-              <Upload className="w-3.5 h-3.5" />
-              Upload
-            </button>
-
+          {/* Panels */}
+          <div className="flex flex-1 overflow-hidden">
             <ResizablePanelGroup groupRef={layout.panelGroupRef} orientation="horizontal" className="flex-1">
               {!layout.hiddenPanels.has("pdf") && (
                 <>
                   <ResizablePanel id="pdf" defaultSize={25} minSize={8}>
                     <div className="h-full flex flex-col">
-                      <div className="border-b px-3 py-2 flex items-center gap-2 shrink-0 bg-muted/50">
-                        <FileText className="h-3.5 w-3.5 text-red-500" />
-                        <span className="text-xs font-medium text-foreground flex-1 truncate">PDF Viewer</span>
-                        <button onClick={() => layout.togglePanel("pdf")} className="text-muted-foreground hover:text-foreground">
-                          <X className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
+                      <PanelHeader title={t("course.pdfViewer")} onClose={() => layout.togglePanel("pdf")} />
                       <ErrorBoundary>
                         <PdfViewer fileUrl={pdfFileUrl} fileName={pdfFileName} />
                       </ErrorBoundary>
@@ -527,13 +506,7 @@ export default function CoursePage() {
                 <>
                   <ResizablePanel id="notes" defaultSize={25} minSize={8}>
                     <div className="h-full flex flex-col">
-                      <div className="border-b px-3 py-2 flex items-center gap-2 shrink-0 bg-muted/50">
-                        <FileText className="h-3.5 w-3.5 text-primary" />
-                        <span className="text-xs font-medium text-foreground flex-1">Agent Notes</span>
-                        <button onClick={() => layout.togglePanel("notes")} className="text-muted-foreground hover:text-foreground">
-                          <X className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
+                      <PanelHeader title={t("course.agentNotes")} onClose={() => layout.togglePanel("notes")} />
                       <ErrorBoundary>
                         <NotesPanel courseId={courseId} contentTree={contentTree} />
                       </ErrorBoundary>
@@ -549,11 +522,10 @@ export default function CoursePage() {
                     <div className="h-full flex flex-col">
                       <div className="border-b px-1 py-1 flex items-center gap-0.5 shrink-0 bg-muted/50 overflow-x-auto">
                         {availableRightTabs.map((tab) => {
-                          const meta = RIGHT_TAB_META[tab];
-                          const Icon = meta.icon;
                           return (
                             <Button
                               key={tab}
+                              data-testid={`right-tab-${tab}`}
                               variant={layout.rightTab === tab ? "secondary" : "ghost"}
                               size="sm"
                               className="text-xs h-7 px-2"
@@ -561,14 +533,13 @@ export default function CoursePage() {
                                 layout.setRightTab(tab);
                               }}
                             >
-                              <Icon className="h-3 w-3 mr-1" />
-                              {meta.label}
+                              {getRightTabLabel(tab, t)}
                             </Button>
                           );
                         })}
                         <div className="flex-1 min-w-2" />
-                        <button onClick={() => layout.togglePanel("quiz")} className="text-muted-foreground hover:text-foreground px-1">
-                          <X className="w-3.5 h-3.5" />
+                        <button type="button" onClick={() => layout.togglePanel("quiz")} className="text-muted-foreground hover:text-foreground px-1 text-xs">
+                          x
                         </button>
                       </div>
                       {rightTabContent}
@@ -581,13 +552,7 @@ export default function CoursePage() {
               {workspaceFeatures.free_qa && !layout.hiddenPanels.has("chat") && (
                 <ResizablePanel id="chat" defaultSize={25} minSize={8}>
                   <div className="h-full flex flex-col">
-                    <div className="border-b px-3 py-2 flex items-center gap-2 shrink-0 bg-muted/50">
-                      <MessageSquare className="h-3.5 w-3.5 text-primary" />
-                      <span className="text-xs font-medium text-foreground flex-1">Q&A</span>
-                      <button onClick={() => layout.togglePanel("chat")} className="text-muted-foreground hover:text-foreground">
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
+                    <PanelHeader title={t("course.qa")} onClose={() => layout.togglePanel("chat")} />
                     <ErrorBoundary>
                       <ChatPanel courseId={courseId} activeTab={layout.activityItem} scene={activeScene} />
                     </ErrorBoundary>
@@ -599,22 +564,24 @@ export default function CoursePage() {
             <NLTuningFAB courseId={courseId} />
           </div>
 
+          {/* Hidden panels restore bar */}
           {hiddenPanels.length > 0 && (
             <div className="h-8 px-3 bg-muted/50 border-t flex items-center gap-2 shrink-0">
-              <span className="text-[11px] text-muted-foreground">Hidden:</span>
+              <span className="text-[11px] text-muted-foreground">{t("course.hidden")}</span>
               {hiddenPanels.map((panelId) => (
                 <button
+                  type="button"
                   key={panelId}
                   onClick={() => layout.togglePanel(panelId)}
                   className="px-2 py-0.5 bg-background border border-border rounded text-[11px] text-muted-foreground hover:border-primary hover:text-primary"
                 >
                   {panelId === "pdf"
-                    ? "PDF"
+                    ? t("course.pdf")
                     : panelId === "notes"
-                      ? "Notes"
+                      ? t("course.notes")
                       : panelId === "quiz"
-                        ? RIGHT_TAB_META[layout.rightTab].label
-                        : "Chat"} +
+                        ? getRightTabLabel(layout.rightTab, t)
+                        : t("course.chat")} +
                 </button>
               ))}
             </div>

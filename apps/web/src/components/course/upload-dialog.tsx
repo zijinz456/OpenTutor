@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import { Upload, Link, FileUp, Loader2 } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -111,11 +110,9 @@ export function UploadDialog({ open, onOpenChange, courseId }: UploadDialogProps
         <Tabs defaultValue="file" className="mt-2">
           <TabsList className="w-full">
             <TabsTrigger value="file" className="flex-1">
-              <FileUp className="h-4 w-4 mr-1" />
               Upload File
             </TabsTrigger>
             <TabsTrigger value="url" className="flex-1" data-testid="workspace-upload-url-tab">
-              <Link className="h-4 w-4 mr-1" />
               Paste URL
             </TabsTrigger>
           </TabsList>
@@ -132,7 +129,7 @@ export function UploadDialog({ open, onOpenChange, courseId }: UploadDialogProps
               onDragLeave={handleDragLeave}
               onDrop={handleDrop}
             >
-              <Upload className={`h-8 w-8 mx-auto mb-2 ${dragging ? "text-primary" : "text-muted-foreground"}`} />
+              <p className={`text-2xl mb-2 ${dragging ? "text-primary" : "text-muted-foreground"}`}>{"\u2191"}</p>
               <p className={`text-sm mb-3 ${dragging ? "text-primary font-medium" : "text-muted-foreground"}`}>
                 {dragging ? "Drop file here" : t("upload.drag")}
               </p>
@@ -149,7 +146,7 @@ export function UploadDialog({ open, onOpenChange, courseId }: UploadDialogProps
                   <span>
                     {uploading ? (
                       <>
-                        <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                        <span className="mr-1 animate-pulse">...</span>
                         {t("upload.uploading")}
                       </>
                     ) : (
@@ -186,7 +183,7 @@ export function UploadDialog({ open, onOpenChange, courseId }: UploadDialogProps
             >
               {uploading ? (
                 <>
-                  <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                  <span className="mr-1 animate-pulse">...</span>
                   Scraping...
                 </>
               ) : (

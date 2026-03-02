@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { WifiOff, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useOnlineStatus } from "@/hooks/use-online-status";
 
@@ -31,17 +30,17 @@ export function OfflineBanner() {
         "dark:bg-amber-950/40 dark:border-amber-800 dark:text-amber-200",
       )}
     >
-      <WifiOff className="h-3.5 w-3.5 shrink-0" />
+      <span className="shrink-0 font-medium" aria-hidden="true">Offline</span>
       <span className="flex-1">
         You are offline. Some features may be unavailable.
       </span>
       <button
         type="button"
         onClick={() => setDismissed(true)}
-        className="text-amber-700 hover:text-amber-900 dark:text-amber-400 dark:hover:text-amber-200"
+        className="text-amber-700 hover:text-amber-900 dark:text-amber-400 dark:hover:text-amber-200 text-sm leading-none"
         title="Dismiss"
       >
-        <X className="h-3.5 w-3.5" />
+        x
       </button>
     </div>
   );

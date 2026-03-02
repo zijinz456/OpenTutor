@@ -38,6 +38,18 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
+  --color-brand-muted: var(--brand-muted);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-success-muted: var(--success-muted);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-warning-muted: var(--warning-muted);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-info-muted: var(--info-muted);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -82,6 +94,22 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
+  /* Brand (indigo) */
+  --brand: oklch(0.457 0.228 264);
+  --brand-foreground: oklch(0.985 0 0);
+  --brand-muted: oklch(0.962 0.02 264);
+  /* Status: success (green) */
+  --success: oklch(0.579 0.175 151);
+  --success-foreground: oklch(0.985 0 0);
+  --success-muted: oklch(0.962 0.03 151);
+  /* Status: warning (amber) */
+  --warning: oklch(0.750 0.183 55);
+  --warning-foreground: oklch(0.145 0 0);
+  --warning-muted: oklch(0.962 0.04 55);
+  /* Status: info (blue) */
+  --info: oklch(0.488 0.243 264);
+  --info-foreground: oklch(0.985 0 0);
+  --info-muted: oklch(0.962 0.02 264);
 }
 
 .dark {
@@ -116,6 +144,22 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
+  /* Brand (indigo) */
+  --brand: oklch(0.541 0.281 264);
+  --brand-foreground: oklch(0.985 0 0);
+  --brand-muted: oklch(0.269 0.04 264);
+  /* Status: success (green) */
+  --success: oklch(0.696 0.17 162);
+  --success-foreground: oklch(0.145 0 0);
+  --success-muted: oklch(0.269 0.04 162);
+  /* Status: warning (amber) */
+  --warning: oklch(0.828 0.189 84);
+  --warning-foreground: oklch(0.145 0 0);
+  --warning-muted: oklch(0.269 0.04 84);
+  /* Status: info (blue) */
+  --info: oklch(0.541 0.281 264);
+  --info-foreground: oklch(0.985 0 0);
+  --info-muted: oklch(0.269 0.04 264);
 }
 
 @layer base {

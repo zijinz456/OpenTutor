@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { skipOnboarding, createCourseWithContent, ensureRightPanelVisible } from "./helpers/test-utils";
+import { skipOnboarding, createCourseViaApi, createCourseWithContent, ensureRightPanelVisible } from "./helpers/test-utils";
 
 test.describe.serial("Workspace Layout", () => {
   test.beforeEach(async ({ page }) => {
@@ -46,7 +46,9 @@ test.describe.serial("Workspace Layout", () => {
   test("clicking Review tab shows review panel", async ({ page }) => {
     await createCourseWithContent(page, "Layout Review");
     await ensureRightPanelVisible(page);
-    await page.getByRole("button", { name: "Review" }).click();
+    const reviewTab = page.getByTestId("right-tab-review");
+    await expect(reviewTab).toBeVisible();
+    await reviewTab.click({ force: true });
     await expect(page.getByText("No unmastered wrong answers").or(page.getByText("Wrong Answer"))).toBeVisible({ timeout: 10_000 });
   });
 
@@ -126,6 +128,27 @@ test.describe.serial("Workspace Layout", () => {
     await createCourseWithContent(page, "Layout ChatUI");
     await expect(page.getByTestId("chat-input")).toBeVisible();
     await expect(page.getByTestId("chat-send")).toBeVisible();
+  });
+
+  test("disabled workspace features hide notes, practice, and chat entry points", async ({ page }) => {
+    const courseId = await createCourseViaApi("Layout Limited", undefined, {
+      workspace_features: {
+        notes: false,
+        practice: false,
+        wrong_answer: false,
+        study_plan: false,
+        free_qa: false,
+      },
+    });
+    await page.goto(`/course/${courseId}`);
+    await expect(page.locator('button[title="Notes"]')).toHaveCount(0);
+    await expect(page.locator('button[title="Practice"]')).toHaveCount(0);
+    await expect(page.locator('button[title="Chat"]')).toHaveCount(0);
+    await expect(page.getByTestId("notes-panel")).toHaveCount(0);
+    await expect(page.getByTestId("chat-input")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Quiz", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Review", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Plan", exact: true })).toHaveCount(0);
   });
 
   test("workspace URL matches /course/[id] pattern", async ({ page }) => {

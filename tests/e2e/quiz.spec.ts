@@ -27,7 +27,9 @@ test.describe.serial("Quiz Panel", () => {
     const generateBtn = page.getByRole("button", { name: /Generate Quiz from Content/ });
     await expect(generateBtn).toBeVisible({ timeout: 15_000 });
     await generateBtn.click();
-    await expect(page.getByText(/Generated \d+ questions/)).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId("quiz-extract-status")).toHaveText(/Generated \d+ questions/, {
+      timeout: 30_000,
+    });
   });
 
   test("generated toast shows question count", async ({ page }) => {
@@ -37,7 +39,9 @@ test.describe.serial("Quiz Panel", () => {
     const generateBtn = page.getByRole("button", { name: /Generate Quiz from Content/ });
     await expect(generateBtn).toBeVisible({ timeout: 15_000 });
     await generateBtn.click();
-    await expect(page.getByText(/Generated \d+ questions/)).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId("quiz-extract-status")).toHaveText(/Generated \d+ questions/, {
+      timeout: 30_000,
+    });
   });
 });
 

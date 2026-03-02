@@ -30,11 +30,21 @@ class CourseCreate(BaseModel):
     metadata: CourseMetadata | None = None
 
 
+class CourseUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    metadata: CourseMetadata | None = None
+
+
 class CourseResponse(BaseModel):
     id: uuid.UUID
     name: str
     description: str | None
-    metadata: CourseMetadata | None = Field(default=None, alias="metadata_")
+    metadata: CourseMetadata | None = Field(
+        default=None,
+        validation_alias="metadata_",
+        serialization_alias="metadata",
+    )
     created_at: datetime
     updated_at: datetime
 

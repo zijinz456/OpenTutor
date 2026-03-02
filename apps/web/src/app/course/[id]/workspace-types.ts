@@ -1,14 +1,3 @@
-import type { ComponentType } from "react";
-import {
-  BookOpen,
-  Layers,
-  BarChart3,
-  Network,
-  ClipboardCheck,
-  CalendarDays,
-  BrainCircuit,
-} from "lucide-react";
-
 export const LAYOUT_PRESETS = {
   balanced: { pdf: 25, notes: 25, quiz: 25, chat: 25 },
   notesFocused: { pdf: 15, notes: 45, quiz: 20, chat: 20 },
@@ -23,15 +12,15 @@ export type LayoutPreset = keyof typeof LAYOUT_PRESETS;
 export type RightTab = (typeof RIGHT_TAB_TYPES)[number];
 export type HiddenPanelId = "pdf" | "notes" | "quiz" | "chat";
 
-export const RIGHT_TAB_META: Record<RightTab, { label: string; icon: ComponentType<{ className?: string }> }> = {
-  quiz: { label: "Quiz", icon: BookOpen },
-  flashcards: { label: "Cards", icon: Layers },
-  progress: { label: "Stats", icon: BarChart3 },
-  graph: { label: "Graph", icon: Network },
-  review: { label: "Review", icon: ClipboardCheck },
-  plan: { label: "Plan", icon: CalendarDays },
-  activity: { label: "Activity", icon: Layers },
-  profile: { label: "Profile", icon: BrainCircuit },
+export const RIGHT_TAB_META: Record<RightTab, { label: string }> = {
+  quiz: { label: "Quiz" },
+  flashcards: { label: "Cards" },
+  progress: { label: "Stats" },
+  graph: { label: "Graph" },
+  review: { label: "Review" },
+  plan: { label: "Plan" },
+  activity: { label: "Activity" },
+  profile: { label: "Profile" },
 };
 
 export function isRightTab(value: string): value is RightTab {

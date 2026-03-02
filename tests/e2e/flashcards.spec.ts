@@ -1,5 +1,11 @@
 import { expect, test } from "@playwright/test";
-import { skipOnboarding, createCourseWithContent, ensureRightPanelVisible, hasRealLlmEnv } from "./helpers/test-utils";
+import {
+  skipOnboarding,
+  createCourseWithContent,
+  ensureRightPanelVisible,
+  hasRealLlmEnv,
+  openRightTab,
+} from "./helpers/test-utils";
 
 test.describe.serial("Flashcard Panel", () => {
   test.beforeEach(async ({ page }) => {
@@ -9,14 +15,14 @@ test.describe.serial("Flashcard Panel", () => {
   test("Cards tab is visible in right panel", async ({ page }) => {
     await createCourseWithContent(page);
     await ensureRightPanelVisible(page);
-    const cardsTab = page.getByRole("button", { name: "Cards" });
+    const cardsTab = page.getByTestId("right-tab-flashcards").last();
     await expect(cardsTab).toBeVisible({ timeout: 15_000 });
   });
 
   test("shows empty state with generate button", async ({ page }) => {
     await createCourseWithContent(page);
     await ensureRightPanelVisible(page);
-    await page.getByRole("button", { name: "Cards" }).click();
+    await openRightTab(page, "flashcards");
     await expect(page.getByText("No flashcards yet")).toBeVisible({ timeout: 15_000 });
     await expect(page.getByRole("button", { name: /Generate Flashcards/ })).toBeVisible({
       timeout: 15_000,
@@ -26,7 +32,7 @@ test.describe.serial("Flashcard Panel", () => {
   test("generate button triggers flashcard creation", async ({ page }) => {
     await createCourseWithContent(page);
     await ensureRightPanelVisible(page);
-    await page.getByRole("button", { name: "Cards" }).click();
+    await openRightTab(page, "flashcards");
     const generateBtn = page.getByRole("button", { name: /Generate Flashcards/ });
     await expect(generateBtn).toBeVisible({ timeout: 15_000 });
     await generateBtn.click();
@@ -43,7 +49,7 @@ test.describe.serial("Flashcard Panel — LLM-dependent", () => {
   test("card counter shows 'Card X of Y'", async ({ page }) => {
     await createCourseWithContent(page);
     await ensureRightPanelVisible(page);
-    await page.getByRole("button", { name: "Cards" }).click();
+    await openRightTab(page, "flashcards");
     const generateBtn = page.getByRole("button", { name: /Generate Flashcards/ });
     await expect(generateBtn).toBeVisible({ timeout: 15_000 });
     await generateBtn.click();
@@ -54,7 +60,7 @@ test.describe.serial("Flashcard Panel — LLM-dependent", () => {
   test("shows front text by default", async ({ page }) => {
     await createCourseWithContent(page);
     await ensureRightPanelVisible(page);
-    await page.getByRole("button", { name: "Cards" }).click();
+    await openRightTab(page, "flashcards");
     const generateBtn = page.getByRole("button", { name: /Generate Flashcards/ });
     await expect(generateBtn).toBeVisible({ timeout: 15_000 });
     await generateBtn.click();
@@ -65,7 +71,7 @@ test.describe.serial("Flashcard Panel — LLM-dependent", () => {
   test("clicking card flips to back", async ({ page }) => {
     await createCourseWithContent(page);
     await ensureRightPanelVisible(page);
-    await page.getByRole("button", { name: "Cards" }).click();
+    await openRightTab(page, "flashcards");
     const generateBtn = page.getByRole("button", { name: /Generate Flashcards/ });
     await expect(generateBtn).toBeVisible({ timeout: 15_000 });
     await generateBtn.click();
@@ -79,7 +85,7 @@ test.describe.serial("Flashcard Panel — LLM-dependent", () => {
   test("FSRS rating buttons appear after flip", async ({ page }) => {
     await createCourseWithContent(page);
     await ensureRightPanelVisible(page);
-    await page.getByRole("button", { name: "Cards" }).click();
+    await openRightTab(page, "flashcards");
     const generateBtn = page.getByRole("button", { name: /Generate Flashcards/ });
     await expect(generateBtn).toBeVisible({ timeout: 15_000 });
     await generateBtn.click();
@@ -96,7 +102,7 @@ test.describe.serial("Flashcard Panel — LLM-dependent", () => {
   test("clicking Good rating advances to next card", async ({ page }) => {
     await createCourseWithContent(page);
     await ensureRightPanelVisible(page);
-    await page.getByRole("button", { name: "Cards" }).click();
+    await openRightTab(page, "flashcards");
     const generateBtn = page.getByRole("button", { name: /Generate Flashcards/ });
     await expect(generateBtn).toBeVisible({ timeout: 15_000 });
     await generateBtn.click();
@@ -112,7 +118,7 @@ test.describe.serial("Flashcard Panel — LLM-dependent", () => {
   test("Prev/Next buttons navigate between cards", async ({ page }) => {
     await createCourseWithContent(page);
     await ensureRightPanelVisible(page);
-    await page.getByRole("button", { name: "Cards" }).click();
+    await openRightTab(page, "flashcards");
     const generateBtn = page.getByRole("button", { name: /Generate Flashcards/ });
     await expect(generateBtn).toBeVisible({ timeout: 15_000 });
     await generateBtn.click();
@@ -126,7 +132,7 @@ test.describe.serial("Flashcard Panel — LLM-dependent", () => {
   test("Prev disabled on first card", async ({ page }) => {
     await createCourseWithContent(page);
     await ensureRightPanelVisible(page);
-    await page.getByRole("button", { name: "Cards" }).click();
+    await openRightTab(page, "flashcards");
     const generateBtn = page.getByRole("button", { name: /Generate Flashcards/ });
     await expect(generateBtn).toBeVisible({ timeout: 15_000 });
     await generateBtn.click();
@@ -138,7 +144,7 @@ test.describe.serial("Flashcard Panel — LLM-dependent", () => {
   test("flip state resets on navigation", async ({ page }) => {
     await createCourseWithContent(page);
     await ensureRightPanelVisible(page);
-    await page.getByRole("button", { name: "Cards" }).click();
+    await openRightTab(page, "flashcards");
     const generateBtn = page.getByRole("button", { name: /Generate Flashcards/ });
     await expect(generateBtn).toBeVisible({ timeout: 15_000 });
     await generateBtn.click();
@@ -153,7 +159,7 @@ test.describe.serial("Flashcard Panel — LLM-dependent", () => {
   test("Save New button saves flashcards", async ({ page }) => {
     await createCourseWithContent(page);
     await ensureRightPanelVisible(page);
-    await page.getByRole("button", { name: "Cards" }).click();
+    await openRightTab(page, "flashcards");
     const generateBtn = page.getByRole("button", { name: /Generate Flashcards/ });
     await expect(generateBtn).toBeVisible({ timeout: 15_000 });
     await generateBtn.click();

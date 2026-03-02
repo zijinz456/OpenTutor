@@ -4,8 +4,30 @@ import { createCourseWithContent, skipOnboarding } from "./helpers/test-utils";
 const apiBaseUrl = process.env.PLAYWRIGHT_API_URL || "http://127.0.0.1:8005/api";
 
 async function openActivityPanel(page: import("@playwright/test").Page) {
-  await page.getByTitle("Activity").click();
-  await expect(page.getByTestId("activity-panel")).toBeVisible({ timeout: 15_000 });
+  const panel = page.getByTestId("activity-panel");
+  if (await panel.isVisible().catch(() => false)) {
+    return;
+  }
+
+  const focusButton = page.getByRole("button", { name: "Open Activity", exact: true });
+  if (await focusButton.isVisible().catch(() => false)) {
+    await focusButton.click();
+  } else {
+    await page.getByTitle("Activity").click();
+  }
+
+  if (await panel.isVisible().catch(() => false)) {
+    return;
+  }
+
+  const activityButtons = page.getByRole("button", { name: "Activity", exact: true });
+  if ((await activityButtons.count()) > 1) {
+    await activityButtons.nth(1).click();
+  } else {
+    await page.getByTitle("Activity").click();
+  }
+
+  await expect(panel).toBeVisible({ timeout: 15_000 });
 }
 
 test.describe.serial("Activity task controls", () => {

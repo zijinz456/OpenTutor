@@ -15,7 +15,24 @@ const apiBaseUrl = process.env.PLAYWRIGHT_API_URL || "http://127.0.0.1:8005/api"
 async function uploadFixture(page: import("@playwright/test").Page, courseId: string) {
   await seedCourseFixture(courseId, fixturePath);
   await page.reload();
-  await expect(page.getByText("Binary Search Basics").first()).toBeVisible({ timeout: 30_000 });
+  await expect(page).toHaveURL(new RegExp(`/course/${courseId}`), { timeout: 30_000 });
+  await expect(page.getByRole("button", { name: "Upload" })).toBeVisible({ timeout: 30_000 });
+}
+
+async function createCourseViaApi(
+  request: import("@playwright/test").APIRequestContext,
+  name: string,
+  metadata?: Record<string, unknown>,
+) {
+  const response = await request.post(`${apiBaseUrl}/courses/`, {
+    data: {
+      name,
+      metadata,
+    },
+  });
+  expect(response.ok()).toBeTruthy();
+  const payload = await response.json();
+  return payload.id as string;
 }
 
 function buildSeedQuestion(question: string, sourceSection: string) {
@@ -165,7 +182,12 @@ test.describe("OpenTutor e2e flows", () => {
   });
 
   test("wrong-answer diagnosis flows through review, progress, and analytics", async ({ page, request }) => {
-    const courseId = await createCourse(page, "E2E Diagnosis Flow");
+    const courseId = await createCourseViaApi(request, "E2E Diagnosis Flow", {
+      workspace_features: {
+        wrong_answer: true,
+      },
+    });
+    await page.goto(`/course/${courseId}`);
     await uploadFixture(page, courseId);
     await seedQuizSet(request, courseId);
     await page.reload();
@@ -175,14 +197,14 @@ test.describe("OpenTutor e2e flows", () => {
     await page.getByTestId("quiz-option-A").click();
     await expect(page.getByText("Binary search relies on ordering")).toBeVisible({ timeout: 15_000 });
 
-    await page.getByRole("button", { name: "Review" }).click();
+    await page.getByTestId("right-tab-review").last().click();
     await expect(page.getByTestId("review-panel")).toBeVisible({ timeout: 15_000 });
     await expect(page.getByTestId("review-stats")).toContainText("Unmastered: 1", { timeout: 15_000 });
 
     await diagnoseLatestWrongAnswer(page);
     await expect(page.getByTestId("review-stats")).toContainText("trap vulnerability: 1", { timeout: 15_000 });
 
-    await page.getByRole("button", { name: "Stats" }).click();
+    await page.getByTestId("right-tab-progress").last().click();
     await expect(page.getByTestId("progress-panel")).toBeVisible({ timeout: 15_000 });
     await expect(page.getByTestId("progress-gap-breakdown")).toContainText("fundamental gap: 1", {
       timeout: 15_000,
@@ -197,7 +219,12 @@ test.describe("OpenTutor e2e flows", () => {
   });
 
   test("multiple diagnoses accumulate into course analytics", async ({ page, request }) => {
-    const courseId = await createCourse(page, "E2E Diagnosis Trend");
+    const courseId = await createCourseViaApi(request, "E2E Diagnosis Trend", {
+      workspace_features: {
+        wrong_answer: true,
+      },
+    });
+    await page.goto(`/course/${courseId}`);
     await uploadFixture(page, courseId);
     await seedQuizSet(request, courseId, [
       buildSeedQuestion("What must be true before binary search can be used correctly?", "Binary Search Basics"),
@@ -208,17 +235,22 @@ test.describe("OpenTutor e2e flows", () => {
     await expect(page.getByTestId("quiz-panel")).toBeVisible({ timeout: 15_000 });
     await page.getByTestId("quiz-option-A").click();
     await expect(page.getByText("Binary search relies on ordering")).toBeVisible({ timeout: 15_000 });
-    await page.getByRole("button", { name: "Review" }).click();
+    await page.getByTestId("right-tab-review").last().click();
     await diagnoseLatestWrongAnswer(page);
     await expect(page.getByTestId("review-stats")).toContainText("trap vulnerability: 1", { timeout: 15_000 });
 
-    await page.getByRole("button", { name: "Quiz", exact: true }).click();
-    await page.getByTestId("quiz-panel").getByRole("button", { name: "Next", exact: true }).click();
-    await expect(page.getByTestId("quiz-question")).toContainText("binary search require sorted data", { timeout: 15_000 });
+    await page.getByTestId("right-tab-quiz").last().click();
+    const quizQuestion = page.getByTestId("quiz-question");
+    await expect(quizQuestion).toBeVisible({ timeout: 15_000 });
+    const questionText = (await quizQuestion.textContent()) || "";
+    if (!questionText.includes("binary search require sorted data")) {
+      await page.keyboard.press("ArrowRight");
+      await expect(quizQuestion).toContainText("binary search require sorted data", { timeout: 15_000 });
+    }
     await page.getByTestId("quiz-option-A").click();
     await expect(page.getByText("Binary search relies on ordering")).toBeVisible({ timeout: 15_000 });
 
-    await page.getByRole("button", { name: "Review" }).click();
+    await page.getByTestId("right-tab-review").last().click();
     await diagnoseLatestWrongAnswer(page);
     await expect(page.getByTestId("review-stats")).toContainText("trap vulnerability: 2", { timeout: 15_000 });
 

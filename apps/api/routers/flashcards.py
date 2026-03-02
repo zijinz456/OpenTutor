@@ -20,7 +20,7 @@ router = APIRouter()
 class GenerateRequest(BaseModel):
     course_id: uuid.UUID
     content_node_id: uuid.UUID | None = None
-    count: int = 10
+    count: int = 5
 
 
 class ReviewRequest(BaseModel):

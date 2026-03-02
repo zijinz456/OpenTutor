@@ -15,7 +15,7 @@ from models.agent_task import AgentTask
 from models.ingestion import Assignment
 from models.study_goal import StudyGoal
 from models.user import User
-from routers.tasks import AgentTaskResponse
+from schemas.task import AgentTaskResponse
 from services.activity.engine import resume_task, retry_task, submit_task
 from services.activity.tasks import serialize_task
 from services.auth.dependency import get_current_user

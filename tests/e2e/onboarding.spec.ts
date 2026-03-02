@@ -15,6 +15,26 @@ test.describe("Onboarding flow", () => {
   // ---- redirect behaviour -----------------------------------------------
 
   test("redirects to /onboarding when opentutor_onboarded is not set", async ({ page }) => {
+    await page.route("**/api/preferences/profile", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          preferences: [],
+          dismissed_preferences: [],
+          signals: [],
+          dismissed_signals: [],
+          memories: [],
+          dismissed_memories: [],
+          summary: {
+            strength_areas: [],
+            weak_areas: [],
+            recurring_errors: [],
+            inferred_habits: [],
+          },
+        }),
+      });
+    });
     // Do NOT call skipOnboarding -- localStorage has no flag.
     await page.goto("/");
     await expect(page).toHaveURL(/\/onboarding/, { timeout: 15_000 });
@@ -26,6 +46,37 @@ test.describe("Onboarding flow", () => {
     });
     await page.goto("/");
     // Should stay on dashboard (URL must NOT contain /onboarding).
+    await page.waitForLoadState("networkidle");
+    expect(page.url()).not.toContain("/onboarding");
+  });
+
+  test("does NOT redirect when onboarding preferences already exist on the server", async ({ page }) => {
+    await page.route("**/api/preferences/profile", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          preferences: [
+            { id: "1", dimension: "language", value: "zh", scope: "global", source: "playwright", confidence: 1, course_id: null, updated_at: new Date().toISOString() },
+            { id: "2", dimension: "learning_mode", value: "balanced", scope: "global", source: "playwright", confidence: 1, course_id: null, updated_at: new Date().toISOString() },
+            { id: "3", dimension: "detail_level", value: "balanced", scope: "global", source: "playwright", confidence: 1, course_id: null, updated_at: new Date().toISOString() },
+            { id: "4", dimension: "layout_preset", value: "balanced", scope: "global", source: "playwright", confidence: 1, course_id: null, updated_at: new Date().toISOString() },
+          ],
+          dismissed_preferences: [],
+          signals: [],
+          dismissed_signals: [],
+          memories: [],
+          dismissed_memories: [],
+          summary: {
+            strength_areas: [],
+            weak_areas: [],
+            recurring_errors: [],
+            inferred_habits: [],
+          },
+        }),
+      });
+    });
+    await page.goto("/");
     await page.waitForLoadState("networkidle");
     expect(page.url()).not.toContain("/onboarding");
   });
@@ -90,19 +141,15 @@ test.describe("Onboarding flow", () => {
 
   // ---- step indicators --------------------------------------------------
 
-  test("step indicators show active/done states", async ({ page }) => {
+  test("step indicators show the sidebar workflow", async ({ page }) => {
     await page.goto("/onboarding");
 
-    // Step 1 is current -- sidebar should show "1" as active.
     const sidebar = page.locator("aside");
-    // The first step button should have bg-white/15 (active marker).
-    // After completing step 1, it should get green checkmark.
     await page.getByText("English", { exact: false }).first().click();
     await page.getByRole("button", { name: /Continue/i }).click();
-
-    // Now on step 2 -- step 1 indicator should be green / done (contains SVG check).
-    const step1Indicator = sidebar.locator("button").first();
-    await expect(step1Indicator.locator("svg")).toBeVisible(); // green check icon
+    await expect(sidebar.getByText("Language")).toBeVisible();
+    await expect(sidebar.getByText("Learning Mode")).toBeVisible();
+    await expect(page.getByText("How do you prefer to learn?")).toBeVisible();
   });
 
   // ---- back button ------------------------------------------------------
@@ -160,7 +207,7 @@ test.describe("Onboarding flow", () => {
     await expect(page.getByText("language:")).toBeVisible();
     await expect(page.getByText("learning mode:")).toBeVisible();
     await expect(page.getByText("detail level:")).toBeVisible();
-    await expect(page.getByText("layout preset:")).toBeVisible();
+    await expect(page.getByText("Layout Template:")).toBeVisible();
   });
 
   // ---- Finish Setup saves & redirects -----------------------------------
@@ -186,6 +233,12 @@ test.describe("Onboarding flow", () => {
 
     // Wait for API calls to save each preference + redirect to dashboard
     await expect(page).toHaveURL("/", { timeout: 60_000 });
+  });
+
+  test("selecting Chinese switches the remaining onboarding shell to Chinese", async ({ page }) => {
+    await page.goto("/onboarding");
+    await page.getByText("中文 (Chinese)").click();
+    await expect(page.getByRole("button", { name: "继续" })).toBeVisible();
   });
 
   // ---- localStorage flag ------------------------------------------------

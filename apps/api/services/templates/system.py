@@ -19,76 +19,130 @@ logger = logging.getLogger(__name__)
 BUILTIN_TEMPLATES = [
     {
         "name": "STEM Student",
-        "description": "Optimized for math, physics, CS, and engineering courses. "
-                       "Emphasizes step-by-step problem solving and diagrams.",
+        "description": (
+            "Optimized for math, physics, computer science, and engineering courses. "
+            "Delivers step-by-step derivations with detailed intermediate reasoning so "
+            "you can follow every logical leap. Proofs, formulas, and algorithms are "
+            "broken into numbered stages with diagrams generated automatically when "
+            "spatial intuition helps. Quiz difficulty adapts to your performance — "
+            "easy problems build confidence, harder ones stretch understanding."
+        ),
         "target_audience": "STEM student",
-        "tags": ["math", "physics", "cs", "engineering"],
+        "tags": [
+            "math", "physics", "cs", "engineering", "chemistry",
+            "problem_solving", "derivation", "proof", "algorithm",
+        ],
         "preferences": {
             "note_format": "step_by_step",
             "detail_level": "detailed",
-            "explanation_style": "step_by_step",
-            "visual_preference": "diagrams",
+            "explanation_style": "socratic",
+            "visual_preference": "diagram_heavy",
             "quiz_difficulty": "adaptive",
+            "layout_preset": "balanced",
             "language": "en",
         },
     },
     {
         "name": "Humanities Scholar",
-        "description": "Designed for literature, history, philosophy courses. "
-                       "Emphasizes summaries, critical thinking, and discussion.",
+        "description": (
+            "Designed for literature, history, philosophy, and social science courses. "
+            "Produces rich narrative summaries that connect themes, highlight cause-and-"
+            "effect chains, and surface competing interpretations. Explanations are "
+            "conversational — the tutor poses open-ended follow-ups to encourage "
+            "critical thinking. Visual clutter is minimized so you can focus on close "
+            "reading and argumentation. Quizzes favor medium difficulty to balance "
+            "recall with analytical depth."
+        ),
         "target_audience": "Humanities student",
-        "tags": ["literature", "history", "philosophy", "arts"],
+        "tags": [
+            "literature", "history", "philosophy", "arts",
+            "social_science", "critical_thinking", "essay", "analysis",
+        ],
         "preferences": {
             "note_format": "summary",
             "detail_level": "detailed",
             "explanation_style": "conversational",
-            "visual_preference": "minimal",
-            "quiz_difficulty": "moderate",
+            "visual_preference": "text_heavy",
+            "quiz_difficulty": "medium",
+            "layout_preset": "notesFocused",
             "language": "en",
         },
     },
     {
         "name": "Language Learner",
-        "description": "Optimized for foreign language courses. "
-                       "Uses tables for vocabulary and example-heavy explanations.",
+        "description": (
+            "Optimized for foreign language acquisition — vocabulary, grammar, reading, "
+            "and conversation practice. Notes are organized as comparison tables "
+            "(target language vs. native language) for quick scanning. Explanations are "
+            "loaded with real-world example sentences so you see words in context. "
+            "Language is set to auto-detect so the tutor can seamlessly switch between "
+            "your native language and the target language. Quizzes start easy to build "
+            "confidence, with the chat panel front-and-center for conversational drills."
+        ),
         "target_audience": "Language student",
-        "tags": ["language", "vocabulary", "grammar"],
+        "tags": [
+            "language", "vocabulary", "grammar", "pronunciation",
+            "conversation", "translation", "reading_comprehension",
+        ],
         "preferences": {
             "note_format": "table",
             "detail_level": "balanced",
             "explanation_style": "example_heavy",
             "visual_preference": "auto",
             "quiz_difficulty": "easy",
+            "layout_preset": "chatFocused",
             "language": "auto",
         },
     },
     {
         "name": "Visual Learner",
-        "description": "For students who learn best with diagrams and visual aids. "
-                       "Maximizes mind maps and visual content.",
+        "description": (
+            "For students who absorb information best through diagrams, mind maps, "
+            "flowcharts, and other visual structures. Notes are generated as mind maps "
+            "that branch from core concepts outward, making relationships between ideas "
+            "immediately visible. Every explanation is accompanied by as much visual "
+            "content as possible — timelines, comparison charts, process flows. "
+            "Quiz difficulty adapts to performance, and the layout keeps notes and "
+            "visuals balanced on screen."
+        ),
         "target_audience": "Visual learner",
-        "tags": ["visual", "diagrams", "mind_maps"],
+        "tags": [
+            "visual", "diagrams", "mind_maps", "flowchart",
+            "infographic", "spatial", "graphic_organizer",
+        ],
         "preferences": {
             "note_format": "mind_map",
             "detail_level": "balanced",
-            "explanation_style": "step_by_step",
+            "explanation_style": "example_heavy",
             "visual_preference": "maximum",
             "quiz_difficulty": "adaptive",
+            "layout_preset": "balanced",
             "language": "en",
         },
     },
     {
         "name": "Quick Reviewer",
-        "description": "For exam preparation and fast review. "
-                       "Concise bullet points with focus on key concepts.",
+        "description": (
+            "Built for exam preparation, last-minute review, and spaced-repetition "
+            "sessions. Notes are distilled to concise bullet points — no fluff, only "
+            "key definitions, formulas, and must-know facts. Explanations are formal "
+            "and to-the-point so you spend zero time on tangents. Quizzes are set to "
+            "hard by default to simulate exam pressure and expose weak spots fast. "
+            "The quiz panel takes center stage in the layout so you can drill "
+            "continuously."
+        ),
         "target_audience": "Exam prep",
-        "tags": ["exam", "review", "quick"],
+        "tags": [
+            "exam", "review", "quick", "spaced_repetition",
+            "flashcard", "cram", "finals", "midterm",
+        ],
         "preferences": {
             "note_format": "bullet_point",
             "detail_level": "concise",
             "explanation_style": "formal",
             "visual_preference": "minimal",
             "quiz_difficulty": "hard",
+            "layout_preset": "quizFocused",
             "language": "en",
         },
     },

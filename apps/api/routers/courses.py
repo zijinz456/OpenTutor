@@ -14,7 +14,7 @@ from models.chat_session import ChatSession
 from models.ingestion import IngestionJob
 from models.study_goal import StudyGoal
 from models.user import User
-from schemas.course import CourseCreate, CourseOverviewCard, CourseResponse, ContentNodeResponse
+from schemas.course import CourseCreate, CourseOverviewCard, CourseResponse, ContentNodeResponse, CourseUpdate
 from services.auth.dependency import get_current_user
 from services.course_access import get_course_or_404
 
@@ -193,6 +193,25 @@ async def create_course(body: CourseCreate, user: User = Depends(get_current_use
 @router.get("/{course_id}", response_model=CourseResponse)
 async def get_course(course_id: uuid.UUID, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     return await get_course_or_404(db, course_id, user_id=user.id)
+
+
+@router.patch("/{course_id}", response_model=CourseResponse)
+async def update_course(
+    course_id: uuid.UUID,
+    body: CourseUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    course = await get_course_or_404(db, course_id, user_id=user.id)
+    if body.name is not None:
+        course.name = body.name
+    if body.description is not None:
+        course.description = body.description
+    if body.metadata is not None:
+        course.metadata_ = body.metadata.model_dump(exclude_none=True)
+    await db.commit()
+    await db.refresh(course)
+    return course
 
 
 @router.get("/{course_id}/content-tree", response_model=list[ContentNodeResponse])

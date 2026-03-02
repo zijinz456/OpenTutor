@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Wand2, X, HelpCircle, ChevronLeft, Loader2 } from "lucide-react";
 import { parseNLPreference, setPreference } from "@/lib/api";
 import { toast } from "sonner";
 
@@ -82,11 +81,9 @@ export function NLTuningFAB({ courseId }: NLTuningFABProps) {
     setInput("");
     setView("parsing");
 
-    // Try LLM-based parsing first
     try {
       const result = await parseNLPreference(text);
       if (result.dimension && result.value) {
-        // LLM successfully parsed — apply directly
         await setPreference(result.dimension, result.value, "course", courseId, "nl_tuning");
         toast.success(`Applied: ${result.label ?? `${result.dimension} → ${result.value}`}`);
         handleClose();
@@ -96,7 +93,6 @@ export function NLTuningFAB({ courseId }: NLTuningFABProps) {
       // LLM unavailable — fall through to manual clarification
     }
 
-    // Fallback: show manual clarification menu
     setView("clarify");
   };
 
@@ -125,25 +121,25 @@ export function NLTuningFAB({ courseId }: NLTuningFABProps) {
     <>
       {/* FAB Button */}
       <button
+        type="button"
         onClick={() => setOpen(!open)}
-        className="absolute bottom-[52px] right-6 w-12 h-12 bg-indigo-600 rounded-full flex items-center justify-center text-white shadow-lg shadow-indigo-600/30 hover:scale-[1.08] hover:shadow-xl hover:shadow-indigo-600/40 transition-all z-10"
+        className="absolute bottom-[112px] right-6 w-12 h-12 bg-brand rounded-full flex items-center justify-center text-brand-foreground shadow-lg hover:scale-[1.08] hover:shadow-xl transition-all z-10 text-xs font-bold"
         title="Fine-tune Agent"
       >
-        <Wand2 className="w-[22px] h-[22px]" />
+        Tune
       </button>
 
       {/* Popup */}
       {open && (
-        <div className="absolute bottom-[108px] right-6 w-[380px] bg-white border border-gray-200 rounded-xl shadow-xl z-10 flex flex-col overflow-hidden animate-in fade-in slide-in-from-bottom-3 duration-200">
+        <div className="absolute bottom-[168px] right-6 w-[380px] bg-card border border-border rounded-xl shadow-xl z-10 flex flex-col overflow-hidden animate-in fade-in slide-in-from-bottom-3 duration-200">
           {/* Header */}
-          <div className="px-4 py-3.5 bg-gray-50 border-b flex items-center gap-2">
-            <Wand2 className="w-4 h-4 text-indigo-600" />
-            <span className="font-semibold text-[13px] text-gray-900" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+          <div className="px-4 py-3.5 bg-muted border-b border-border flex items-center gap-2">
+            <span className="font-semibold text-[13px] text-foreground">
               Fine-tune Agent
             </span>
             <div className="flex-1" />
-            <button onClick={handleClose} className="text-gray-400 hover:text-gray-900">
-              <X className="w-3.5 h-3.5" />
+            <button type="button" onClick={handleClose} className="text-muted-foreground hover:text-foreground text-xs">
+              x
             </button>
           </div>
 
@@ -153,41 +149,40 @@ export function NLTuningFAB({ courseId }: NLTuningFABProps) {
               <>
                 <input
                   ref={inputRef}
-                  className="w-full h-10 px-4 border border-gray-200 rounded-lg bg-white text-[13px] text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-600/20 focus:border-indigo-600"
+                  className="w-full h-10 px-4 border border-border rounded-lg bg-background text-[13px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-brand/20 focus:border-brand"
                   placeholder='e.g. "simplify notes", "use more examples"...'
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && void handleSubmit()}
                 />
-                <span className="text-[11px] text-gray-400">
-                  Describe what you want to change — AI will parse your intent
+                <span className="text-[11px] text-muted-foreground">
+                  Describe what you want to change -- AI will parse your intent
                 </span>
               </>
             )}
 
             {view === "parsing" && (
               <div className="flex items-center justify-center gap-2 py-4">
-                <Loader2 className="w-4 h-4 animate-spin text-indigo-600" />
-                <span className="text-[13px] text-gray-500">Understanding your request...</span>
+                <span className="text-[13px] text-muted-foreground animate-pulse">Understanding your request...</span>
               </div>
             )}
 
             {view === "clarify" && (
               <>
                 <div className="flex items-center gap-1.5 mb-1">
-                  <HelpCircle className="w-3.5 h-3.5 text-indigo-600" />
-                  <span className="text-[13px] font-semibold text-gray-900">What would you like to adjust?</span>
+                  <span className="text-[13px] font-semibold text-foreground">What would you like to adjust?</span>
                 </div>
-                <span className="text-xs text-gray-500 mb-1">
+                <span className="text-xs text-muted-foreground mb-1">
                   Your request &ldquo;{lastInput}&rdquo; could apply to:
                 </span>
                 {CLARIFY_OPTIONS.map((opt) => (
                   <button
+                    type="button"
                     key={opt.dimension}
                     onClick={() => handleClarifySelect(opt)}
-                    className="flex items-center gap-2 p-2.5 px-3.5 border border-gray-200 rounded-lg text-[13px] text-gray-900 hover:border-indigo-600 hover:bg-indigo-50 transition-colors text-left"
+                    className="flex items-center gap-2 p-2.5 px-3.5 border border-border rounded-lg text-[13px] text-foreground hover:border-brand hover:bg-brand-muted transition-colors text-left"
                   >
-                    <div className="w-2 h-2 rounded-full border-2 border-gray-200 shrink-0" />
+                    <div className="w-2 h-2 rounded-full border-2 border-border shrink-0" />
                     {opt.label}
                   </button>
                 ))}
@@ -199,14 +194,12 @@ export function NLTuningFAB({ courseId }: NLTuningFABProps) {
                 <button
                   type="button"
                   onClick={handleBackToClarify}
-                  className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 transition-colors self-start mb-1"
+                  className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors self-start mb-1"
                 >
-                  <ChevronLeft className="w-3 h-3" />
-                  Back
+                  &larr; Back
                 </button>
                 <div className="flex items-center gap-1.5 mb-1">
-                  <Wand2 className="w-3.5 h-3.5 text-indigo-600" />
-                  <span className="text-[13px] font-semibold text-gray-900">
+                  <span className="text-[13px] font-semibold text-foreground">
                     Choose a value for {selectedDimension.dimension.replace(/_/g, " ")}
                   </span>
                 </div>
@@ -216,7 +209,7 @@ export function NLTuningFAB({ courseId }: NLTuningFABProps) {
                       type="button"
                       key={sub.value}
                       onClick={() => handleSubOptionSelect(sub)}
-                      className="px-3.5 py-2 border border-gray-200 rounded-lg text-[13px] text-gray-900 hover:border-indigo-600 hover:bg-indigo-50 transition-colors"
+                      className="px-3.5 py-2 border border-border rounded-lg text-[13px] text-foreground hover:border-brand hover:bg-brand-muted transition-colors"
                     >
                       {sub.label}
                     </button>

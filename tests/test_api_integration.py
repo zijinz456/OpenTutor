@@ -126,6 +126,34 @@ async def test_create_course(client):
 
 
 @pytest.mark.asyncio
+async def test_create_course_persists_metadata(client):
+    resp = await client.post(
+        "/api/courses/",
+        json={
+            "name": "Metadata Course",
+            "description": "metadata roundtrip",
+            "metadata": {
+                "workspace_features": {
+                    "notes": True,
+                    "practice": False,
+                    "wrong_answer": True,
+                    "study_plan": False,
+                    "free_qa": True,
+                },
+                "auto_scrape": {
+                    "enabled": True,
+                },
+            },
+        },
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["metadata"]["workspace_features"]["practice"] is False
+    assert data["metadata"]["workspace_features"]["free_qa"] is True
+    assert data["metadata"]["auto_scrape"]["enabled"] is True
+
+
+@pytest.mark.asyncio
 async def test_list_courses(client):
     create_resp = await client.post("/api/courses/", json={"name": "List Course", "description": "for list"})
     assert create_resp.status_code == 201
