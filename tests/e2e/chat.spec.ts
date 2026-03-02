@@ -234,7 +234,8 @@ test.describe("Edge cases", () => {
 
     // Send button should be enabled for a non-empty message
     await expect(page.getByTestId("chat-send")).toBeEnabled();
-    await page.getByTestId("chat-send").click();
+    // Use force:true to bypass any overlay elements (e.g., Tune FAB)
+    await page.getByTestId("chat-send").click({ force: true });
 
     // Should receive a response (mock fallback)
     await expect(

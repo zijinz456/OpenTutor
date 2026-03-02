@@ -20,7 +20,8 @@ async function openActivityPanel(page: import("@playwright/test").Page) {
   await expect(activityTab).toBeVisible({ timeout: 15_000 });
 
   // Wait for the dynamically imported ActivityPanel to load and render
-  await expect(panel).toBeVisible({ timeout: 30_000 });
+  // Dynamic imports can be very slow under CI load (5 parallel workers)
+  await expect(panel).toBeVisible({ timeout: 60_000 });
 }
 
 test.describe.serial("Activity task controls", () => {

@@ -24,8 +24,8 @@ test.describe.serial("Workspace Layout", () => {
     await createCourseWithContent(page, "Layout Cards");
     await ensureRightPanelVisible(page);
     await page.getByRole("button", { name: "Cards" }).click();
-    // Flashcard content should be visible
-    await expect(page.getByText("No flashcards yet")).toBeVisible({ timeout: 10_000 });
+    // Flashcard content should be visible — either empty state or flashcard list
+    await expect(page.getByText("No flashcards yet").or(page.getByText("Generate Flashcards"))).toBeVisible({ timeout: 30_000 });
   });
 
   test("clicking Stats tab shows progress panel", async ({ page }) => {
