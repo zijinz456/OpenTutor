@@ -1,6 +1,24 @@
 import { expect, test } from "@playwright/test";
 import { skipOnboarding, createCourseWithContent, ensureRightPanelVisible, hasRealLlmEnv } from "./helpers/test-utils";
 
+/**
+ * Helper: click Review tab, wait for the wrong-answers API call to complete,
+ * then verify the panel has transitioned out of loading state.
+ * Under CI with 5 parallel workers and single-worker uvicorn, API calls
+ * can take 60–90s as the event loop is saturated.
+ */
+async function openReviewPanelAndWaitForData(page: import("@playwright/test").Page) {
+  // Set up response listener BEFORE clicking, so we don't miss the API response
+  const wrongAnswersResp = page.waitForResponse(
+    (resp) => resp.url().includes("/wrong-answers/") && resp.request().method() === "GET",
+    { timeout: 120_000 },
+  );
+  await page.getByRole("button", { name: "Review" }).click();
+  await expect(page.getByTestId("review-panel")).toBeVisible({ timeout: 15_000 });
+  // Wait for the API call to complete (this is the slow part under CI load)
+  await wrongAnswersResp;
+}
+
 test.describe.serial("Review Panel", () => {
   test.beforeEach(async ({ page }) => {
     await skipOnboarding(page);
@@ -14,19 +32,19 @@ test.describe.serial("Review Panel", () => {
   });
 
   test("shows empty state when no wrong answers", async ({ page }) => {
+    test.setTimeout(150_000);
     await createCourseWithContent(page);
     await ensureRightPanelVisible(page);
-    await page.getByRole("button", { name: "Review" }).click();
-    await expect(page.getByTestId("review-panel")).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByText("No unmastered wrong answers")).toBeVisible({ timeout: 60_000 });
+    await openReviewPanelAndWaitForData(page);
+    await expect(page.getByText("No unmastered wrong answers")).toBeVisible({ timeout: 10_000 });
   });
 
   test("Refresh button is clickable", async ({ page }) => {
+    test.setTimeout(150_000);
     await createCourseWithContent(page);
     await ensureRightPanelVisible(page);
-    await page.getByRole("button", { name: "Review" }).click();
-    await expect(page.getByTestId("review-panel")).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByText("No unmastered wrong answers")).toBeVisible({ timeout: 60_000 });
+    await openReviewPanelAndWaitForData(page);
+    await expect(page.getByText("No unmastered wrong answers")).toBeVisible({ timeout: 10_000 });
     const refreshBtn = page.getByRole("button", { name: "Refresh" });
     await expect(refreshBtn).toBeVisible({ timeout: 15_000 });
     await expect(refreshBtn).toBeEnabled();
@@ -35,21 +53,21 @@ test.describe.serial("Review Panel", () => {
   });
 
   test("stats section shows Total, Mastered, Unmastered", async ({ page }) => {
+    test.setTimeout(150_000);
     await createCourseWithContent(page);
     await ensureRightPanelVisible(page);
-    await page.getByRole("button", { name: "Review" }).click();
-    await expect(page.getByTestId("review-panel")).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByText("No unmastered wrong answers")).toBeVisible({ timeout: 60_000 });
+    await openReviewPanelAndWaitForData(page);
+    await expect(page.getByText("No unmastered wrong answers")).toBeVisible({ timeout: 10_000 });
     const refreshBtn = page.getByRole("button", { name: "Refresh" });
     await expect(refreshBtn).toBeVisible({ timeout: 15_000 });
   });
 
   test("Generate Review button is present", async ({ page }) => {
+    test.setTimeout(150_000);
     await createCourseWithContent(page);
     await ensureRightPanelVisible(page);
-    await page.getByRole("button", { name: "Review" }).click();
-    await expect(page.getByTestId("review-panel")).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByText("No unmastered wrong answers")).toBeVisible({ timeout: 60_000 });
+    await openReviewPanelAndWaitForData(page);
+    await expect(page.getByText("No unmastered wrong answers")).toBeVisible({ timeout: 10_000 });
     await expect(page.getByRole("button", { name: "Refresh" })).toBeVisible({ timeout: 15_000 });
   });
 });

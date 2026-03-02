@@ -35,7 +35,8 @@ test.describe.serial("Flashcard Panel", () => {
     await openRightTab(page, "flashcards");
     const generateBtn = page.getByRole("button", { name: /Generate Flashcards/ });
     await expect(generateBtn).toBeVisible({ timeout: 15_000 });
-    await generateBtn.click();
+    // Use force:true because dynamic import re-renders can detach the button from DOM
+    await generateBtn.click({ force: true });
     await expect(page.getByText(/Generated \d+ flashcards/)).toBeVisible({ timeout: 30_000 });
   });
 });
