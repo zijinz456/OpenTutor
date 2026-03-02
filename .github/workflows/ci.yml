@@ -119,6 +119,7 @@ jobs:
       STRICT_LLM: "1"
       DISABLE_RATE_LIMIT: "1"
       CODE_SANDBOX_BACKEND: process
+      APP_AUTO_CREATE_TABLES: "true"
 
     steps:
       - name: Checkout
@@ -239,6 +240,7 @@ jobs:
       DATABASE_URL: postgresql+asyncpg://opentutor:REDACTED_DEV_PASSWORD@127.0.0.1:5432/opentutor
       PYTHON_BIN: python
       DISABLE_RATE_LIMIT: "1"
+      APP_AUTO_CREATE_TABLES: "true"
 
     steps:
       - name: Checkout
@@ -323,6 +325,7 @@ jobs:
       API_BASE: http://127.0.0.1:8004
       LLM_REQUIRED: "1"
       PYTHON_BIN: python
+      APP_AUTO_CREATE_TABLES: "true"
 
     steps:
       - name: Checkout
