@@ -57,7 +57,7 @@ test.describe.serial("Workspace Layout", () => {
   test("clicking Plan tab shows study plan panel", async ({ page }) => {
     await createCourseWithContent(page, "Layout Plan");
     await ensureRightPanelVisible(page);
-    await page.getByRole("button", { name: "Plan" }).click();
+    await page.getByTestId("right-tab-plan").click();
     await expect(page.getByTestId("study-plan-panel")).toBeVisible({ timeout: 10_000 });
   });
 
