@@ -72,7 +72,7 @@ record_warn() {
 init_report() {
   mkdir -p "${REPORT_DIR}"
   rm -f "${REPORT_DIR}/verification-summary.XXXXXX.tsv"
-  REPORT_TMP_FILE="$(mktemp -p "${REPORT_DIR}" verification-summary.XXXXXX.tsv)"
+  REPORT_TMP_FILE="$(mktemp "${REPORT_DIR}/verification-summary.XXXXXX.tsv")"
   trap finalize_report EXIT
   cat > "${REPORT_FILE}" <<EOF
 # Verification Summary

@@ -24,18 +24,28 @@ The fastest way to get OpenTutor running. Choose one of two paths:
 
 ### Option A: Quickstart Script (recommended for first-time setup)
 
-This script installs dependencies, creates the database, runs migrations, and starts both servers:
+This script checks prerequisites, creates the database, runs migrations, and starts both servers.
+
+**macOS / Linux:**
 
 ```bash
 git clone https://github.com/zijinz456/OpenTutor.git
 cd OpenTutor
-./scripts/quickstart.sh
+bash scripts/quickstart.sh
+```
+
+**Windows (PowerShell):**
+
+```powershell
+git clone https://github.com/zijinz456/OpenTutor.git
+cd OpenTutor
+.\scripts\quickstart.ps1
 ```
 
 The script will:
 1. Verify prerequisites (Node.js 20+, Python 3.11, PostgreSQL, curl)
 2. Create `.env` from `.env.example` if it does not exist
-3. Auto-detect Ollama and configure it as the LLM provider if no cloud API key is set
+3. Auto-detect Ollama and configure it as the LLM provider if no cloud API key is set (bash script only)
 4. Create a Python virtual environment at `apps/api/.venv/` and install dependencies
 5. Create the `opentutor` database and enable the pgvector extension
 6. Run Alembic migrations
@@ -103,13 +113,13 @@ Step-by-step setup for development without Docker.
 
 ### Prerequisites
 
-| Tool | Version | Install (macOS) | Install (Ubuntu) |
-|------|---------|-----------------|-------------------|
-| Python | 3.11 (required; 3.14 breaks tiktoken) | `brew install python@3.11` | `sudo apt install python3.11 python3.11-venv` |
-| Node.js | 20+ | `brew install node` | [nodesource.com](https://nodesource.com/) |
-| PostgreSQL | 16+ | `brew install postgresql@16` | `sudo apt install postgresql-16` |
-| pgvector | latest | `brew install pgvector` | See [pgvector install docs](https://github.com/pgvector/pgvector#installation) |
-| curl | any | pre-installed | `sudo apt install curl` |
+| Tool | Version | macOS (brew) | Ubuntu/Debian (apt) | Fedora (dnf) | Windows |
+|------|---------|-------------|---------------------|-------------|---------|
+| Python | 3.11 (required; 3.14 breaks tiktoken) | `brew install python@3.11` | `sudo apt install python3.11 python3.11-venv` | `sudo dnf install python3.11` | [python.org](https://www.python.org/downloads/) |
+| Node.js | 20+ | `brew install node` | [nodesource.com](https://nodesource.com/) | `sudo dnf install nodejs` | [nodejs.org](https://nodejs.org/) |
+| PostgreSQL | 16+ | `brew install postgresql@16` | `sudo apt install postgresql` | `sudo dnf install postgresql-server` | [postgresql.org](https://www.postgresql.org/download/windows/) |
+| pgvector | latest | `brew install pgvector` | See [pgvector install docs](https://github.com/pgvector/pgvector#installation) | See [pgvector install docs](https://github.com/pgvector/pgvector#installation) | [pgvector Windows](https://github.com/pgvector/pgvector#windows) |
+| curl | any | pre-installed | `sudo apt install curl` | pre-installed | built into Windows 10+ |
 
 ### Step 1: Clone and configure
 
@@ -132,7 +142,7 @@ ANTHROPIC_API_KEY=sk-ant-...
 ```bash
 cd apps/api
 python3.11 -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate         # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
@@ -140,8 +150,10 @@ pip install -r requirements.txt
 
 ```bash
 # Start PostgreSQL
-brew services start postgresql@16   # macOS
-# sudo systemctl start postgresql   # Ubuntu
+brew services start postgresql@16          # macOS
+# sudo systemctl start postgresql          # Ubuntu / Fedora (systemd)
+# sudo service postgresql start            # Ubuntu (SysV init)
+# Start-Service postgresql-x64-16          # Windows (PowerShell, run as admin)
 
 # Create database and user
 createdb opentutor
@@ -178,7 +190,7 @@ Open two terminal windows:
 **Terminal 1 -- API:**
 ```bash
 cd apps/api
-source .venv/bin/activate
+source .venv/bin/activate         # Windows: .venv\Scripts\activate
 uvicorn main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
@@ -429,7 +441,7 @@ The API uses Alembic for database schema management. Migration files live in `ap
 
 ```bash
 cd apps/api
-source .venv/bin/activate   # if running outside Docker
+source .venv/bin/activate   # if running outside Docker (Windows: .venv\Scripts\activate)
 
 # Apply all migrations
 alembic upgrade head
@@ -877,8 +889,14 @@ See [troubleshooting.md](troubleshooting.md) for detailed solutions. Here is a s
 Another service is using port 5432, 6379, 8000, or 3000.
 
 ```bash
-lsof -i :5432          # find the process
-brew services stop postgresql@16   # stop it (macOS example)
+# Find what's using the port
+lsof -i :5432                              # macOS / Linux
+# Get-NetTCPConnection -LocalPort 5432     # Windows (PowerShell)
+
+# Stop the conflicting service
+brew services stop postgresql@16           # macOS
+# sudo systemctl stop postgresql           # Linux
+# Stop-Service postgresql-x64-16           # Windows (PowerShell, run as admin)
 ```
 
 Or change the port mapping in `docker-compose.yml` (e.g., `"5433:5432"`).

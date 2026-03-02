@@ -42,14 +42,14 @@ fi
 
 # PostgreSQL
 if ! command -v psql >/dev/null 2>&1; then
-  fail "PostgreSQL client (psql) not found. Install: brew install postgresql@16"
+  fail "PostgreSQL client (psql) not found. Install: $(install_hint postgresql)"
 fi
 log "  psql found"
 
 # Python 3.11
 PY_BIN="$(resolve_python_bin || true)"
 if [[ -z "${PY_BIN}" ]]; then
-  fail "Python not found. OpenTutor requires Python 3.11. Install: brew install python@3.11"
+  fail "Python not found. OpenTutor requires Python 3.11. Install: $(install_hint python)"
 fi
 
 require_python_311 "${PY_BIN}"
@@ -93,12 +93,14 @@ fi
 # ---------------------------------------------------------------------------
 step "Python environment"
 
-if [[ ! -x "${VENV_DIR}/bin/python" ]]; then
+VENV_PY="$(venv_python_path "${VENV_DIR}")"
+VENV_PIP="$(venv_pip_path "${VENV_DIR}")"
+if [[ ! -x "${VENV_PY}" ]]; then
   log "  Creating virtual environment ..."
   "${PY_BIN}" -m venv "${VENV_DIR}"
 fi
-PY_BIN="${VENV_DIR}/bin/python"
-PIP_BIN="${VENV_DIR}/bin/pip"
+PY_BIN="${VENV_PY}"
+PIP_BIN="${VENV_PIP}"
 
 log "  Installing Python dependencies ..."
 "${PIP_BIN}" install -q -r "${API_DIR}/requirements.txt"
@@ -116,12 +118,12 @@ DB_USER="${DB_USER%%:*}"
 # Check if PostgreSQL is running
 if ! pg_isready -q 2>/dev/null; then
   log "  PostgreSQL is not running. Attempting to start ..."
-  if command -v brew >/dev/null 2>&1; then
-    brew services start postgresql@16 2>/dev/null || brew services start postgresql 2>/dev/null || true
-    sleep 2
-  fi
+  start_postgresql
   if ! pg_isready -q 2>/dev/null; then
-    fail "PostgreSQL is not running. Start it manually: brew services start postgresql@16"
+    fail "PostgreSQL is not running. Start it manually:
+  macOS:   brew services start postgresql@16
+  Linux:   sudo systemctl start postgresql
+  Windows: Start-Service postgresql-x64-16  (run as admin)"
   fi
 fi
 
@@ -135,7 +137,7 @@ fi
 
 # Enable pgvector extension
 psql -d "${DB_NAME}" -c "CREATE EXTENSION IF NOT EXISTS vector;" 2>/dev/null || \
-  log "  Warning: Could not create pgvector extension. Install: brew install pgvector"
+  log "  Warning: Could not create pgvector extension. Install: $(install_hint pgvector)"
 
 # ---------------------------------------------------------------------------
 # 6. Database migrations
@@ -143,7 +145,7 @@ psql -d "${DB_NAME}" -c "CREATE EXTENSION IF NOT EXISTS vector;" 2>/dev/null || 
 step "Running database migrations"
 
 cd "${API_DIR}"
-"${VENV_DIR}/bin/alembic" upgrade head
+"${PY_BIN}" -m alembic upgrade head
 log "  Migrations complete"
 
 # ---------------------------------------------------------------------------
@@ -176,7 +178,7 @@ step "Starting services"
 
 cd "${API_DIR}"
 log "  Starting API server (port 8000) ..."
-"${VENV_DIR}/bin/uvicorn" main:app --host 127.0.0.1 --port 8000 --reload 2>&1 | sed 's/^/  [api] /' &
+"${PY_BIN}" -m uvicorn main:app --host 127.0.0.1 --port 8000 --reload 2>&1 | sed 's/^/  [api] /' &
 API_PID=$!
 
 cd "${WEB_DIR}"
