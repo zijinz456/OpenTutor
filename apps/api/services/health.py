@@ -8,7 +8,7 @@ from typing import Any
 from sqlalchemy import text
 
 from config import settings
-from database import async_session
+import database as database_module
 from services.agent.container_sandbox import container_runtime_available
 from services.llm.router import get_registry
 from services.migrations import MigrationState, inspect_database_migrations
@@ -31,7 +31,7 @@ async def get_health_status() -> dict[str, Any]:
     db_ok = False
     migration_state = _default_migration_state()
     try:
-        async with async_session() as db:
+        async with database_module.async_session() as db:
             await db.execute(text("SELECT 1"))
             conn = await db.connection()
             migration_state = await conn.run_sync(inspect_database_migrations)
