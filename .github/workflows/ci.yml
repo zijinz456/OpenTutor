@@ -135,6 +135,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r apps/api/requirements.txt
+          pip install pytest pytest-timeout
 
       - name: Prepare database
         run: python scripts/setup_ci_db.py
