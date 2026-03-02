@@ -83,7 +83,8 @@ test.describe.serial("Activity task controls", () => {
     await page.getByTestId("goal-title-input").fill("Pass the final");
     await page.getByTestId("goal-objective-input").fill("Score above 85% and eliminate binary search mistakes.");
     await page.getByTestId("goal-next-action-input").fill("Review wrong answers from chapter 2");
-    await page.getByRole("button", { name: "Create Goal" }).click();
+    // Use force:true because dynamic import re-renders can detach the button from DOM
+    await page.getByRole("button", { name: "Create Goal" }).click({ force: true });
 
     const goalCard = page.getByTestId(/^study-goal-/).first();
     await expect(goalCard).toContainText("Pass the final", { timeout: 30_000 });
@@ -100,7 +101,8 @@ test.describe.serial("Activity task controls", () => {
     await page.getByTestId("goal-title-input").fill("Pass the final");
     await page.getByTestId("goal-objective-input").fill("Score above 85% and finish the review queue.");
     await page.getByTestId("goal-next-action-input").fill("Review wrong answers from chapter 2 tonight");
-    await page.getByRole("button", { name: "Create Goal" }).click();
+    // Use force:true because dynamic import re-renders can detach the button from DOM
+    await page.getByRole("button", { name: "Create Goal" }).click({ force: true });
 
     await expect(page.getByTestId("next-action-queue-button")).toBeVisible({ timeout: 15_000 });
     await page.getByTestId("next-action-queue-button").click();

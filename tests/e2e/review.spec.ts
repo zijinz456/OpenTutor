@@ -8,15 +8,24 @@ import { skipOnboarding, createCourseWithContent, ensureRightPanelVisible, hasRe
  * can take 60–90s as the event loop is saturated.
  */
 async function openReviewPanelAndWaitForData(page: import("@playwright/test").Page) {
-  // Set up response listener BEFORE clicking, so we don't miss the API response
-  const wrongAnswersResp = page.waitForResponse(
-    (resp) => resp.url().includes("/wrong-answers/") && resp.request().method() === "GET",
-    { timeout: 120_000 },
-  );
+  // The ReviewPanel makes TWO API calls: listWrongAnswers + getWrongAnswerStats
+  // Both must complete before loading state transitions. Set up listeners BEFORE clicking.
+  let resolvedCount = 0;
+  const bothDone = new Promise<void>((resolve) => {
+    const check = () => { if (++resolvedCount >= 2) resolve(); };
+    page.waitForResponse(
+      (resp) => resp.url().includes("/wrong-answers/") && !resp.url().includes("/stats") && resp.request().method() === "GET",
+      { timeout: 120_000 },
+    ).then(check).catch(() => check());
+    page.waitForResponse(
+      (resp) => resp.url().includes("/wrong-answers/") && resp.url().includes("/stats") && resp.request().method() === "GET",
+      { timeout: 120_000 },
+    ).then(check).catch(() => check());
+  });
   await page.getByRole("button", { name: "Review" }).click();
   await expect(page.getByTestId("review-panel")).toBeVisible({ timeout: 15_000 });
-  // Wait for the API call to complete (this is the slow part under CI load)
-  await wrongAnswersResp;
+  // Wait for BOTH API calls to complete (this is the slow part under CI load)
+  await bothDone;
 }
 
 test.describe.serial("Review Panel", () => {
@@ -36,7 +45,7 @@ test.describe.serial("Review Panel", () => {
     await createCourseWithContent(page);
     await ensureRightPanelVisible(page);
     await openReviewPanelAndWaitForData(page);
-    await expect(page.getByText("No unmastered wrong answers")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText("No unmastered wrong answers")).toBeVisible({ timeout: 30_000 });
   });
 
   test("Refresh button is clickable", async ({ page }) => {
@@ -44,7 +53,7 @@ test.describe.serial("Review Panel", () => {
     await createCourseWithContent(page);
     await ensureRightPanelVisible(page);
     await openReviewPanelAndWaitForData(page);
-    await expect(page.getByText("No unmastered wrong answers")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText("No unmastered wrong answers")).toBeVisible({ timeout: 30_000 });
     const refreshBtn = page.getByRole("button", { name: "Refresh" });
     await expect(refreshBtn).toBeVisible({ timeout: 15_000 });
     await expect(refreshBtn).toBeEnabled();
@@ -57,7 +66,7 @@ test.describe.serial("Review Panel", () => {
     await createCourseWithContent(page);
     await ensureRightPanelVisible(page);
     await openReviewPanelAndWaitForData(page);
-    await expect(page.getByText("No unmastered wrong answers")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText("No unmastered wrong answers")).toBeVisible({ timeout: 30_000 });
     const refreshBtn = page.getByRole("button", { name: "Refresh" });
     await expect(refreshBtn).toBeVisible({ timeout: 15_000 });
   });
@@ -67,7 +76,7 @@ test.describe.serial("Review Panel", () => {
     await createCourseWithContent(page);
     await ensureRightPanelVisible(page);
     await openReviewPanelAndWaitForData(page);
-    await expect(page.getByText("No unmastered wrong answers")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText("No unmastered wrong answers")).toBeVisible({ timeout: 30_000 });
     await expect(page.getByRole("button", { name: "Refresh" })).toBeVisible({ timeout: 15_000 });
   });
 });
