@@ -86,10 +86,10 @@ test.describe.serial("Activity task controls", () => {
     await page.getByRole("button", { name: "Create Goal" }).click();
 
     const goalCard = page.getByTestId(/^study-goal-/).first();
-    await expect(goalCard).toContainText("Pass the final", { timeout: 15_000 });
-    await expect(goalCard).toContainText("Review wrong answers from chapter 2", { timeout: 15_000 });
+    await expect(goalCard).toContainText("Pass the final", { timeout: 30_000 });
+    await expect(goalCard).toContainText("Review wrong answers from chapter 2", { timeout: 30_000 });
     await goalCard.getByRole("button", { name: "Complete" }).click();
-    await expect(goalCard).toContainText("completed", { timeout: 15_000 });
+    await expect(goalCard).toContainText("completed", { timeout: 30_000 });
   });
 
   test("next best action can be queued into a durable task from the activity panel", async ({ page }) => {

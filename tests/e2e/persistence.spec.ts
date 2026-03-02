@@ -81,62 +81,47 @@ test.describe("Persistence", () => {
 
   // ---- removing onboarding flag -----------------------------------------
 
-  test("removing onboarding flag triggers redirect", async ({ page }) => {
-    await page.route("**/api/preferences/profile", async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          preferences: [],
-          dismissed_preferences: [],
-          signals: [],
-          dismissed_signals: [],
-          memories: [],
-          dismissed_memories: [],
-          summary: {
-            strength_areas: [],
-            weak_areas: [],
-            recurring_errors: [],
-            inferred_habits: [],
-          },
-        }),
-      });
+  test("removing onboarding flag triggers redirect", async ({ browser }, testInfo) => {
+    // Use a fresh browser context to avoid addInitScript pollution from other tests.
+    // A brand-new context has no localStorage, so the onboarding check fires immediately.
+    const baseURL = testInfo.project.use.baseURL || "http://127.0.0.1:3005";
+    const emptyProfileResponse = JSON.stringify({
+      preferences: [],
+      dismissed_preferences: [],
+      signals: [],
+      dismissed_signals: [],
+      memories: [],
+      dismissed_memories: [],
+      summary: {
+        strength_areas: [],
+        weak_areas: [],
+        recurring_errors: [],
+        inferred_habits: [],
+      },
     });
-    // Do NOT use skipOnboarding here — we need full control over localStorage.
-    // First, manually set the flag and visit dashboard.
-    await page.addInitScript(() => {
-      localStorage.setItem("opentutor_onboarded", "true");
-    });
-    await page.goto("/");
-    await expect(page).toHaveURL("/", { timeout: 15_000 });
 
-    // Now create a fresh context without the initScript and without the flag
-    await page.evaluate(() => localStorage.removeItem("opentutor_onboarded"));
-    // Remove the addInitScript by creating a new page context
-    const newPage = await page.context().newPage();
-    await newPage.route("**/api/preferences/profile", async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          preferences: [],
-          dismissed_preferences: [],
-          signals: [],
-          dismissed_signals: [],
-          memories: [],
-          dismissed_memories: [],
-          summary: {
-            strength_areas: [],
-            weak_areas: [],
-            recurring_errors: [],
-            inferred_habits: [],
-          },
-        }),
-      });
+    // First: verify that WITH the flag, dashboard stays at /
+    const ctx1 = await browser.newContext({ baseURL });
+    const page1 = await ctx1.newPage();
+    await page1.route("**/api/preferences/profile**", async (route) => {
+      await route.fulfill({ status: 200, contentType: "application/json", body: emptyProfileResponse });
     });
-    await newPage.goto("/");
-    await expect(newPage).toHaveURL(/\/onboarding/, { timeout: 30_000 });
-    await newPage.close();
+    await page1.addInitScript(() => localStorage.setItem("opentutor_onboarded", "true"));
+    await page1.goto("/");
+    await expect(page1).toHaveURL("/", { timeout: 15_000 });
+    await page1.close();
+    await ctx1.close();
+
+    // Second: verify that WITHOUT the flag, dashboard redirects to /onboarding
+    const ctx2 = await browser.newContext({ baseURL });
+    const page2 = await ctx2.newPage();
+    await page2.route("**/api/preferences/profile**", async (route) => {
+      await route.fulfill({ status: 200, contentType: "application/json", body: emptyProfileResponse });
+    });
+    await page2.goto("/");
+    await expect(page2).toHaveURL(/\/onboarding/, { timeout: 30_000 });
+    await page2.close();
+    await ctx2.close();
   });
 
   // ---- course features --------------------------------------------------
