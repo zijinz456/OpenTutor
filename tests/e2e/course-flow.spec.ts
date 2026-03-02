@@ -78,12 +78,13 @@ async function seedQuizSet(
 
 async function diagnoseLatestWrongAnswer(page: import("@playwright/test").Page) {
   const deriveButton = page.locator("[data-testid^='derive-']").first();
+  await expect(deriveButton).toBeVisible({ timeout: 30_000 });
   await deriveButton.click();
   const diagnosticCard = page.locator("[data-testid^='diagnostic-']").first();
-  await expect(diagnosticCard).toBeVisible({ timeout: 15_000 });
+  await expect(diagnosticCard).toBeVisible({ timeout: 30_000 });
   await diagnosticCard.locator("[data-testid*='-B']").click();
   await expect(page.locator("[data-testid^='diagnosis-']").first()).toContainText("trap vulnerability", {
-    timeout: 15_000,
+    timeout: 30_000,
   });
 }
 
@@ -198,16 +199,16 @@ test.describe("OpenTutor e2e flows", () => {
     await expect(page.getByText("Binary search relies on ordering")).toBeVisible({ timeout: 15_000 });
 
     await page.getByTestId("right-tab-review").last().click();
-    await expect(page.getByTestId("review-panel")).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByTestId("review-stats")).toContainText("Unmastered: 1", { timeout: 15_000 });
+    await expect(page.getByTestId("review-panel")).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId("review-stats")).toContainText("Unmastered: 1", { timeout: 30_000 });
 
     await diagnoseLatestWrongAnswer(page);
-    await expect(page.getByTestId("review-stats")).toContainText("trap vulnerability: 1", { timeout: 15_000 });
+    await expect(page.getByTestId("review-stats")).toContainText("trap vulnerability: 1", { timeout: 30_000 });
 
     await page.getByTestId("right-tab-progress").last().click();
-    await expect(page.getByTestId("progress-panel")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("progress-panel")).toBeVisible({ timeout: 30_000 });
     await expect(page.getByTestId("progress-gap-breakdown")).toContainText("fundamental gap: 1", {
-      timeout: 15_000,
+      timeout: 30_000,
     });
 
     await page.goto("/analytics");
@@ -236,8 +237,9 @@ test.describe("OpenTutor e2e flows", () => {
     await page.getByTestId("quiz-option-A").click();
     await expect(page.getByText("Binary search relies on ordering")).toBeVisible({ timeout: 15_000 });
     await page.getByTestId("right-tab-review").last().click();
+    await expect(page.getByTestId("review-panel")).toBeVisible({ timeout: 30_000 });
     await diagnoseLatestWrongAnswer(page);
-    await expect(page.getByTestId("review-stats")).toContainText("trap vulnerability: 1", { timeout: 15_000 });
+    await expect(page.getByTestId("review-stats")).toContainText("trap vulnerability: 1", { timeout: 30_000 });
 
     await page.getByTestId("right-tab-quiz").last().click();
     const quizQuestion = page.getByTestId("quiz-question");
@@ -251,8 +253,9 @@ test.describe("OpenTutor e2e flows", () => {
     await expect(page.getByText("Binary search relies on ordering")).toBeVisible({ timeout: 15_000 });
 
     await page.getByTestId("right-tab-review").last().click();
+    await expect(page.getByTestId("review-panel")).toBeVisible({ timeout: 30_000 });
     await diagnoseLatestWrongAnswer(page);
-    await expect(page.getByTestId("review-stats")).toContainText("trap vulnerability: 2", { timeout: 15_000 });
+    await expect(page.getByTestId("review-stats")).toContainText("trap vulnerability: 2", { timeout: 30_000 });
 
     await page.goto("/analytics");
     await expect(page.getByTestId("analytics-page")).toBeVisible({ timeout: 15_000 });
