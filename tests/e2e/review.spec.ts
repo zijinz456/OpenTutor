@@ -17,7 +17,8 @@ test.describe.serial("Review Panel", () => {
     await createCourseWithContent(page);
     await ensureRightPanelVisible(page);
     await page.getByRole("button", { name: "Review" }).click();
-    await expect(page.getByText("No unmastered wrong answers")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("review-panel")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("No unmastered wrong answers")).toBeVisible({ timeout: 30_000 });
   });
 
   test("Refresh button is clickable", async ({ page }) => {

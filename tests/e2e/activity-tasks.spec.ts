@@ -9,25 +9,18 @@ async function openActivityPanel(page: import("@playwright/test").Page) {
     return;
   }
 
-  const focusButton = page.getByRole("button", { name: "Open Activity", exact: true });
-  if (await focusButton.isVisible().catch(() => false)) {
-    await focusButton.click();
-  } else {
-    await page.getByTitle("Activity").click();
+  // Click Activity in the activity bar to switch to the activity tab
+  const activityBarBtn = page.getByTitle("Activity");
+  if (await activityBarBtn.isVisible({ timeout: 5_000 }).catch(() => false)) {
+    await activityBarBtn.click();
   }
 
-  if (await panel.isVisible().catch(() => false)) {
-    return;
-  }
+  // Wait for the right panel to switch to activity tab (confirms tab switch worked)
+  const activityTab = page.getByTestId("right-tab-activity");
+  await expect(activityTab).toBeVisible({ timeout: 15_000 });
 
-  const activityButtons = page.getByRole("button", { name: "Activity", exact: true });
-  if ((await activityButtons.count()) > 1) {
-    await activityButtons.nth(1).click();
-  } else {
-    await page.getByTitle("Activity").click();
-  }
-
-  await expect(panel).toBeVisible({ timeout: 15_000 });
+  // Wait for the dynamically imported ActivityPanel to load and render
+  await expect(panel).toBeVisible({ timeout: 30_000 });
 }
 
 test.describe.serial("Activity task controls", () => {

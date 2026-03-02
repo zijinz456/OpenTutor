@@ -91,9 +91,11 @@ test.describe.serial("Knowledge Graph", () => {
     await createCourseWithContent(page);
     await ensureRightPanelVisible(page);
     await page.getByRole("button", { name: "Graph" }).click();
+    // Wait for the dynamically imported KnowledgeGraph to load (any state)
+    await expect(page.getByTestId("graph-panel").or(page.locator("canvas"))).toBeVisible({ timeout: 15_000 });
     const canvas = page.locator("canvas");
     const emptyState = page.getByText("Upload course materials to generate the knowledge graph");
-    await expect(canvas.or(emptyState)).toBeVisible({ timeout: 15_000 });
+    await expect(canvas.or(emptyState)).toBeVisible({ timeout: 30_000 });
     if (await canvas.isVisible()) {
       const zoomIn = page.locator("button").filter({ has: page.locator("svg") }).first();
       await expect(zoomIn).toBeVisible({ timeout: 5_000 });

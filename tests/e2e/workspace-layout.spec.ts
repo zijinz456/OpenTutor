@@ -49,7 +49,8 @@ test.describe.serial("Workspace Layout", () => {
     const reviewTab = page.getByTestId("right-tab-review");
     await expect(reviewTab).toBeVisible();
     await reviewTab.click({ force: true });
-    await expect(page.getByText("No unmastered wrong answers").or(page.getByText("Wrong Answer"))).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByTestId("review-panel")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("No unmastered wrong answers").or(page.getByText("Wrong Answer"))).toBeVisible({ timeout: 30_000 });
   });
 
   test("clicking Plan tab shows study plan panel", async ({ page }) => {

@@ -185,7 +185,7 @@ export function ReviewPanel({ courseId }: ReviewPanelProps) {
 
   if (loading) {
     return (
-      <div className="flex-1 flex items-center justify-center">
+      <div className="flex-1 flex items-center justify-center" data-testid="review-panel">
         <span className="text-sm animate-pulse text-muted-foreground">...</span>
       </div>
     );
@@ -193,7 +193,7 @@ export function ReviewPanel({ courseId }: ReviewPanelProps) {
 
   if (wrongAnswers.length === 0) {
     return (
-      <div className="flex-1 flex items-center justify-center p-4 text-center">
+      <div className="flex-1 flex items-center justify-center p-4 text-center" data-testid="review-panel">
         <div>
           <p className="text-muted-foreground text-sm mb-3">No unmastered wrong answers</p>
           <Button size="sm" variant="outline" onClick={loadWrongAnswers}>
