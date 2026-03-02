@@ -31,7 +31,7 @@ test.describe("Dashboard", () => {
     await page.goto("/");
     // Either shows empty state or existing courses (DB may have data from other tests)
     const emptyState = page.getByText("No courses yet", { exact: false });
-    const courseList = page.locator(".grid");
+    const courseList = page.locator(".grid").first();
     await expect(emptyState.or(courseList)).toBeVisible({ timeout: 15_000 });
   });
 
