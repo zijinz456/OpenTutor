@@ -1,8 +1,6 @@
 import { expect, test } from "@playwright/test";
 import {
   skipOnboarding,
-  createCourse,
-  SAMPLE_COURSE_MD,
 } from "./helpers/test-utils";
 
 // ---------------------------------------------------------------------------
@@ -44,7 +42,7 @@ test.describe("Step 1: Mode Selection", () => {
   });
 
   test("Back to Projects navigates to dashboard", async ({ page }) => {
-    await page.getByRole("button", { name: /Back to Projects/i }).click();
+    await page.getByTestId("back-to-projects").click();
     await expect(page).toHaveURL("/");
   });
 });
@@ -79,7 +77,7 @@ test.describe("Step 2: Upload Form", () => {
   });
 
   test("Back button returns to mode selection", async ({ page }) => {
-    await page.getByRole("button", { name: /Back/i }).first().click();
+    await page.getByTestId("new-back-mode").click();
     // Mode selection cards should be visible again
     await expect(page.getByTestId("mode-option-both")).toBeVisible();
   });
@@ -88,7 +86,7 @@ test.describe("Step 2: Upload Form", () => {
     await page.getByTestId("project-name-input").fill("Parse Test Project");
     await page.getByTestId("start-parsing").click();
     // Should transition to parsing step — look for progress indicators
-    await expect(page.getByText(/Parsing Progress/i)).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("continue-to-features").or(page.getByText(/\d+%/))).toBeVisible({ timeout: 15_000 });
   });
 });
 
@@ -107,7 +105,7 @@ test.describe("Step 3: Parsing Progress", () => {
 
   test("shows progress indicators", async ({ page }) => {
     // Wait for parsing to begin — the continue button or a progress indicator appears
-    const progressOrContinue = page.getByTestId("continue-to-features").or(page.getByText(/\d+% complete/));
+    const progressOrContinue = page.getByTestId("continue-to-features").or(page.getByText(/\d+%/));
     await expect(progressOrContinue.first()).toBeVisible({ timeout: 60_000 });
   });
 
@@ -132,26 +130,24 @@ test.describe("Step 4: Feature Selection", () => {
   });
 
   test("shows feature cards", async ({ page }) => {
-    await expect(page.getByText("Organize Notes")).toBeVisible();
-    await expect(page.getByText("Practice Mode")).toBeVisible();
-    await expect(page.getByText("Wrong Answer Review")).toBeVisible();
-    await expect(page.getByText("Study Plan").first()).toBeVisible();
-    await expect(page.getByText("Free Q&A")).toBeVisible();
+    await expect(page.getByTestId("feature-card-notes")).toBeVisible();
+    await expect(page.getByTestId("feature-card-practice")).toBeVisible();
+    await expect(page.getByTestId("feature-card-wrong_answer")).toBeVisible();
+    await expect(page.getByTestId("feature-card-study_plan")).toBeVisible();
+    await expect(page.getByTestId("feature-card-free_qa")).toBeVisible();
   });
 
   test("feature cards can be toggled", async ({ page }) => {
-    // "Organize Notes" is enabled by default — click to toggle it off
-    const notesCard = page.getByText("Organize Notes").locator("..").locator("..");
+    const notesCard = page.getByTestId("feature-card-notes");
+    await expect(notesCard).toHaveAttribute("data-selected", "true");
     await notesCard.click();
-    // The checkbox indicator should no longer have the selected style
-    // Click again to re-enable
+    await expect(notesCard).toHaveAttribute("data-selected", "false");
     await notesCard.click();
-    // Should still be visible and interactable
-    await expect(page.getByText("Organize Notes")).toBeVisible();
+    await expect(notesCard).toHaveAttribute("data-selected", "true");
   });
 
   test("NL instruction textarea accepts input", async ({ page }) => {
-    const textarea = page.getByPlaceholder(/Use bullet points/i);
+    const textarea = page.getByTestId("new-extra-prompt");
     await expect(textarea).toBeVisible();
     await textarea.fill("Focus on algorithms and data structures");
     await expect(textarea).toHaveValue("Focus on algorithms and data structures");
@@ -197,10 +193,9 @@ test.describe("Full wizard flow", () => {
     await page.getByTestId("mode-continue").click();
 
     // URL input should be visible, file upload area should NOT be visible
-    await expect(page.getByPlaceholder(/https:\/\/professor-site/i)).toBeVisible();
-    await expect(page.getByText("Upload Learning Materials")).not.toBeVisible();
-    // Auto-Scrape settings should be visible in URL mode
-    await expect(page.getByText("Auto-Scrape Settings")).toBeVisible();
+    await expect(page.getByTestId("project-url-input")).toBeVisible();
+    await expect(page.getByTestId("upload-dropzone")).toHaveCount(0);
+    await expect(page.getByTestId("autoscrape-toggle")).toBeVisible();
   });
 
   test("complete Both mode flow shows file and URL inputs", async ({ page }) => {
@@ -209,9 +204,9 @@ test.describe("Full wizard flow", () => {
     await page.getByTestId("mode-continue").click();
 
     // Both file upload area and URL input should be present
-    await expect(page.getByText("Upload Learning Materials")).toBeVisible();
-    await expect(page.getByPlaceholder(/https:\/\/professor-site/i)).toBeVisible();
-    await expect(page.getByText("Auto-Scrape Settings")).toBeVisible();
+    await expect(page.getByTestId("upload-dropzone")).toBeVisible();
+    await expect(page.getByTestId("project-url-input")).toBeVisible();
+    await expect(page.getByTestId("autoscrape-toggle")).toBeVisible();
   });
 
   test("wizard preserves project name through steps", async ({ page }) => {
@@ -268,7 +263,7 @@ test.describe("Full wizard flow", () => {
     await page.getByTestId("continue-to-features").click();
 
     // Toggle "Practice Mode" off by clicking its card
-    const practiceCard = page.getByRole("button", { name: /Practice Mode/ });
+    const practiceCard = page.getByTestId("feature-card-practice");
     await practiceCard.click();
 
     // Enter workspace
@@ -300,7 +295,7 @@ test.describe("Full wizard flow", () => {
     await page.getByTestId("continue-to-features").click();
 
     // Fill in NL instruction
-    const textarea = page.getByPlaceholder(/Use bullet points/i);
+    const textarea = page.getByTestId("new-extra-prompt");
     await textarea.fill(instruction);
 
     // Enter workspace

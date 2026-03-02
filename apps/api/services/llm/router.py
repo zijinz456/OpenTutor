@@ -97,6 +97,10 @@ class LLMClient(ABC):
         self._cooldown_until = 0
         self._circuit_open = False
 
+    async def ping(self) -> bool:
+        """Active liveness check. Override for providers that need probing."""
+        return self.is_healthy
+
     @abstractmethod
     async def stream_chat(self, system_prompt: str, user_message: str, images: list[dict] | None = None) -> AsyncIterator[str]:
         """Stream chat response chunks. Token usage stored in _last_usage.
@@ -166,6 +170,40 @@ class OpenAIClient(LLMClient):
         kwargs["timeout"] = httpx.Timeout(connect=10, read=120, write=30, pool=10)
         self.client = AsyncOpenAI(**kwargs)
         self.model = model
+
+    async def ping(self) -> bool:
+        """Active liveness probe for local backends (OpenClaw pattern).
+
+        Classifies errors: unreachable / auth / rate_limit / timeout / server_error.
+        """
+        if self.provider_name not in self._NO_STREAM_OPTIONS:
+            return self.is_healthy  # Cloud APIs: trust cached status
+        try:
+            import httpx
+            base = str(self.client.base_url).rstrip("/")
+            async with httpx.AsyncClient(timeout=5.0) as http:
+                resp = await http.get(f"{base}/models")
+            if resp.status_code < 400:
+                self.mark_healthy()
+                return True
+            if resp.status_code in (401, 403):
+                self.mark_unhealthy(f"auth_error ({resp.status_code})")
+            elif resp.status_code == 429:
+                self.mark_unhealthy("rate_limited")
+            elif resp.status_code >= 500:
+                self.mark_unhealthy(f"server_error ({resp.status_code})")
+            else:
+                self.mark_unhealthy(f"unexpected_status ({resp.status_code})")
+            return False
+        except Exception as e:
+            ename = type(e).__name__
+            if "Connect" in ename or "ConnectionRefused" in str(e):
+                self.mark_unhealthy("unreachable")
+            elif "Timeout" in ename:
+                self.mark_unhealthy("timeout")
+            else:
+                self.mark_unhealthy(f"probe_error: {e}")
+            return False
 
     async def stream_chat(self, system_prompt: str, user_message: str, images: list[dict] | None = None) -> AsyncIterator[str]:
         try:
@@ -501,6 +539,9 @@ class ProviderRegistry:
         self._primary: str | None = None
         self._fallback_order: list[str] = []
         self._model_variants: dict[str, LLMClient] = {}
+        # Background health monitor (OpenClaw pattern)
+        self._probe_cache: dict[str, dict] = {}
+        self._probe_task: object | None = None  # asyncio.Task
 
     def register(self, name: str, client: LLMClient, primary: bool = False):
         """Register a provider."""
@@ -569,9 +610,98 @@ class ProviderRegistry:
         """Name of the primary provider (public accessor)."""
         return self._primary
 
+    async def ping_all(self) -> dict[str, bool]:
+        """Actively probe all providers and return live health status."""
+        import asyncio
+        results = await asyncio.gather(
+            *(client.ping() for client in self._providers.values()),
+            return_exceptions=True,
+        )
+        return {
+            name: (r is True)
+            for (name, _), r in zip(self._providers.items(), results)
+        }
+
+    # ── Background health monitor (OpenClaw pattern) ──────────
+
+    def start_health_monitor(self, interval: float = 30.0):
+        """Start background health probe loop. Call once at app startup."""
+        import asyncio
+        if self._probe_task is not None:
+            return
+
+        async def _loop():
+            while True:
+                await self._refresh_probe_cache()
+                await asyncio.sleep(interval)
+
+        self._probe_task = asyncio.create_task(_loop())
+        logger.info("Health monitor started (interval=%ss)", interval)
+
+    async def stop_health_monitor(self):
+        """Cancel background probe loop on shutdown."""
+        import asyncio
+        task = self._probe_task
+        if task is not None and isinstance(task, asyncio.Task):
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            self._probe_task = None
+
+    async def _refresh_probe_cache(self):
+        """Probe every provider, store detailed results in cache."""
+        import asyncio
+        items = list(self._providers.items())
+        results = await asyncio.gather(
+            *(self._probe_one(name, client) for name, client in items),
+            return_exceptions=True,
+        )
+        for (name, _), result in zip(items, results):
+            if isinstance(result, dict):
+                self._probe_cache[name] = result
+            else:
+                self._probe_cache[name] = {
+                    "healthy": False,
+                    "status": "error",
+                    "error": str(result),
+                    "latency_ms": 0,
+                    "checked_at": time.time(),
+                }
+
+    async def _probe_one(self, name: str, client: LLMClient) -> dict:
+        start = time.time()
+        try:
+            healthy = await client.ping()
+            elapsed = (time.time() - start) * 1000
+            return {
+                "healthy": healthy,
+                "status": "ok" if healthy else "unhealthy",
+                "error": None if healthy else getattr(client, '_last_error', None),
+                "latency_ms": round(elapsed, 1),
+                "checked_at": time.time(),
+            }
+        except Exception as e:
+            elapsed = (time.time() - start) * 1000
+            return {
+                "healthy": False,
+                "status": "error",
+                "error": str(e),
+                "latency_ms": round(elapsed, 1),
+                "checked_at": time.time(),
+            }
+
+    @property
+    def provider_health_cached(self) -> dict[str, dict]:
+        """Cached probe details per provider (OpenClaw pattern)."""
+        return dict(self._probe_cache)
+
     @property
     def provider_health(self) -> dict[str, bool]:
         """Health status of all registered providers (public accessor)."""
+        if self._probe_cache:
+            return {name: d["healthy"] for name, d in self._probe_cache.items()}
         return {name: client.is_healthy for name, client in self._providers.items()}
 
 

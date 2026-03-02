@@ -27,7 +27,6 @@ import {
   Pie,
   Cell,
 } from "recharts";
-import { ShareReportButton } from "@/components/share-report-button";
 
 const GAP_COLORS: Record<string, string> = {
   fundamental_gap: "var(--color-destructive, #ef4444)",
@@ -131,9 +130,7 @@ export default function AnalyticsPage() {
           &larr; Back
         </button>
         <h1 className="text-lg font-semibold text-foreground">Learning Analytics</h1>
-        <div className="ml-auto">
-          <ShareReportButton targetRef={statsRef} />
-        </div>
+        <div className="ml-auto" />
       </header>
 
       <div ref={statsRef} className="max-w-6xl mx-auto p-6 space-y-6" data-testid="analytics-page">

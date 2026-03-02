@@ -13,16 +13,17 @@ import {
   canvasBrowserLogin,
   type CourseMetadata,
 } from "@/lib/api";
+import { useT } from "@/lib/i18n-context";
 import { useCourseStore } from "@/store/course";
 
 type Mode = "upload" | "url" | "both";
 type Step = "mode" | "upload" | "parsing" | "features";
 
-const STEP_LABELS: { key: Step; label: string }[] = [
-  { key: "mode", label: "Source" },
-  { key: "upload", label: "Content" },
-  { key: "parsing", label: "Parse" },
-  { key: "features", label: "Features" },
+const STEP_LABELS: { key: Step; labelKey: string }[] = [
+  { key: "mode", labelKey: "new.step.source" },
+  { key: "upload", labelKey: "new.step.content" },
+  { key: "parsing", labelKey: "new.step.parse" },
+  { key: "features", labelKey: "new.step.features" },
 ];
 
 /* Canvas URL detection — ported from learning-agent-extension */
@@ -49,12 +50,12 @@ interface ParseStep {
   status: "waiting" | "active" | "done";
 }
 
-const PARSE_STEPS: { key: string; label: string }[] = [
-  { key: "uploaded", label: "Uploads registered" },
-  { key: "extracting", label: "Extracting content" },
-  { key: "classifying", label: "Classifying materials" },
-  { key: "dispatching", label: "Building workspace artifacts" },
-  { key: "embedding", label: "Building semantic index" },
+const PARSE_STEPS: { key: string; labelKey: string }[] = [
+  { key: "uploaded", labelKey: "new.parse.uploaded" },
+  { key: "extracting", labelKey: "new.parse.extracting" },
+  { key: "classifying", labelKey: "new.parse.classifying" },
+  { key: "dispatching", labelKey: "new.parse.dispatching" },
+  { key: "embedding", labelKey: "new.parse.embedding" },
 ];
 
 const PHASE_ORDER = {
@@ -75,13 +76,14 @@ function deriveParseSteps(
   jobs: IngestionJobSummary[],
   isSubmittingContent: boolean,
   noSourcesSubmitted: boolean,
+  t: (key: string) => string,
 ): ParseStep[] {
   if (noSourcesSubmitted) {
-    return PARSE_STEPS.map((step) => ({ label: step.label, status: "done" }));
+    return PARSE_STEPS.map((step) => ({ label: t(step.labelKey), status: "done" }));
   }
   if (!jobs.length) {
     return PARSE_STEPS.map((step, index) => ({
-      label: step.label,
+      label: t(step.labelKey),
       status: isSubmittingContent && index === 0 ? "active" : "waiting",
     }));
   }
@@ -97,7 +99,7 @@ function deriveParseSteps(
     } else if (hasReachedLater || (hasReachedCurrent && jobs.every((job) => getPhaseRank(job.status) >= index || job.status === "failed"))) {
       status = "done";
     }
-    return { label: step.label, status };
+    return { label: t(step.labelKey), status };
   });
 }
 
@@ -117,15 +119,15 @@ function deriveParseProgress(
   );
 }
 
-const FEATURE_CARDS: { id: string; label: string; description: string; enabled: boolean; phase?: string }[] = [
-  { id: "notes", label: "Organize Notes", description: "Restructure your materials into clean, organized notes in your preferred format.", enabled: true },
-  { id: "practice", label: "Practice Mode", description: "Generate practice questions from your materials. Interactive Q&A with instant feedback.", enabled: true },
-  { id: "wrong_answer", label: "Wrong Answer Review", description: "Track, diagnose, and revisit incorrect answers from generated quizzes.", enabled: true },
-  { id: "study_plan", label: "Study Plan", description: "Generate a personalized study plan with scheduled reviews.", enabled: true },
-  { id: "free_qa", label: "Free Q&A", description: "Ask any question about your materials and get AI-powered answers with source references.", enabled: true },
+const FEATURE_CARDS: { id: string; labelKey: string; descriptionKey: string; enabled: boolean; phase?: string }[] = [
+  { id: "notes", labelKey: "new.notesFeature", descriptionKey: "new.notesFeatureDesc", enabled: true },
+  { id: "practice", labelKey: "new.practiceFeature", descriptionKey: "new.practiceFeatureDesc", enabled: true },
+  { id: "wrong_answer", labelKey: "new.reviewFeature", descriptionKey: "new.reviewFeatureDesc", enabled: true },
+  { id: "study_plan", labelKey: "new.planFeature", descriptionKey: "new.planFeatureDesc", enabled: true },
+  { id: "free_qa", labelKey: "new.qaFeature", descriptionKey: "new.qaFeatureDesc", enabled: true },
 ];
 
-function StepIndicator({ currentStep }: { currentStep: Step }) {
+function StepIndicator({ currentStep, t }: { currentStep: Step; t: (key: string) => string }) {
   const currentIndex = STEP_LABELS.findIndex((s) => s.key === currentStep);
   return (
     <div className="flex items-center gap-2 text-xs">
@@ -141,7 +143,7 @@ function StepIndicator({ currentStep }: { currentStep: Step }) {
                 : "text-muted-foreground"
             }
           >
-            {i + 1}. {s.label}
+            {i + 1}. {t(s.labelKey)}
           </span>
         </span>
       ))}
@@ -151,6 +153,7 @@ function StepIndicator({ currentStep }: { currentStep: Step }) {
 
 export default function NewProjectPage() {
   const router = useRouter();
+  const t = useT();
   const { addCourse, fetchContentTree } = useCourseStore();
   const [step, setStep] = useState<Step>("mode");
   const [mode, setMode] = useState<Mode>("both");
@@ -178,7 +181,7 @@ export default function NewProjectPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const seenJobStatesRef = useRef<Record<string, string>>({});
 
-  const parseSteps = deriveParseSteps(ingestionJobs, isSubmittingContent, noSourcesSubmitted);
+  const parseSteps = deriveParseSteps(ingestionJobs, isSubmittingContent, noSourcesSubmitted, t);
   const parseProgress = deriveParseProgress(ingestionJobs, isSubmittingContent, noSourcesSubmitted);
   const hasCompletedJob = ingestionJobs.some((job) => job.status === "completed");
   const allJobsFailed = ingestionJobs.length > 0 && ingestionJobs.every((job) => job.status === "failed");
@@ -192,9 +195,9 @@ export default function NewProjectPage() {
 
   const validateName = (value: string) => {
     if (!value.trim()) {
-      setNameError("Project name is required");
+      setNameError(t("new.projectNameRequired"));
     } else if (value.length > 100) {
-      setNameError("Project name must be 100 characters or fewer");
+      setNameError(t("new.projectNameTooLong"));
     } else {
       setNameError(null);
     }
@@ -203,7 +206,7 @@ export default function NewProjectPage() {
   const validateUrl = (value: string) => {
     const trimmed = value.trim();
     if (trimmed && !/^https?:\/\//i.test(trimmed)) {
-      setUrlError("URL must start with http:// or https://");
+      setUrlError(t("new.urlInvalid"));
     } else {
       setUrlError(null);
     }
@@ -285,7 +288,7 @@ export default function NewProjectPage() {
           }
           seenJobStatesRef.current[job.id] = stateKey;
 
-          const label = job.filename || "Untitled source";
+          const label = job.filename || t("new.untitledSource");
           if (job.error_message) {
             addLog(`${new Date().toLocaleTimeString()}  ${label}: ${job.error_message}`, "text-destructive");
           } else if (job.phase_label) {
@@ -295,7 +298,7 @@ export default function NewProjectPage() {
       } catch (error) {
         if (!cancelled) {
           addLog(
-            `${new Date().toLocaleTimeString()}  Failed to refresh ingestion status: ${(error as Error).message}`,
+            `${new Date().toLocaleTimeString()}  ${t("new.logRefreshFailed")}: ${(error as Error).message}`,
             "text-destructive",
           );
         }
@@ -311,7 +314,7 @@ export default function NewProjectPage() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [createdCourseId, noSourcesSubmitted, step]);
+  }, [createdCourseId, noSourcesSubmitted, step, t]);
 
   // Handle "Add" button click for URL input
   const handleAddUrl = useCallback(async () => {
@@ -347,11 +350,11 @@ export default function NewProjectPage() {
       setCanvasSessionValid(true);
       setShowCanvasLogin(false);
     } catch (err) {
-      setCanvasLoginError((err as Error).message || "Login failed or timed out");
+      setCanvasLoginError((err as Error).message || t("new.loginFailed"));
     } finally {
       setCanvasLogging(false);
     }
-  }, [url]);
+  }, [t, url]);
 
   // Start parsing: create course, upload files, scrape URL
   const startParsing = useCallback(async () => {
@@ -376,18 +379,18 @@ export default function NewProjectPage() {
         },
       };
 
-      addLog(`${new Date().toLocaleTimeString()}  Creating project "${projectName || "Untitled"}"...`, "text-muted-foreground");
+      addLog(`${new Date().toLocaleTimeString()}  ${t("new.logCreatingProject")} "${projectName || t("new.untitled")}"...`, "text-muted-foreground");
       const description = nlInput.trim() || undefined;
-      const course = await addCourse(projectName.trim() || "Untitled Project", description, metadata);
+      const course = await addCourse(projectName.trim() || t("new.untitledProject"), description, metadata);
       nextCourseId = course.id;
       setCreatedCourseId(course.id);
 
-      addLog(`${new Date().toLocaleTimeString()}  Project created`, "text-success");
+      addLog(`${new Date().toLocaleTimeString()}  ${t("new.logProjectCreated")}`, "text-success");
       const hasSources = files.length > 0 || (url.trim() && (mode === "url" || mode === "both"));
       if (!hasSources) {
         setNoSourcesSubmitted(true);
         addLog(
-          `${new Date().toLocaleTimeString()}  No files or URLs submitted. You can continue and add content later.`,
+          `${new Date().toLocaleTimeString()}  ${t("new.logNoSources")}`,
           "text-muted-foreground",
         );
         return;
@@ -395,65 +398,99 @@ export default function NewProjectPage() {
 
       if (files.length > 0) {
         for (const f of files) {
-          addLog(`${new Date().toLocaleTimeString()}  Uploading ${f.name}...`, "text-muted-foreground");
+          addLog(`${new Date().toLocaleTimeString()}  ${t("new.logUploading")} ${f.name}...`, "text-muted-foreground");
           try {
             const result = await uploadFile(course.id, f.file);
             addLog(
-              `${new Date().toLocaleTimeString()}  ${f.name}: ${result.nodes_created} nodes queued`,
+              `${new Date().toLocaleTimeString()}  ${f.name}: ${result.nodes_created} ${t("new.logNodesQueued")}`,
               "text-success",
             );
           } catch (err) {
-            addLog(`${new Date().toLocaleTimeString()}  Failed: ${f.name} — ${(err as Error).message}`, "text-destructive");
+            addLog(`${new Date().toLocaleTimeString()}  ${t("new.logFailed")}: ${f.name} — ${(err as Error).message}`, "text-destructive");
           }
         }
       }
 
       if (url.trim() && (mode === "url" || mode === "both")) {
         const urlIsCanvas = isCanvasUrl(url.trim());
+
+        // Canvas URLs: ensure login before scraping
+        if (urlIsCanvas && !canvasSessionValid) {
+          addLog(
+            `${new Date().toLocaleTimeString()}  ${t("new.logCanvasOpening")}`,
+            "text-warning",
+          );
+          setShowCanvasLogin(true);
+          setCanvasLogging(true);
+          try {
+            await canvasBrowserLogin(url.trim());
+            setCanvasSessionValid(true);
+            setShowCanvasLogin(false);
+            addLog(
+              `${new Date().toLocaleTimeString()}  ${t("new.logCanvasLoginSucceeded")}`,
+              "text-success",
+            );
+          } catch (loginErr) {
+            setCanvasLoginError((loginErr as Error).message || t("new.loginFailed"));
+            setCanvasLogging(false);
+            addLog(
+              `${new Date().toLocaleTimeString()}  ${t("new.logCanvasLoginFailed")}: ${(loginErr as Error).message}`,
+              "text-destructive",
+            );
+            addLog(
+              `${new Date().toLocaleTimeString()}  ${t("new.logBrowserTip")}`,
+              "text-warning",
+            );
+            return;
+          } finally {
+            setCanvasLogging(false);
+          }
+        }
+
         addLog(
-          `${new Date().toLocaleTimeString()}  Fetching ${url}${urlIsCanvas ? " (Canvas LMS detected)" : ""}...`,
+          `${new Date().toLocaleTimeString()}  ${t("new.logFetching")} ${url}${urlIsCanvas ? ` (${t("new.logCanvasDetected")})` : ""}...`,
           "text-muted-foreground",
         );
         try {
           const result = await scrapeUrl(course.id, url.trim());
           addLog(
-            `${new Date().toLocaleTimeString()}  URL content accepted: ${result.nodes_created} nodes queued`,
+            `${new Date().toLocaleTimeString()}  ${t("new.logUrlAccepted")}: ${result.nodes_created} ${t("new.logNodesQueued")}`,
             "text-success",
           );
           if (autoScrape) {
             await createScrapeSource({
               course_id: course.id,
               url: url.trim(),
-              label: projectName.trim() || "Project source",
+              label: projectName.trim() || t("new.untitledSource"),
               source_type: urlIsCanvas ? "canvas" : "generic",
               requires_auth: urlIsCanvas,
               interval_hours: 24,
             });
             addLog(
-              `${new Date().toLocaleTimeString()}  Auto-scrape enabled for this URL (every 24 hours)`,
+              `${new Date().toLocaleTimeString()}  ${t("new.logAutoScrapeEnabled")}`,
               "text-success",
             );
           }
         } catch (err) {
           const errMsg = (err as Error).message;
-          addLog(`${new Date().toLocaleTimeString()}  Scrape failed: ${errMsg}`, "text-destructive");
+          addLog(`${new Date().toLocaleTimeString()}  ${t("new.logScrapeFailed")}: ${errMsg}`, "text-destructive");
           if (urlIsCanvas && errMsg.includes("authentication")) {
             addLog(
-              `${new Date().toLocaleTimeString()}  Tip: Go to Settings to authenticate, then retry.`,
+              `${new Date().toLocaleTimeString()}  ${t("new.logAuthTip")}`,
               "text-warning",
             );
           }
         }
       }
     } catch (err) {
-      addLog(`${new Date().toLocaleTimeString()}  Error: ${(err as Error).message}`, "text-destructive");
+      addLog(`${new Date().toLocaleTimeString()}  ${t("new.logError")}: ${(err as Error).message}`, "text-destructive");
     } finally {
       setIsSubmittingContent(false);
       if (nextCourseId) {
         void fetchContentTree(nextCourseId).catch(() => undefined);
       }
     }
-  }, [addCourse, autoScrape, features, fetchContentTree, files, mode, nlInput, projectName, url]);
+  }, [addCourse, autoScrape, canvasSessionValid, features, fetchContentTree, files, mode, nlInput, projectName, t, url]);
 
   const enterWorkspace = async () => {
     if (!createdCourseId) return;
@@ -486,20 +523,20 @@ export default function NewProjectPage() {
         <div className="h-screen flex items-center justify-center">
           <div className="w-[640px] flex flex-col gap-10 items-center animate-in fade-in duration-300">
             <div className="flex flex-col gap-3 items-center text-center">
-              <StepIndicator currentStep="mode" />
+              <StepIndicator currentStep="mode" t={t} />
               <h1 className="text-[32px] font-bold text-foreground mt-4">
-                How would you like to add content?
+                {t("new.mode.title")}
               </h1>
               <p className="text-[15px] text-muted-foreground max-w-[480px] leading-relaxed">
-                Choose how you want to bring learning materials into your new project.
+                {t("new.mode.subtitle")}
               </p>
             </div>
 
             <div className="flex gap-4 w-full">
               {([
-                { key: "upload" as Mode, label: "Upload Documents", desc: "Upload PDF, PPT, DOCX files from your computer" },
-                { key: "url" as Mode, label: "Scrape from URL", desc: "Auto-fetch content from course websites and pages" },
-                { key: "both" as Mode, label: "Both", desc: "Upload files and scrape URLs together" },
+                { key: "upload" as Mode, label: t("new.mode.upload"), desc: t("new.mode.uploadDesc") },
+                { key: "url" as Mode, label: t("new.mode.url"), desc: t("new.mode.urlDesc") },
+                { key: "both" as Mode, label: t("new.mode.both"), desc: t("new.mode.bothDesc") },
               ]).map((m) => (
                 <button
                   type="button"
@@ -525,10 +562,11 @@ export default function NewProjectPage() {
             <div className="flex justify-between w-full mt-2">
               <button
                 type="button"
+                data-testid="back-to-projects"
                 onClick={() => router.push("/")}
                 className="h-11 px-6 border border-border rounded-lg flex items-center gap-1.5 text-muted-foreground font-medium text-sm hover:border-foreground/20"
               >
-                &larr; Back to Projects
+                &larr; {t("new.backToProjects")}
               </button>
               <button
                 type="button"
@@ -536,7 +574,7 @@ export default function NewProjectPage() {
                 data-testid="mode-continue"
                 className="h-11 px-7 bg-brand text-brand-foreground rounded-lg flex items-center gap-2 font-semibold text-sm hover:opacity-90"
               >
-                Continue &rarr;
+                {t("new.continue")} &rarr;
               </button>
             </div>
           </div>
@@ -548,24 +586,24 @@ export default function NewProjectPage() {
         <div className="max-w-4xl mx-auto p-12 flex flex-col gap-8 animate-in fade-in duration-300">
           {/* Top nav */}
           <div className="flex items-center gap-3">
-            <button type="button" onClick={() => setStep("mode")} className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">
-              &larr; Back
+            <button type="button" data-testid="new-back-mode" onClick={() => setStep("mode")} className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">
+              &larr; {t("settings.back")}
             </button>
             <div className="w-px h-4 bg-border" />
-            <span className="font-semibold text-sm text-foreground">Create New Project</span>
+            <span className="font-semibold text-sm text-foreground">{t("new.createTitle")}</span>
             <div className="flex-1" />
-            <StepIndicator currentStep="upload" />
+            <StepIndicator currentStep="upload" t={t} />
           </div>
 
           <div className="flex items-center gap-2">
             <span className="px-2 py-1 bg-brand-muted text-brand text-[11px] font-medium rounded">
-              {mode === "upload" ? "Upload Documents" : mode === "url" ? "Scrape from URL" : "Both: Upload + URL"}
+              {mode === "upload" ? t("new.mode.upload") : mode === "url" ? t("new.mode.url") : `${t("new.mode.both")}: ${t("new.mode.upload")} + ${t("new.addUrl")}`}
             </span>
           </div>
 
           {/* Project Name */}
           <div className="flex flex-col gap-2">
-            <label className="font-semibold text-sm text-foreground">Project Name</label>
+            <label className="font-semibold text-sm text-foreground">{t("new.projectName")}</label>
             <input
               data-testid="project-name-input"
               className={`w-full h-11 px-4 border rounded-lg bg-background text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-brand/20 focus:border-brand ${nameError ? "border-destructive" : "border-border"}`}
@@ -575,7 +613,7 @@ export default function NewProjectPage() {
                 validateName(e.target.value);
               }}
               onBlur={() => validateName(projectName)}
-              placeholder="CS101 Computer Science"
+              placeholder={t("new.projectNamePlaceholder")}
               maxLength={100}
             />
             {nameError && <p className="text-xs text-destructive mt-1">{nameError}</p>}
@@ -584,8 +622,9 @@ export default function NewProjectPage() {
           {/* Upload Section */}
           {(mode === "upload" || mode === "both") && (
             <div className="flex flex-col gap-3">
-              <h3 className="text-base font-semibold text-foreground">Upload Learning Materials</h3>
+              <h3 className="text-base font-semibold text-foreground">{t("new.uploadMaterials")}</h3>
               <div
+                data-testid="upload-dropzone"
                 className={`w-full h-40 border-2 border-dashed rounded-lg flex flex-col items-center justify-center gap-3 cursor-pointer transition-colors ${
                   dragging
                     ? "border-brand bg-brand-muted"
@@ -598,9 +637,9 @@ export default function NewProjectPage() {
                 onDrop={handleDrop}
               >
                 <span className={`text-sm ${dragging ? "text-brand font-medium" : "text-muted-foreground"}`}>
-                  {dragging ? "Drop files here" : "Drag files here, or click to browse"}
+                  {dragging ? t("new.dropFiles") : t("new.dragFiles")}
                 </span>
-                <span className="text-xs text-muted-foreground">Supports PDF, PPT, DOCX</span>
+                <span className="text-xs text-muted-foreground">{t("new.supportedFormats")}</span>
               </div>
               <input
                 ref={fileInputRef}
@@ -608,7 +647,7 @@ export default function NewProjectPage() {
                 type="file"
                 accept=".pdf,.pptx,.ppt,.docx,.doc,.html,.htm,.txt,.md"
                 multiple
-                title="Upload learning materials"
+                title={t("new.uploadTitle")}
                 className="hidden"
                 onChange={handleFileAdd}
               />
@@ -631,11 +670,12 @@ export default function NewProjectPage() {
           {/* URL Section */}
           {(mode === "url" || mode === "both") && (
             <div className="flex flex-col gap-3">
-              <h3 className="text-base font-semibold text-foreground">Add URL</h3>
+              <h3 className="text-base font-semibold text-foreground">{t("new.addUrl")}</h3>
               <div className="flex gap-2">
                 <input
+                  data-testid="project-url-input"
                   className={`flex-1 h-11 px-4 border rounded-lg bg-background text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-brand/20 focus:border-brand ${urlError ? "border-destructive" : "border-border"}`}
-                  placeholder="https://professor-site.edu/cs101/"
+                  placeholder={t("new.urlPlaceholder")}
                   value={url}
                   onChange={(e) => {
                     setUrl(e.target.value);
@@ -645,6 +685,7 @@ export default function NewProjectPage() {
                 />
                 <button
                   type="button"
+                  data-testid="add-url-button"
                   onClick={handleAddUrl}
                   className={`h-11 px-5 text-brand-foreground rounded-lg font-semibold text-sm ${
                     isCanvasDetected && !canvasSessionValid
@@ -652,20 +693,20 @@ export default function NewProjectPage() {
                       : "bg-brand hover:opacity-90"
                   }`}
                 >
-                  {isCanvasDetected && !canvasSessionValid ? "Login & Add" : "Add"}
+                  {isCanvasDetected && !canvasSessionValid ? t("new.loginAndAdd") : t("new.add")}
                 </button>
               </div>
               {urlError && <p className="text-xs text-destructive mt-1">{urlError}</p>}
               {isCanvasDetected && !urlError && canvasSessionValid && (
                 <div className="p-3 px-4 bg-success-muted border border-success/30 rounded-md text-sm text-success leading-relaxed">
-                  <span className="font-semibold">Canvas LMS -- authenticated.</span>{" "}
-                  Your Canvas session is active. Content will be fetched with your credentials.
+                  <span className="font-semibold">{t("new.canvasAuthedTitle")}</span>{" "}
+                  {t("new.canvasAuthedBody")}
                 </div>
               )}
               {isCanvasDetected && !urlError && !canvasSessionValid && (
                 <div className="p-3 px-4 bg-warning-muted border border-warning/30 rounded-md text-sm text-warning leading-relaxed">
-                  <span className="font-semibold">Canvas LMS detected.</span>{" "}
-                  This URL requires authentication. Click <span className="font-medium">&quot;Login &amp; Add&quot;</span> to sign in with your university credentials.
+                  <span className="font-semibold">{t("new.canvasDetectedTitle")}</span>{" "}
+                  {t("new.canvasDetectedBody")}
                 </div>
               )}
             </div>
@@ -674,30 +715,32 @@ export default function NewProjectPage() {
           {/* Auto-Scrape Settings */}
           {(mode === "url" || mode === "both") && (
             <div className="flex flex-col gap-4">
-              <h3 className="text-base font-semibold text-foreground">Auto-Scrape Settings</h3>
-              <p className="text-[13px] text-muted-foreground">Automatically fetch updates from added URLs on a schedule.</p>
+              <h3 className="text-base font-semibold text-foreground">{t("new.autoscrapeTitle")}</h3>
+              <p className="text-[13px] text-muted-foreground">{t("new.autoscrapeDesc")}</p>
               <div className="flex items-center gap-3">
                 <button
                   type="button"
-                  title="Toggle auto-scrape"
+                  data-testid="autoscrape-toggle"
+                  title={t("new.autoscrapeToggle")}
+                  aria-pressed={autoScrape}
                   onClick={() => setAutoScrape(!autoScrape)}
                   className={`w-11 h-6 rounded-full relative transition-colors ${autoScrape ? "bg-brand" : "bg-muted-foreground/30"}`}
                 >
                   <div className={`w-[18px] h-[18px] bg-background rounded-full absolute top-[3px] transition-all ${autoScrape ? "right-[3px]" : "left-[3px]"}`} />
                 </button>
-                <span className="text-sm text-foreground">Enable periodic auto-scraping</span>
+                <span className="text-sm text-foreground">{t("new.autoscrapeToggle")}</span>
               </div>
               <div className="flex items-center gap-3">
-                <span className="text-sm text-muted-foreground">Frequency:</span>
+                <span className="text-sm text-muted-foreground">{t("new.frequency")}</span>
                 <div className="flex items-center gap-2 px-3.5 h-10 border border-border rounded-md bg-background">
-                  <span className="text-[13px] text-foreground">Every 24 hours</span>
+                  <span className="text-[13px] text-foreground">{t("new.every24h")}</span>
                 </div>
               </div>
               <div className="flex items-center gap-3">
                 <div className="w-[18px] h-[18px] rounded-[3px] bg-brand flex items-center justify-center shrink-0">
                   <span className="text-[10px] text-brand-foreground font-bold">{"\u2713"}</span>
                 </div>
-                <span className="text-sm text-foreground">Remind me when login session expires</span>
+                <span className="text-sm text-foreground">{t("new.remindExpiry")}</span>
               </div>
             </div>
           )}
@@ -705,8 +748,8 @@ export default function NewProjectPage() {
           <div className="w-full h-px bg-border" />
 
           <div className="flex justify-end gap-4">
-            <button type="button" onClick={() => setStep("mode")} className="h-11 px-6 border border-border rounded-lg text-muted-foreground font-medium text-sm hover:border-foreground/20">
-              Cancel
+            <button type="button" data-testid="new-cancel-upload" onClick={() => setStep("mode")} className="h-11 px-6 border border-border rounded-lg text-muted-foreground font-medium text-sm hover:border-foreground/20">
+              {t("new.cancel")}
             </button>
             <button
               type="button"
@@ -715,7 +758,7 @@ export default function NewProjectPage() {
               disabled={hasUploadErrors}
               className={`h-11 px-7 text-brand-foreground rounded-lg flex items-center gap-2 font-semibold text-sm ${hasUploadErrors ? "bg-brand/50 cursor-not-allowed" : "bg-brand hover:opacity-90"}`}
             >
-              Start Parsing &rarr;
+              {t("new.startParsing")} &rarr;
             </button>
           </div>
         </div>
@@ -727,14 +770,14 @@ export default function NewProjectPage() {
           {/* Top bar */}
           <div className="h-12 px-6 bg-muted border-b border-border flex items-center gap-4 shrink-0">
             <span className="font-semibold text-sm text-foreground">
-              Processing -- {projectName || "New Project"}
+              {t("new.processingPrefix")} -- {projectName || t("new.newProject")}
             </span>
             <div className="flex-1" />
-            <StepIndicator currentStep="parsing" />
+            <StepIndicator currentStep="parsing" t={t} />
             <div className={`flex items-center gap-1.5 px-2.5 h-6 rounded ${allJobsFailed ? "bg-destructive/10" : "bg-success-muted"}`}>
               <div className={`w-1.5 h-1.5 rounded-full ${allJobsFailed ? "bg-destructive" : "bg-success"}`} />
               <span className={`text-[11px] font-semibold ${allJobsFailed ? "text-destructive" : "text-success"}`}>
-                {allJobsFailed ? "Needs attention" : "Active"}
+                {allJobsFailed ? t("new.needsAttention") : t("new.active")}
               </span>
             </div>
           </div>
@@ -745,22 +788,22 @@ export default function NewProjectPage() {
               {url && (
                 <div className="h-9 px-4 bg-muted border-b border-border flex items-center gap-2">
                   <span className="text-xs text-muted-foreground flex-1 truncate">{url}</span>
-                  {!canContinueToFeatures && <span className="text-xs text-muted-foreground animate-pulse">loading...</span>}
+                  {!canContinueToFeatures && <span className="text-xs text-muted-foreground animate-pulse">{t("new.loading")}</span>}
                 </div>
               )}
               <div className="flex-1 p-6 bg-muted/50 flex flex-col gap-4 overflow-y-auto">
-                <h2 className="text-xl font-bold text-foreground">Processing your materials...</h2>
+                <h2 className="text-xl font-bold text-foreground">{t("new.processingTitle")}</h2>
                 <p className="text-sm text-muted-foreground leading-relaxed">
-                  Progress now comes directly from backend ingestion jobs. If you enter early, the workspace will keep updating while imports finish.
+                  {t("new.processingDesc")}
                 </p>
                 {files.length > 0 && (
                   <div className="p-3 px-4 bg-warning-muted border border-warning/30 rounded-md text-sm text-warning leading-relaxed">
-                    Processing {files.length} file{files.length > 1 ? "s" : ""}: {files.map((f) => f.name).join(", ")}
+                    {t("new.processingFiles")} {files.length} {t(files.length === 1 ? "new.fileCountOne" : "new.fileCountMany")}: {files.map((f) => f.name).join(", ")}
                   </div>
                 )}
                 {allJobsFailed && (
                   <div className="p-3 px-4 bg-destructive/10 border border-destructive/30 rounded-md text-sm text-destructive leading-relaxed">
-                    All ingestion jobs failed. Review the processing log for the backend error details, then go back and retry.
+                    {t("new.allJobsFailed")}
                   </div>
                 )}
               </div>
@@ -770,15 +813,15 @@ export default function NewProjectPage() {
             <div className="w-[340px] border-l border-border bg-background flex flex-col shrink-0">
               <div className="h-11 px-4 bg-muted border-b border-border flex items-center gap-2 shrink-0">
                 {!canContinueToFeatures && <span className="text-xs text-brand animate-pulse">...</span>}
-                <span className="font-semibold text-[13px] text-foreground">Parsing Progress</span>
+                <span className="font-semibold text-[13px] text-foreground">{t("new.parsingProgress")}</span>
               </div>
               <div className="flex-1 p-4 flex flex-col gap-4 overflow-y-auto">
                 <div className="flex flex-col gap-1.5">
                   <span className="font-semibold text-sm text-foreground">
-                    {projectName || "New Project"}
+                    {projectName || t("new.newProject")}
                   </span>
                   <span className="text-xs text-muted-foreground">
-                    {files.length} file{files.length !== 1 ? "s" : ""}{url ? " + 1 URL source" : ""}
+                    {files.length} {t(files.length === 1 ? "new.fileCountOne" : "new.fileCountMany")}{url ? ` + 1 ${t("new.urlSourceOne")}` : ""}
                   </span>
                 </div>
 
@@ -790,7 +833,7 @@ export default function NewProjectPage() {
                       style={{ width: `${parseProgress}%` }}
                     />
                   </div>
-                  <span className="text-xs font-medium text-brand">{parseProgress}% complete</span>
+                  <span className="text-xs font-medium text-brand">{parseProgress}% {t("new.completeSuffix")}</span>
                 </div>
 
                 {/* Steps */}
@@ -828,7 +871,7 @@ export default function NewProjectPage() {
 
                 {/* Processing Log */}
                 <div className="flex flex-col gap-2">
-                  <span className="text-xs font-semibold text-muted-foreground">Processing Log</span>
+                  <span className="text-xs font-semibold text-muted-foreground">{t("new.processingLog")}</span>
                   {parseLogs.map((log, idx) => (
                     <span key={idx} className={`text-[11px] font-mono ${log.color}`}>
                       {log.text}
@@ -846,7 +889,7 @@ export default function NewProjectPage() {
                       data-testid="enter-now"
                       className="w-full h-11 border border-border text-foreground rounded-lg flex items-center justify-center gap-2 font-semibold text-sm hover:border-foreground/20"
                     >
-                      Enter now
+                      {t("new.enterNow")}
                     </button>
                   )}
                   {canContinueToFeatures && (
@@ -856,7 +899,7 @@ export default function NewProjectPage() {
                       data-testid="continue-to-features"
                       className="w-full h-11 bg-brand text-brand-foreground rounded-lg flex items-center justify-center gap-2 font-semibold text-sm hover:opacity-90"
                     >
-                      Continue to Features &rarr;
+                      {t("new.continueToFeatures")} &rarr;
                     </button>
                   )}
                 </div>
@@ -871,22 +914,22 @@ export default function NewProjectPage() {
         <div className="max-w-4xl mx-auto p-12 flex flex-col gap-8 animate-in fade-in duration-300">
           {/* Top nav */}
           <div className="flex items-center gap-3">
-            <button type="button" onClick={() => setStep("parsing")} className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">
-              &larr; Back
+            <button type="button" data-testid="new-back-features" onClick={() => setStep("parsing")} className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">
+              &larr; {t("settings.back")}
             </button>
             <div className="w-px h-4 bg-border" />
             <span className="font-semibold text-sm text-foreground">
-              {projectName || "New Project"}
+              {projectName || t("new.newProject")}
             </span>
             <div className="flex-1" />
-            <StepIndicator currentStep="features" />
+            <StepIndicator currentStep="features" t={t} />
           </div>
 
           <div className="flex flex-col gap-2">
             <h1 className="text-[28px] font-bold text-foreground">
-              What should Agent do for you?
+              {t("new.featureTitle")}
             </h1>
-            <p className="text-[15px] text-muted-foreground">Select the features you want to enable for this project. You can change these later.</p>
+            <p className="text-[15px] text-muted-foreground">{t("new.featureSubtitle")}</p>
           </div>
 
           {/* Feature Cards -- 2-column grid */}
@@ -896,17 +939,18 @@ export default function NewProjectPage() {
                 type="button"
                 key={card.id}
                 onClick={() => toggleFeature(card.id)}
+                data-testid={`feature-card-${card.id}`}
                 aria-pressed={features[card.id]}
                 data-selected={features[card.id] ? "true" : "false"}
                 className={`p-5 rounded-xl flex flex-col gap-3 text-left transition-all ${
                   features[card.id]
                     ? "border-2 border-brand"
                     : "border border-border"
-                } ${card.phase ? "opacity-60 cursor-default" : "hover:shadow-md"}`}
+                  } ${card.phase ? "opacity-60 cursor-default" : "hover:shadow-md"}`}
               >
                 <div className="flex items-center gap-2.5 w-full">
                   <span className="font-semibold text-base text-foreground flex-1">
-                    {card.label}
+                    {t(card.labelKey)}
                   </span>
                   {card.phase && (
                     <span className="h-[22px] px-2 bg-warning-muted rounded text-[11px] font-semibold text-warning flex items-center">
@@ -921,7 +965,7 @@ export default function NewProjectPage() {
                     {features[card.id] && <span className="text-[10px] text-brand-foreground font-bold">{"\u2713"}</span>}
                   </div>
                 </div>
-                <p className="text-[13px] text-muted-foreground">{card.description}</p>
+                <p className="text-[13px] text-muted-foreground">{t(card.descriptionKey)}</p>
               </button>
             ))}
           </div>
@@ -929,11 +973,12 @@ export default function NewProjectPage() {
           {/* NL Input */}
           <div className="flex flex-col gap-2.5">
             <span className="font-semibold text-[15px] text-foreground">
-              Anything else you&apos;d like to tell Agent?
+              {t("new.extraPrompt")}
             </span>
             <textarea
+              data-testid="new-extra-prompt"
               className="w-full h-20 p-3 border border-border rounded-lg bg-background resize-none text-[13px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-brand/20 focus:border-brand"
-              placeholder='e.g. "Use bullet points for notes", "Focus on algorithms", "Explain in simple terms"...'
+              placeholder={t("new.extraPromptPlaceholder")}
               value={nlInput}
               onChange={(e) => setNlInput(e.target.value)}
             />
@@ -943,7 +988,7 @@ export default function NewProjectPage() {
 
           <div className="flex justify-end gap-4">
             <button type="button" onClick={() => setStep("parsing")} className="h-11 px-6 border border-border rounded-lg text-muted-foreground font-medium text-sm hover:border-foreground/20">
-              Back
+              {t("settings.back")}
             </button>
             <button
               type="button"
@@ -951,7 +996,7 @@ export default function NewProjectPage() {
               data-testid="enter-workspace"
               className="h-11 px-7 bg-brand text-brand-foreground rounded-lg flex items-center gap-2 font-semibold text-sm hover:opacity-90"
             >
-              Enter Workspace &rarr;
+              {t("new.enterWorkspace")} &rarr;
             </button>
           </div>
         </div>
@@ -963,13 +1008,13 @@ export default function NewProjectPage() {
           <div className="w-[420px] bg-card rounded-xl shadow-2xl p-6 flex flex-col gap-5 animate-in fade-in zoom-in-95 duration-200">
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-bold text-foreground">
-                Canvas Login
+                {t("new.canvasLogin")}
               </h2>
               {!canvasLogging && (
                 <button
                   type="button"
                   onClick={() => setShowCanvasLogin(false)}
-                  title="Close"
+                  title={t("new.close")}
                   className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground"
                 >
                   x
@@ -978,7 +1023,7 @@ export default function NewProjectPage() {
             </div>
 
             <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-medium text-muted-foreground">Canvas URL</label>
+              <label className="text-xs font-medium text-muted-foreground">{t("new.canvasUrl")}</label>
               <div className="h-10 px-3 flex items-center border border-border rounded-lg bg-muted text-sm text-muted-foreground truncate">
                 {url.trim()}
               </div>
@@ -988,11 +1033,10 @@ export default function NewProjectPage() {
               <div className="flex flex-col items-center gap-4 py-6">
                 <div className="w-10 h-10 border-3 border-brand border-t-transparent rounded-full animate-spin" />
                 <p className="text-sm font-medium text-foreground">
-                  A browser window has opened
+                  {t("new.canvasBrowserOpened")}
                 </p>
                 <p className="text-[13px] text-muted-foreground text-center leading-relaxed">
-                  Please complete your university login (Okta / SSO / MFA) in the browser window.
-                  This dialog will close automatically once login is detected.
+                  {t("new.canvasBrowserHelp")}
                 </p>
               </div>
             )}
@@ -1007,25 +1051,27 @@ export default function NewProjectPage() {
               <div className="flex justify-end gap-3">
                 <button
                   type="button"
+                  data-testid="canvas-login-cancel"
                   onClick={() => setShowCanvasLogin(false)}
                   className="h-10 px-5 border border-border rounded-lg text-sm font-medium text-muted-foreground hover:border-foreground/20"
                 >
-                  Cancel
+                  {t("new.cancel")}
                 </button>
                 <button
                   type="button"
+                  data-testid="canvas-login-retry"
                   onClick={handleAddUrl}
                   className="h-10 px-5 rounded-lg text-sm font-semibold text-brand-foreground bg-brand hover:opacity-90"
                 >
-                  Retry
+                  {t("new.retry")}
                 </button>
               </div>
             )}
 
             <p className="text-[11px] text-muted-foreground leading-relaxed">
               {canvasLogging
-                ? "Your session cookies will be saved locally after login. No passwords are stored."
-                : "Login timed out or was cancelled. Click Retry to open the browser again."}
+                ? t("new.browserSessionNote")
+                : t("new.loginTimeout")}
             </p>
           </div>
         </div>

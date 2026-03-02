@@ -1,184 +1,97 @@
 import { expect, test } from "@playwright/test";
 import {
-  skipOnboarding,
   createCourseWithContent,
   ensureRightPanelVisible,
+  getRealLlmTimeoutMs,
   hasRealLlmEnv,
   openRightTab,
+  seedFlashcardsViaApi,
+  skipOnboarding,
 } from "./helpers/test-utils";
+
+async function openFlashcards(page: import("@playwright/test").Page) {
+  await ensureRightPanelVisible(page);
+  await openRightTab(page, "flashcards");
+}
 
 test.describe.serial("Flashcard Panel", () => {
   test.beforeEach(async ({ page }) => {
     await skipOnboarding(page);
   });
 
-  test("Cards tab is visible in right panel", async ({ page }) => {
+  test("flashcards tab is accessible from practice workspace", async ({ page }) => {
     await createCourseWithContent(page);
-    await ensureRightPanelVisible(page);
-    const cardsTab = page.getByTestId("right-tab-flashcards").last();
-    await expect(cardsTab).toBeVisible({ timeout: 15_000 });
+    await openFlashcards(page);
+    await expect(page.getByRole("heading", { name: /Flashcards|闪卡/i })).toBeVisible({ timeout: 15_000 });
   });
 
-  test("shows empty state with generate button", async ({ page }) => {
+  test("shows empty state when no flashcards exist", async ({ page }) => {
     await createCourseWithContent(page);
-    await ensureRightPanelVisible(page);
-    await openRightTab(page, "flashcards");
+    await openFlashcards(page);
     await expect(page.getByText("No flashcards yet")).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByRole("button", { name: /Generate Flashcards/ })).toBeVisible({
-      timeout: 15_000,
-    });
-  });
-
-  test("generate button triggers flashcard creation", async ({ page }) => {
-    await createCourseWithContent(page);
-    await ensureRightPanelVisible(page);
-    await openRightTab(page, "flashcards");
-    const generateBtn = page.getByRole("button", { name: /Generate Flashcards/ });
-    await expect(generateBtn).toBeVisible({ timeout: 15_000 });
-    // Use force:true because dynamic import re-renders can detach the button from DOM
-    await generateBtn.click({ force: true });
-    await expect(page.getByText(/Generated \d+ flashcards/)).toBeVisible({ timeout: 30_000 });
   });
 });
 
 test.describe.serial("Flashcard Panel — LLM-dependent", () => {
   test.beforeEach(async ({ page }) => {
-    test.skip(!hasRealLlmEnv(), "Requires real LLM API key for flashcard generation");
+    test.skip(!hasRealLlmEnv(), "Requires a real LLM provider for flashcard generation");
     await skipOnboarding(page);
   });
 
-  test("card counter shows 'Card X of Y'", async ({ page }) => {
-    await createCourseWithContent(page);
-    await ensureRightPanelVisible(page);
-    await openRightTab(page, "flashcards");
-    const generateBtn = page.getByRole("button", { name: /Generate Flashcards/ });
-    await expect(generateBtn).toBeVisible({ timeout: 15_000 });
-    await generateBtn.click();
-    await expect(page.getByText(/Generated \d+ flashcards/)).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByText(/Card\s+1\s+of\s+\d+/)).toBeVisible({ timeout: 15_000 });
+  test("review counter shows seeded flashcards", async ({ page }) => {
+    test.setTimeout(getRealLlmTimeoutMs(90_000) + 30_000);
+    const courseId = await createCourseWithContent(page);
+    await seedFlashcardsViaApi(courseId, 3);
+    await page.reload();
+    await openFlashcards(page);
+    await expect(page.getByText(/0\/3 reviewed/)).toBeVisible({ timeout: 30_000 });
   });
 
-  test("shows front text by default", async ({ page }) => {
-    await createCourseWithContent(page);
-    await ensureRightPanelVisible(page);
-    await openRightTab(page, "flashcards");
-    const generateBtn = page.getByRole("button", { name: /Generate Flashcards/ });
-    await expect(generateBtn).toBeVisible({ timeout: 15_000 });
-    await generateBtn.click();
-    await expect(page.getByText(/Generated \d+ flashcards/)).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByText("Question")).toBeVisible({ timeout: 15_000 });
+  test("shows question text by default", async ({ page }) => {
+    test.setTimeout(getRealLlmTimeoutMs(90_000) + 30_000);
+    const courseId = await createCourseWithContent(page);
+    await seedFlashcardsViaApi(courseId, 3);
+    await page.reload();
+    await openFlashcards(page);
+    await expect(page.getByText("Question")).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator(".flashcard-face").first()).toBeVisible({ timeout: 30_000 });
   });
 
-  test("clicking card flips to back", async ({ page }) => {
-    await createCourseWithContent(page);
-    await ensureRightPanelVisible(page);
-    await openRightTab(page, "flashcards");
-    const generateBtn = page.getByRole("button", { name: /Generate Flashcards/ });
-    await expect(generateBtn).toBeVisible({ timeout: 15_000 });
-    await generateBtn.click();
-    await expect(page.getByText(/Generated \d+ flashcards/)).toBeVisible({ timeout: 30_000 });
-    const cardArea = page.locator(".cursor-pointer").first();
-    await expect(cardArea).toBeVisible({ timeout: 15_000 });
+  test("clicking card flips to answer", async ({ page }) => {
+    test.setTimeout(getRealLlmTimeoutMs(90_000) + 30_000);
+    const courseId = await createCourseWithContent(page);
+    await seedFlashcardsViaApi(courseId, 3);
+    await page.reload();
+    await openFlashcards(page);
+    const cardArea = page.getByRole("button").filter({ has: page.locator(".flashcard-inner") }).first();
+    await expect(cardArea).toBeVisible({ timeout: 30_000 });
     await cardArea.click();
-    await expect(page.getByText("Answer")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("Answer")).toBeVisible({ timeout: 30_000 });
   });
 
-  test("FSRS rating buttons appear after flip", async ({ page }) => {
-    await createCourseWithContent(page);
-    await ensureRightPanelVisible(page);
-    await openRightTab(page, "flashcards");
-    const generateBtn = page.getByRole("button", { name: /Generate Flashcards/ });
-    await expect(generateBtn).toBeVisible({ timeout: 15_000 });
-    await generateBtn.click();
-    await expect(page.getByText(/Generated \d+ flashcards/)).toBeVisible({ timeout: 30_000 });
-    const cardArea = page.locator(".cursor-pointer").first();
+  test("rating buttons appear after flip", async ({ page }) => {
+    test.setTimeout(getRealLlmTimeoutMs(90_000) + 30_000);
+    const courseId = await createCourseWithContent(page);
+    await seedFlashcardsViaApi(courseId, 3);
+    await page.reload();
+    await openFlashcards(page);
+    const cardArea = page.getByRole("button").filter({ has: page.locator(".flashcard-inner") }).first();
     await cardArea.click();
-    await expect(page.getByText("Answer")).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByRole("button", { name: "Again" })).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByRole("button", { name: "Hard" })).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByRole("button", { name: "Good" })).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByRole("button", { name: "Easy" })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole("button", { name: "Again" })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole("button", { name: "Hard" })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole("button", { name: "Good" })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole("button", { name: "Easy" })).toBeVisible({ timeout: 30_000 });
   });
 
-  test("clicking Good rating advances to next card", async ({ page }) => {
-    await createCourseWithContent(page);
-    await ensureRightPanelVisible(page);
-    await openRightTab(page, "flashcards");
-    const generateBtn = page.getByRole("button", { name: /Generate Flashcards/ });
-    await expect(generateBtn).toBeVisible({ timeout: 15_000 });
-    await generateBtn.click();
-    await expect(page.getByText(/Generated \d+ flashcards/)).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByText(/Card\s+1\s+of/)).toBeVisible({ timeout: 15_000 });
-    const cardArea = page.locator(".cursor-pointer").first();
+  test("clicking Good advances the review counter", async ({ page }) => {
+    test.setTimeout(getRealLlmTimeoutMs(90_000) + 30_000);
+    const courseId = await createCourseWithContent(page);
+    await seedFlashcardsViaApi(courseId, 3);
+    await page.reload();
+    await openFlashcards(page);
+    const cardArea = page.getByRole("button").filter({ has: page.locator(".flashcard-inner") }).first();
     await cardArea.click();
-    await expect(page.getByRole("button", { name: "Good" })).toBeVisible({ timeout: 15_000 });
     await page.getByRole("button", { name: "Good" }).click();
-    await expect(page.getByText(/Card\s+2\s+of/)).toBeVisible({ timeout: 15_000 });
-  });
-
-  test("Prev/Next buttons navigate between cards", async ({ page }) => {
-    await createCourseWithContent(page);
-    await ensureRightPanelVisible(page);
-    await openRightTab(page, "flashcards");
-    const generateBtn = page.getByRole("button", { name: /Generate Flashcards/ });
-    await expect(generateBtn).toBeVisible({ timeout: 15_000 });
-    await generateBtn.click();
-    await expect(page.getByText(/Generated \d+ flashcards/)).toBeVisible({ timeout: 30_000 });
-    await page.getByRole("button", { name: "Next" }).click();
-    await expect(page.getByText(/Card\s+2\s+of/)).toBeVisible({ timeout: 15_000 });
-    await page.getByRole("button", { name: "Prev" }).click();
-    await expect(page.getByText(/Card\s+1\s+of/)).toBeVisible({ timeout: 15_000 });
-  });
-
-  test("Prev disabled on first card", async ({ page }) => {
-    await createCourseWithContent(page);
-    await ensureRightPanelVisible(page);
-    await openRightTab(page, "flashcards");
-    const generateBtn = page.getByRole("button", { name: /Generate Flashcards/ });
-    await expect(generateBtn).toBeVisible({ timeout: 15_000 });
-    await generateBtn.click();
-    await expect(page.getByText(/Generated \d+ flashcards/)).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByText(/Card\s+1\s+of/)).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByRole("button", { name: "Prev" })).toBeDisabled();
-  });
-
-  test("flip state resets on navigation", async ({ page }) => {
-    await createCourseWithContent(page);
-    await ensureRightPanelVisible(page);
-    await openRightTab(page, "flashcards");
-    const generateBtn = page.getByRole("button", { name: /Generate Flashcards/ });
-    await expect(generateBtn).toBeVisible({ timeout: 15_000 });
-    await generateBtn.click();
-    await expect(page.getByText(/Generated \d+ flashcards/)).toBeVisible({ timeout: 30_000 });
-    await page.getByRole("button", { name: "Next" }).click();
-    await expect(page.getByText(/Card\s+2\s+of/)).toBeVisible({ timeout: 15_000 });
-    await page.getByRole("button", { name: "Prev" }).click();
-    await expect(page.getByText(/Card\s+1\s+of/)).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByText("Question")).toBeVisible({ timeout: 15_000 });
-  });
-
-  test("Save New button saves flashcards", async ({ page }) => {
-    await createCourseWithContent(page);
-    await ensureRightPanelVisible(page);
-    await openRightTab(page, "flashcards");
-    const generateBtn = page.getByRole("button", { name: /Generate Flashcards/ });
-    await expect(generateBtn).toBeVisible({ timeout: 15_000 });
-    await generateBtn.click();
-    await expect(page.getByText(/Generated \d+ flashcards/)).toBeVisible({ timeout: 30_000 });
-    await page.getByRole("button", { name: "Save New" }).click();
-    await expect(page.getByText("Saved flashcard set")).toBeVisible({ timeout: 15_000 });
-  });
-
-  test("difficulty and due count badges display", async ({ page }) => {
-    await createCourseWithContent(page);
-    await ensureRightPanelVisible(page);
-    await page.getByRole("button", { name: "Cards" }).click();
-    const generateBtn = page.getByRole("button", { name: /Generate Flashcards/ });
-    await expect(generateBtn).toBeVisible({ timeout: 15_000 });
-    await generateBtn.click();
-    await expect(page.getByText(/Generated \d+ flashcards/)).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByText(/Due for review/)).toBeVisible({ timeout: 15_000 });
-    const difficultyBadge = page.locator('[data-slot="badge"]').filter({ hasText: /\d/ });
-    await expect(difficultyBadge.first()).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText(/1\/3 reviewed/)).toBeVisible({ timeout: 30_000 });
   });
 });

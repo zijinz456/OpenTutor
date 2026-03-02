@@ -8,10 +8,12 @@ import {
   Course,
   CourseMetadata,
   ContentNode,
+  IngestionJobSummary,
   listCourseOverview,
   createCourse,
   deleteCourse,
   getContentTree,
+  listIngestionJobs,
 } from "@/lib/api";
 import { ttlCache } from "@/lib/cache";
 
@@ -23,6 +25,7 @@ interface CourseState {
   courses: Course[];
   activeCourse: Course | null;
   contentTree: ContentNode[];
+  ingestionJobs: IngestionJobSummary[];
   loading: boolean;
   error: string | null;
 
@@ -31,12 +34,14 @@ interface CourseState {
   addCourse: (name: string, description?: string, metadata?: CourseMetadata) => Promise<Course>;
   removeCourse: (id: string) => Promise<void>;
   fetchContentTree: (courseId: string) => Promise<void>;
+  fetchIngestionJobs: (courseId: string) => Promise<void>;
 }
 
 export const useCourseStore = create<CourseState>((set, get) => ({
   courses: [],
   activeCourse: null,
   contentTree: [],
+  ingestionJobs: [],
   loading: false,
   error: null,
 
@@ -85,6 +90,15 @@ export const useCourseStore = create<CourseState>((set, get) => ({
     try {
       const tree = await getContentTree(courseId);
       set({ contentTree: tree });
+    } catch (e) {
+      set({ error: (e as Error).message });
+    }
+  },
+
+  fetchIngestionJobs: async (courseId) => {
+    try {
+      const jobs = await listIngestionJobs(courseId);
+      set({ ingestionJobs: jobs });
     } catch (e) {
       set({ error: (e as Error).message });
     }

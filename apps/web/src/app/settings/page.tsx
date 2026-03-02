@@ -14,15 +14,22 @@ import {
   applyTemplate,
   getHealthStatus,
   getLlmRuntimeConfig,
+  getNotificationSettings,
+  getOllamaModels,
   listTemplates,
   testLlmRuntimeConnection,
   updateLlmRuntimeConfig,
+  updateNotificationSettings,
+  getUsageSummary,
+  getExportSessionUrl,
   type HealthStatus,
   type LlmConnectionTestResult,
   type LlmRuntimeConfig,
+  type NotificationSettings,
+  type OllamaModel,
+  type UsageSummary,
 } from "@/lib/api";
-import { PushSubscriptionManager } from "@/components/push-subscription-manager";
-import { OllamaSetupWizard } from "@/components/settings/ollama-setup-wizard";
+import { useNotificationStore } from "@/store/notifications";
 const PROVIDERS = ["openai", "anthropic", "deepseek", "openrouter", "gemini", "groq", "ollama", "lmstudio", "textgenwebui"] as const;
 
 const PROVIDER_META = {
@@ -49,28 +56,30 @@ interface Template {
   preferences: Record<string, string>;
 }
 
-const LLM_STATUS_META = {
-  ready: {
-    label: "Ready",
-    description: "A real LLM provider is configured and healthy.",
-    badgeVariant: "default" as const,
-  },
-  degraded: {
-    label: "Model Issue",
-    description: "A provider is configured, but the active provider is unhealthy or degraded.",
-    badgeVariant: "destructive" as const,
-  },
-  configuration_required: {
-    label: "Configuration Required",
-    description: "This app requires a real LLM provider, but no API key or local backend is configured.",
-    badgeVariant: "destructive" as const,
-  },
-  mock_fallback: {
-    label: "Fallback Mode",
-    description: "No real LLM is configured. The app is running with local mock responses.",
-    badgeVariant: "secondary" as const,
-  },
-};
+function getLlmStatusMeta(t: (key: string) => string) {
+  return {
+    ready: {
+      label: t("settings.status.ready"),
+      description: t("settings.status.readyDesc"),
+      badgeVariant: "default" as const,
+    },
+    degraded: {
+      label: t("settings.status.degraded"),
+      description: t("settings.status.degradedDesc"),
+      badgeVariant: "destructive" as const,
+    },
+    configuration_required: {
+      label: t("settings.status.configurationRequired"),
+      description: t("settings.status.configurationRequiredDesc"),
+      badgeVariant: "destructive" as const,
+    },
+    mock_fallback: {
+      label: t("settings.status.mockFallback"),
+      description: t("settings.status.mockFallbackDesc"),
+      badgeVariant: "secondary" as const,
+    },
+  };
+}
 
 export default function SettingsPage() {
   const router = useRouter();
@@ -93,10 +102,40 @@ export default function SettingsPage() {
   const [testingProvider, setTestingProvider] = useState<string | null>(null);
   const [testResults, setTestResults] = useState<Record<string, LlmConnectionTestResult | null>>({});
   const [keyErrors, setKeyErrors] = useState<Record<string, string | null>>({});
+  const [usage, setUsage] = useState<UsageSummary | null>(null);
+  const [usageLoading, setUsageLoading] = useState(false);
+  const [notificationSettings, setNotificationSettings] = useState<NotificationSettings | null>(null);
+  const [notificationChannels, setNotificationChannels] = useState("");
+  const [notificationLoading, setNotificationLoading] = useState(false);
+  const [notificationSaving, setNotificationSaving] = useState(false);
+  const [ollamaModels, setOllamaModels] = useState<OllamaModel[]>([]);
+  const [ollamaLoading, setOllamaLoading] = useState(false);
+  const [ollamaBaseUrl, setOllamaBaseUrl] = useState("http://localhost:11434");
+  const [ollamaMessage, setOllamaMessage] = useState<string | null>(null);
+  const {
+    pushSupported,
+    pushPermission,
+    isSubscribed,
+    subscribing: pushBusy,
+    error: pushError,
+    checkSubscription,
+    subscribe,
+    unsubscribe,
+  } = useNotificationStore();
 
   useEffect(() => {
-    void Promise.all([loadTemplates(), loadHealth(), loadRuntimeConfig()]);
-  }, []);
+    void Promise.all([
+      loadTemplates(),
+      loadHealth(),
+      loadRuntimeConfig(),
+      loadUsage(),
+      loadNotificationSettings(),
+    ]);
+    void checkSubscription();
+    // Poll health every 30s so status stays fresh
+    const id = setInterval(() => void loadHealth(), 30_000);
+    return () => clearInterval(id);
+  }, [checkSubscription]);
 
   const loadTemplates = async () => {
     try {
@@ -131,6 +170,45 @@ export default function SettingsPage() {
       setRuntimeConfig(null);
     } finally {
       setRuntimeLoading(false);
+    }
+  };
+
+  const loadUsage = async () => {
+    setUsageLoading(true);
+    try {
+      setUsage(await getUsageSummary("month"));
+    } catch {
+      setUsage(null);
+    } finally {
+      setUsageLoading(false);
+    }
+  };
+
+  const loadNotificationSettings = async () => {
+    setNotificationLoading(true);
+    try {
+      const data = await getNotificationSettings();
+      setNotificationSettings(data);
+      setNotificationChannels(data.channels_enabled.join(", "));
+    } catch {
+      setNotificationSettings(null);
+    } finally {
+      setNotificationLoading(false);
+    }
+  };
+
+  const loadOllama = async () => {
+    setOllamaLoading(true);
+    setOllamaMessage(null);
+    try {
+      const models = await getOllamaModels(ollamaBaseUrl);
+      setOllamaModels(models);
+      setOllamaMessage(models.length > 0 ? null : "Ollama is reachable, but no models are installed.");
+    } catch (error) {
+      setOllamaModels([]);
+      setOllamaMessage((error as Error).message || "Unable to reach Ollama.");
+    } finally {
+      setOllamaLoading(false);
     }
   };
 
@@ -183,10 +261,10 @@ export default function SettingsPage() {
       });
       setRuntimeConfig(updated);
       setDraftKeys((prev) => ({ ...prev, [name]: "" }));
-      toast.success(`Deleted saved ${name} key`);
+      toast.success(t("settings.savedKeyDeleted"));
       await loadHealth();
     } catch (error) {
-      toast.error((error as Error).message || `Failed to delete ${name} key`);
+      toast.error((error as Error).message || t("settings.savedKeyDeleteFailed"));
     } finally {
       setSavingRuntime(false);
       setDeleteTarget(null);
@@ -202,18 +280,67 @@ export default function SettingsPage() {
         api_key: draftKeys[name]?.trim() || undefined,
       });
       setTestResults((prev) => ({ ...prev, [name]: result }));
-      toast.success(`${name} connection test passed`);
+      toast.success(`${name} ${t("settings.connectionTestPassed")}`);
       await loadHealth();
     } catch (error) {
       setTestResults((prev) => ({ ...prev, [name]: null }));
-      toast.error((error as Error).message || `Failed to test ${name} connection`);
+      toast.error((error as Error).message || `${t("settings.connectionTestFailed")}: ${name}`);
     } finally {
       setTestingProvider(null);
     }
   };
 
+  const handleSaveNotifications = async () => {
+    if (!notificationSettings) return;
+    setNotificationSaving(true);
+    try {
+      const channels = notificationChannels
+        .split(",")
+        .map((channel) => channel.trim())
+        .filter(Boolean);
+      const updated = await updateNotificationSettings({
+        channels_enabled: channels,
+        quiet_hours_start: notificationSettings.quiet_hours_start,
+        quiet_hours_end: notificationSettings.quiet_hours_end,
+        timezone: notificationSettings.timezone,
+        max_notifications_per_hour: notificationSettings.max_notifications_per_hour,
+        max_notifications_per_day: notificationSettings.max_notifications_per_day,
+        escalation_enabled: notificationSettings.escalation_enabled,
+        escalation_delay_hours: notificationSettings.escalation_delay_hours,
+      });
+      setNotificationSettings(updated);
+      setNotificationChannels(updated.channels_enabled.join(", "));
+      toast.success("Notification settings saved");
+    } catch (error) {
+      toast.error((error as Error).message || "Failed to save notification settings");
+    } finally {
+      setNotificationSaving(false);
+    }
+  };
+
+  const handleUseOllamaModel = async (modelName: string) => {
+    setSavingRuntime(true);
+    try {
+      const updated = await updateLlmRuntimeConfig({
+        provider: "ollama",
+        model: modelName,
+        base_url: ollamaBaseUrl,
+      });
+      setRuntimeConfig(updated);
+      setProvider("ollama");
+      setModel(modelName);
+      toast.success(`Switched runtime to Ollama (${modelName})`);
+      await loadHealth();
+    } catch (error) {
+      toast.error((error as Error).message || "Failed to switch to Ollama");
+    } finally {
+      setSavingRuntime(false);
+    }
+  };
+
   const hasKeyErrors = Object.values(keyErrors).some((err) => err !== null);
-  const statusMeta = health ? LLM_STATUS_META[health.llm_status] : null;
+  const llmStatusMeta = getLlmStatusMeta(t);
+  const statusMeta = health ? llmStatusMeta[health.llm_status] : null;
   const providerStatus = useMemo(() => {
     const byProvider = new Map(runtimeConfig?.providers.map((item) => [item.provider, item]));
     return PROVIDERS.map((name) => ({
@@ -248,22 +375,22 @@ export default function SettingsPage() {
               <>
                 <div className="flex flex-wrap gap-2 text-xs">
                   <Badge variant="outline">
-                    Deployment: {health.deployment_mode === "single_user" ? "Single User" : health.deployment_mode}
+                    {t("settings.deployment")}: {health.deployment_mode === "single_user" ? t("settings.singleUser") : health.deployment_mode}
                   </Badge>
                   <Badge variant={health.migration_required ? "destructive" : "secondary"}>
-                    Schema: {health.migration_required ? "Migration required" : "Ready"}
+                    {t("settings.schema")}: {health.migration_required ? t("settings.schemaMigrationRequired") : t("settings.schemaReady")}
                   </Badge>
                   <Badge variant="outline">
-                    Migration status: {health.migration_status || "unknown"}
+                    {t("settings.migrationStatus")}: {health.migration_status || t("settings.unknown")}
                   </Badge>
                   <Badge variant={health.alembic_version_present ? "secondary" : "destructive"}>
-                    {health.alembic_version_present ? "Alembic tracked" : "Alembic version missing"}
+                    {health.alembic_version_present ? t("settings.alembicTracked") : t("settings.alembicMissing")}
                   </Badge>
                   <Badge variant="outline">
-                    Sandbox: {health.code_sandbox_backend}/{health.code_sandbox_runtime}
+                    {t("settings.sandbox")}: {health.code_sandbox_backend}/{health.code_sandbox_runtime}
                   </Badge>
                   <Badge variant={health.code_sandbox_runtime_available ? "secondary" : "destructive"}>
-                    {health.code_sandbox_runtime_available ? "Sandbox runtime ready" : "Sandbox runtime unavailable"}
+                    {health.code_sandbox_runtime_available ? t("settings.sandboxReady") : t("settings.sandboxUnavailable")}
                   </Badge>
                 </div>
                 <div className="flex items-center gap-2">
@@ -273,28 +400,28 @@ export default function SettingsPage() {
                 <p className="text-sm text-muted-foreground">{statusMeta.description}</p>
                 {health.deployment_mode === "single_user" && (
                   <div className="rounded-md border border-dashed border-border p-3 text-xs text-muted-foreground">
-                    Single-user mode is active. The local owner account is automatically bound to requests until you enable auth and switch deployment mode.
+                    {t("settings.singleUserNote")}
                   </div>
                 )}
                 {health.migration_required && (
                   <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-xs text-muted-foreground">
-                    Database migrations are not fully applied or the schema is not tracked by Alembic. Run <code>bash scripts/dev_local.sh migrate-host</code>, or use <code>python -m alembic stamp head</code> if the tables already match the latest schema.
+                    {t("settings.migrationHelp")}
                   </div>
                 )}
                 <div className="flex flex-wrap gap-2 text-xs">
-                  <Badge variant="outline">LLM required: {health.llm_required ? "yes" : "no"}</Badge>
-                  <Badge variant="outline">LLM available: {health.llm_available ? "yes" : "no"}</Badge>
-                  <Badge variant="outline">Primary: {health.llm_primary || "none"}</Badge>
+                  <Badge variant="outline">{t("settings.llmRequiredBadge")}: {health.llm_required ? t("settings.yes") : t("settings.no")}</Badge>
+                  <Badge variant="outline">{t("settings.llmAvailableBadge")}: {health.llm_available ? t("settings.yes") : t("settings.no")}</Badge>
+                  <Badge variant="outline">{t("settings.primaryBadge")}: {health.llm_primary || t("settings.none")}</Badge>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   {health.llm_providers.length > 0 ? (
                     health.llm_providers.map((item) => (
                       <Badge key={item} variant={health.llm_provider_health[item] ? "secondary" : "destructive"}>
-                        {item}: {health.llm_provider_health[item] ? "healthy" : "unhealthy"}
+                        {item}: {health.llm_provider_health[item] ? t("settings.providerHealthy") : t("settings.providerUnhealthy")}
                       </Badge>
                     ))
                   ) : (
-                    <span className="text-sm text-muted-foreground">No providers configured.</span>
+                    <span className="text-sm text-muted-foreground">{t("settings.noProvidersConfigured")}</span>
                   )}
                 </div>
               </>
@@ -315,11 +442,11 @@ export default function SettingsPage() {
           </div>
           <div className="rounded-xl border border-border p-4 space-y-4">
             <p className="text-sm text-muted-foreground">
-              Paste provider API keys here for local use. Keys are stored in <code>apps/api/.env</code> on this machine and the backend reloads the LLM registry after saving.
+              {t("settings.providerStorageHelp")}
             </p>
             <div className="grid gap-4 md:grid-cols-[180px,1fr,auto] items-end">
               <label className="space-y-2 text-sm">
-                <span className="font-medium text-foreground">Primary provider</span>
+                <span className="font-medium text-foreground">{t("settings.primaryProvider")}</span>
                 <select
                   data-testid="settings-llm-provider"
                   className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground"
@@ -338,7 +465,7 @@ export default function SettingsPage() {
                 </select>
               </label>
               <label className="space-y-2 text-sm">
-                <span className="font-medium text-foreground">Model</span>
+                <span className="font-medium text-foreground">{t("settings.model")}</span>
                 <Input
                   data-testid="settings-llm-model"
                   value={model}
@@ -352,7 +479,7 @@ export default function SettingsPage() {
                 data-testid="settings-llm-required"
                 onClick={() => setLlmRequired((value) => !value)}
               >
-                LLM required: {llmRequired ? "On" : "Off"}
+                {llmRequired ? t("settings.requiredOn") : t("settings.requiredOff")}
               </Button>
             </div>
 
@@ -369,11 +496,11 @@ export default function SettingsPage() {
                         <div className="text-sm font-medium capitalize text-foreground">{name}</div>
                         <div className="text-xs text-muted-foreground">
                           {requiresKey
-                            ? status?.has_key ? `Saved: ${status.masked_key}` : "No key saved"
-                            : "Uses local runtime endpoint"}
+                            ? status?.has_key ? `${t("settings.savedKey")}: ${status.masked_key}` : t("settings.noKeySaved")
+                            : t("settings.localEndpoint")}
                         </div>
                       </div>
-                      {name === provider && <Badge variant="secondary">Primary</Badge>}
+                      {name === provider && <Badge variant="secondary">{t("settings.primary")}</Badge>}
                     </div>
                     {requiresKey ? (
                       <div className="space-y-1">
@@ -386,12 +513,12 @@ export default function SettingsPage() {
                               const val = e.target.value;
                               setDraftKeys((prev) => ({ ...prev, [name]: val }));
                               if (val.trim().length > 0 && val.trim().length < 8) {
-                                setKeyErrors((prev) => ({ ...prev, [name]: "API key must be at least 8 characters" }));
+                                setKeyErrors((prev) => ({ ...prev, [name]: t("settings.apiKeyTooShort") }));
                               } else {
                                 setKeyErrors((prev) => ({ ...prev, [name]: null }));
                               }
                             }}
-                            placeholder={`Paste ${name} API key`}
+                            placeholder={`${t("settings.pasteApiKey")} (${name})`}
                           />
                           <Button
                             type="button"
@@ -400,18 +527,18 @@ export default function SettingsPage() {
                             onClick={() => setShowKeys((prev) => ({ ...prev, [name]: !prev[name] }))}
                             aria-label={`toggle-${name}-visibility`}
                           >
-                            {showing ? "Hide" : "Show"}
+                            {showing ? t("settings.hide") : t("settings.show")}
                           </Button>
                         </div>
                         {keyErrors[name] && <p className="text-xs text-destructive mt-1">{keyErrors[name]}</p>}
                       </div>
                     ) : (
                       <div className="rounded-md border border-dashed border-border px-3 py-2 text-xs text-muted-foreground">
-                        No API key is needed. Make sure the local backend for {name} is running, then save this provider as primary.
+                        {t("settings.localProviderHelp")}
                       </div>
                     )}
                     <div className="flex items-center justify-between text-xs text-muted-foreground gap-2">
-                      <span>{requiresKey ? "Leave blank to keep the saved key unchanged." : "Connection tests call the local runtime directly."}</span>
+                      <span>{requiresKey ? t("settings.keepSavedKey") : t("settings.localTestHelp")}</span>
                       <div className="flex items-center gap-1">
                         <Button
                           type="button"
@@ -422,7 +549,7 @@ export default function SettingsPage() {
                           onClick={() => void handleTestConnection(name)}
                           disabled={savingRuntime || testingProvider === name}
                         >
-                          {testingProvider === name ? "Testing..." : "Test Connection"}
+                          {testingProvider === name ? t("settings.testing") : t("settings.testConnection")}
                         </Button>
                         <Button
                           type="button"
@@ -431,7 +558,7 @@ export default function SettingsPage() {
                           className="h-7 px-2"
                           onClick={() => setDraftKeys((prev) => ({ ...prev, [name]: "" }))}
                         >
-                          Clear draft
+                          {t("settings.clearDraft")}
                         </Button>
                         {requiresKey && status?.has_key && (
                           <Button
@@ -443,7 +570,7 @@ export default function SettingsPage() {
                             onClick={() => setDeleteTarget(name)}
                             disabled={savingRuntime}
                           >
-                            Delete saved
+                            {t("settings.deleteSaved")}
                           </Button>
                         )}
                       </div>
@@ -451,10 +578,10 @@ export default function SettingsPage() {
                     {testResult && (
                       <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-xs" data-testid={`provider-test-result-${name}`}>
                         <div className="font-medium text-foreground">
-                          {testResult.ok ? "Connection OK" : "Connection returned unexpected response"}
+                          {testResult.ok ? t("settings.connectionOk") : t("settings.connectionUnexpected")}
                         </div>
                         <div className="text-muted-foreground">
-                          Model: {testResult.model} · Preview: {testResult.response_preview || "empty"}
+                          {t("settings.model")}: {testResult.model} · {t("settings.preview")}: {testResult.response_preview || t("settings.previewEmpty")}
                         </div>
                       </div>
                     )}
@@ -465,10 +592,10 @@ export default function SettingsPage() {
 
             <div className="flex items-center justify-end gap-2">
               <Button type="button" variant="outline" onClick={() => setDraftKeys({})} disabled={savingRuntime}>
-                Reset Draft
+                {t("settings.resetDraft")}
               </Button>
               <Button type="button" data-testid="settings-save-llm" onClick={() => void handleSaveRuntime()} disabled={savingRuntime || hasKeyErrors}>
-                {savingRuntime ? "Saving..." : "Save Local LLM Config"}
+                {savingRuntime ? t("settings.saving") : t("settings.saveLocalConfig")}
               </Button>
             </div>
           </div>
@@ -479,16 +606,65 @@ export default function SettingsPage() {
           <p className="text-sm text-muted-foreground mb-3">
             {t("settings.localAiDescription")}
           </p>
-          <OllamaSetupWizard onComplete={() => { void loadHealth(); void loadRuntimeConfig(); }} />
+          <div className="rounded-xl border border-border p-4 space-y-4">
+            <div className="grid gap-3 md:grid-cols-[1fr_auto_auto]">
+              <Input
+                value={ollamaBaseUrl}
+                onChange={(e) => setOllamaBaseUrl(e.target.value)}
+                placeholder="http://localhost:11434"
+              />
+              <Button type="button" variant="outline" onClick={() => void loadOllama()} disabled={ollamaLoading}>
+                {ollamaLoading ? "Checking..." : "Detect Models"}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setProvider("ollama");
+                  if (ollamaModels[0]?.name) setModel(ollamaModels[0].name);
+                }}
+              >
+                Use Ollama
+              </Button>
+            </div>
+
+            {ollamaMessage && (
+              <p className="text-xs text-muted-foreground">{ollamaMessage}</p>
+            )}
+
+            {ollamaModels.length > 0 && (
+              <div className="space-y-2">
+                {ollamaModels.map((entry) => (
+                  <div key={entry.name} className="flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2">
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium truncate">{entry.name}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {(entry.size / (1024 * 1024 * 1024)).toFixed(1)} GB · updated {new Date(entry.modified_at).toLocaleDateString()}
+                      </div>
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={provider === "ollama" && model === entry.name ? "default" : "outline"}
+                      onClick={() => void handleUseOllamaModel(entry.name)}
+                      disabled={savingRuntime}
+                    >
+                      {provider === "ollama" && model === entry.name ? "Selected" : "Use Model"}
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </section>
 
         <section>
           <h2 className="font-medium text-foreground mb-3">{t("pref.language")}</h2>
           <div className="flex gap-2">
-            <Button variant={locale === "en" ? "default" : "outline"} size="sm" onClick={() => handleLocaleChange("en")}>
+            <Button data-testid="settings-language-en" variant={locale === "en" ? "default" : "outline"} size="sm" onClick={() => handleLocaleChange("en")}>
               English
             </Button>
-            <Button variant={locale === "zh" ? "default" : "outline"} size="sm" onClick={() => handleLocaleChange("zh")}>
+            <Button data-testid="settings-language-zh" variant={locale === "zh" ? "default" : "outline"} size="sm" onClick={() => handleLocaleChange("zh")}>
               中文
             </Button>
           </div>
@@ -497,13 +673,13 @@ export default function SettingsPage() {
         <section>
           <h2 className="font-medium text-foreground mb-3">{t("settings.theme")}</h2>
           <div className="flex gap-2">
-            <Button variant={theme === "light" ? "default" : "outline"} size="sm" onClick={() => setTheme("light")}>
+            <Button data-testid="settings-theme-light" variant={theme === "light" ? "default" : "outline"} size="sm" onClick={() => setTheme("light")}>
               {t("settings.appearance.light")}
             </Button>
-            <Button variant={theme === "dark" ? "default" : "outline"} size="sm" onClick={() => setTheme("dark")}>
+            <Button data-testid="settings-theme-dark" variant={theme === "dark" ? "default" : "outline"} size="sm" onClick={() => setTheme("dark")}>
               {t("settings.appearance.dark")}
             </Button>
-            <Button variant={theme === "system" ? "default" : "outline"} size="sm" onClick={() => setTheme("system")}>
+            <Button data-testid="settings-theme-system" variant={theme === "system" ? "default" : "outline"} size="sm" onClick={() => setTheme("system")}>
               {t("settings.appearance.system")}
             </Button>
           </div>
@@ -511,7 +687,200 @@ export default function SettingsPage() {
 
         <section data-testid="settings-notifications">
           <h2 className="font-medium text-foreground mb-3">{t("settings.notifications")}</h2>
-          <PushSubscriptionManager />
+          <div className="rounded-xl border border-border p-4 space-y-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="outline">Push supported: {pushSupported ? "yes" : "no"}</Badge>
+              <Badge variant="outline">Permission: {pushPermission || "unknown"}</Badge>
+              <Badge variant={isSubscribed ? "secondary" : "outline"}>
+                {isSubscribed ? "Subscribed" : "Not subscribed"}
+              </Badge>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" size="sm" variant="outline" onClick={() => void checkSubscription()} disabled={pushBusy}>
+                Refresh Browser Status
+              </Button>
+              <Button type="button" size="sm" onClick={() => void subscribe()} disabled={!pushSupported || pushBusy || isSubscribed}>
+                {pushBusy && !isSubscribed ? "Working..." : "Enable Push"}
+              </Button>
+              <Button type="button" size="sm" variant="outline" onClick={() => void unsubscribe()} disabled={!isSubscribed || pushBusy}>
+                Disable Push
+              </Button>
+            </div>
+
+            {pushError && (
+              <p className="text-xs text-destructive">{pushError}</p>
+            )}
+
+            {notificationLoading ? (
+              <div className="h-4 w-36 rounded bg-muted animate-pulse" />
+            ) : notificationSettings ? (
+              <div className="grid gap-4 md:grid-cols-2">
+                <label className="space-y-2 text-sm">
+                  <span className="font-medium text-foreground">Channels</span>
+                  <Input
+                    value={notificationChannels}
+                    onChange={(e) => setNotificationChannels(e.target.value)}
+                    placeholder="web_push, email"
+                  />
+                  <span className="block text-xs text-muted-foreground">
+                    Comma-separated channel ids.
+                  </span>
+                </label>
+
+                <label className="space-y-2 text-sm">
+                  <span className="font-medium text-foreground">Timezone</span>
+                  <Input
+                    value={notificationSettings.timezone}
+                    onChange={(e) => setNotificationSettings((current) => current ? {
+                      ...current,
+                      timezone: e.target.value,
+                    } : current)}
+                  />
+                </label>
+
+                <label className="space-y-2 text-sm">
+                  <span className="font-medium text-foreground">Quiet hours start</span>
+                  <Input
+                    value={notificationSettings.quiet_hours_start || ""}
+                    onChange={(e) => setNotificationSettings((current) => current ? {
+                      ...current,
+                      quiet_hours_start: e.target.value || null,
+                    } : current)}
+                    placeholder="22:00"
+                  />
+                </label>
+
+                <label className="space-y-2 text-sm">
+                  <span className="font-medium text-foreground">Quiet hours end</span>
+                  <Input
+                    value={notificationSettings.quiet_hours_end || ""}
+                    onChange={(e) => setNotificationSettings((current) => current ? {
+                      ...current,
+                      quiet_hours_end: e.target.value || null,
+                    } : current)}
+                    placeholder="07:00"
+                  />
+                </label>
+
+                <label className="space-y-2 text-sm">
+                  <span className="font-medium text-foreground">Max notifications / hour</span>
+                  <Input
+                    type="number"
+                    min="1"
+                    max="100"
+                    value={notificationSettings.max_notifications_per_hour}
+                    onChange={(e) => setNotificationSettings((current) => current ? {
+                      ...current,
+                      max_notifications_per_hour: Number.parseInt(e.target.value, 10) || 1,
+                    } : current)}
+                  />
+                </label>
+
+                <label className="space-y-2 text-sm">
+                  <span className="font-medium text-foreground">Max notifications / day</span>
+                  <Input
+                    type="number"
+                    min="1"
+                    max="500"
+                    value={notificationSettings.max_notifications_per_day}
+                    onChange={(e) => setNotificationSettings((current) => current ? {
+                      ...current,
+                      max_notifications_per_day: Number.parseInt(e.target.value, 10) || 1,
+                    } : current)}
+                  />
+                </label>
+
+                <label className="space-y-2 text-sm">
+                  <span className="font-medium text-foreground">Escalation delay (hours)</span>
+                  <Input
+                    type="number"
+                    min="1"
+                    max="48"
+                    value={notificationSettings.escalation_delay_hours}
+                    onChange={(e) => setNotificationSettings((current) => current ? {
+                      ...current,
+                      escalation_delay_hours: Number.parseInt(e.target.value, 10) || 1,
+                    } : current)}
+                  />
+                </label>
+
+                <div className="space-y-2 text-sm">
+                  <span className="font-medium text-foreground">Escalation</span>
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={notificationSettings.escalation_enabled ? "default" : "outline"}
+                      onClick={() => setNotificationSettings((current) => current ? {
+                        ...current,
+                        escalation_enabled: true,
+                      } : current)}
+                    >
+                      Enabled
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={!notificationSettings.escalation_enabled ? "default" : "outline"}
+                      onClick={() => setNotificationSettings((current) => current ? {
+                        ...current,
+                        escalation_enabled: false,
+                      } : current)}
+                    >
+                      Disabled
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">Notification settings unavailable.</p>
+            )}
+
+            <div className="flex justify-end">
+              <Button type="button" onClick={() => void handleSaveNotifications()} disabled={!notificationSettings || notificationSaving}>
+                {notificationSaving ? "Saving..." : "Save Notification Settings"}
+              </Button>
+            </div>
+          </div>
+        </section>
+
+        <section data-testid="settings-usage">
+          <h2 className="font-medium text-foreground mb-3">{t("settings.usage")}</h2>
+          <div className="rounded-lg border border-border p-4">
+            {usageLoading ? (
+              <div className="h-4 w-32 bg-muted animate-pulse rounded" />
+            ) : usage ? (
+              <div className="grid grid-cols-3 gap-4 text-center">
+                <div>
+                  <div className="text-2xl font-semibold text-foreground">${usage.total_cost_usd.toFixed(2)}</div>
+                  <div className="text-xs text-muted-foreground">{t("settings.costMonth")}</div>
+                </div>
+                <div>
+                  <div className="text-2xl font-semibold text-foreground">{((usage.total_input_tokens + usage.total_output_tokens) / 1000).toFixed(1)}k</div>
+                  <div className="text-xs text-muted-foreground">{t("settings.tokens")}</div>
+                </div>
+                <div>
+                  <div className="text-2xl font-semibold text-foreground">{usage.total_calls}</div>
+                  <div className="text-xs text-muted-foreground">{t("settings.apiCalls")}</div>
+                </div>
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">{t("settings.usageUnavailable")}</p>
+            )}
+          </div>
+        </section>
+
+        <section data-testid="settings-export">
+          <h2 className="font-medium text-foreground mb-3">{t("settings.export")}</h2>
+          <p className="text-sm text-muted-foreground mb-3">
+            {t("settings.exportDescription")}
+          </p>
+          <a href={getExportSessionUrl()} download>
+            <Button variant="outline" size="sm">
+              {t("settings.exportButton")}
+            </Button>
+          </a>
         </section>
 
         <section>
@@ -550,23 +919,22 @@ export default function SettingsPage() {
       <Dialog open={deleteTarget !== null} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Delete saved API key?</DialogTitle>
+            <DialogTitle>{t("settings.deleteKeyTitle")}</DialogTitle>
             <DialogDescription>
-              {deleteTarget
-                ? `This removes the saved ${deleteTarget} API key from local config. You can still keep an unsaved draft in the input field.`
-                : ""}
+              {deleteTarget ? `${deleteTarget}. ${t("settings.deleteKeyDescription")}` : ""}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteTarget(null)}>
-              Cancel
+            <Button data-testid="settings-delete-key-cancel" variant="outline" onClick={() => setDeleteTarget(null)}>
+              {t("general.cancel")}
             </Button>
             <Button
+              data-testid="settings-delete-key-confirm"
               variant="destructive"
               onClick={() => deleteTarget && void handleDeleteSavedKey(deleteTarget)}
               disabled={savingRuntime}
             >
-              {savingRuntime ? "Deleting..." : "Delete saved key"}
+              {savingRuntime ? t("settings.deleting") : t("settings.deleteSavedKey")}
             </Button>
           </DialogFooter>
         </DialogContent>

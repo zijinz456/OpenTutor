@@ -6,6 +6,8 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from sqlalchemy.exc import SQLAlchemyError
+
 from config import settings
 from libs.exceptions import AppError
 from services.app_lifecycle import lifespan
@@ -46,9 +48,21 @@ async def llm_configuration_error_handler(_: Request, exc: LLMConfigurationError
     return JSONResponse(status_code=503, content={"code": "llm_configuration_error", "message": str(exc), "status": 503})
 
 
+async def database_error_handler(_: Request, exc: SQLAlchemyError):
+    logger.error("Database error: %s", exc, exc_info=True)
+    return JSONResponse(status_code=503, content={"code": "database_error", "message": "Service temporarily unavailable", "status": 503})
+
+
+async def generic_error_handler(_: Request, exc: Exception):
+    logger.error("Unhandled error: %s", exc, exc_info=True)
+    return JSONResponse(status_code=500, content={"code": "internal_error", "message": "An unexpected error occurred", "status": 500})
+
+
 def _register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(AppError, app_error_handler)
     app.add_exception_handler(LLMConfigurationError, llm_configuration_error_handler)
+    app.add_exception_handler(SQLAlchemyError, database_error_handler)
+    app.add_exception_handler(Exception, generic_error_handler)
 
 
 def create_app() -> FastAPI:

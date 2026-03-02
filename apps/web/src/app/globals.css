@@ -57,6 +57,26 @@
   --radius-2xl: calc(var(--radius) + 8px);
   --radius-3xl: calc(var(--radius) + 12px);
   --radius-4xl: calc(var(--radius) + 16px);
+
+  /* Layout: course tree */
+  --color-tree: var(--tree-bg);
+  --color-tree-hover: var(--tree-hover);
+  --color-tree-active: var(--tree-active);
+
+  /* Layout: chat */
+  --color-chat-user: var(--chat-user-bg);
+  --color-chat-user-foreground: var(--chat-user-fg);
+  --color-chat-assistant: var(--chat-assistant-bg);
+  --color-chat-assistant-foreground: var(--chat-assistant-fg);
+
+  /* Layout: section */
+  --color-section: var(--section-bg);
+  --color-section-header: var(--section-header);
+
+  /* Animation */
+  --duration-fast: 150ms;
+  --duration-normal: 250ms;
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 :root {
@@ -110,6 +130,21 @@
   --info: oklch(0.488 0.243 264);
   --info-foreground: oklch(0.985 0 0);
   --info-muted: oklch(0.962 0.02 264);
+
+  /* Course tree */
+  --tree-bg: oklch(0.98 0 0);
+  --tree-hover: oklch(0.96 0 0);
+  --tree-active: oklch(0.93 0.02 264);
+
+  /* Chat bubbles */
+  --chat-user-bg: oklch(0.457 0.228 264);
+  --chat-user-fg: oklch(0.99 0 0);
+  --chat-assistant-bg: oklch(0.97 0 0);
+  --chat-assistant-fg: oklch(0.15 0 0);
+
+  /* Section panel */
+  --section-bg: oklch(0.995 0 0);
+  --section-header: oklch(0.98 0 0);
 }
 
 .dark {
@@ -160,6 +195,21 @@
   --info: oklch(0.541 0.281 264);
   --info-foreground: oklch(0.985 0 0);
   --info-muted: oklch(0.269 0.04 264);
+
+  /* Course tree */
+  --tree-bg: oklch(0.15 0 0);
+  --tree-hover: oklch(0.20 0 0);
+  --tree-active: oklch(0.22 0.03 264);
+
+  /* Chat bubbles */
+  --chat-user-bg: oklch(0.50 0.22 264);
+  --chat-user-fg: oklch(0.99 0 0);
+  --chat-assistant-bg: oklch(0.19 0 0);
+  --chat-assistant-fg: oklch(0.93 0 0);
+
+  /* Section panel */
+  --section-bg: oklch(0.15 0 0);
+  --section-header: oklch(0.19 0 0);
 }
 
 @layer base {
@@ -168,29 +218,30 @@
   }
   body {
     @apply bg-background text-foreground;
-    /* PWA safe area padding for notch devices */
-    padding-top: env(safe-area-inset-top);
-    padding-bottom: env(safe-area-inset-bottom);
-    padding-left: env(safe-area-inset-left);
-    padding-right: env(safe-area-inset-right);
     -webkit-text-size-adjust: 100%;
     text-size-adjust: 100%;
   }
 }
 
-/* PWA standalone mode adjustments */
-@media (display-mode: standalone) {
-  body {
-    overscroll-behavior-y: none;
-  }
+/* Flashcard flip animation */
+.flashcard-perspective {
+  perspective: 800px;
 }
 
-/* Minimum touch target size for touch devices */
-@media (pointer: coarse) {
-  button,
-  a,
-  [role="button"] {
-    min-height: 44px;
-    min-width: 44px;
-  }
+.flashcard-inner {
+  transform-style: preserve-3d;
+  transition: transform 500ms ease;
+}
+
+.flashcard-inner.flipped {
+  transform: rotateY(180deg);
+}
+
+.flashcard-face {
+  backface-visibility: hidden;
+}
+
+.flashcard-back {
+  backface-visibility: hidden;
+  transform: rotateY(180deg);
 }

@@ -8,6 +8,7 @@ Extracted from orchestrator.py. Handles:
 """
 
 import asyncio
+import functools
 import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -46,12 +47,17 @@ TOPIC_SUMMARY_PROMPT = (
 )
 
 
+@functools.lru_cache(maxsize=1)
+def _get_tiktoken_encoder():
+    """Cache the tiktoken encoder to avoid re-loading on every call."""
+    import tiktoken
+    return tiktoken.get_encoding("cl100k_base")
+
+
 def _estimate_tokens(text: str) -> int:
     """Token estimate using tiktoken when available, falling back to heuristic."""
     try:
-        import tiktoken
-        enc = tiktoken.get_encoding("cl100k_base")
-        return len(enc.encode(text))
+        return len(_get_tiktoken_encoder().encode(text))
     except Exception:
         # Fallback: English ~4 chars/token, CJK ~1.5 chars/token
         ascii_chars = sum(1 for c in text if ord(c) < 128)
@@ -70,47 +76,55 @@ async def _fetch_latest_by_types(
 
     This ensures profile and preference memories are always included in context,
     even if they don't match the current search query.
+
+    Uses a single query with ROW_NUMBER() window function instead of one query
+    per memory type.
     """
     from sqlalchemy import text as sa_text
 
-    results = []
-    for mem_type in memory_types:
-        params = {
-            "user_id": str(user_id),
-            "memory_type": mem_type,
-            "limit": limit_per_type,
-        }
-        filters = [
-            "user_id = :user_id",
-            "memory_type = :memory_type",
-            "dismissed_at IS NULL",
-        ]
-        if course_id:
-            filters.append("(course_id = :course_id OR course_id IS NULL)")
-            params["course_id"] = str(course_id)
+    if not memory_types:
+        return []
 
-        rows = await db.execute(
-            sa_text(f"""
-                SELECT id, summary, memory_type, importance, access_count,
-                       created_at, category
+    params: dict = {
+        "user_id": str(user_id),
+        "memory_types": memory_types,
+        "limit_per_type": limit_per_type,
+    }
+    course_filter = "AND (course_id = :course_id OR course_id IS NULL)" if course_id else ""
+    if course_id:
+        params["course_id"] = str(course_id)
+
+    rows = await db.execute(
+        sa_text(f"""
+            SELECT id, summary, memory_type, importance, category, created_at
+            FROM (
+                SELECT id, summary, memory_type, importance, category, created_at,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY memory_type
+                           ORDER BY importance DESC, created_at DESC
+                       ) AS rn
                 FROM conversation_memories
-                WHERE {" AND ".join(filters)}
-                ORDER BY importance DESC, created_at DESC
-                LIMIT :limit
-            """),
-            params,
-        )
-        for row in rows.fetchall():
-            results.append({
-                "id": str(row.id),
-                "summary": row.summary,
-                "memory_type": row.memory_type,
-                "importance": row.importance,
-                "category": row.category,
-                "created_at": row.created_at.isoformat(),
-                "source": "auto_recall",
-            })
-    return results
+                WHERE user_id = :user_id
+                  AND memory_type = ANY(:memory_types)
+                  AND dismissed_at IS NULL
+                  {course_filter}
+            ) sub
+            WHERE rn <= :limit_per_type
+        """),
+        params,
+    )
+    return [
+        {
+            "id": str(row.id),
+            "summary": row.summary,
+            "memory_type": row.memory_type,
+            "importance": row.importance,
+            "category": row.category,
+            "created_at": row.created_at.isoformat(),
+            "source": "auto_recall",
+        }
+        for row in rows.fetchall()
+    ]
 
 
 async def _extract_topic_summary(messages: list[dict]) -> str | None:
