@@ -99,7 +99,7 @@ icalendar>=6.0.0
 # pix2tex>=0.1.2
 
 # Phase 4: Adaptive Teaching Strategy (Thompson Sampling)
-contextualbandits>=0.4.0
+contextualbandits>=0.3.20
 scikit-learn>=1.4.0
 
 # Phase 4: Bayesian Knowledge Tracing
