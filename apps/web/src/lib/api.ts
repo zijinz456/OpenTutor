@@ -562,6 +562,40 @@ export async function createScrapeSource(body: {
   });
 }
 
+// ── Canvas / Auth Sessions ──
+
+export interface AuthSessionSummary {
+  id: string;
+  domain: string;
+  session_name: string;
+  auth_type: string;
+  is_valid: boolean;
+  last_validated_at: string | null;
+}
+
+export async function listAuthSessions(): Promise<AuthSessionSummary[]> {
+  return request("/scrape/auth/sessions");
+}
+
+export async function canvasLogin(
+  canvasUrl: string,
+  username: string,
+  password: string,
+): Promise<{ status: string; message: string }> {
+  return request("/canvas/login", {
+    method: "POST",
+    body: JSON.stringify({ canvas_url: canvasUrl, username, password }),
+  });
+}
+
+export async function validateAuthSession(
+  sessionName: string,
+): Promise<{ session_name: string; is_valid: boolean }> {
+  return request(`/scrape/auth/validate/${encodeURIComponent(sessionName)}`, {
+    method: "POST",
+  });
+}
+
 // ── Chat (SSE streaming) ──
 
 type ChatActionType =
@@ -910,6 +944,11 @@ export interface LearningProfile {
 export async function getLearningProfile(courseId?: string): Promise<LearningProfile> {
   const params = courseId ? `?course_id=${courseId}` : "";
   return request(`/preferences/profile${params}`);
+}
+
+export async function listPreferences(courseId?: string): Promise<Preference[]> {
+  const params = courseId ? `?course_id=${encodeURIComponent(courseId)}` : "";
+  return request(`/preferences/${params}`);
 }
 
 export async function setPreference(
