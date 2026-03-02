@@ -17,6 +17,7 @@ Max iterations: configurable (default 3).
 import json
 import logging
 import re
+import time
 from typing import Any, AsyncIterator
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -141,7 +142,7 @@ def _make_call_signature(tool_name: str, params: dict) -> str:
     return f"{tool_name}:{json.dumps(params, sort_keys=True, default=str)}"
 
 
-def _record_tool_call(ctx: AgentContext, tool_name: str, tool_input: dict | None, result_output: str, success: bool, iteration: int) -> None:
+def _record_tool_call(ctx: AgentContext, tool_name: str, tool_input: dict | None, result_output: str, success: bool, iteration: int, duration_ms: float | None = None, error: str | None = None) -> None:
     """Record a tool call in context with consistent format."""
     ctx.tool_calls.append({
         "tool": tool_name,
@@ -149,6 +150,8 @@ def _record_tool_call(ctx: AgentContext, tool_name: str, tool_input: dict | None
         "output": result_output[:_TOOL_RESULT_CONTEXT_CHARS],
         "success": success,
         "iteration": iteration,
+        "duration_ms": duration_ms,
+        "error": error,
     })
 
 
@@ -308,14 +311,22 @@ async def _react_function_calling(
 
             # Execute tool
             ctx.transition(TaskPhase.ACTING)
-            yield {"type": "tool_start", "tool": tool_name, "input": json.dumps(tool_input, ensure_ascii=False)}
+            tool_obj = registry.get(tool_name)
+            explanation = tool_obj.explain_args(tool_input) if tool_obj else f"Running {tool_name}"
+            yield {"type": "tool_start", "tool": tool_name, "input": json.dumps(tool_input, ensure_ascii=False), "explanation": explanation}
 
-            result = await registry.execute(tool_name, tool_input, ctx, db)
+            _t0 = time.monotonic()
+            result = await registry.execute(
+                tool_name, tool_input, ctx, db,
+                agent_name=ctx.delegated_agent,
+            )
+            _duration_ms = (time.monotonic() - _t0) * 1000
 
             ctx.transition(TaskPhase.OBSERVING)
-            yield {"type": "tool_result", "tool": tool_name, "result": result.output[:_TOOL_RESULT_CONTEXT_CHARS]}
+            result_explanation = tool_obj.explain_result(result) if tool_obj else ""
+            yield {"type": "tool_result", "tool": tool_name, "result": result.output[:_TOOL_RESULT_CONTEXT_CHARS], "explanation": result_explanation}
 
-            _record_tool_call(ctx, tool_name, tool_input, result.output, result.success, iteration)
+            _record_tool_call(ctx, tool_name, tool_input, result.output, result.success, iteration, duration_ms=_duration_ms, error=result.error)
 
             # Add tool result to messages (truncated to avoid context overflow)
             tool_content = result.output[:_TOOL_RESULT_CONTEXT_CHARS] if result.success else f"Error: {result.error or result.output or 'unknown error'}"
@@ -416,14 +427,22 @@ async def _react_text_parsing(
 
         # Execute tool
         ctx.transition(TaskPhase.ACTING)
-        yield {"type": "tool_start", "tool": tool_name, "input": json.dumps(safe_input, ensure_ascii=False)}
+        tool_obj = registry.get(tool_name)
+        explanation = tool_obj.explain_args(safe_input) if tool_obj else f"Running {tool_name}"
+        yield {"type": "tool_start", "tool": tool_name, "input": json.dumps(safe_input, ensure_ascii=False), "explanation": explanation}
 
-        result = await registry.execute(tool_name, safe_input, ctx, db)
+        _t0 = time.monotonic()
+        result = await registry.execute(
+            tool_name, safe_input, ctx, db,
+            agent_name=ctx.delegated_agent,
+        )
+        _duration_ms = (time.monotonic() - _t0) * 1000
 
         ctx.transition(TaskPhase.OBSERVING)
-        yield {"type": "tool_result", "tool": tool_name, "result": result.output[:_TOOL_RESULT_CONTEXT_CHARS]}
+        result_explanation = tool_obj.explain_result(result) if tool_obj else ""
+        yield {"type": "tool_result", "tool": tool_name, "result": result.output[:_TOOL_RESULT_CONTEXT_CHARS], "explanation": result_explanation}
 
-        _record_tool_call(ctx, tool_name, safe_input, result.output, result.success, iteration)
+        _record_tool_call(ctx, tool_name, safe_input, result.output, result.success, iteration, duration_ms=_duration_ms, error=result.error)
 
         # Append observation for next iteration
         obs = result.output if result.success else f"Error: {result.error or result.output or 'unknown error'}"

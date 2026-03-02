@@ -22,6 +22,16 @@ RAG_BUDGET = 3000
 HISTORY_BUDGET = 2000
 HISTORY_KEEP_RECENT = 4
 
+# Intent-specific budget overrides: allocate more tokens to what matters most.
+# Keys are IntentType values; values override defaults.
+INTENT_BUDGET_OVERRIDES: dict[str, dict[str, int]] = {
+    "learn": {"RAG_BUDGET": 4000, "MEMORY_BUDGET": 1000, "HISTORY_BUDGET": 1500},
+    "review": {"RAG_BUDGET": 2000, "MEMORY_BUDGET": 2500, "HISTORY_BUDGET": 2000},
+    "quiz": {"RAG_BUDGET": 3500, "MEMORY_BUDGET": 1000, "HISTORY_BUDGET": 1000},
+    "chat": {"RAG_BUDGET": 2000, "MEMORY_BUDGET": 1500, "HISTORY_BUDGET": 3000},
+    "plan": {"RAG_BUDGET": 2000, "MEMORY_BUDGET": 2000, "HISTORY_BUDGET": 2500},
+}
+
 HISTORY_SUMMARIZE_PROMPT = (
     "Summarize this conversation between a student and tutor. "
     "Preserve: key decisions, learning progress, concepts discussed, "
@@ -29,12 +39,170 @@ HISTORY_SUMMARIZE_PROMPT = (
     "Be concise (under 150 words). Output only the summary."
 )
 
+TOPIC_SUMMARY_PROMPT = (
+    "Extract the main topic or subject being discussed in this recent conversation "
+    "between a student and tutor. Output a short phrase (5-15 words) capturing the "
+    "core topic. Output only the topic phrase, nothing else."
+)
+
 
 def _estimate_tokens(text: str) -> int:
-    """Rough token estimate (English ÷4, CJK ÷2)."""
-    ascii_chars = sum(1 for c in text if ord(c) < 128)
-    non_ascii = len(text) - ascii_chars
-    return ascii_chars // 4 + non_ascii // 2
+    """Token estimate using tiktoken when available, falling back to heuristic."""
+    try:
+        import tiktoken
+        enc = tiktoken.get_encoding("cl100k_base")
+        return len(enc.encode(text))
+    except Exception:
+        # Fallback: English ~4 chars/token, CJK ~1.5 chars/token
+        ascii_chars = sum(1 for c in text if ord(c) < 128)
+        non_ascii = len(text) - ascii_chars
+        return ascii_chars // 4 + max(1, int(non_ascii / 1.5))
+
+
+async def _fetch_latest_by_types(
+    db: AsyncSession,
+    user_id,
+    course_id,
+    memory_types: list[str],
+    limit_per_type: int = 2,
+) -> list[dict]:
+    """Fetch the latest memories of specific types for a user+course, regardless of query.
+
+    This ensures profile and preference memories are always included in context,
+    even if they don't match the current search query.
+    """
+    from sqlalchemy import text as sa_text
+
+    results = []
+    for mem_type in memory_types:
+        params = {
+            "user_id": str(user_id),
+            "memory_type": mem_type,
+            "limit": limit_per_type,
+        }
+        filters = [
+            "user_id = :user_id",
+            "memory_type = :memory_type",
+            "dismissed_at IS NULL",
+        ]
+        if course_id:
+            filters.append("(course_id = :course_id OR course_id IS NULL)")
+            params["course_id"] = str(course_id)
+
+        rows = await db.execute(
+            sa_text(f"""
+                SELECT id, summary, memory_type, importance, access_count,
+                       created_at, category
+                FROM conversation_memories
+                WHERE {" AND ".join(filters)}
+                ORDER BY importance DESC, created_at DESC
+                LIMIT :limit
+            """),
+            params,
+        )
+        for row in rows.fetchall():
+            results.append({
+                "id": str(row.id),
+                "summary": row.summary,
+                "memory_type": row.memory_type,
+                "importance": row.importance,
+                "category": row.category,
+                "created_at": row.created_at.isoformat(),
+                "source": "auto_recall",
+            })
+    return results
+
+
+async def _extract_topic_summary(messages: list[dict]) -> str | None:
+    """Extract a short topic phrase from recent conversation history."""
+    parts = []
+    for msg in messages[-6:]:  # Look at last 6 messages
+        role = msg.get("role", "user")
+        content = msg.get("content", "")
+        if not content or role == "system":
+            continue
+        parts.append(f"{role}: {content[:200]}")
+
+    if not parts:
+        return None
+
+    try:
+        from services.llm.router import get_llm_client
+        client = get_llm_client("fast")
+        topic, _ = await client.extract(
+            "You extract conversation topics concisely.",
+            f"{TOPIC_SUMMARY_PROMPT}\n\nConversation:\n" + "\n".join(parts),
+        )
+        topic = topic.strip()
+        if topic and len(topic) > 3:
+            return topic
+    except Exception as e:
+        logger.warning("Topic extraction failed: %s", e)
+
+    return None
+
+
+async def _auto_recall_memories(
+    db: AsyncSession,
+    user_id,
+    course_id,
+    user_message: str,
+    conversation_history: list[dict],
+    limit: int = 5,
+) -> list[dict]:
+    """Enhanced memory recall with multi-strategy retrieval.
+
+    Strategy:
+    1. Search with user message (existing semantic/BM25 hybrid search)
+    2. Always fetch latest profile/preference memories for user+course
+    3. If conversation is long (> 4 messages), also search by topic summary
+    4. Deduplicate results by memory ID
+    """
+    from services.memory.pipeline import retrieve_memories
+
+    seen_ids: set[str] = set()
+    all_memories: list[dict] = []
+
+    def _add_unique(mems: list[dict]):
+        for m in mems:
+            mid = m.get("id")
+            if mid and mid not in seen_ids:
+                seen_ids.add(mid)
+                all_memories.append(m)
+
+    # 1. Primary search: user message query (existing behavior)
+    try:
+        query_results = await retrieve_memories(
+            db, user_id, user_message, course_id, limit=limit,
+        )
+        _add_unique(query_results)
+    except Exception as e:
+        logger.warning("Auto-recall query search failed: %s", e)
+
+    # 2. Always fetch latest profile + preference memories
+    try:
+        type_results = await _fetch_latest_by_types(
+            db, user_id, course_id,
+            memory_types=["profile", "preference"],
+            limit_per_type=2,
+        )
+        _add_unique(type_results)
+    except Exception as e:
+        logger.warning("Auto-recall type fetch failed: %s", e)
+
+    # 3. If conversation history is long, search by topic summary
+    if len(conversation_history) > HISTORY_KEEP_RECENT:
+        try:
+            topic = await _extract_topic_summary(conversation_history)
+            if topic and topic != user_message:
+                topic_results = await retrieve_memories(
+                    db, user_id, topic, course_id, limit=3,
+                )
+                _add_unique(topic_results)
+        except Exception as e:
+            logger.warning("Auto-recall topic search failed: %s", e)
+
+    return all_memories
 
 
 async def _summarize_history(messages: list[dict]) -> str | None:
@@ -59,7 +227,7 @@ async def _summarize_history(messages: list[dict]) -> str | None:
 
     try:
         from services.llm.router import get_llm_client
-        client = get_llm_client()
+        client = get_llm_client("fast")
         summary, _ = await client.extract(
             "You are a conversation summarizer for an educational tutoring system.",
             f"{HISTORY_SUMMARIZE_PROMPT}\n\nConversation:\n{conversation_text}",
@@ -112,14 +280,87 @@ async def _flush_memories_before_trim(
         logger.warning("Pre-compaction memory flush failed: %s", e)
 
 
+async def _apply_context_guard(ctx: AgentContext) -> AgentContext:
+    """Session-level context window guard (OpenFang-inspired).
+
+    Two layers:
+    - 70% fill → LLM-summarise old messages (keep recent N)
+    - 90% fill → Emergency trim (drop oldest messages)
+
+    This runs AFTER per-category _trim_context to handle overall context window pressure.
+    """
+    from config import settings
+    from services.agent.compaction import (
+        get_context_window,
+        estimate_session_tokens,
+        compact_session,
+        emergency_trim,
+        COMPACTION_TRIGGER_PCT,
+        EMERGENCY_TRIM_PCT,
+    )
+
+    model_name = settings.llm_model
+    context_window = get_context_window(model_name)
+
+    # Build a rough system prompt estimate from context data
+    pref_text = " ".join(f"{k}={v}" for k, v in ctx.preferences.items())
+    mem_text = " ".join(m.get("summary", "") for m in ctx.memories)
+    rag_text = " ".join(d.get("content", "") for d in ctx.content_docs)
+    system_estimate = pref_text + mem_text + rag_text
+
+    total_tokens = estimate_session_tokens(
+        ctx.conversation_history,
+        system_prompt=system_estimate,
+    )
+
+    fill_pct = total_tokens / context_window if context_window > 0 else 0.0
+
+    if fill_pct >= EMERGENCY_TRIM_PCT:
+        logger.warning(
+            "Context guard: emergency trim (%.0f%% of %d window)",
+            fill_pct * 100, context_window,
+        )
+        ctx.conversation_history = emergency_trim(
+            ctx.conversation_history, int(context_window * 0.5),
+        )
+        ctx.metadata["compaction"] = {"action": "emergency_trim", "fill_pct": round(fill_pct, 3)}
+
+    elif fill_pct >= COMPACTION_TRIGGER_PCT:
+        logger.info(
+            "Context guard: compacting session (%.0f%% of %d window)",
+            fill_pct * 100, context_window,
+        )
+        try:
+            from services.llm.router import get_llm_client
+            llm_client = get_llm_client("fast")
+        except Exception:
+            llm_client = None
+        ctx.conversation_history = await compact_session(
+            ctx.conversation_history, model_name, llm_client,
+        )
+        ctx.metadata["compaction"] = {"action": "llm_compact", "fill_pct": round(fill_pct, 3)}
+
+    return ctx
+
+
 async def _trim_context(ctx: AgentContext, db: AsyncSession) -> AgentContext:
-    """Trim context to fit token budgets with LLM summarization."""
+    """Trim context to fit token budgets with LLM summarization.
+
+    Uses intent-specific budgets: e.g., LEARN intent gets more RAG budget,
+    REVIEW intent gets more memory budget, CHAT gets more history budget.
+    """
+    intent_key = ctx.intent.value if ctx.intent else None
+    overrides = INTENT_BUDGET_OVERRIDES.get(intent_key, {}) if intent_key else {}
+    history_budget = overrides.get("HISTORY_BUDGET", HISTORY_BUDGET)
+    rag_budget = overrides.get("RAG_BUDGET", RAG_BUDGET)
+    memory_budget = overrides.get("MEMORY_BUDGET", MEMORY_BUDGET)
+
     # 1. Trim conversation history with summarization
     history_tokens = sum(
         _estimate_tokens(m.get("content", "")) for m in ctx.conversation_history
     )
 
-    if history_tokens > HISTORY_BUDGET and len(ctx.conversation_history) > HISTORY_KEEP_RECENT:
+    if history_tokens > history_budget and len(ctx.conversation_history) > HISTORY_KEEP_RECENT:
         keep_count = HISTORY_KEEP_RECENT
         messages_to_drop = ctx.conversation_history[:-keep_count]
         messages_to_keep = ctx.conversation_history[-keep_count:]
@@ -139,19 +380,19 @@ async def _trim_context(ctx: AgentContext, db: AsyncSession) -> AgentContext:
         history_tokens = sum(
             _estimate_tokens(m.get("content", "")) for m in ctx.conversation_history
         )
-        while history_tokens > HISTORY_BUDGET and len(ctx.conversation_history) > 2:
+        while history_tokens > history_budget and len(ctx.conversation_history) > 2:
             removed = ctx.conversation_history.pop(0)
             history_tokens -= _estimate_tokens(removed.get("content", ""))
 
     # 2. Trim RAG docs
     rag_tokens = sum(_estimate_tokens(d.get("content", "")) for d in ctx.content_docs)
-    while rag_tokens > RAG_BUDGET and ctx.content_docs:
+    while rag_tokens > rag_budget and ctx.content_docs:
         removed = ctx.content_docs.pop()
         rag_tokens -= _estimate_tokens(removed.get("content", ""))
 
     # 3. Trim memories
     mem_tokens = sum(_estimate_tokens(m.get("summary", "")) for m in ctx.memories)
-    while mem_tokens > MEMORY_BUDGET and ctx.memories:
+    while mem_tokens > memory_budget and ctx.memories:
         removed = ctx.memories.pop()
         mem_tokens -= _estimate_tokens(removed.get("summary", ""))
 
@@ -171,7 +412,6 @@ async def load_context(
     ctx.transition(TaskPhase.LOADING_CONTEXT)
 
     from services.preference.engine import resolve_preferences
-    from services.memory.pipeline import retrieve_memories
     from services.scene.policy import resolve_scene_policy
 
     _db_factory = db_factory or _default_db_factory
@@ -265,8 +505,10 @@ async def load_context(
         async def _load_memories():
             try:
                 async with _db_factory() as _db:
-                    return await retrieve_memories(
-                        _db, ctx.user_id, ctx.user_message, ctx.course_id, limit=3,
+                    return await _auto_recall_memories(
+                        _db, ctx.user_id, ctx.course_id,
+                        ctx.user_message, ctx.conversation_history,
+                        limit=5,
                     )
             except Exception as exc:
                 logger.warning("Memory retrieval failed (parallel): %s", exc)
@@ -320,7 +562,11 @@ async def load_context(
             logger.warning("Preference loading failed: %s", exc)
 
         try:
-            memories = await retrieve_memories(db, ctx.user_id, ctx.user_message, ctx.course_id, limit=3)
+            memories = await _auto_recall_memories(
+                db, ctx.user_id, ctx.course_id,
+                ctx.user_message, ctx.conversation_history,
+                limit=5,
+            )
             ctx.memories = memories
         except Exception as exc:
             await db.rollback()
@@ -335,6 +581,18 @@ async def load_context(
 
     # Apply context window budget trimming
     ctx = await _trim_context(ctx, db)
+
+    # Session compaction guard (OpenFang-inspired: 70% compact, 90% emergency trim)
+    ctx = await _apply_context_guard(ctx)
+
+    # Load tutor notes (lightweight KV read)
+    try:
+        from services.agent.tutor_notes import get_tutor_notes
+        notes = await get_tutor_notes(db, ctx.user_id, ctx.course_id)
+        if notes:
+            ctx.metadata["tutor_notes"] = notes
+    except Exception as exc:
+        logger.warning("Tutor notes loading failed: %s", exc)
 
     # Adaptive difficulty guidance for QUIZ intent
     if ctx.intent == IntentType.QUIZ:

@@ -191,9 +191,9 @@ async def get_learning_trends(
         select(PracticeResult)
         .where(
             PracticeResult.user_id == user.id,
-            PracticeResult.created_at >= cutoff,
+            PracticeResult.answered_at >= cutoff,
         )
-        .order_by(PracticeResult.created_at)
+        .order_by(PracticeResult.answered_at)
     )
     quiz_rows = quiz_result.scalars().all()
 
@@ -210,8 +210,8 @@ async def get_learning_trends(
                 daily[d]["study_minutes"] += s.duration_minutes or 0
 
     for q in quiz_rows:
-        if q.created_at:
-            d = q.created_at.strftime("%Y-%m-%d")
+        if q.answered_at:
+            d = q.answered_at.strftime("%Y-%m-%d")
             if d in daily:
                 daily[d]["quiz_total"] += 1
                 if q.is_correct:
@@ -259,8 +259,8 @@ async def get_global_trends(
     from models.practice import PracticeResult
     quiz_result = await db.execute(
         select(PracticeResult)
-        .where(PracticeResult.user_id == user.id, PracticeResult.created_at >= cutoff)
-        .order_by(PracticeResult.created_at)
+        .where(PracticeResult.user_id == user.id, PracticeResult.answered_at >= cutoff)
+        .order_by(PracticeResult.answered_at)
     )
     quiz_rows = quiz_result.scalars().all()
 
@@ -276,8 +276,8 @@ async def get_global_trends(
                 daily[d]["study_minutes"] += s.duration_minutes or 0
 
     for q in quiz_rows:
-        if q.created_at:
-            d = q.created_at.strftime("%Y-%m-%d")
+        if q.answered_at:
+            d = q.answered_at.strftime("%Y-%m-%d")
             if d in daily:
                 daily[d]["quiz_total"] += 1
                 if q.is_correct:
@@ -291,6 +291,100 @@ async def get_global_trends(
         )
 
     return {"days": days, "trend": trend_data}
+
+
+# ── Weekly Report Endpoint ──
+
+
+@router.get("/weekly-report")
+async def get_weekly_report(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Generate a weekly learning report with this-week vs last-week comparison."""
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+    # Monday of this week
+    this_monday = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+    last_monday = this_monday - timedelta(days=7)
+
+    async def _week_stats(start: datetime, end: datetime) -> dict:
+        sess_result = await db.execute(
+            select(StudySession).where(
+                StudySession.user_id == user.id,
+                StudySession.started_at >= start,
+                StudySession.started_at < end,
+            )
+        )
+        sessions = sess_result.scalars().all()
+        study_minutes = sum(s.duration_minutes or 0 for s in sessions)
+        active_days = len({s.started_at.strftime("%Y-%m-%d") for s in sessions if s.started_at})
+
+        from models.practice import PracticeResult
+        quiz_result = await db.execute(
+            select(PracticeResult).where(
+                PracticeResult.user_id == user.id,
+                PracticeResult.answered_at >= start,
+                PracticeResult.answered_at < end,
+            )
+        )
+        quizzes = quiz_result.scalars().all()
+        quiz_total = len(quizzes)
+        quiz_correct = sum(1 for q in quizzes if q.is_correct)
+        accuracy = round(quiz_correct / quiz_total * 100, 1) if quiz_total > 0 else 0.0
+
+        return {
+            "study_minutes": study_minutes,
+            "active_days": active_days,
+            "quiz_total": quiz_total,
+            "quiz_correct": quiz_correct,
+            "accuracy": accuracy,
+        }
+
+    this_week = await _week_stats(this_monday, now)
+    last_week = await _week_stats(last_monday, this_monday)
+
+    # Current mastery
+    progress_result = await db.execute(
+        select(LearningProgress).where(LearningProgress.user_id == user.id)
+    )
+    progress_rows = progress_result.scalars().all()
+    mastery_avg = round(
+        sum(p.mastery_score for p in progress_rows) / len(progress_rows) * 100, 1
+    ) if progress_rows else 0.0
+
+    # Deltas
+    deltas = {
+        "study_minutes": this_week["study_minutes"] - last_week["study_minutes"],
+        "accuracy": round(this_week["accuracy"] - last_week["accuracy"], 1),
+        "quiz_total": this_week["quiz_total"] - last_week["quiz_total"],
+    }
+
+    # Generate highlights
+    highlights: list[str] = []
+    if this_week["active_days"] >= 5:
+        highlights.append(f"Studied {this_week['active_days']} days this week!")
+    if deltas["accuracy"] > 0:
+        highlights.append(f"Quiz accuracy improved by {deltas['accuracy']}%")
+    if this_week["quiz_total"] > 0:
+        highlights.append(f"Completed {this_week['quiz_total']} quiz questions")
+    if this_week["study_minutes"] > 0:
+        highlights.append(f"Studied for {this_week['study_minutes']} minutes total")
+    if not highlights:
+        highlights.append("Start studying to see your weekly progress!")
+
+    return {
+        "period": {
+            "start": this_monday.strftime("%Y-%m-%d"),
+            "end": now.strftime("%Y-%m-%d"),
+        },
+        "this_week": this_week,
+        "last_week": last_week,
+        "deltas": deltas,
+        "mastery_avg": mastery_avg,
+        "highlights": highlights[:4],
+    }
 
 
 # ── Memory Stats Endpoint ──
@@ -390,13 +484,39 @@ async def get_knowledge_graph(
 
 
 @router.get("/courses/{course_id}/learning-path")
-async def get_optimized_learning_path(
+async def get_learning_path(
     course_id: uuid.UUID,
-    skip_mastered: bool = True,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get optimized learning path (topo sort + critical path + mastery-aware prioritization)."""
-    from services.knowledge.path_optimizer import optimize_learning_path
+    """Get recommended learning path based on prerequisite topology and mastery gaps.
 
-    return await optimize_learning_path(db, course_id, user.id, skip_mastered)
+    Returns knowledge-point nodes sorted by recommended order:
+    - Nodes with unmet prerequisites first (topological sort)
+    - Within same level, low-mastery nodes prioritised
+    - Each node annotated with a recommended_reason
+    """
+    from services.knowledge.graph_memory import get_learning_path_recommendations
+
+    recommendations = await get_learning_path_recommendations(db, user.id, course_id)
+    return {"course_id": str(course_id), "recommendations": recommendations}
+
+
+@router.get("/courses/{course_id}/knowledge-graph-mastery")
+async def get_knowledge_graph_mastery(
+    course_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get knowledge graph nodes coloured by mastery status.
+
+    Mastery colouring:
+    - mastered (green):  mastery >= 0.8
+    - developing (yellow): mastery >= 0.5
+    - weak (red):        mastery < 0.5
+    - unknown (gray):    no mastery data
+    """
+    from services.knowledge.graph_memory import get_mastery_colored_graph
+
+    nodes = await get_mastery_colored_graph(db, user.id, course_id)
+    return {"course_id": str(course_id), "nodes": nodes}

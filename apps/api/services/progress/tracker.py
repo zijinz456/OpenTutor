@@ -11,7 +11,7 @@ The mastery model uses recent-answer weighting plus layer-based gap inference:
 
 import uuid
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,6 +29,10 @@ _DECAY_FACTOR = 0.95       # Per-result recency decay
 _WRONG_WEIGHT = 1.3        # Wrong answers count more than correct
 _CORRECT_WEIGHT = 1.0      # Correct answer weight
 _RECENT_RESULTS_LIMIT = 20 # How many recent results to consider
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 async def get_or_create_progress(
@@ -72,7 +76,7 @@ async def update_study_time(
     """Record study time for a content node."""
     progress = await get_or_create_progress(db, user_id, course_id, content_node_id)
     progress.time_spent_minutes += minutes
-    progress.last_studied_at = datetime.utcnow()
+    progress.last_studied_at = _utcnow()
 
     if progress.status == "not_started":
         progress.status = "in_progress"
@@ -154,7 +158,7 @@ def _apply_fsrs_review(progress: LearningProgress, is_correct: bool) -> None:
     )
 
     rating = 3 if is_correct else 1
-    now = datetime.utcnow()
+    now = _utcnow()
     updated_card, _log = review_card(card, rating, now)
 
     progress.fsrs_difficulty = updated_card.difficulty

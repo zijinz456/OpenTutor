@@ -24,6 +24,8 @@ def _is_channel_configured(channel_type: str) -> bool:
         "imessage": lambda: bool(
             settings.bluebubbles_server_url and settings.bluebubbles_password
         ),
+        "telegram": lambda: bool(settings.telegram_bot_token),
+        "discord": lambda: bool(settings.discord_bot_token),
     }
     check = checks.get(channel_type)
     return check() if check else False
@@ -62,6 +64,14 @@ def _create_adapter(channel_type: str) -> BaseChannelAdapter:
         from services.channels.imessage import IMessageAdapter
         return IMessageAdapter()
 
+    if channel_type == "telegram":
+        from services.channels.telegram import TelegramAdapter
+        return TelegramAdapter()
+
+    if channel_type == "discord":
+        from services.channels.discord import DiscordAdapter
+        return DiscordAdapter()
+
     raise ValueError(f"Unknown channel type: '{channel_type}'")
 
 
@@ -71,7 +81,7 @@ def get_all_adapters() -> list[BaseChannelAdapter]:
     Only returns adapters for channels whose credentials are present.
     Does not raise on misconfigured channels — just skips them.
     """
-    known_channels = ["whatsapp", "imessage"]
+    known_channels = ["whatsapp", "imessage", "telegram", "discord"]
     active = []
 
     for channel_type in known_channels:

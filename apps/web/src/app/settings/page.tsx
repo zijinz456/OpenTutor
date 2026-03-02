@@ -23,7 +23,20 @@ import {
   type LlmRuntimeConfig,
 } from "@/lib/api";
 import { PushSubscriptionManager } from "@/components/push-subscription-manager";
-const PROVIDERS = ["openai", "anthropic", "deepseek", "openrouter", "gemini", "groq"] as const;
+import { OllamaSetupWizard } from "@/components/settings/ollama-setup-wizard";
+const PROVIDERS = ["openai", "anthropic", "deepseek", "openrouter", "gemini", "groq", "ollama", "lmstudio", "textgenwebui"] as const;
+
+const PROVIDER_META = {
+  openai: { requiresKey: true, defaultModel: "gpt-4o-mini" },
+  anthropic: { requiresKey: true, defaultModel: "claude-sonnet-4-20250514" },
+  deepseek: { requiresKey: true, defaultModel: "deepseek-chat" },
+  openrouter: { requiresKey: true, defaultModel: "openai/gpt-4o-mini" },
+  gemini: { requiresKey: true, defaultModel: "gemini-2.0-flash" },
+  groq: { requiresKey: true, defaultModel: "llama-3.3-70b-versatile" },
+  ollama: { requiresKey: false, defaultModel: "llama3.2:1b" },
+  lmstudio: { requiresKey: false, defaultModel: "default" },
+  textgenwebui: { requiresKey: false, defaultModel: "default" },
+} as const;
 
 type ProviderName = (typeof PROVIDERS)[number];
 
@@ -84,6 +97,7 @@ export default function SettingsPage() {
   const [deleteTarget, setDeleteTarget] = useState<ProviderName | null>(null);
   const [testingProvider, setTestingProvider] = useState<string | null>(null);
   const [testResults, setTestResults] = useState<Record<string, LlmConnectionTestResult | null>>({});
+  const [keyErrors, setKeyErrors] = useState<Record<string, string | null>>({});
 
   useEffect(() => {
     setLocaleState(getLocale());
@@ -204,6 +218,7 @@ export default function SettingsPage() {
     }
   };
 
+  const hasKeyErrors = Object.values(keyErrors).some((err) => err !== null);
   const statusMeta = health ? LLM_STATUS_META[health.llm_status] : null;
   const StatusIcon = statusMeta?.icon;
   const providerStatus = useMemo(() => {
@@ -235,12 +250,42 @@ export default function SettingsPage() {
           <div className="rounded-lg border p-4 space-y-3">
             {health && statusMeta && StatusIcon ? (
               <>
+                <div className="flex flex-wrap gap-2 text-xs">
+                  <Badge variant="outline">
+                    Deployment: {health.deployment_mode === "single_user" ? "Single User" : health.deployment_mode}
+                  </Badge>
+                  <Badge variant={health.migration_required ? "destructive" : "secondary"}>
+                    Schema: {health.migration_required ? "Migration required" : "Ready"}
+                  </Badge>
+                  <Badge variant="outline">
+                    Migration status: {health.migration_status || "unknown"}
+                  </Badge>
+                  <Badge variant={health.alembic_version_present ? "secondary" : "destructive"}>
+                    {health.alembic_version_present ? "Alembic tracked" : "Alembic version missing"}
+                  </Badge>
+                  <Badge variant="outline">
+                    Sandbox: {health.code_sandbox_backend}/{health.code_sandbox_runtime}
+                  </Badge>
+                  <Badge variant={health.code_sandbox_runtime_available ? "secondary" : "destructive"}>
+                    {health.code_sandbox_runtime_available ? "Sandbox runtime ready" : "Sandbox runtime unavailable"}
+                  </Badge>
+                </div>
                 <div className="flex items-center gap-2">
                   <StatusIcon className="h-4 w-4" />
                   <span className="text-sm font-medium">{statusMeta.label}</span>
                   <Badge variant={statusMeta.badgeVariant}>{health.llm_status}</Badge>
                 </div>
                 <p className="text-sm text-muted-foreground">{statusMeta.description}</p>
+                {health.deployment_mode === "single_user" && (
+                  <div className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
+                    Single-user mode is active. The local owner account is automatically bound to requests until you enable auth and switch deployment mode.
+                  </div>
+                )}
+                {health.migration_required && (
+                  <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-xs text-muted-foreground">
+                    Database migrations are not fully applied or the schema is not tracked by Alembic. Run <code>bash scripts/dev_local.sh migrate-host</code>, or use <code>python -m alembic stamp head</code> if the tables already match the latest schema.
+                  </div>
+                )}
                 <div className="flex flex-wrap gap-2 text-xs">
                   <Badge variant="outline">LLM required: {health.llm_required ? "yes" : "no"}</Badge>
                   <Badge variant="outline">LLM available: {health.llm_available ? "yes" : "no"}</Badge>
@@ -285,7 +330,13 @@ export default function SettingsPage() {
                   data-testid="settings-llm-provider"
                   className="h-9 w-full rounded-md border bg-background px-3 text-sm"
                   value={provider}
-                  onChange={(e) => setProvider(e.target.value as ProviderName)}
+                  onChange={(e) => {
+                    const nextProvider = e.target.value as ProviderName;
+                    setProvider(nextProvider);
+                    if (!model.trim() || model === PROVIDER_META[provider].defaultModel) {
+                      setModel(PROVIDER_META[nextProvider].defaultModel);
+                    }
+                  }}
                 >
                   {PROVIDERS.map((name) => (
                     <option key={name} value={name}>{name}</option>
@@ -316,37 +367,57 @@ export default function SettingsPage() {
                 const pendingValue = draftKeys[name] ?? "";
                 const showing = showKeys[name] ?? false;
                 const testResult = testResults[name];
+                const requiresKey = status?.requires_key ?? PROVIDER_META[name].requiresKey;
                 return (
                   <div key={name} className="rounded-lg border p-3 space-y-3" data-testid={`provider-card-${name}`}>
                     <div className="flex items-center justify-between gap-2">
                       <div>
                         <div className="text-sm font-medium capitalize">{name}</div>
                         <div className="text-xs text-muted-foreground">
-                          {status?.has_key ? `Saved: ${status.masked_key}` : "No key saved"}
+                          {requiresKey
+                            ? status?.has_key ? `Saved: ${status.masked_key}` : "No key saved"
+                            : "Uses local runtime endpoint"}
                         </div>
                       </div>
                       {name === provider && <Badge variant="secondary">Primary</Badge>}
                     </div>
-                    <div className="flex gap-2">
-                      <Input
-                        data-testid={`provider-key-${name}`}
-                        type={showing ? "text" : "password"}
-                        value={pendingValue}
-                        onChange={(e) => setDraftKeys((prev) => ({ ...prev, [name]: e.target.value }))}
-                        placeholder={`Paste ${name} API key`}
-                      />
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="icon"
-                        onClick={() => setShowKeys((prev) => ({ ...prev, [name]: !prev[name] }))}
-                        aria-label={`toggle-${name}-visibility`}
-                      >
-                        {showing ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                      </Button>
-                    </div>
+                    {requiresKey ? (
+                      <div className="space-y-1">
+                        <div className="flex gap-2">
+                          <Input
+                            data-testid={`provider-key-${name}`}
+                            type={showing ? "text" : "password"}
+                            value={pendingValue}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setDraftKeys((prev) => ({ ...prev, [name]: val }));
+                              if (val.trim().length > 0 && val.trim().length < 8) {
+                                setKeyErrors((prev) => ({ ...prev, [name]: "API key must be at least 8 characters" }));
+                              } else {
+                                setKeyErrors((prev) => ({ ...prev, [name]: null }));
+                              }
+                            }}
+                            placeholder={`Paste ${name} API key`}
+                          />
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            onClick={() => setShowKeys((prev) => ({ ...prev, [name]: !prev[name] }))}
+                            aria-label={`toggle-${name}-visibility`}
+                          >
+                            {showing ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                          </Button>
+                        </div>
+                        {keyErrors[name] && <p className="text-xs text-destructive mt-1">{keyErrors[name]}</p>}
+                      </div>
+                    ) : (
+                      <div className="rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">
+                        No API key is needed. Make sure the local backend for {name} is running, then save this provider as primary.
+                      </div>
+                    )}
                     <div className="flex items-center justify-between text-xs text-muted-foreground gap-2">
-                      <span>Leave blank to keep the saved key unchanged.</span>
+                      <span>{requiresKey ? "Leave blank to keep the saved key unchanged." : "Connection tests call the local runtime directly."}</span>
                       <div className="flex items-center gap-1">
                         <Button
                           type="button"
@@ -368,7 +439,7 @@ export default function SettingsPage() {
                         >
                           Clear draft
                         </Button>
-                        {status?.has_key && (
+                        {requiresKey && status?.has_key && (
                           <Button
                             type="button"
                             variant="ghost"
@@ -402,11 +473,22 @@ export default function SettingsPage() {
               <Button type="button" variant="outline" onClick={() => setDraftKeys({})} disabled={savingRuntime}>
                 Reset Draft
               </Button>
-              <Button type="button" data-testid="settings-save-llm" onClick={() => void handleSaveRuntime()} disabled={savingRuntime}>
+              <Button type="button" data-testid="settings-save-llm" onClick={() => void handleSaveRuntime()} disabled={savingRuntime || hasKeyErrors}>
                 {savingRuntime ? "Saving..." : "Save Local LLM Config"}
               </Button>
             </div>
           </div>
+        </section>
+
+        <section data-testid="settings-ollama-wizard">
+          <div className="flex items-center gap-2 mb-3">
+            <Wrench className="h-4 w-4" />
+            <h2 className="font-medium">Local AI (Ollama)</h2>
+          </div>
+          <p className="text-sm text-muted-foreground mb-3">
+            Run AI completely free and offline with Ollama. Detect your local Ollama instance, pick a model, and switch in one click.
+          </p>
+          <OllamaSetupWizard onComplete={() => { void loadHealth(); void loadRuntimeConfig(); }} />
         </section>
 
         <section>
@@ -417,6 +499,9 @@ export default function SettingsPage() {
           <div className="flex gap-2">
             <Button variant={locale === "en" ? "default" : "outline"} size="sm" onClick={() => handleLocaleChange("en")}>
               English
+            </Button>
+            <Button variant={locale === "zh" ? "default" : "outline"} size="sm" onClick={() => handleLocaleChange("zh")}>
+              中文
             </Button>
           </div>
         </section>

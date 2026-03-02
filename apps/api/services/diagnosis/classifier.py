@@ -79,7 +79,7 @@ async def classify_error(
     )
 
     try:
-        client = get_llm_client()
+        client = get_llm_client("fast")
         response, _ = await client.chat(
             "You classify student errors. Return only valid JSON, nothing else.",
             prompt,

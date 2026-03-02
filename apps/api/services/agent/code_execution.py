@@ -35,12 +35,21 @@ logger = logging.getLogger(__name__)
 _sandbox_backend_override: ContextVar[str | None] = ContextVar("sandbox_backend_override", default=None)
 
 
+def process_sandbox_allowed() -> bool:
+    return bool(
+        os.environ.get("PYTEST_CURRENT_TEST")
+        or os.environ.get("ALLOW_INSECURE_PROCESS_SANDBOX") == "true"
+    )
+
+
 def get_effective_sandbox_backend() -> str:
     backend = _sandbox_backend_override.get() or settings.code_sandbox_backend
     if backend == "process":
-        if os.environ.get("PYTEST_CURRENT_TEST") or os.environ.get("ALLOW_INSECURE_PROCESS_SANDBOX") == "true":
+        if process_sandbox_allowed():
             return backend
         logger.warning("Process sandbox requested outside test/dev override; forcing container backend.")
+        return "container"
+    if backend == "auto" and not process_sandbox_allowed():
         return "container"
     return backend
 
@@ -80,9 +89,15 @@ class CodeExecutionAgent(BaseAgent):
         r"\bimport\s+os\b", r"\bimport\s+sys\b", r"\bimport\s+subprocess\b",
         r"\bimport\s+shutil\b", r"\bimport\s+socket\b", r"\bimport\s+http\b",
         r"\bimport\s+urllib\b", r"\bimport\s+requests\b", r"\bimport\s+pathlib\b",
+        r"\bfrom\s+(os|sys|subprocess|shutil|socket|http|urllib|requests|pathlib)\b",
         r"\b__import__\s*\(", r"\beval\s*\(", r"\bexec\s*\(",
         r"\bopen\s*\(", r"\bcompile\s*\(", r"\bglobals\s*\(",
         r"\bbreakpoint\s*\(",
+        r"\bgetattr\s*\(", r"\bsetattr\s*\(",
+        r"\b__subclasses__\s*\(", r"\b__bases__\b", r"\b__mro__\b",
+        r"\bimport\s+importlib\b", r"\bfrom\s+importlib\b",
+        r"\bimport\s+ctypes\b", r"\bfrom\s+ctypes\b",
+        r"\bimport\s+pickle\b", r"\bfrom\s+pickle\b",
     ]
 
     MAX_EXECUTION_TIME = 5  # seconds
@@ -119,9 +134,13 @@ class CodeExecutionAgent(BaseAgent):
         # Check code length
         if len(code) > 5000:
             return False, "Code too long (max 5000 characters)"
-        # Check for infinite loop indicators
-        if re.search(r"while\s+True\s*:", code) and "break" not in code:
-            return False, "Potential infinite loop detected (while True without break)"
+        # Check for infinite loop indicators (while True, while 1, while not False, etc.)
+        if re.search(r"while\s+(True|1|not\s+False)\s*:", code):
+            # Only allow if "break" appears as an actual statement (not in strings/comments)
+            code_lines = [l.split("#")[0] for l in code.split("\n")]  # strip comments
+            has_break = any(re.search(r"\bbreak\b", l) for l in code_lines)
+            if not has_break:
+                return False, "Potential infinite loop detected (while True without break)"
         return True, "OK"
 
     def _execute_in_process_sandbox(self, code: str) -> dict:
@@ -192,7 +211,7 @@ class CodeExecutionAgent(BaseAgent):
             try:
                 return execute_in_container(code, runner_path=runner_path)
             except ContainerSandboxUnavailable as exc:
-                if backend == "container":
+                if backend == "container" or not process_sandbox_allowed():
                     return {"success": False, "output": "", "error": str(exc), "backend": "container"}
                 logger.info("Container sandbox unavailable, falling back to process sandbox: %s", exc)
 
@@ -225,7 +244,7 @@ class CodeExecutionAgent(BaseAgent):
                 f"Error: {result['error']}\n```"
             )
 
-        client = self.get_llm_client()
+        client = self.get_llm_client(ctx)
         ctx.response, _ = await client.chat(system_prompt, ctx.user_message)
         return ctx
 
@@ -258,7 +277,7 @@ class CodeExecutionAgent(BaseAgent):
                 f"Error: {result['error']}\n```"
             )
 
-        client = self.get_llm_client()
+        client = self.get_llm_client(ctx)
         ctx.transition(TaskPhase.STREAMING)
         full_response = ""
         async for chunk in client.stream_chat(system_prompt, ctx.user_message):

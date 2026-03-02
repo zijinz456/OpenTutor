@@ -2,6 +2,10 @@
 
 Common issues when setting up OpenTutor and how to fix them.
 
+If your machine uses the legacy `docker-compose` binary instead of the `docker compose`
+plugin, you can substitute that command in the examples below. The repo-local
+`bash scripts/dev_local.sh ...` wrappers now support either form automatically.
+
 ---
 
 ## Docker Setup Issues
@@ -93,15 +97,45 @@ If using Docker, this should not happen — the `pgvector/pgvector:pg17` image i
 ```bash
 # Check current migration state
 cd apps/api
-alembic current
+python -m alembic current
 
 # Try upgrading again
-alembic upgrade head
+python -m alembic upgrade head
 
-# If the database is in a bad state, you can stamp it to the latest version
-# (only do this if you're OK losing migration history)
-alembic stamp head
+# If tables already exist but alembic_version is missing, stamp the current schema
+# after confirming the database matches the latest migrations.
+python -m alembic stamp head
 ```
+
+### API health says schema is missing or migration is required
+
+If `GET /api/health` returns `"schema": "missing"` or `"migration_required": true`, the
+database is reachable but the tables are either missing or not tracked by Alembic yet.
+
+```bash
+# Preferred repo-local command
+bash scripts/dev_local.sh migrate-host
+
+# Equivalent manual command
+cd apps/api
+python -m alembic upgrade head
+```
+
+If health reports `"migration_status": "version_table_missing"`, the schema exists but the
+`alembic_version` table does not. In that case, verify the schema is current and then run:
+
+```bash
+cd apps/api
+python -m alembic stamp head
+```
+
+You can also run:
+
+```bash
+bash scripts/dev_local.sh verify-host
+```
+
+This now fails with a direct migration hint instead of a generic stack error.
 
 ---
 

@@ -125,6 +125,30 @@ class Tool(ABC):
             },
         }
 
+    def explain_args(self, parameters: dict[str, Any]) -> str:
+        """Human-readable explanation of what this tool call will do.
+
+        Override in subclasses for domain-specific explanations.
+        Default: "Running {name} with {key1}=val1, key2=val2"
+        """
+        if not parameters:
+            return f"Running {self.name}"
+        parts = ", ".join(f"{k}={v!r}" for k, v in list(parameters.items())[:3])
+        return f"Running {self.name} with {parts}"
+
+    def explain_result(self, result: "ToolResult") -> str:
+        """Human-readable explanation of a tool result.
+
+        Override in subclasses for domain-specific summaries.
+        Default: first 120 chars of output or error message.
+        """
+        if not result.success:
+            return f"Failed: {result.error or 'unknown error'}"
+        preview = result.output[:120].replace("\n", " ")
+        if len(result.output) > 120:
+            preview += "..."
+        return preview
+
     def to_text_description(self) -> str:
         """Convert to NL description for text-based parsing fallback.
 
@@ -191,8 +215,29 @@ class ToolRegistry:
         parameters: dict[str, Any],
         ctx: Any,
         db: AsyncSession,
+        agent_name: str | None = None,
     ) -> ToolResult:
-        """Execute a registered tool by name with error isolation."""
+        """Execute a registered tool by name with error isolation.
+
+        Args:
+            agent_name: If provided, check capability permissions before running.
+                        None = no check (backward compat).
+        """
+        # Capability check (defense in depth — ReActMixin also filters)
+        if agent_name is not None:
+            from services.agent.capabilities import check_tool_permission
+
+            if not check_tool_permission(agent_name, name):
+                logger.warning(
+                    "Tool '%s' blocked for agent '%s' (capability violation)",
+                    name, agent_name,
+                )
+                return ToolResult(
+                    success=False,
+                    output="",
+                    error=f"Agent '{agent_name}' is not allowed to use tool '{name}'.",
+                )
+
         tool = self._tools.get(name)
         if not tool:
             return ToolResult(

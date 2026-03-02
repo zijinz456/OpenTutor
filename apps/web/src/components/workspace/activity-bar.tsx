@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 interface ActivityBarProps {
   activeItem: string;
   onItemClick: (item: string) => void;
+  items?: Array<{ id: string; title: string }>;
 }
 
 const TOP_ITEMS = [
@@ -17,8 +18,11 @@ const TOP_ITEMS = [
   { id: "profile", icon: BrainCircuit, title: "Profile" },
 ];
 
-export function ActivityBar({ activeItem, onItemClick }: ActivityBarProps) {
+export function ActivityBar({ activeItem, onItemClick, items }: ActivityBarProps) {
   const router = useRouter();
+  const visibleItems = TOP_ITEMS.filter((item) =>
+    items ? items.some((candidate) => candidate.id === item.id) : true,
+  );
 
   return (
     <div className="w-12 bg-[#1E1B4B] flex flex-col items-center py-3 gap-1 shrink-0">
@@ -32,7 +36,7 @@ export function ActivityBar({ activeItem, onItemClick }: ActivityBarProps) {
 
       <div className="w-7 h-px bg-white/15 my-1" />
 
-      {TOP_ITEMS.map((item) => (
+      {visibleItems.map((item) => (
         <button
           key={item.id}
           onClick={() => onItemClick(item.id)}

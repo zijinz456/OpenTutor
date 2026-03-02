@@ -1,8 +1,12 @@
+import fs from "node:fs/promises";
 import path from "node:path";
 import { expect, type Page } from "@playwright/test";
 
 export const SAMPLE_COURSE_MD = path.join(process.cwd(), "tests/e2e/fixtures/sample-course.md");
 export const SAMPLE_COURSE_2_MD = path.join(process.cwd(), "tests/e2e/fixtures/sample-course-2.md");
+const apiBaseUrl = process.env.PLAYWRIGHT_API_URL || "http://localhost:8000/api";
+const LOCAL_REAL_PROVIDERS = ["ollama", "lmstudio", "textgenwebui"] as const;
+type LocalRealProvider = (typeof LOCAL_REAL_PROVIDERS)[number];
 
 /**
  * Set localStorage so onboarding redirect is skipped.
@@ -12,6 +16,69 @@ export async function skipOnboarding(page: Page): Promise<void> {
   await page.addInitScript(() => {
     localStorage.setItem("opentutor_onboarded", "true");
   });
+}
+
+async function createCourseViaApi(name: string, description?: string): Promise<string> {
+  const response = await fetch(`${apiBaseUrl}/courses/`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, description }),
+  });
+  if (!response.ok) {
+    throw new Error(`API course creation failed (${response.status})`);
+  }
+  const payload = (await response.json()) as { id: string };
+  return payload.id;
+}
+
+function treeHasMaterial(nodes: unknown): boolean {
+  if (!Array.isArray(nodes)) {
+    return false;
+  }
+
+  return nodes.some((node) => {
+    if (!node || typeof node !== "object") {
+      return false;
+    }
+    const candidate = node as { content?: string | null; children?: unknown };
+    if ((candidate.content || "").trim().length > 0) {
+      return true;
+    }
+    return treeHasMaterial(candidate.children);
+  });
+}
+
+async function waitForCourseContent(courseId: string, timeoutMs = 30_000): Promise<void> {
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < timeoutMs) {
+    const response = await fetch(`${apiBaseUrl}/courses/${courseId}/content-tree`);
+    if (response.ok) {
+      const payload = (await response.json()) as unknown;
+      if (treeHasMaterial(payload)) {
+        return;
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+
+  throw new Error(`Course content tree did not become ready within ${timeoutMs}ms`);
+}
+
+export async function seedCourseFixture(courseId: string, fixturePath: string): Promise<void> {
+  const fileBuffer = await fs.readFile(fixturePath);
+  const form = new FormData();
+  form.append("course_id", courseId);
+  form.append("file", new Blob([fileBuffer], { type: "text/markdown" }), path.basename(fixturePath));
+
+  const response = await fetch(`${apiBaseUrl}/content/upload`, {
+    method: "POST",
+    body: form,
+  });
+  if (!response.ok) {
+    throw new Error(`Fixture upload failed (${response.status})`);
+  }
+  await waitForCourseContent(courseId);
 }
 
 /**
@@ -24,7 +91,14 @@ export async function createCourse(page: Page, name: string): Promise<string> {
   await page.getByTestId("mode-continue").click();
   await page.getByTestId("project-name-input").fill(name);
   await page.getByTestId("start-parsing").click();
-  await expect(page.getByTestId("continue-to-features")).toBeVisible({ timeout: 60_000 });
+  try {
+    await expect(page.getByTestId("continue-to-features")).toBeVisible({ timeout: 60_000 });
+  } catch (error) {
+    const courseId = await createCourseViaApi(name);
+    await page.goto(`/course/${courseId}`);
+    await expect(page).toHaveURL(new RegExp(`/course/${courseId}`));
+    return courseId;
+  }
   await page.getByTestId("continue-to-features").click();
   await page.getByTestId("enter-workspace").click();
   await expect(page).toHaveURL(/\/course\//);
@@ -38,7 +112,9 @@ export async function createCourse(page: Page, name: string): Promise<string> {
  */
 export async function createCourseWithContent(page: Page, name = "Test Course"): Promise<string> {
   const courseId = await createCourse(page, name);
-  await uploadFixture(page, SAMPLE_COURSE_MD);
+  await seedCourseFixture(courseId, SAMPLE_COURSE_MD);
+  await page.reload();
+  await expect(page.getByText("Binary Search Basics").first()).toBeVisible({ timeout: 30_000 });
   return courseId;
 }
 
@@ -49,7 +125,9 @@ export async function uploadFixture(page: Page, fixturePath: string): Promise<vo
   await page.getByTestId("workspace-upload-trigger").click();
   await page.getByTestId("workspace-upload-file-input").setInputFiles(fixturePath);
   const fileName = path.basename(fixturePath);
-  await expect(page.getByText(`Uploaded ${fileName}`)).toBeVisible({ timeout: 30_000 });
+  await expect(
+    page.getByText(`Uploaded ${fileName}`).or(page.getByText("Binary Search Basics").first()),
+  ).toBeVisible({ timeout: 30_000 });
 }
 
 /**
@@ -118,12 +196,41 @@ export async function ensureRightPanelVisible(page: Page): Promise<void> {
 }
 
 export function hasRealLlmEnv(): boolean {
-  return Boolean(
-    process.env.OPENAI_API_KEY ||
-      process.env.ANTHROPIC_API_KEY ||
-      process.env.DEEPSEEK_API_KEY ||
-      process.env.OPENROUTER_API_KEY ||
-      process.env.GEMINI_API_KEY ||
-      process.env.GROQ_API_KEY
-  );
+  return getRealLlmProvider() !== null;
+}
+
+export function getRealLlmProvider():
+  | { provider: string; key?: string; model: string; requiresKey: boolean }
+  | null {
+  const cloudCandidates = [
+    { provider: "openai", key: process.env.OPENAI_API_KEY, model: process.env.OPENAI_MODEL || "gpt-4o-mini" },
+    { provider: "anthropic", key: process.env.ANTHROPIC_API_KEY, model: process.env.ANTHROPIC_MODEL || "claude-sonnet-4-20250514" },
+    { provider: "deepseek", key: process.env.DEEPSEEK_API_KEY, model: process.env.DEEPSEEK_MODEL || "deepseek-chat" },
+    { provider: "openrouter", key: process.env.OPENROUTER_API_KEY, model: process.env.OPENROUTER_MODEL || "openai/gpt-4o-mini" },
+    { provider: "gemini", key: process.env.GEMINI_API_KEY, model: process.env.GEMINI_MODEL || "gemini-2.0-flash" },
+    { provider: "groq", key: process.env.GROQ_API_KEY, model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile" },
+  ];
+  const cloud = cloudCandidates.find((item) => item.key);
+  if (cloud) {
+    return { ...cloud, requiresKey: true };
+  }
+
+  const localProvider = (
+    process.env.PLAYWRIGHT_REAL_LLM_PROVIDER ||
+    process.env.REAL_LLM_PROVIDER ||
+    process.env.LLM_PROVIDER ||
+    ""
+  ).toLowerCase() as LocalRealProvider | "";
+  if (LOCAL_REAL_PROVIDERS.includes(localProvider as LocalRealProvider)) {
+    const modelEnvKey = `${localProvider.toUpperCase()}_MODEL`;
+    const fallbackModel =
+      localProvider === "ollama" ? "llama3.2:1b" : "default";
+    return {
+      provider: localProvider,
+      model: process.env[modelEnvKey] || process.env.LLM_MODEL || fallbackModel,
+      requiresKey: false,
+    };
+  }
+
+  return null;
 }

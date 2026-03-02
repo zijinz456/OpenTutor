@@ -4,10 +4,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/_common.sh"
 
-API_BASE="${API_BASE:-http://127.0.0.1:8000/api}"
+API_BASE="${API_BASE:-http://localhost:8000/api}"
 UPLOAD_FILE="${UPLOAD_FILE:-${ROOT_DIR}/tests/e2e/fixtures/sample-course.md}"
 PY_BIN="$(resolve_python_bin || true)"
-TMP_DIR="$(mktemp -d)"
+TMP_DIR="$(create_temp_dir)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 require_cmd curl

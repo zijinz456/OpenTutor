@@ -35,6 +35,8 @@ from services.agent.merger import merge_results
 logger = logging.getLogger(__name__)
 
 # ── Background Task Tracking ──
+# Tracked set for fire-and-forget tasks; safe under asyncio's cooperative
+# single-threaded model (no preemptive context switches within set ops).
 _background_tasks: set[asyncio.Task] = set()
 
 
@@ -331,24 +333,146 @@ async def run_agent_turn(
     return ctx
 
 
+async def orchestrate_simple(
+    user_id,
+    message: str,
+    channel: str = "api",
+    db=None,
+    course_id=None,
+) -> str:
+    """Non-streaming orchestration for webhook/channel integrations.
+
+    Lightweight wrapper around ``run_agent_turn`` that returns just the text
+    response.  If no course_id is provided, attempts to find the user's most
+    recent course.  If no database session is provided, creates one.
+
+    Args:
+        user_id: The user's UUID.
+        message: The user's message text.
+        channel: Channel identifier (e.g. "telegram", "discord").
+        db: Optional active database session.
+        course_id: Optional course UUID. If None, resolves from user's courses.
+
+    Returns:
+        The agent's text response, or an error message string.
+    """
+    from database import async_session
+
+    try:
+        async with async_session() as session:
+            # Resolve course_id if not provided
+            if course_id is None:
+                from sqlalchemy import select
+                from models.course import Course
+
+                stmt = (
+                    select(Course.id)
+                    .where(Course.user_id == user_id)
+                    .order_by(Course.updated_at.desc())
+                    .limit(1)
+                )
+                result = await session.execute(stmt)
+                course_id = result.scalar_one_or_none()
+
+                if course_id is None:
+                    return "You don't have any courses yet. Create one on the web app first."
+
+            ctx = await run_agent_turn(
+                user_id=user_id,
+                course_id=course_id,
+                message=message,
+                db=session,
+                db_factory=async_session,
+                post_process_inline=True,
+            )
+
+            return ctx.response or "I couldn't process that. Please try again."
+
+    except Exception as e:
+        logger.error("orchestrate_simple failed (channel=%s): %s", channel, e)
+        return "Sorry, I encountered an error. Please try again later."
+
+
 # ── Post-Processing with Retry (NanoClaw group-queue pattern) ──
 
-async def _retry_async(coro_fn, name: str, max_retries: int = 2, base_delay: float = 1.0):
+async def _retry_async(coro_fn, name: str, max_retries: int = 2, base_delay: float = 1.0) -> dict:
     """Execute an async coroutine with exponential backoff retry.
 
     Borrowed from NanoClaw group-queue.ts: 5s→10s→20s backoff pattern,
     adapted with shorter delays for post-processing tasks (1s→2s→4s).
+
+    Returns a dict with 'success' bool and optional 'error' string.
     """
     for attempt in range(max_retries + 1):
         try:
-            return await coro_fn()
+            await coro_fn()
+            return {"success": True, "name": name}
         except Exception as e:
             if attempt == max_retries:
                 logger.warning("Post-process '%s' failed after %d retries: %s", name, max_retries, e)
-                return None
+                return {"success": False, "name": name, "error": str(e)}
             delay = base_delay * (2 ** attempt)
             logger.debug("Retrying '%s' in %.1fs (attempt %d/%d): %s", name, delay, attempt + 1, max_retries, e)
             await asyncio.sleep(delay)
+    return {"success": False, "name": name, "error": "exhausted retries"}
+
+
+async def _persist_pp_failures(ctx: AgentContext, db_factory, failures: list[dict]) -> None:
+    """Record post-processing failures as a notification so the user can see them."""
+    from models.notification import Notification
+
+    failed_names = [f.get("name", "unknown") for f in failures]
+    errors_detail = "; ".join(
+        f"{f.get('name', '?')}: {f.get('error', 'unknown')[:120]}" for f in failures
+    )
+    async with db_factory() as db:
+        notification = Notification(
+            user_id=ctx.user_id,
+            course_id=ctx.course_id,
+            category="system",
+            priority="low",
+            title="Background processing partially failed",
+            body=f"Some post-processing steps failed after your last chat message: {', '.join(failed_names)}. Details: {errors_detail[:300]}",
+        )
+        db.add(notification)
+        await db.commit()
+    logger.info("Persisted %d post-processing failure(s) as notification: %s", len(failures), failed_names)
+
+
+async def _record_llm_usage(ctx: AgentContext, db_factory) -> None:
+    """Record LLM usage event for cost tracking (fire-and-forget)."""
+    try:
+        async with db_factory() as db:
+            from services.llm.usage import record_usage
+            from services.llm.router import get_registry
+
+            registry = get_registry()
+            provider_name = registry.primary_name or "unknown"
+
+            # Determine model name from the primary provider client
+            model_name = "unknown"
+            try:
+                if registry.primary_name:
+                    primary_client = registry.get(registry.primary_name)
+                    model_name = getattr(primary_client, "model", "unknown")
+            except Exception:
+                pass
+
+            await record_usage(
+                db,
+                user_id=ctx.user_id,
+                course_id=ctx.course_id,
+                agent_name=ctx.delegated_agent or ctx.metadata.get("routed_agent", "unknown"),
+                scene=ctx.scene,
+                model_provider=provider_name,
+                model_name=model_name,
+                input_tokens=ctx.input_tokens,
+                output_tokens=ctx.output_tokens,
+                tool_calls=len(ctx.tool_calls),
+                metadata={"intent": ctx.intent.value if ctx.intent else None},
+            )
+    except Exception as e:
+        logger.debug("Usage recording failed (non-critical): %s", e)
 
 
 async def post_process(ctx: AgentContext, db_factory) -> None:
@@ -359,6 +483,7 @@ async def post_process(ctx: AgentContext, db_factory) -> None:
     Uses a new DB session to avoid session lifecycle issues.
     """
     ctx.transition(TaskPhase.POST_PROCESSING)
+    pp_results: list[dict] = []
     try:
         async with db_factory() as db:
             # 1. Preference signal extraction (~95% return NONE)
@@ -407,21 +532,104 @@ async def post_process(ctx: AgentContext, db_factory) -> None:
                 from services.agent.memory_agent import maybe_auto_consolidate
                 await maybe_auto_consolidate(db, ctx.user_id, ctx.course_id)
 
+            # 5. Behavior-based preference inference (every interaction)
+            async def behavior_signals():
+                from services.preference.extractor import collect_behavior_signals
+                from services.preference.confidence import process_signal_to_preference
+                from models.preference import PreferenceSignal
+
+                signals = await collect_behavior_signals(db, ctx.user_id, ctx.course_id)
+                for signal in signals:
+                    ps = PreferenceSignal(
+                        user_id=signal["user_id"],
+                        course_id=signal.get("course_id"),
+                        signal_type=signal["signal_type"],
+                        dimension=signal["dimension"],
+                        value=signal["value"],
+                        context=signal.get("context"),
+                    )
+                    db.add(ps)
+                    await db.flush()
+                    await process_signal_to_preference(
+                        db, signal["user_id"], signal["dimension"], signal.get("course_id"),
+                    )
+                if signals:
+                    logger.info("Behavior signals inferred: %d signals", len(signals))
+
             # Execute sequentially — AsyncSession is NOT safe for concurrent use.
-            # _retry_async handles per-task error isolation (returns None on failure).
+            # _retry_async returns {success, name, error?} for tracking.
+            pp_results: list[dict] = []
             for coro_fn, name, retries in [
                 (extract_signal, "signal_extraction", 2),
                 (encode_mem, "memory_encoding", 2),
                 (extract_graph, "graph_extraction", 1),
                 (auto_consolidate, "auto_consolidation", 1),
+                (behavior_signals, "behavior_inference", 1),
             ]:
-                await _retry_async(coro_fn, name, max_retries=retries)
+                pp_results.append(await _retry_async(coro_fn, name, max_retries=retries))
 
             # Commit whatever succeeded — partial results are better than none
             await db.commit()
 
     except Exception as e:
         logger.warning("Post-processing failed: %s", e, exc_info=True)
+        pp_results = [{"success": False, "name": "post_process_session", "error": str(e)}]
+
+    # Persist tool calls (separate session to avoid coupling with post-processing)
+    if ctx.tool_calls:
+        try:
+            from services.agent.tool_tracking import batch_record_tool_calls
+            async with db_factory() as tool_db:
+                await batch_record_tool_calls(
+                    tool_db,
+                    user_id=ctx.user_id,
+                    course_id=ctx.course_id,
+                    session_id=str(ctx.session_id) if ctx.session_id else None,
+                    agent_name=ctx.delegated_agent or "unknown",
+                    tool_calls=ctx.tool_calls,
+                )
+        except Exception as e:
+            logger.warning("Failed to persist tool calls: %s", e)
+
+    # Update tutor notes (fire-and-forget, non-critical)
+    try:
+        if ctx.response and ctx.user_message:
+            from services.agent.tutor_notes import update_tutor_notes
+
+            # Build a brief conversation summary from the current turn
+            summary = (
+                f"Student: {ctx.user_message[:300]}\n"
+                f"Tutor: {ctx.response[:500]}"
+            )
+            current_notes = ctx.metadata.get("tutor_notes")
+
+            async with db_factory() as notes_db:
+                await update_tutor_notes(
+                    notes_db,
+                    ctx.user_id,
+                    ctx.course_id,
+                    current_notes,
+                    summary,
+                )
+    except Exception as e:
+        logger.warning("Tutor notes update failed (non-critical): %s", e)
+
+    # Persist post-processing failures as notifications so the user sees them
+    failures = [r for r in pp_results if not r.get("success")]
+    if failures:
+        try:
+            await _persist_pp_failures(ctx, db_factory, failures)
+        except Exception as e:
+            logger.debug("Failed to persist post-processing failure notification: %s", e)
+
+    # Extension hook: post-processing complete
+    try:
+        from services.agent.extensions import get_extension_registry, ExtensionHook
+        await get_extension_registry().run_hooks(
+            ExtensionHook.POST_PROCESS, ctx, response=ctx.response or "",
+        )
+    except Exception as e:
+        logger.debug("POST_PROCESS extension hook error: %s", e)
 
     ctx.mark_completed()
 
@@ -448,11 +656,13 @@ def _detect_fatigue(message: str) -> float:
     OpenAkita persona dimension pattern: check signals across multiple categories.
     Positive signals reduce the score to prevent false positives.
     """
+    # De-duplicated fatigue signals — each concept appears in only ONE group
+    # to prevent a single phrase from matching multiple patterns and inflating the score.
     FATIGUE_SIGNALS = [
-        (r"(don'?t\s+want\s+to\s+study|can'?t\s+do\s+it|too\s+hard|give\s+up|so\s+annoying|so\s+tired|can'?t\s+keep\s+going)", 0.35),
-        (r"(confused|tired|give up|too hard|frustrated|hate this|can't do)", 0.35),
+        (r"(don'?t\s+want\s+to\s+study|give\s+up|so\s+annoying|so\s+tired|can'?t\s+keep\s+going|hate\s+this)", 0.35),
+        (r"(can'?t\s+do\s+it|too\s+hard|frustrated|confused)", 0.3),
         (r"(can'?t\s+understand|can'?t\s+learn|why\s+still\s+wrong|wrong\s+again|can'?t\s+figure\s+out)", 0.3),
-        (r"(again wrong|still don't get|keep getting wrong|makes no sense)", 0.3),
+        (r"(again\s+wrong|still\s+don'?t\s+get|keep\s+getting\s+wrong|makes\s+no\s+sense)", 0.25),
         (r"(forget\s+it|sigh|ugh|whatever|nvm|never\s+mind)", 0.25),
         (r"[😫😤😩😭💀🤯😡]{1}", 0.2),
     ]
@@ -514,11 +724,22 @@ async def orchestrate_stream(
         images=images,
     )
 
+    # Extension hooks
+    from services.agent.extensions import get_extension_registry, ExtensionHook
+    ext_registry = get_extension_registry()
+
     # Emit agent status
     yield {"event": "status", "data": json.dumps({"phase": "routing"})}
 
+    await ext_registry.run_hooks(ExtensionHook.PRE_ROUTING, ctx, message=message)
+
     ctx.transition(TaskPhase.ROUTING)
     ctx = await classify_intent(ctx)
+
+    await ext_registry.run_hooks(
+        ExtensionHook.POST_ROUTING, ctx,
+        intent=ctx.intent.value, confidence=ctx.intent_confidence,
+    )
 
     yield {
         "event": "status",
@@ -680,7 +901,9 @@ async def orchestrate_stream(
 
         # Post-processing (same pattern as single-agent path)
         if ctx.response:
-            task = asyncio.create_task(post_process(ctx, db_factory))
+            import copy
+            swarm_bg_ctx = copy.deepcopy(ctx)
+            task = asyncio.create_task(post_process(swarm_bg_ctx, db_factory))
             _background_tasks.add(task)
             task.add_done_callback(_background_tasks.discard)
 
@@ -695,6 +918,8 @@ async def orchestrate_stream(
             }),
         }
 
+        await ext_registry.run_hooks(ExtensionHook.PRE_AGENT, ctx, agent_name=agent.name)
+
         # 5. Stream response with marker parsing + token tracking
         # Markers: [ACTION:...] (UI actions), [TOOL_START:...] / [TOOL_DONE:...] (ReAct tools)
         buffer = ""
@@ -706,7 +931,7 @@ async def orchestrate_stream(
             while changed:
                 changed = False
 
-                # Parse [TOOL_START:tool_name] markers
+                # Parse [TOOL_START:tool_name] or [TOOL_START:tool_name|explanation] markers
                 if "[TOOL_START:" in buffer:
                     start = buffer.index("[TOOL_START:")
                     end = buffer.find("]", start)
@@ -714,16 +939,23 @@ async def orchestrate_stream(
                         before = buffer[:start]
                         if before:
                             yield {"event": "message", "data": json.dumps({"content": before})}
-                        tool_name = buffer[start + 12:end]
+                        marker_content = buffer[start + 12:end]
+                        if "|" in marker_content:
+                            tool_name, explanation = marker_content.split("|", 1)
+                        else:
+                            tool_name, explanation = marker_content, ""
+                        event_data: dict = {"status": "running", "tool": tool_name}
+                        if explanation:
+                            event_data["explanation"] = explanation
                         yield {
                             "event": "tool_status",
-                            "data": json.dumps({"status": "running", "tool": tool_name}),
+                            "data": json.dumps(event_data),
                         }
                         buffer = buffer[end + 1:]
                         changed = True
                         continue
 
-                # Parse [TOOL_DONE:tool_name] markers
+                # Parse [TOOL_DONE:tool_name] or [TOOL_DONE:tool_name|explanation] markers
                 if "[TOOL_DONE:" in buffer:
                     start = buffer.index("[TOOL_DONE:")
                     end = buffer.find("]", start)
@@ -731,10 +963,17 @@ async def orchestrate_stream(
                         before = buffer[:start]
                         if before:
                             yield {"event": "message", "data": json.dumps({"content": before})}
-                        tool_name = buffer[start + 11:end]
+                        marker_content = buffer[start + 11:end]
+                        if "|" in marker_content:
+                            tool_name, explanation = marker_content.split("|", 1)
+                        else:
+                            tool_name, explanation = marker_content, ""
+                        event_data = {"status": "complete", "tool": tool_name}
+                        if explanation:
+                            event_data["explanation"] = explanation
                         yield {
                             "event": "tool_status",
-                            "data": json.dumps({"status": "complete", "tool": tool_name}),
+                            "data": json.dumps(event_data),
                         }
                         buffer = buffer[end + 1:]
                         changed = True
@@ -776,6 +1015,10 @@ async def orchestrate_stream(
                 yield {"event": "message", "data": json.dumps({"content": buffer})}
 
         _finalize_token_usage(ctx, agent)
+        await ext_registry.run_hooks(
+            ExtensionHook.POST_AGENT, ctx,
+            agent_name=agent.name, response=ctx.response or "",
+        )
         streamed_response = ctx.response
         ctx.metadata["provenance"] = _build_provenance(ctx)
         ctx = await apply_verifier(ctx, agent)
@@ -798,8 +1041,18 @@ async def orchestrate_stream(
             "data": json.dumps(_envelope_payload(ctx)),
         }
 
-        # 7. Post-processing with retry (tracked to prevent GC and enable graceful shutdown)
-        if ctx.response:
-            task = asyncio.create_task(post_process(ctx, db_factory))
+        # Snapshot ctx for background tasks to avoid data races with the SSE generator
+        import copy
+        bg_ctx = copy.deepcopy(ctx)
+
+        # 7a. Record LLM usage (fire-and-forget)
+        if bg_ctx.input_tokens or bg_ctx.output_tokens:
+            task_usage = asyncio.create_task(_record_llm_usage(bg_ctx, db_factory))
+            _background_tasks.add(task_usage)
+            task_usage.add_done_callback(_background_tasks.discard)
+
+        # 7b. Post-processing with retry (tracked to prevent GC and enable graceful shutdown)
+        if bg_ctx.response:
+            task = asyncio.create_task(post_process(bg_ctx, db_factory))
             _background_tasks.add(task)
             task.add_done_callback(_background_tasks.discard)

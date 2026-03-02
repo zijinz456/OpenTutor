@@ -131,6 +131,6 @@ class ReviewAgent(ReActMixin, BaseAgent):
 
     async def execute(self, ctx: AgentContext, db: AsyncSession) -> AgentContext:
         system_prompt = self.build_system_prompt(ctx)
-        client = self.get_llm_client()
+        client = self.get_llm_client(ctx)
         ctx.response, _ = await client.chat(system_prompt, ctx.user_message)
         return ctx

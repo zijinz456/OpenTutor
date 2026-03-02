@@ -1,9 +1,17 @@
 import type { Metadata, Viewport } from "next";
+import { Space_Grotesk } from "next/font/google";
 import { ThemeProvider } from "next-themes";
 import { Toaster } from "@/components/ui/sonner";
 import { LocaleProvider } from "@/lib/i18n-context";
 import { ServiceWorkerRegistrar } from "@/components/sw-registrar";
+import { OfflineBanner } from "@/components/offline-banner";
 import "./globals.css";
+
+const spaceGrotesk = Space_Grotesk({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-space-grotesk",
+});
 
 export const viewport: Viewport = {
   width: "device-width",
@@ -41,10 +49,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning className={spaceGrotesk.variable}>
       <body className="antialiased">
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
           <LocaleProvider>
+            <OfflineBanner />
             {children}
             <Toaster />
             <ServiceWorkerRegistrar />

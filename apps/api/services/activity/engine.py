@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timezone
 from typing import Any
 
@@ -24,18 +24,35 @@ from services.activity.tasks import (
     APPROVAL_REQUIRED_STATUS,
     CANCEL_REQUESTED_STATUS,
     EXECUTABLE_TASK_STATUSES,
+    GoalUpdatePayload,
+    JsonObject,
+    PlanProgressStep,
+    PlanResultPayload,
     REJECTED_TASK_STATUS,
     RESUMING_TASK_STATUS,
+    TaskCheckpointPayload,
+    TaskStepResult,
     _truncate_summary,
+    attach_task_review_payload,
+    build_task_review_payload,
+    infer_task_policy,
     infer_approval_status,
     normalize_task_status,
 )
+from services.activity.redis_notify import (
+    close_redis as _close_redis_notify,
+    notify_task_ready,
+    wait_for_task_notification,
+)
+from services.audit import record_audit_log
 from services.provenance import build_provenance, merge_provenance
 
 logger = logging.getLogger(__name__)
 
 POLL_INTERVAL_SECONDS = 1.0
 IDLE_INTERVAL_SECONDS = 2.0
+MAX_IDLE_INTERVAL_SECONDS = 30.0
+BACKOFF_MULTIPLIER = 1.5
 
 _worker_task: asyncio.Task | None = None
 _stop_event: asyncio.Event | None = None
@@ -54,7 +71,7 @@ class TaskCancelledError(RuntimeError):
         self,
         message: str = "Task cancelled by user.",
         *,
-        result_payload: dict[str, Any] | None = None,
+        result_payload: JsonObject | None = None,
         summary: str | None = None,
     ) -> None:
         super().__init__(message)
@@ -81,6 +98,17 @@ def _queueable_status(task: AgentTask) -> str:
 
 
 def _refresh_task_policy(task: AgentTask) -> None:
+    policy = infer_task_policy(
+        task.task_type,
+        input_json=task.input_json,
+        requires_approval=task.requires_approval,
+        title=task.title,
+    )
+    task.requires_approval = policy.requires_approval
+    task.task_kind = policy.task_kind
+    task.risk_level = policy.risk_level
+    task.approval_reason = policy.approval_reason
+    task.approval_action = policy.approval_action
     task.status = normalize_task_status(task.status)
     task.approval_status = infer_approval_status(
         requires_approval=task.requires_approval,
@@ -104,10 +132,48 @@ def _task_event(task: AgentTask, event: str, **details: Any) -> None:
     task.metadata_json = metadata
 
 
-def _coerce_step_results(raw_steps: Any) -> list[dict[str, Any]]:
+def _task_audit_details(task: AgentTask, extra: JsonObject | None = None) -> JsonObject:
+    details: JsonObject = {
+        "task_type": task.task_type,
+        "title": task.title,
+        "status": task.status,
+        "task_kind": task.task_kind,
+        "risk_level": task.risk_level,
+        "requires_approval": task.requires_approval,
+        "approval_reason": task.approval_reason,
+        "approval_action": task.approval_action,
+        "source": task.source,
+    }
+    if extra:
+        details.update(extra)
+    return details
+
+
+async def _record_task_audit(
+    db: AsyncSession,
+    task: AgentTask,
+    *,
+    action_kind: str,
+    outcome: str,
+    details: JsonObject | None = None,
+) -> None:
+    tool_name = "run_code" if task.task_type == "code_execution" else None
+    await record_audit_log(
+        db,
+        actor_user_id=task.user_id,
+        task_id=task.id,
+        tool_name=tool_name,
+        action_kind=action_kind,
+        approval_status=task.approval_status,
+        outcome=outcome,
+        details_json=_task_audit_details(task, details),
+    )
+
+
+def _coerce_step_results(raw_steps: Any) -> list[TaskStepResult]:
     if not isinstance(raw_steps, list):
         return []
-    normalized: list[dict[str, Any]] = []
+    normalized: list[TaskStepResult] = []
     for item in raw_steps:
         if not isinstance(item, dict):
             continue
@@ -118,7 +184,7 @@ def _coerce_step_results(raw_steps: Any) -> list[dict[str, Any]]:
     return normalized
 
 
-def _build_plan_result_payload(steps: list[dict[str, Any]], results: list[dict[str, Any]]) -> dict[str, Any]:
+def _build_plan_result_payload(steps: list[JsonObject], results: list[TaskStepResult]) -> PlanResultPayload:
     completed = sum(1 for item in results if item.get("success"))
     failed = sum(1 for item in results if not item.get("success"))
     return {
@@ -130,7 +196,7 @@ def _build_plan_result_payload(steps: list[dict[str, Any]], results: list[dict[s
     }
 
 
-def _build_plan_summary(steps: list[dict[str, Any]], results: list[dict[str, Any]]) -> str:
+def _build_plan_summary(steps: list[JsonObject], results: list[TaskStepResult]) -> str:
     payload = _build_plan_result_payload(steps, results)
     summary_parts = [f"{payload['completed']}/{payload['total']} steps completed"]
     if payload["failed"]:
@@ -141,10 +207,10 @@ def _build_plan_summary(steps: list[dict[str, Any]], results: list[dict[str, Any
 
 
 def _build_checkpoint(
-    results: list[dict[str, Any]],
+    results: list[TaskStepResult],
     *,
     active_step_index: int | None = None,
-) -> dict[str, Any]:
+) -> TaskCheckpointPayload:
     completed = [item for item in results if item.get("success")]
     failed = [item for item in results if not item.get("success")]
     last_success = completed[-1] if completed else None
@@ -162,8 +228,8 @@ def _build_checkpoint(
     }
 
 
-def _merge_step_provenance(results: list[dict[str, Any]]) -> dict[str, Any] | None:
-    merged: dict[str, Any] | None = None
+def _merge_step_provenance(results: list[TaskStepResult]) -> JsonObject | None:
+    merged: JsonObject | None = None
     for item in results:
         provenance = item.get("provenance")
         if isinstance(provenance, dict):
@@ -185,20 +251,42 @@ def _extract_first_action(text: str | None) -> str | None:
     return None
 
 
-async def _sync_goal_after_task_success(db: AsyncSession, task: AgentTask, result_payload: dict[str, Any]) -> None:
+def _serialize_goal_update(goal: StudyGoal) -> GoalUpdatePayload:
+    return {
+        "goal_id": str(goal.id),
+        "title": goal.title,
+        "status": goal.status,
+        "current_milestone": goal.current_milestone,
+        "next_action": goal.next_action,
+    }
+
+
+async def _sync_goal_after_task_success(
+    db: AsyncSession,
+    task: AgentTask,
+    result_payload: JsonObject,
+) -> GoalUpdatePayload | None:
     if not task.goal_id:
-        return
+        return None
     result = await db.execute(
         select(StudyGoal).where(StudyGoal.id == task.goal_id, StudyGoal.user_id == task.user_id)
     )
     goal = result.scalar_one_or_none()
     if not goal:
-        return
+        return None
 
     metadata = dict(goal.metadata_json or {})
     metadata["last_task_id"] = str(task.id)
     metadata["last_task_type"] = task.task_type
     metadata["last_reviewed_at"] = _utcnow().isoformat()
+
+    next_action = (
+        result_payload.get("next_action")
+        or _extract_first_action(result_payload.get("plan"))
+        or _extract_first_action(result_payload.get("analysis"))
+        or _extract_first_action(result_payload.get("review"))
+        or goal.next_action
+    )
 
     if task.task_type == "weekly_prep":
         week_start = (task.input_json or {}).get("week_start")
@@ -207,15 +295,30 @@ async def _sync_goal_after_task_success(db: AsyncSession, task: AgentTask, resul
         deadline_count = len(result_payload.get("deadlines") or [])
         metadata["last_deadline_count"] = deadline_count
         goal.current_milestone = f"Weekly review refreshed with {deadline_count} tracked deadlines"
-        next_action = (
-            result_payload.get("next_action")
-            or _extract_first_action(result_payload.get("plan"))
-            or goal.next_action
-        )
-        if next_action:
-            goal.next_action = next_action
+    elif task.task_type == "multi_step":
+        completed = int(result_payload.get("completed") or 0)
+        total = int(result_payload.get("total") or 0)
+        failed = int(result_payload.get("failed") or 0)
+        if total > 0:
+            goal.current_milestone = f"Completed {completed}/{total} planned steps" + (f" with {failed} blocked" if failed else "")
+    elif task.task_type == "exam_prep":
+        goal.current_milestone = "Exam prep plan refreshed"
+    elif task.task_type == "assignment_analysis":
+        goal.current_milestone = f"Assignment analysis ready: {task.title}"
+    elif task.task_type == "wrong_answer_review":
+        wrong_answer_count = int(result_payload.get("wrong_answer_count") or 0)
+        goal.current_milestone = f"Reviewed {wrong_answer_count} wrong answer(s)"
+
+    if next_action:
+        goal.next_action = next_action
 
     goal.metadata_json = metadata
+    return _serialize_goal_update(goal)
+
+
+def _refresh_task_checkpoint(task: AgentTask, *, active_step_index: int | None = None) -> None:
+    if task.step_results_json:
+        task.checkpoint_json = _build_checkpoint(list(task.step_results_json), active_step_index=active_step_index)
 
 
 @contextmanager
@@ -232,20 +335,21 @@ async def submit_task(
     user_id: uuid.UUID,
     task_type: str,
     title: str,
+    db: AsyncSession | None = None,
     course_id: uuid.UUID | None = None,
     goal_id: uuid.UUID | None = None,
     summary: str | None = None,
     source: str = "workflow",
-    input_json: dict[str, Any] | None = None,
-    metadata_json: dict[str, Any] | None = None,
+    input_json: JsonObject | None = None,
+    metadata_json: JsonObject | None = None,
     requires_approval: bool = False,
     max_attempts: int = 2,
 ) -> AgentTask:
     from services.activity.tasks import create_task
 
-    async with async_session() as db:
+    async with _task_session(db) as db_session:
         task = await create_task(
-            db,
+            db_session,
             user_id=user_id,
             course_id=course_id,
             goal_id=goal_id,
@@ -259,20 +363,57 @@ async def submit_task(
             requires_approval=requires_approval,
             max_attempts=max_attempts,
         )
-        await db.commit()
-        await db.refresh(task)
+        await _record_task_audit(
+            db_session,
+            task,
+            action_kind="task_submit",
+            outcome="queued" if task.status != APPROVAL_REQUIRED_STATUS else "pending_approval",
+        )
+        await db_session.commit()
+        await db_session.refresh(task)
+
+        # Notify the activity engine via Redis (if enabled) so it wakes up
+        # immediately instead of waiting for the next polling interval.
+        if settings.activity_use_redis_notify and task.status != APPROVAL_REQUIRED_STATUS:
+            await notify_task_ready(str(task.id))
+
         return task
 
 
-async def approve_task(task_id: uuid.UUID, user_id: uuid.UUID) -> AgentTask | None:
-    async with async_session() as db:
-        result = await db.execute(
-            select(AgentTask).where(AgentTask.id == task_id, AgentTask.user_id == user_id)
-        )
-        task = result.scalar_one_or_none()
+@asynccontextmanager
+async def _null_async_context(value: AsyncSession):
+    yield value
+
+
+@asynccontextmanager
+async def _task_session(db: AsyncSession | None):
+    owns_session = db is None
+    session = db or async_session()
+    async with (session if owns_session else _null_async_context(session)) as db_session:
+        yield db_session
+
+
+async def _get_user_task(db: AsyncSession, task_id: uuid.UUID, user_id: uuid.UUID) -> AgentTask | None:
+    result = await db.execute(
+        select(AgentTask).where(AgentTask.id == task_id, AgentTask.user_id == user_id)
+    )
+    task = result.scalar_one_or_none()
+    if task:
+        _refresh_task_policy(task)
+    return task
+
+
+async def _commit_refreshed_task(db: AsyncSession, task: AgentTask) -> AgentTask:
+    await db.commit()
+    await db.refresh(task)
+    return task
+
+
+async def approve_task(task_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSession | None = None) -> AgentTask | None:
+    async with _task_session(db) as db_session:
+        task = await _get_user_task(db_session, task_id, user_id)
         if not task:
             return None
-        _refresh_task_policy(task)
         if task.status != APPROVAL_REQUIRED_STATUS:
             raise TaskMutationError(f"Task cannot be approved from status '{task.status}'")
         task.approved_at = _utcnow()
@@ -281,20 +422,18 @@ async def approve_task(task_id: uuid.UUID, user_id: uuid.UUID) -> AgentTask | No
         task.error_message = None
         task.completed_at = None
         _task_event(task, "approved")
-        await db.commit()
-        await db.refresh(task)
-        return task
+        await _record_task_audit(db_session, task, action_kind="task_approve", outcome="queued")
+        result = await _commit_refreshed_task(db_session, task)
+        if settings.activity_use_redis_notify:
+            await notify_task_ready(str(task.id))
+        return result
 
 
-async def reject_task(task_id: uuid.UUID, user_id: uuid.UUID) -> AgentTask | None:
-    async with async_session() as db:
-        result = await db.execute(
-            select(AgentTask).where(AgentTask.id == task_id, AgentTask.user_id == user_id)
-        )
-        task = result.scalar_one_or_none()
+async def reject_task(task_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSession | None = None) -> AgentTask | None:
+    async with _task_session(db) as db_session:
+        task = await _get_user_task(db_session, task_id, user_id)
         if not task:
             return None
-        _refresh_task_policy(task)
         if task.status != APPROVAL_REQUIRED_STATUS:
             raise TaskMutationError(f"Task cannot be rejected from status '{task.status}'")
         now = _utcnow()
@@ -304,20 +443,15 @@ async def reject_task(task_id: uuid.UUID, user_id: uuid.UUID) -> AgentTask | Non
         task.completed_at = now
         task.approved_at = None
         _task_event(task, "rejected")
-        await db.commit()
-        await db.refresh(task)
-        return task
+        await _record_task_audit(db_session, task, action_kind="task_reject", outcome="rejected")
+        return await _commit_refreshed_task(db_session, task)
 
 
-async def cancel_task(task_id: uuid.UUID, user_id: uuid.UUID) -> AgentTask | None:
-    async with async_session() as db:
-        result = await db.execute(
-            select(AgentTask).where(AgentTask.id == task_id, AgentTask.user_id == user_id)
-        )
-        task = result.scalar_one_or_none()
+async def cancel_task(task_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSession | None = None) -> AgentTask | None:
+    async with _task_session(db) as db_session:
+        task = await _get_user_task(db_session, task_id, user_id)
         if not task:
             return None
-        _refresh_task_policy(task)
         now = _utcnow()
         if task.status in {"completed", "failed", "cancelled", REJECTED_TASK_STATUS}:
             raise TaskMutationError(f"Task cannot be cancelled from status '{task.status}'")
@@ -327,24 +461,20 @@ async def cancel_task(task_id: uuid.UUID, user_id: uuid.UUID) -> AgentTask | Non
             task.completed_at = now
             task.error_message = "Cancelled before execution."
             _task_event(task, "cancelled")
+            await _record_task_audit(db_session, task, action_kind="task_cancel", outcome="cancelled")
         elif task.status == "running":
             task.status = CANCEL_REQUESTED_STATUS
             task.completed_at = None
             _task_event(task, "cancel_requested")
-        await db.commit()
-        await db.refresh(task)
-        return task
+            await _record_task_audit(db_session, task, action_kind="task_cancel", outcome="cancel_requested")
+        return await _commit_refreshed_task(db_session, task)
 
 
-async def resume_task(task_id: uuid.UUID, user_id: uuid.UUID) -> AgentTask | None:
-    async with async_session() as db:
-        result = await db.execute(
-            select(AgentTask).where(AgentTask.id == task_id, AgentTask.user_id == user_id)
-        )
-        task = result.scalar_one_or_none()
+async def resume_task(task_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSession | None = None) -> AgentTask | None:
+    async with _task_session(db) as db_session:
+        task = await _get_user_task(db_session, task_id, user_id)
         if not task:
             return None
-        _refresh_task_policy(task)
         if task.status == CANCEL_REQUESTED_STATUS:
             raise TaskMutationError("Task cancellation is still in progress")
         if task.status != "cancelled":
@@ -357,20 +487,18 @@ async def resume_task(task_id: uuid.UUID, user_id: uuid.UUID) -> AgentTask | Non
             APPROVAL_APPROVED if task.status == RESUMING_TASK_STATUS and task.requires_approval else APPROVAL_PENDING
         ) if task.requires_approval else task.approval_status
         _task_event(task, "resumed")
-        await db.commit()
-        await db.refresh(task)
-        return task
+        await _record_task_audit(db_session, task, action_kind="task_resume", outcome=task.status)
+        result = await _commit_refreshed_task(db_session, task)
+        if settings.activity_use_redis_notify and task.status in EXECUTABLE_TASK_STATUSES:
+            await notify_task_ready(str(task.id))
+        return result
 
 
-async def retry_task(task_id: uuid.UUID, user_id: uuid.UUID) -> AgentTask | None:
-    async with async_session() as db:
-        result = await db.execute(
-            select(AgentTask).where(AgentTask.id == task_id, AgentTask.user_id == user_id)
-        )
-        task = result.scalar_one_or_none()
+async def retry_task(task_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSession | None = None) -> AgentTask | None:
+    async with _task_session(db) as db_session:
+        task = await _get_user_task(db_session, task_id, user_id)
         if not task:
             return None
-        _refresh_task_policy(task)
         if task.status in {"running", CANCEL_REQUESTED_STATUS}:
             raise TaskMutationError(f"Task cannot be retried from status '{task.status}'")
         if task.status not in {"failed", "cancelled", REJECTED_TASK_STATUS}:
@@ -394,9 +522,11 @@ async def retry_task(task_id: uuid.UUID, user_id: uuid.UUID) -> AgentTask | None
             approved_at=task.approved_at,
         )
         _task_event(task, "retried")
-        await db.commit()
-        await db.refresh(task)
-        return task
+        await _record_task_audit(db_session, task, action_kind="task_retry", outcome=task.status)
+        result = await _commit_refreshed_task(db_session, task)
+        if settings.activity_use_redis_notify and task.status in EXECUTABLE_TASK_STATUSES:
+            await notify_task_ready(str(task.id))
+        return result
 
 
 async def _claim_pending_tasks(limit: int) -> list[uuid.UUID]:
@@ -428,6 +558,7 @@ async def _claim_pending_tasks(limit: int) -> list[uuid.UUID]:
             )
             task.started_at = now
             task.attempts += 1
+            await _record_task_audit(db, task, action_kind="task_execute_start", outcome="running")
             ids.append(task.id)
         await db.commit()
         return ids
@@ -464,7 +595,7 @@ async def execute_task(task_id: uuid.UUID) -> bool:
     return await _mark_task_success(task_id, result_payload=result_payload, summary=summary)
 
 
-async def _mark_task_success(task_id: uuid.UUID, *, result_payload: dict[str, Any], summary: str | None) -> bool:
+async def _mark_task_success(task_id: uuid.UUID, *, result_payload: JsonObject, summary: str | None) -> bool:
     async with async_session() as db:
         result = await db.execute(select(AgentTask).where(AgentTask.id == task_id))
         task = result.scalar_one_or_none()
@@ -481,11 +612,22 @@ async def _mark_task_success(task_id: uuid.UUID, *, result_payload: dict[str, An
                 approved_at=task.approved_at,
             )
             _task_event(task, "cancelled")
+            await _record_task_audit(db, task, action_kind="task_execute_cancelled", outcome="cancelled")
             await db.commit()
             return False
         task.status = "completed"
+        goal_update = await _sync_goal_after_task_success(db, task, result_payload)
+        stored_result = attach_task_review_payload(
+            result_payload,
+            build_task_review_payload(
+                task,
+                result_payload,
+                summary,
+                goal_update=goal_update,
+            ),
+        )
         task.summary = _truncate_summary(summary)
-        task.result_json = result_payload
+        task.result_json = stored_result
         metadata = dict(task.metadata_json or {})
         merged_provenance = merge_provenance(
             metadata.get("provenance") if isinstance(metadata.get("provenance"), dict) else None,
@@ -495,8 +637,7 @@ async def _mark_task_success(task_id: uuid.UUID, *, result_payload: dict[str, An
             metadata["provenance"] = merged_provenance
             task.metadata_json = metadata
             task.provenance_json = merged_provenance
-        if task.step_results_json:
-            task.checkpoint_json = _build_checkpoint(list(task.step_results_json), active_step_index=None)
+        _refresh_task_checkpoint(task)
         task.approval_status = infer_approval_status(
             requires_approval=task.requires_approval,
             status=task.status,
@@ -504,8 +645,14 @@ async def _mark_task_success(task_id: uuid.UUID, *, result_payload: dict[str, An
         )
         task.error_message = None
         task.completed_at = now
-        await _sync_goal_after_task_success(db, task, result_payload)
         _task_event(task, "completed")
+        await _record_task_audit(
+            db,
+            task,
+            action_kind="task_execute_complete",
+            outcome="completed",
+            details={"result_keys": sorted(result_payload.keys())[:12]},
+        )
         await db.commit()
         return True
 
@@ -514,7 +661,7 @@ async def _mark_task_cancelled(
     task_id: uuid.UUID,
     *,
     error_message: str,
-    result_payload: dict[str, Any] | None = None,
+    result_payload: JsonObject | None = None,
     summary: str | None = None,
 ) -> bool:
     async with async_session() as db:
@@ -530,8 +677,7 @@ async def _mark_task_cancelled(
             task.result_json = result_payload
             result_provenance = result_payload.get("provenance") if isinstance(result_payload, dict) else None
             task.provenance_json = merge_provenance(task.provenance_json, result_provenance)
-        if task.step_results_json:
-            task.checkpoint_json = _build_checkpoint(list(task.step_results_json), active_step_index=None)
+        _refresh_task_checkpoint(task)
         task.approval_status = infer_approval_status(
             requires_approval=task.requires_approval,
             status=task.status,
@@ -539,6 +685,7 @@ async def _mark_task_cancelled(
         )
         task.completed_at = now
         _task_event(task, "cancelled")
+        await _record_task_audit(db, task, action_kind="task_execute_cancelled", outcome="cancelled")
         await db.commit()
         return True
 
@@ -564,12 +711,18 @@ async def _mark_task_failure(task_id: uuid.UUID, error_message: str) -> bool:
             task.status = "failed"
             task.completed_at = now
             _task_event(task, "failed")
-        if task.step_results_json:
-            task.checkpoint_json = _build_checkpoint(list(task.step_results_json), active_step_index=None)
+        _refresh_task_checkpoint(task)
         task.approval_status = infer_approval_status(
             requires_approval=task.requires_approval,
             status=task.status,
             approved_at=task.approved_at,
+        )
+        await _record_task_audit(
+            db,
+            task,
+            action_kind="task_execute_failed",
+            outcome=task.status,
+            details={"error_message": error_message},
         )
         await db.commit()
         return True
@@ -580,8 +733,8 @@ async def _dispatch_task(
     task_id: uuid.UUID,
     task_type: str,
     user_id: uuid.UUID,
-    payload: dict[str, Any],
-) -> tuple[dict[str, Any], str | None]:
+    payload: JsonObject,
+) -> tuple[JsonObject, str | None]:
     with _force_container_sandbox():
         async with async_session() as db:
             if task_type == "weekly_prep":
@@ -650,17 +803,52 @@ async def _dispatch_task(
                 summary = f"Executed code in {result.get('backend', 'unknown')} sandbox"
                 return result, summary
 
+            if task_type == "memory_consolidation":
+                from services.agent.memory_agent import run_full_consolidation
+
+                result = await run_full_consolidation(db, user_id)
+                summary = (
+                    f"Consolidated: deduped={result.get('deduped', 0)}, "
+                    f"decayed={result.get('decayed', 0)}, "
+                    f"categorized={result.get('categorized', 0)}"
+                )
+                return result, summary
+
+            if task_type == "agent_subtask":
+                # Generic agent subtask: runs a specified agent with a message
+                agent_name = str(payload.get("agent_name", "teaching"))
+                message = str(payload.get("message", ""))
+                if not message.strip():
+                    raise ValueError("agent_subtask requires a non-empty message")
+
+                from services.agent.registry import get_agent, build_agent_context
+                agent = get_agent(agent_name)
+                if not agent:
+                    raise ValueError(f"Unknown agent: {agent_name}")
+
+                ctx = build_agent_context(
+                    user_id=user_id,
+                    course_id=_normalize_uuid(payload.get("course_id")),
+                    message=message,
+                    intent_type=payload.get("intent_type", "general"),
+                )
+                ctx = await agent.run(ctx, db)
+                return {
+                    "agent": agent_name,
+                    "response": ctx.response or "",
+                }, (ctx.response or "Agent subtask completed.")[:300]
+
             raise ValueError(f"Unsupported task_type: {task_type}")
 
 
 def _build_plan_progress(
-    steps: list[dict[str, Any]],
+    steps: list[JsonObject],
     *,
-    results: list[dict[str, Any]] | None = None,
+    results: list[TaskStepResult] | None = None,
     active_step_index: int | None = None,
-) -> list[dict[str, Any]]:
+) -> list[PlanProgressStep]:
     result_map = {item["step_index"]: item for item in (results or [])}
-    progress: list[dict[str, Any]] = []
+    progress: list[PlanProgressStep] = []
     for step in steps:
         step_index = step["step_index"]
         result = result_map.get(step_index)
@@ -686,11 +874,11 @@ def _build_plan_progress(
 
 
 def _build_plan_result_snapshot(
-    steps: list[dict[str, Any]],
-    results: list[dict[str, Any]],
+    steps: list[JsonObject],
+    results: list[TaskStepResult],
     *,
     active_step_index: int | None = None,
-) -> dict[str, Any]:
+) -> PlanResultPayload:
     payload = _build_plan_result_payload(steps, results)
     if active_step_index is not None:
         payload["active_step_index"] = active_step_index
@@ -700,9 +888,9 @@ def _build_plan_result_snapshot(
 async def _persist_plan_progress(
     db: AsyncSession,
     task_id: uuid.UUID,
-    steps: list[dict[str, Any]],
+    steps: list[JsonObject],
     *,
-    results: list[dict[str, Any]] | None = None,
+    results: list[TaskStepResult] | None = None,
     active_step_index: int | None = None,
 ) -> None:
     result = await db.execute(select(AgentTask).where(AgentTask.id == task_id))
@@ -724,14 +912,13 @@ async def _persist_plan_progress(
             active_step_index=active_step_index,
         )
         task.step_results_json = results
-        task.checkpoint_json = _build_checkpoint(results, active_step_index=active_step_index)
+        _refresh_task_checkpoint(task, active_step_index=active_step_index)
         task.provenance_json = merge_provenance(task.provenance_json, _merge_step_provenance(results))
     await db.commit()
 
 
 async def _cancel_requested(db: AsyncSession, task_id: uuid.UUID) -> bool:
-    result = await db.execute(select(AgentTask).where(AgentTask.id == task_id))
-    task = result.scalar_one_or_none()
+    task = await db.get(AgentTask, task_id, populate_existing=True)
     return bool(task and task.cancel_requested_at is not None)
 
 
@@ -739,9 +926,9 @@ async def _run_multi_step_plan(
     db: AsyncSession,
     task_id: uuid.UUID,
     user_id: uuid.UUID,
-    payload: dict[str, Any],
+    payload: JsonObject,
     db_factory,
-) -> tuple[dict[str, Any], str | None]:
+) -> tuple[PlanResultPayload, str | None]:
     """Execute a multi-step plan created by TaskPlanner."""
     from services.agent.task_planner import execute_plan_step
 
@@ -753,7 +940,7 @@ async def _run_multi_step_plan(
     task_result = await db.execute(select(AgentTask).where(AgentTask.id == task_id))
     task = task_result.scalar_one_or_none()
     persisted_steps = (task.step_results_json if task else None) or ((task.result_json or {}) if task else {}).get("steps")
-    results: list[dict[str, Any]] = _coerce_step_results(persisted_steps)
+    results: list[TaskStepResult] = _coerce_step_results(persisted_steps)
 
     await _persist_plan_progress(db, task_id, steps, results=results, active_step_index=None)
 
@@ -825,11 +1012,49 @@ async def _execute_with_semaphore(task_id: uuid.UUID) -> None:
         await execute_task(task_id)
 
 
+async def _wait_with_redis_or_stop(timeout: float) -> bool:
+    """Wait for either a Redis task notification or a stop event.
+
+    Returns *True* if a Redis notification was received (meaning new work is
+    likely available), *False* if the stop event fired or the timeout expired.
+    """
+    assert _stop_event is not None
+
+    async def _redis_wait() -> bool:
+        result = await wait_for_task_notification(timeout=timeout)
+        return result is not None
+
+    async def _stop_wait() -> bool:
+        await _stop_event.wait()
+        return False
+
+    done, pending = await asyncio.wait(
+        [asyncio.create_task(_redis_wait()), asyncio.create_task(_stop_wait())],
+        return_when=asyncio.FIRST_COMPLETED,
+    )
+    # Cancel whichever coroutine lost the race.
+    for task in pending:
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):
+            pass
+    # Return the result of the first completed coroutine.
+    for task in done:
+        try:
+            return task.result()
+        except Exception:
+            return False
+    return False
+
+
 async def _run_loop() -> None:
     assert _stop_event is not None
     assert _worker_semaphore is not None
     max_concurrency = settings.activity_engine_max_concurrency
+    use_redis = settings.activity_use_redis_notify
 
+    current_idle_interval = IDLE_INTERVAL_SECONDS
     while not _stop_event.is_set():
         try:
             # Claim up to max_concurrency tasks in one batch.
@@ -843,8 +1068,26 @@ async def _run_loop() -> None:
                 t = asyncio.create_task(_execute_with_semaphore(task_id))
                 _inflight_tasks.add(t)
                 t.add_done_callback(_inflight_tasks.discard)
+            # Reset backoff when work is found
+            current_idle_interval = IDLE_INTERVAL_SECONDS
+            timeout = POLL_INTERVAL_SECONDS
+        else:
+            # Exponential backoff when idle to reduce unnecessary DB load
+            timeout = current_idle_interval
+            current_idle_interval = min(current_idle_interval * BACKOFF_MULTIPLIER, MAX_IDLE_INTERVAL_SECONDS)
 
-        timeout = POLL_INTERVAL_SECONDS if ids else IDLE_INTERVAL_SECONDS
+        # When Redis notify is enabled, use pub/sub to wait for a wake-up
+        # signal instead of sleeping for the full timeout.  If a notification
+        # arrives we reset the backoff and immediately loop back to claim
+        # tasks.  The existing stop_event is checked concurrently so that
+        # shutdown requests are still honoured promptly.
+        if use_redis and not ids:
+            notified = await _wait_with_redis_or_stop(timeout)
+            if notified:
+                # A task was published -- reset backoff and claim immediately.
+                current_idle_interval = IDLE_INTERVAL_SECONDS
+            continue
+
         try:
             await asyncio.wait_for(_stop_event.wait(), timeout=timeout)
         except asyncio.TimeoutError:
@@ -859,8 +1102,9 @@ def start_activity_engine() -> None:
     _worker_semaphore = asyncio.Semaphore(settings.activity_engine_max_concurrency)
     _worker_task = asyncio.create_task(_run_loop())
     logger.info(
-        "Activity engine started (max_concurrency=%d)",
+        "Activity engine started (max_concurrency=%d, redis_notify=%s)",
         settings.activity_engine_max_concurrency,
+        settings.activity_use_redis_notify,
     )
 
 
@@ -882,4 +1126,6 @@ async def stop_activity_engine() -> None:
         await asyncio.gather(*_inflight_tasks, return_exceptions=True)
     _inflight_tasks.clear()
     _worker_semaphore = None
+    # Close the shared Redis connection used for task notifications.
+    await _close_redis_notify()
     logger.info("Activity engine stopped")

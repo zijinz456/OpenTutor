@@ -41,6 +41,7 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://opentutor:opentutor_dev@db:5432/opentutor
       REDIS_URL: redis://redis:6379/0
+      DEPLOYMENT_MODE: ${DEPLOYMENT_MODE:-single_user}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
@@ -48,12 +49,13 @@ services:
       LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
       LLM_REQUIRED: ${LLM_REQUIRED:-false}
       APP_AUTO_CREATE_TABLES: ${APP_AUTO_CREATE_TABLES:-false}
-      APP_AUTO_SEED_SYSTEM: ${APP_AUTO_SEED_SYSTEM:-true}
+      APP_AUTO_SEED_SYSTEM: ${APP_AUTO_SEED_SYSTEM:-false}
       APP_RUN_SCHEDULER: ${APP_RUN_SCHEDULER:-false}
-      APP_RUN_ACTIVITY_ENGINE: ${APP_RUN_ACTIVITY_ENGINE:-true}
+      APP_RUN_ACTIVITY_ENGINE: ${APP_RUN_ACTIVITY_ENGINE:-false}
       CODE_SANDBOX_BACKEND: ${CODE_SANDBOX_BACKEND:-container}
       CODE_SANDBOX_RUNTIME: ${CODE_SANDBOX_RUNTIME:-docker}
       CODE_SANDBOX_IMAGE: ${CODE_SANDBOX_IMAGE:-python:3.11-alpine}
+      ALLOW_INSECURE_PROCESS_SANDBOX: ${ALLOW_INSECURE_PROCESS_SANDBOX:-false}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
       UPLOAD_DIR: /app/uploads
       SCRAPE_FIXTURE_DIR: /fixtures/e2e/scrape

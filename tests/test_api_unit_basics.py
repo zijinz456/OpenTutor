@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy.exc import ProgrammingError
 
 from libs.exceptions import NotFoundError, ValidationError
 from routers.chat import _build_session_title, _resolve_chat_session
@@ -18,6 +19,7 @@ from routers.workflows import _raise_if_service_error
 from services.auth.dependency import get_current_user
 from services.llm.local_config import get_llm_runtime_config, update_llm_runtime_config
 from services.llm import router as llm_router
+from services.migrations import summarize_migration_state
 from services.preference.scene import DEFAULT_SCENE, detect_scene
 
 
@@ -129,6 +131,32 @@ def test_build_session_title_trims_and_compacts_whitespace():
     assert title == "this is a long first message"
 
 
+def test_summarize_migration_state_requires_alembic_tracking():
+    state = summarize_migration_state(
+        table_names={"users", "courses"},
+        current_heads=[],
+        expected_heads=["20260306_0017"],
+    )
+
+    assert state.schema_ready is False
+    assert state.migration_required is True
+    assert state.migration_status == "version_table_missing"
+    assert state.alembic_version_present is False
+
+
+def test_summarize_migration_state_accepts_current_head():
+    state = summarize_migration_state(
+        table_names={"users", "alembic_version"},
+        current_heads=["20260306_0017"],
+        expected_heads=["20260306_0017"],
+    )
+
+    assert state.schema_ready is True
+    assert state.migration_required is False
+    assert state.migration_status == "ready"
+    assert state.alembic_version_present is True
+
+
 class _ScalarResult:
     def __init__(self, value):
         self._value = value
@@ -225,13 +253,37 @@ async def test_get_current_user_commits_local_user_creation(monkeypatch):
     db.add = MagicMock()
     db.commit = AsyncMock()
     db.refresh = AsyncMock()
+    request = SimpleNamespace(state=SimpleNamespace())
 
-    user = await get_current_user(db=db, credentials=None)
+    user = await get_current_user(request=request, db=db, credentials=None)
 
     assert user.name == "Owner"
     db.add.assert_called_once()
     db.commit.assert_awaited_once()
     db.refresh.assert_awaited_once_with(user)
+    assert request.state.user_id == str(user.id)
+    assert request.state.deployment_mode == "single_user"
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_returns_schema_hint_when_users_table_missing(monkeypatch):
+    monkeypatch.setattr("services.auth.dependency.settings.auth_enabled", False, raising=False)
+    monkeypatch.setattr("services.auth.dependency.settings.deployment_mode", "single_user", raising=False)
+
+    db = MagicMock()
+    db.execute = AsyncMock(
+        side_effect=ProgrammingError(
+            "SELECT users.id FROM users LIMIT 1",
+            None,
+            Exception('relation "users" does not exist'),
+        )
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await get_current_user(db=db, credentials=None)
+
+    assert exc.value.status_code == 503
+    assert "alembic upgrade head" in exc.value.detail
 
 
 @pytest.mark.asyncio

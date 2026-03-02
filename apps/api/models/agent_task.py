@@ -35,6 +35,8 @@ class AgentTask(Base):
     task_kind: Mapped[str] = mapped_column(String(30), nullable=False, default="read_only")
     risk_level: Mapped[str] = mapped_column(String(20), nullable=False, default="low")
     approval_status: Mapped[str] = mapped_column(String(20), nullable=False, default="not_required")
+    approval_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    approval_action: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     checkpoint_json: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     step_results_json: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
     provenance_json: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)

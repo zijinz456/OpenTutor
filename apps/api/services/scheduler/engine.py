@@ -524,6 +524,73 @@ async def _has_scheduled_weekly_task(
     return result.scalar_one_or_none() is not None
 
 
+async def study_reminder_job():
+    """Study reminder job — check goals with target dates and send reminders.
+
+    For each active goal approaching its target_date, send a notification
+    reminding the student to work toward it. Deduplicates by goal ID + date.
+    """
+    logger.info("Running study reminder job...")
+    now = _utcnow()
+    reminded = 0
+
+    async with async_session() as db:
+        # Find active goals with target_date within the next 3 days
+        result = await db.execute(
+            select(StudyGoal).where(
+                StudyGoal.status == "active",
+                StudyGoal.target_date.isnot(None),
+                StudyGoal.target_date <= now + timedelta(days=3),
+                StudyGoal.target_date >= now - timedelta(hours=1),
+            )
+        )
+        goals = result.scalars().all()
+
+        for goal in goals:
+            days_left = (goal.target_date - now).days
+            if days_left < 0:
+                urgency = "overdue"
+                title = f"Goal overdue: {goal.title}"
+                body = f'Your goal "{goal.title}" is past its target date. Consider updating or completing it.'
+                priority = "high"
+            elif days_left == 0:
+                urgency = "today"
+                title = f"Goal due today: {goal.title}"
+                body = f'Your goal "{goal.title}" is due today! {goal.next_action or "Time to finish up."}'
+                priority = "high"
+            elif days_left == 1:
+                urgency = "tomorrow"
+                title = f"Goal due tomorrow: {goal.title}"
+                body = f'Your goal "{goal.title}" is due tomorrow. {goal.next_action or "Keep going!"}'
+                priority = "normal"
+            else:
+                urgency = "soon"
+                title = f"Goal due in {days_left} days: {goal.title}"
+                body = f'Your goal "{goal.title}" is coming up. {goal.next_action or "Stay on track!"}'
+                priority = "normal"
+
+            dedup_key = f"study_reminder:{goal.id}:{now.strftime('%Y-%m-%d')}:{urgency}"
+            try:
+                await _push_notification(
+                    user_id=goal.user_id,
+                    title=title,
+                    body=body,
+                    category="study_reminder",
+                    course_id=goal.course_id,
+                    priority=priority,
+                    dedup_key=dedup_key,
+                )
+                reminded += 1
+            except Exception as e:
+                logger.warning("Failed to send study reminder for goal %s: %s", goal.id, e)
+
+    logger.info("Study reminder job complete: %d reminders sent", reminded)
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 def start_scheduler():
     """Start the APScheduler with all configured jobs."""
     # Weekly prep: every Monday at 8:00 AM
@@ -604,6 +671,15 @@ def start_scheduler():
         trigger=IntervalTrigger(hours=2),
         id="escalation_check",
         name="Notification Escalation Check",
+        replace_existing=True,
+    )
+
+    # Study goal reminders: every 4 hours
+    scheduler.add_job(
+        study_reminder_job,
+        trigger=IntervalTrigger(hours=4),
+        id="study_reminder",
+        name="Study Goal Reminder (target date alerts)",
         replace_existing=True,
     )
 

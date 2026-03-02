@@ -160,4 +160,9 @@ def _derive_display_name(channel_type: str, channel_id: str) -> str:
         local, domain = channel_id.split("@", 1)
         masked_local = local[:3] + "***" if len(local) > 3 else local
         return f"{masked_local}@{domain}"
+    if channel_type in ("telegram", "discord"):
+        # Use a generic label with masked ID for privacy
+        if len(channel_id) > 4:
+            return f"{channel_type.title()} User ***{channel_id[-4:]}"
+        return f"{channel_type.title()} User"
     return f"{channel_type.title()} User"

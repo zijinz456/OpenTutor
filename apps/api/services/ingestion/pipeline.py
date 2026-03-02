@@ -203,7 +203,7 @@ async def classify_content(content: str) -> str:
     try:
         from services.ingestion.content_trimmer import trim_for_llm
 
-        client = get_llm_client()
+        client = get_llm_client("fast")
         trimmed = trim_for_llm(content, max_tokens=2000)
         prompt = CLASSIFICATION_PROMPT.format(content=trimmed)
         result, _ = await client.extract(

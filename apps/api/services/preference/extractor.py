@@ -12,6 +12,7 @@ Phase 1: Full 5-dimension extraction + batch processing.
 import json
 import logging
 import uuid
+from datetime import datetime, timezone
 
 from services.llm.router import get_llm_client
 
@@ -80,7 +81,7 @@ async def extract_preference_signal(
 
     Returns signal dict or None if no signal detected.
     """
-    client = get_llm_client()
+    client = get_llm_client("fast")
 
     conversation_text = f"Student: {user_message}\nTutor: {assistant_response}"
 
@@ -133,3 +134,192 @@ async def extract_preference_signal(
     except Exception as e:
         logger.warning(f"Signal extraction failed: {e}")
         return None
+
+
+# ---------------------------------------------------------------------------
+# Behavior-based preference inference
+# ---------------------------------------------------------------------------
+
+def infer_time_of_day_preference(
+    now: datetime | None = None,
+) -> dict | None:
+    """Infer detail_level preference based on time of day.
+
+    Late-night learners (22:00–05:00) likely prefer concise content.
+    Morning/afternoon learners are assumed to tolerate balanced detail.
+    """
+    now = now or datetime.now(timezone.utc)
+    hour = now.hour
+    if 22 <= hour or hour < 5:
+        return {
+            "signal_type": "behavior",
+            "dimension": "detail_level",
+            "value": "concise",
+            "context": {"evidence": f"Late-night session (hour={hour})", "source": "time_of_day"},
+        }
+    return None
+
+
+async def infer_from_quiz_performance(
+    db,
+    user_id: uuid.UUID,
+    course_id: uuid.UUID,
+    *,
+    window: int = 20,
+) -> list[dict]:
+    """Infer preference signals from recent quiz performance.
+
+    - Consistent high accuracy (>85%) → suggest increasing difficulty / detail.
+    - Consistent low accuracy (<45%) → suggest reducing detail, more examples.
+    """
+    from sqlalchemy import select, desc
+    from models.quiz import QuizAttempt
+
+    stmt = (
+        select(QuizAttempt.is_correct)
+        .where(QuizAttempt.user_id == user_id, QuizAttempt.course_id == course_id)
+        .order_by(desc(QuizAttempt.created_at))
+        .limit(window)
+    )
+    result = await db.execute(stmt)
+    rows = result.scalars().all()
+
+    if len(rows) < 10:
+        return []
+
+    accuracy = sum(1 for r in rows if r) / len(rows)
+    signals: list[dict] = []
+
+    if accuracy >= 0.85:
+        signals.append({
+            "signal_type": "behavior",
+            "dimension": "detail_level",
+            "value": "detailed",
+            "context": {
+                "evidence": f"High quiz accuracy ({accuracy:.0%} over {len(rows)} attempts)",
+                "source": "quiz_performance",
+            },
+        })
+    elif accuracy < 0.45:
+        signals.append({
+            "signal_type": "behavior",
+            "dimension": "detail_level",
+            "value": "concise",
+            "context": {
+                "evidence": f"Low quiz accuracy ({accuracy:.0%} over {len(rows)} attempts) — simpler explanations may help",
+                "source": "quiz_performance",
+            },
+        })
+        signals.append({
+            "signal_type": "behavior",
+            "dimension": "explanation_style",
+            "value": "example_heavy",
+            "context": {
+                "evidence": f"Low quiz accuracy ({accuracy:.0%}) — more examples may reinforce understanding",
+                "source": "quiz_performance",
+            },
+        })
+
+    return signals
+
+
+async def infer_from_interaction_patterns(
+    db,
+    user_id: uuid.UUID,
+    course_id: uuid.UUID,
+    *,
+    window: int = 30,
+) -> list[dict]:
+    """Infer preferences from recent message length patterns.
+
+    - If user consistently sends very short messages (<30 chars), they may
+      prefer concise responses.
+    - If user sends long detailed questions (>200 chars), they likely want
+      detailed responses.
+    """
+    from sqlalchemy import select, desc, func
+    from models.chat import ChatMessage
+
+    stmt = (
+        select(func.length(ChatMessage.content))
+        .where(
+            ChatMessage.user_id == user_id,
+            ChatMessage.course_id == course_id,
+            ChatMessage.role == "user",
+        )
+        .order_by(desc(ChatMessage.created_at))
+        .limit(window)
+    )
+    result = await db.execute(stmt)
+    lengths = result.scalars().all()
+
+    if len(lengths) < 10:
+        return []
+
+    avg_length = sum(lengths) / len(lengths)
+    signals: list[dict] = []
+
+    if avg_length < 30:
+        signals.append({
+            "signal_type": "behavior",
+            "dimension": "detail_level",
+            "value": "concise",
+            "context": {
+                "evidence": f"Average message length {avg_length:.0f} chars — user prefers brevity",
+                "source": "interaction_pattern",
+            },
+        })
+    elif avg_length > 200:
+        signals.append({
+            "signal_type": "behavior",
+            "dimension": "detail_level",
+            "value": "detailed",
+            "context": {
+                "evidence": f"Average message length {avg_length:.0f} chars — user engages deeply",
+                "source": "interaction_pattern",
+            },
+        })
+
+    return signals
+
+
+async def collect_behavior_signals(
+    db,
+    user_id: uuid.UUID,
+    course_id: uuid.UUID,
+) -> list[dict]:
+    """Aggregate all behavior-based preference signals.
+
+    Called periodically (e.g., after every N interactions) to supplement
+    the primary LLM-based extraction.
+    """
+    signals: list[dict] = []
+
+    # Time-of-day signal
+    tod_signal = infer_time_of_day_preference()
+    if tod_signal:
+        tod_signal["user_id"] = user_id
+        tod_signal["course_id"] = course_id
+        signals.append(tod_signal)
+
+    # Quiz performance signals
+    try:
+        quiz_signals = await infer_from_quiz_performance(db, user_id, course_id)
+        for s in quiz_signals:
+            s["user_id"] = user_id
+            s["course_id"] = course_id
+        signals.extend(quiz_signals)
+    except Exception as e:
+        logger.debug("Quiz performance inference skipped: %s", e)
+
+    # Interaction pattern signals
+    try:
+        pattern_signals = await infer_from_interaction_patterns(db, user_id, course_id)
+        for s in pattern_signals:
+            s["user_id"] = user_id
+            s["course_id"] = course_id
+        signals.extend(pattern_signals)
+    except Exception as e:
+        logger.debug("Interaction pattern inference skipped: %s", e)
+
+    return signals

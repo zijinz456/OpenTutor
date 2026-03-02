@@ -34,10 +34,21 @@ class Settings(BaseSettings):
     custom_llm_base_url: str = ""
     custom_llm_model: str = ""
 
+    # LiteLLM integration (opt-in alternative provider)
+    use_litellm: bool = False
+    litellm_model: str = ""  # Model string for LiteLLM (e.g., "openai/gpt-4o")
+    litellm_api_base: str = ""  # Optional custom API base for LiteLLM proxy
+    litellm_api_key: str = ""  # Optional API key for LiteLLM proxy
+
     # Model size routing (agent preference hints)
     llm_model_large: str = ""   # e.g. gpt-4o for teaching/planning agents
     llm_model_small: str = ""   # e.g. gpt-4o-mini for preference/scene agents
     llm_required: bool = False
+
+    # 3-tier model routing (overrides large/small when set)
+    llm_model_fast: str = ""       # e.g. gpt-4o-mini — greetings, preferences
+    llm_model_standard: str = ""   # e.g. gpt-4o — teaching, exercises
+    llm_model_frontier: str = ""   # e.g. o3-mini — planning, code execution
 
     # Authentication
     auth_enabled: bool = False
@@ -48,7 +59,7 @@ class Settings(BaseSettings):
     jwt_refresh_token_expire_days: int = 7
 
     # CORS
-    cors_origins: str = "http://localhost:3000"
+    cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
 
     # File Upload
     upload_dir: str = "./uploads"
@@ -77,11 +88,25 @@ class Settings(BaseSettings):
     bluebubbles_password: str = ""
     bluebubbles_webhook_secret: str = ""
 
+    # Telegram Bot API
+    telegram_bot_token: str = ""
+    telegram_chat_id: str = ""  # Default chat ID for outbound notifications
+
+    # Discord Bot
+    discord_bot_token: str = ""
+    discord_application_id: str = ""
+    discord_public_key: str = ""
+
     # Notification push
     push_notifications_enabled: bool = False
     vapid_private_key: str = ""
     vapid_public_key: str = ""
     vapid_claims_email: str = ""
+
+    # Rate limiting
+    rate_limit_mode: str = "simple"  # "simple" | "cost_aware"
+    rate_limit_cost_budget: int = 500  # cost units per minute per IP (cost_aware mode)
+    trust_proxy_headers: bool = False  # Trust X-Forwarded-For header (only enable behind a reverse proxy)
 
     # Swarm / parallel execution
     swarm_enabled: bool = True
@@ -90,6 +115,7 @@ class Settings(BaseSettings):
     swarm_token_budget: int = 50000
     parallel_context_loading: bool = True
     activity_engine_max_concurrency: int = 3
+    activity_use_redis_notify: bool = False
 
     # Code sandbox
     code_sandbox_backend: str = "container"  # container | auto | process

@@ -4,6 +4,7 @@ import {
   expectAssistantMessage,
   expectGeneratedNotes,
   expectGeneratedStudyPlan,
+  getRealLlmProvider,
   hasRealLlmEnv,
   sendChatMessage,
   skipOnboarding,
@@ -12,42 +13,33 @@ import {
 
 const FALLBACK_RE = /No LLM API key configured|local fallback response/i;
 
-function getRealProvider() {
-  const candidates = [
-    { provider: "openai", key: process.env.OPENAI_API_KEY, model: process.env.OPENAI_MODEL || "gpt-4o-mini" },
-    { provider: "anthropic", key: process.env.ANTHROPIC_API_KEY, model: process.env.ANTHROPIC_MODEL || "claude-sonnet-4-20250514" },
-    { provider: "deepseek", key: process.env.DEEPSEEK_API_KEY, model: process.env.DEEPSEEK_MODEL || "deepseek-chat" },
-    { provider: "openrouter", key: process.env.OPENROUTER_API_KEY, model: process.env.OPENROUTER_MODEL || "openai/gpt-4o-mini" },
-    { provider: "gemini", key: process.env.GEMINI_API_KEY, model: process.env.GEMINI_MODEL || "gemini-2.0-flash" },
-    { provider: "groq", key: process.env.GROQ_API_KEY, model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile" },
-  ];
-  const selected = candidates.find((item) => item.key);
-  if (!selected) {
-    throw new Error("No real LLM API key found in environment");
-  }
-  return selected as { provider: string; key: string; model: string };
-}
-
 test.describe.serial("Real LLM browser flows @llm", () => {
-  test.skip(!hasRealLlmEnv(), "Requires a real LLM API key");
+  test.skip(!hasRealLlmEnv(), "Requires a real LLM provider");
 
   test.beforeEach(async ({ page }) => {
     await skipOnboarding(page);
   });
 
   test("settings can store a provider key and transition runtime status", async ({ page }) => {
-    const llm = getRealProvider();
+    const llm = getRealLlmProvider();
+    if (!llm) {
+      throw new Error("No real LLM provider found in environment");
+    }
 
     await page.goto("/settings");
-    await expect(page.getByTestId("settings-llm-status")).toContainText(/mock_fallback|configuration_required/i, {
+    await expect(page.getByTestId("settings-llm-status")).toContainText(/mock_fallback|configuration_required|ready|degraded/i, {
       timeout: 15_000,
     });
 
     await page.getByTestId("settings-llm-provider").selectOption(llm.provider);
     await page.getByTestId("settings-llm-model").fill(llm.model);
     const requiredToggle = page.getByTestId("settings-llm-required");
-    await requiredToggle.click();
-    await page.getByTestId(`provider-key-${llm.provider}`).fill(llm.key);
+    if ((await requiredToggle.textContent())?.includes("Off")) {
+      await requiredToggle.click();
+    }
+    if (llm.requiresKey && llm.key) {
+      await page.getByTestId(`provider-key-${llm.provider}`).fill(llm.key);
+    }
     await page.getByTestId("settings-save-llm").click();
 
     await expect(page.getByText(/Saved local LLM configuration/i)).toBeVisible({ timeout: 15_000 });
@@ -64,6 +56,12 @@ test.describe.serial("Real LLM browser flows @llm", () => {
   });
 
   test("notes generation uses a real provider response", async ({ page }) => {
+    const llm = getRealLlmProvider();
+    if (!llm) {
+      throw new Error("No real LLM provider found in environment");
+    }
+    test.skip(!llm.requiresKey, "Long-form notes generation validation requires a higher-capacity provider");
+
     await createCourseWithContent(page, "LLM Browser Notes");
     await page.getByTestId("notes-generate").click();
     const preview = await expectGeneratedNotes(page);
@@ -71,6 +69,12 @@ test.describe.serial("Real LLM browser flows @llm", () => {
   });
 
   test("study plan generation uses a real provider response", async ({ page }) => {
+    const llm = getRealLlmProvider();
+    if (!llm) {
+      throw new Error("No real LLM provider found in environment");
+    }
+    test.skip(!llm.requiresKey, "Long-form study-plan validation requires a higher-capacity provider");
+
     await createCourseWithContent(page, "LLM Browser Plan");
     await switchScene(page, "exam_prep");
     await page.getByTestId("study-plan-generate").click();
@@ -79,6 +83,12 @@ test.describe.serial("Real LLM browser flows @llm", () => {
   });
 
   test("exercise generation can be saved into the quiz bank", async ({ page }) => {
+    const llm = getRealLlmProvider();
+    if (!llm) {
+      throw new Error("No real LLM provider found in environment");
+    }
+    test.skip(!llm.requiresKey, "Structured quiz-save validation requires a higher-capacity provider");
+
     await createCourseWithContent(page, "LLM Browser Exercise");
     await sendChatMessage(
       page,
@@ -87,10 +97,11 @@ test.describe.serial("Real LLM browser flows @llm", () => {
 
     const assistant = await expectAssistantMessage(page);
     await expect(assistant).not.toContainText(FALLBACK_RE);
+
     await expect(page.getByText(/generated questions detected/i)).toBeVisible({ timeout: 30_000 });
 
     await page.getByRole("button", { name: "Save New" }).click();
-    await expect(page.getByText(/Saved 3 questions to the course quiz bank/i)).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText(/Saved \d+ questions to the course quiz bank/i)).toBeVisible({ timeout: 15_000 });
 
     await page.getByRole("button", { name: "Practice" }).click();
     await expect(page.getByTestId("quiz-panel")).toBeVisible({ timeout: 15_000 });

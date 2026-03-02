@@ -48,3 +48,41 @@ def test_code_execution_reports_error_when_container_backend_required(monkeypatc
     assert result["success"] is False
     assert result["backend"] == "container"
     assert "not available" in result["error"]
+
+
+def test_code_execution_auto_mode_stays_strict_without_dev_override(monkeypatch):
+    agent = CodeExecutionAgent()
+
+    monkeypatch.setattr("services.agent.code_execution.settings.code_sandbox_backend", "auto")
+    monkeypatch.setattr("services.agent.container_sandbox.container_runtime_available", lambda: False)
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    monkeypatch.delenv("ALLOW_INSECURE_PROCESS_SANDBOX", raising=False)
+
+    result = agent._execute_safe("print('hi')")
+
+    assert result["success"] is False
+    assert result["backend"] == "container"
+    assert "not available" in result["error"]
+
+
+def test_code_execution_blocks_file_network_and_infinite_loop_patterns():
+    agent = CodeExecutionAgent()
+
+    assert agent._validate_code("import socket\nprint('x')")[0] is False
+    assert agent._validate_code("open('tmp.txt', 'w')")[0] is False
+    assert agent._validate_code("while True:\n    pass")[0] is False
+
+
+def test_container_sandbox_command_includes_strict_isolation_flags():
+    from pathlib import Path
+
+    from services.agent.container_sandbox import _build_container_command
+
+    command = _build_container_command(Path("/tmp/sandbox_runner.py"))
+
+    assert "--read-only" in command
+    assert "--network" in command and "none" in command
+    assert "--memory" in command and "256m" in command
+    assert "--memory-swap" in command and "256m" in command
+    assert "--cap-drop" in command and "ALL" in command
+    assert "--tmpfs" in command
