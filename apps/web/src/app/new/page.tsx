@@ -26,12 +26,27 @@ import {
   listIngestionJobs,
   uploadFile,
   scrapeUrl,
+  listAuthSessions,
+  canvasLogin,
   type CourseMetadata,
 } from "@/lib/api";
 import { useCourseStore } from "@/store/course";
 
 type Mode = "upload" | "url" | "both";
 type Step = "mode" | "upload" | "parsing" | "features";
+
+/* Canvas URL detection — ported from learning-agent-extension */
+const CANVAS_URL_PATTERNS = [
+  /^https?:\/\/canvas\.[^/]*\.edu/i,
+  /^https?:\/\/[^/]*\.edu\/.*canvas/i,
+  /^https?:\/\/[^/]*\.instructure\.com/i,
+  /^https?:\/\/[^/]*\.canvaslms\.com/i,
+  /^https?:\/\/canvas\.lms\.[^/]+\.edu/i,
+];
+
+function isCanvasUrl(url: string): boolean {
+  return CANVAS_URL_PATTERNS.some((p) => p.test(url));
+}
 
 interface FileItem {
   file: File;
@@ -136,6 +151,13 @@ export default function NewProjectPage() {
   const [createdCourseId, setCreatedCourseId] = useState<string | null>(null);
   const [nameError, setNameError] = useState<string | null>(null);
   const [urlError, setUrlError] = useState<string | null>(null);
+  const [isCanvasDetected, setIsCanvasDetected] = useState(false);
+  const [showCanvasLogin, setShowCanvasLogin] = useState(false);
+  const [canvasUsername, setCanvasUsername] = useState("");
+  const [canvasPassword, setCanvasPassword] = useState("");
+  const [canvasLogging, setCanvasLogging] = useState(false);
+  const [canvasLoginError, setCanvasLoginError] = useState<string | null>(null);
+  const [canvasSessionValid, setCanvasSessionValid] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [ingestionJobs, setIngestionJobs] = useState<IngestionJobSummary[]>([]);
   const [isSubmittingContent, setIsSubmittingContent] = useState(false);
@@ -167,11 +189,13 @@ export default function NewProjectPage() {
   };
 
   const validateUrl = (value: string) => {
-    if (value.trim() && !/^https?:\/\//i.test(value.trim())) {
+    const trimmed = value.trim();
+    if (trimmed && !/^https?:\/\//i.test(trimmed)) {
       setUrlError("URL must start with http:// or https://");
     } else {
       setUrlError(null);
     }
+    setIsCanvasDetected(trimmed ? isCanvasUrl(trimmed) : false);
   };
 
   const hasUploadErrors = nameError !== null || urlError !== null;
@@ -277,6 +301,58 @@ export default function NewProjectPage() {
     };
   }, [createdCourseId, noSourcesSubmitted, step]);
 
+  // Handle "Add" button click for URL input
+  const handleAddUrl = useCallback(async () => {
+    const trimmed = url.trim();
+    if (!trimmed) return;
+
+    if (!isCanvasUrl(trimmed)) {
+      // Non-Canvas URL — nothing special to do, URL is already in state
+      return;
+    }
+
+    // Canvas URL detected — check if we already have a valid session for this domain
+    try {
+      const sessions = await listAuthSessions();
+      const domain = new URL(trimmed).hostname;
+      const match = sessions.find(
+        (s) => s.is_valid && domain.includes(s.domain),
+      );
+      if (match) {
+        setCanvasSessionValid(true);
+        return;
+      }
+    } catch {
+      // Auth session check failed — prompt login anyway
+    }
+
+    // No valid session — open the Canvas login modal
+    setCanvasLoginError(null);
+    setCanvasUsername("");
+    setCanvasPassword("");
+    setShowCanvasLogin(true);
+  }, [url]);
+
+  // Handle Canvas login form submission
+  const handleCanvasLoginSubmit = useCallback(async () => {
+    const trimmed = url.trim();
+    if (!trimmed || !canvasUsername || !canvasPassword) return;
+
+    setCanvasLogging(true);
+    setCanvasLoginError(null);
+
+    try {
+      await canvasLogin(trimmed, canvasUsername, canvasPassword);
+      setCanvasSessionValid(true);
+      setShowCanvasLogin(false);
+      setCanvasPassword("");
+    } catch (err) {
+      setCanvasLoginError((err as Error).message || "Login failed");
+    } finally {
+      setCanvasLogging(false);
+    }
+  }, [url, canvasUsername, canvasPassword]);
+
   // Start parsing: create course, upload files, scrape URL
   const startParsing = useCallback(async () => {
     setStep("parsing");
@@ -335,7 +411,11 @@ export default function NewProjectPage() {
 
       // Step 3: Scrape URL
       if (url.trim() && (mode === "url" || mode === "both")) {
-        addLog(`${new Date().toLocaleTimeString()}  Fetching ${url}...`, "text-gray-400");
+        const urlIsCanvas = isCanvasUrl(url.trim());
+        addLog(
+          `${new Date().toLocaleTimeString()}  Fetching ${url}${urlIsCanvas ? " (Canvas LMS detected)" : ""}...`,
+          "text-gray-400",
+        );
         try {
           const result = await scrapeUrl(course.id, url.trim());
           addLog(
@@ -347,6 +427,8 @@ export default function NewProjectPage() {
               course_id: course.id,
               url: url.trim(),
               label: projectName.trim() || "Project source",
+              source_type: urlIsCanvas ? "canvas" : "generic",
+              requires_auth: urlIsCanvas,
               interval_hours: 24,
             });
             addLog(
@@ -355,7 +437,14 @@ export default function NewProjectPage() {
             );
           }
         } catch (err) {
-          addLog(`${new Date().toLocaleTimeString()}  Scrape failed: ${(err as Error).message}`, "text-red-500");
+          const errMsg = (err as Error).message;
+          addLog(`${new Date().toLocaleTimeString()}  Scrape failed: ${errMsg}`, "text-red-500");
+          if (urlIsCanvas && errMsg.includes("authentication")) {
+            addLog(
+              `${new Date().toLocaleTimeString()}  Tip: Go to Settings → Canvas Login to authenticate, then retry.`,
+              "text-amber-500",
+            );
+          }
         }
       }
     } catch (err) {
@@ -374,6 +463,12 @@ export default function NewProjectPage() {
     // Store the NL instruction so the workspace can send it as the first chat message
     if (nlInput.trim()) {
       localStorage.setItem(`course_init_prompt_${createdCourseId}`, nlInput.trim());
+    }
+
+    // Persist feature toggles and auto-scrape preference
+    localStorage.setItem(`course_features_${createdCourseId}`, JSON.stringify(features));
+    if (mode === "both" || mode === "url") {
+      localStorage.setItem(`course_autoscrape_${createdCourseId}`, String(autoScrape));
     }
 
     router.push(`/course/${createdCourseId}`);
@@ -540,9 +635,30 @@ export default function NewProjectPage() {
                   }}
                   onBlur={() => validateUrl(url)}
                 />
-                <button className="h-11 px-5 bg-indigo-600 text-white rounded-lg font-semibold text-sm hover:bg-indigo-700">Add</button>
+                <button
+                  onClick={handleAddUrl}
+                  className={`h-11 px-5 text-white rounded-lg font-semibold text-sm ${
+                    isCanvasDetected && !canvasSessionValid
+                      ? "bg-amber-500 hover:bg-amber-600"
+                      : "bg-indigo-600 hover:bg-indigo-700"
+                  }`}
+                >
+                  {isCanvasDetected && !canvasSessionValid ? "Login & Add" : "Add"}
+                </button>
               </div>
               {urlError && <p className="text-xs text-destructive mt-1">{urlError}</p>}
+              {isCanvasDetected && !urlError && canvasSessionValid && (
+                <div className="p-3 px-4 bg-green-50 border border-green-200 rounded-md text-sm text-green-800 leading-relaxed">
+                  <span className="font-semibold">Canvas LMS — authenticated.</span>{" "}
+                  Your Canvas session is active. Content will be fetched with your credentials.
+                </div>
+              )}
+              {isCanvasDetected && !urlError && !canvasSessionValid && (
+                <div className="p-3 px-4 bg-amber-50 border border-amber-200 rounded-md text-sm text-amber-800 leading-relaxed">
+                  <span className="font-semibold">Canvas LMS detected.</span>{" "}
+                  This URL requires authentication. Click <span className="font-medium">&quot;Login &amp; Add&quot;</span> to sign in with your university credentials.
+                </div>
+              )}
             </div>
           )}
 
@@ -818,6 +934,91 @@ export default function NewProjectPage() {
             >
               Enter Workspace <ArrowRight className="w-4 h-4" />
             </button>
+          </div>
+        </div>
+      )}
+      {/* Canvas Login Modal */}
+      {showCanvasLogin && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="w-[420px] bg-white rounded-xl shadow-2xl p-6 flex flex-col gap-5 animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-bold text-gray-900" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+                Canvas Login
+              </h2>
+              <button
+                onClick={() => setShowCanvasLogin(false)}
+                title="Close"
+                className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-100"
+              >
+                <X className="w-4 h-4 text-gray-500" />
+              </button>
+            </div>
+
+            <p className="text-sm text-gray-500 leading-relaxed">
+              Sign in with your university credentials to access Canvas course content.
+            </p>
+
+            <div className="flex flex-col gap-3">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-medium text-gray-600">Canvas URL</label>
+                <div className="h-10 px-3 flex items-center border border-gray-200 rounded-lg bg-gray-50 text-sm text-gray-500 truncate">
+                  {url.trim()}
+                </div>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-medium text-gray-600">Username / Email</label>
+                <input
+                  className="h-10 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-600/20 focus:border-indigo-600"
+                  placeholder="student@university.edu"
+                  value={canvasUsername}
+                  onChange={(e) => setCanvasUsername(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleCanvasLoginSubmit()}
+                  autoFocus
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-medium text-gray-600">Password</label>
+                <input
+                  type="password"
+                  className="h-10 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-600/20 focus:border-indigo-600"
+                  placeholder="••••••••"
+                  value={canvasPassword}
+                  onChange={(e) => setCanvasPassword(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleCanvasLoginSubmit()}
+                />
+              </div>
+            </div>
+
+            {canvasLoginError && (
+              <div className="p-3 bg-red-50 border border-red-200 rounded-md text-sm text-red-700">
+                {canvasLoginError}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setShowCanvasLogin(false)}
+                className="h-10 px-5 border border-gray-200 rounded-lg text-sm font-medium text-gray-600 hover:border-gray-300"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleCanvasLoginSubmit}
+                disabled={canvasLogging || !canvasUsername || !canvasPassword}
+                className={`h-10 px-5 rounded-lg text-sm font-semibold text-white flex items-center gap-2 ${
+                  canvasLogging || !canvasUsername || !canvasPassword
+                    ? "bg-indigo-400 cursor-not-allowed"
+                    : "bg-indigo-600 hover:bg-indigo-700"
+                }`}
+              >
+                {canvasLogging && <Loader className="w-4 h-4 animate-spin" />}
+                {canvasLogging ? "Signing in..." : "Sign in"}
+              </button>
+            </div>
+
+            <p className="text-[11px] text-gray-400 leading-relaxed">
+              Your credentials are used once to establish a browser session and are not stored.
+            </p>
           </div>
         </div>
       )}

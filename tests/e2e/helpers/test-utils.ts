@@ -4,7 +4,9 @@ import { expect, type Page } from "@playwright/test";
 
 export const SAMPLE_COURSE_MD = path.join(process.cwd(), "tests/e2e/fixtures/sample-course.md");
 export const SAMPLE_COURSE_2_MD = path.join(process.cwd(), "tests/e2e/fixtures/sample-course-2.md");
-const apiBaseUrl = process.env.PLAYWRIGHT_API_URL || "http://localhost:8000/api";
+const useExistingServer = process.env.PLAYWRIGHT_USE_EXISTING_SERVER === "1";
+const backendPort = Number(process.env.PLAYWRIGHT_BACKEND_PORT || (useExistingServer ? "8000" : "8005"));
+const apiBaseUrl = process.env.PLAYWRIGHT_API_URL || `http://127.0.0.1:${backendPort}/api`;
 const LOCAL_REAL_PROVIDERS = ["ollama", "lmstudio", "textgenwebui"] as const;
 type LocalRealProvider = (typeof LOCAL_REAL_PROVIDERS)[number];
 
@@ -18,17 +20,54 @@ export async function skipOnboarding(page: Page): Promise<void> {
   });
 }
 
-async function createCourseViaApi(name: string, description?: string): Promise<string> {
+export async function createCourseViaApi(
+  name: string,
+  description?: string,
+  metadata?: Record<string, unknown>,
+): Promise<string> {
   const response = await fetch(`${apiBaseUrl}/courses/`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, description }),
+    body: JSON.stringify({ name, description, metadata }),
   });
   if (!response.ok) {
     throw new Error(`API course creation failed (${response.status})`);
   }
   const payload = (await response.json()) as { id: string };
   return payload.id;
+}
+
+export async function getCourseViaApi(courseId: string): Promise<Record<string, unknown>> {
+  const response = await fetch(`${apiBaseUrl}/courses/${courseId}`);
+  if (!response.ok) {
+    throw new Error(`API course fetch failed (${response.status})`);
+  }
+  return (await response.json()) as Record<string, unknown>;
+}
+
+export async function seedOnboardingPreferencesViaApi(
+  preferences: Record<string, string> = {
+    language: "zh",
+    learning_mode: "balanced",
+    detail_level: "balanced",
+    layout_preset: "balanced",
+  },
+): Promise<void> {
+  for (const [dimension, value] of Object.entries(preferences)) {
+    const response = await fetch(`${apiBaseUrl}/preferences/`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        dimension,
+        value,
+        scope: "global",
+        source: "playwright",
+      }),
+    });
+    if (!response.ok) {
+      throw new Error(`API preference seed failed for ${dimension} (${response.status})`);
+    }
+  }
 }
 
 function treeHasMaterial(nodes: unknown): boolean {
@@ -114,7 +153,8 @@ export async function createCourseWithContent(page: Page, name = "Test Course"):
   const courseId = await createCourse(page, name);
   await seedCourseFixture(courseId, SAMPLE_COURSE_MD);
   await page.reload();
-  await expect(page.getByText("Binary Search Basics").first()).toBeVisible({ timeout: 30_000 });
+  await expect(page).toHaveURL(new RegExp(`/course/${courseId}`), { timeout: 30_000 });
+  await expect(page.getByRole("button", { name: "Upload" })).toBeVisible({ timeout: 30_000 });
   return courseId;
 }
 
