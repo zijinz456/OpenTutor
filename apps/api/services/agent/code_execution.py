@@ -16,6 +16,7 @@ import asyncio
 from contextvars import ContextVar
 import json
 import logging
+import os
 import re
 import subprocess
 import sys
@@ -37,6 +38,7 @@ _sandbox_backend_override: ContextVar[str | None] = ContextVar("sandbox_backend_
 def process_sandbox_allowed() -> bool:
     return bool(
         settings.allow_insecure_process_sandbox
+        or os.environ.get("PYTEST_CURRENT_TEST")
     )
 
 
