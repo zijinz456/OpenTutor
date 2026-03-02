@@ -25,10 +25,9 @@ function getDismissed(): boolean {
 export function NotificationPrompt() {
   const { pushSupported, pushPermission, isSubscribed, subscribing, checkSubscription, subscribe } =
     useNotificationStore();
-  const [dismissed, setDismissed] = useState(true);
+  const [dismissed, setDismissed] = useState(getDismissed);
 
   useEffect(() => {
-    setDismissed(getDismissed());
     checkSubscription();
   }, [checkSubscription]);
 

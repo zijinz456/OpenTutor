@@ -94,9 +94,9 @@ export default function DashboardPage() {
     .filter((value): value is string => Boolean(value))
     .sort((a, b) => (a > b ? -1 : 1))[0] ?? null;
 
-  const [overview, setOverview] = useState<LearningOverview | null>(null);
-  const [trends, setTrends] = useState<LearningTrends | null>(null);
-  const [health, setHealth] = useState<HealthStatus | null>(null);
+  const [overview, setOverview] = useState<LearningOverview | null>(() => ttlCache.get<LearningOverview>("dash:overview") ?? null);
+  const [trends, setTrends] = useState<LearningTrends | null>(() => ttlCache.get<LearningTrends>("dash:trends") ?? null);
+  const [health, setHealth] = useState<HealthStatus | null>(() => ttlCache.get<HealthStatus>("dash:health") ?? null);
 
   const shouldShowOnboarding = useSyncExternalStore(
     () => () => {},
@@ -120,28 +120,19 @@ export default function DashboardPage() {
     // on rapid re-mounts (e.g. back-navigation).  TTL = 120s.
     const DASH_TTL = 120_000;
 
-    const cachedOverview = ttlCache.get<LearningOverview>("dash:overview");
-    if (cachedOverview) {
-      setOverview(cachedOverview);
-    } else {
+    if (!overview) {
       getLearningOverview()
         .then((d) => { ttlCache.set("dash:overview", d, DASH_TTL); setOverview(d); })
         .catch(() => {});
     }
 
-    const cachedTrends = ttlCache.get<LearningTrends>("dash:trends");
-    if (cachedTrends) {
-      setTrends(cachedTrends);
-    } else {
+    if (!trends) {
       getGlobalTrends(7)
         .then((d) => { ttlCache.set("dash:trends", d, DASH_TTL); setTrends(d); })
         .catch(() => {});
     }
 
-    const cachedHealth = ttlCache.get<HealthStatus>("dash:health");
-    if (cachedHealth) {
-      setHealth(cachedHealth);
-    } else {
+    if (!health) {
       getHealthStatus()
         .then((d) => { ttlCache.set("dash:health", d, DASH_TTL); setHealth(d); })
         .catch(() => {});
