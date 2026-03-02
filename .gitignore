@@ -45,5 +45,3 @@ tmp/
 # Temporary directories
 sessions/
 
-# Lock files (regenerated on install)
-package-lock.json
