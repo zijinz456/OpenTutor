@@ -6,6 +6,7 @@ import {
   expectAssistantMessage,
   expectGeneratedNotes,
   expectGeneratedStudyPlan,
+  hasRealLlmEnv,
   seedCourseFixture,
 } from "./helpers/test-utils";
 
@@ -16,7 +17,7 @@ async function uploadFixture(page: import("@playwright/test").Page, courseId: st
   await seedCourseFixture(courseId, fixturePath);
   await page.reload();
   await expect(page).toHaveURL(new RegExp(`/course/${courseId}`), { timeout: 30_000 });
-  await expect(page.getByRole("button", { name: "Upload" })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("workspace-upload-trigger")).toBeVisible({ timeout: 30_000 });
 }
 
 async function createCourseViaApi(
@@ -89,7 +90,8 @@ async function diagnoseLatestWrongAnswer(page: import("@playwright/test").Page) 
 }
 
 test.describe("OpenTutor e2e flows", () => {
-  test("create course, chat, switch scene, and generate a study plan", async ({ page }) => {
+  test("create course, chat, open the plan workspace, and generate a study plan", async ({ page }) => {
+    test.skip(!hasRealLlmEnv(), "Requires a real LLM provider");
     const courseId = await createCourse(page, "E2E Study Flow");
     await uploadFixture(page, courseId);
 
@@ -97,8 +99,7 @@ test.describe("OpenTutor e2e flows", () => {
     await page.getByTestId("chat-send").click();
     await expectAssistantMessage(page);
 
-    await page.getByTestId("scene-selector-trigger").click();
-    await page.getByTestId("scene-option-exam_prep").click();
+    await page.locator('button[title="Plan"]').first().click();
     await expect(page.getByTestId("study-plan-panel")).toBeVisible({ timeout: 15_000 });
 
     await page.getByTestId("study-plan-generate").click();
@@ -109,6 +110,7 @@ test.describe("OpenTutor e2e flows", () => {
   });
 
   test("generate and save AI notes from uploaded content", async ({ page }) => {
+    test.skip(!hasRealLlmEnv(), "Requires a real LLM provider");
     const courseId = await createCourse(page, "E2E Notes Flow");
     await uploadFixture(page, courseId);
     await page.getByTestId("notes-generate").click();
@@ -118,7 +120,8 @@ test.describe("OpenTutor e2e flows", () => {
     await expect(page.getByText("Saved AI notes")).toBeVisible({ timeout: 15_000 });
   });
 
-  test("replace generated study plan, restore chat session, and persist active scene across reload", async ({ page }) => {
+  test("replace generated study plan and restore chat session across reload", async ({ page }) => {
+    test.skip(!hasRealLlmEnv(), "Requires a real LLM provider");
     const courseId = await createCourse(page, "E2E Restore Flow");
     await uploadFixture(page, courseId);
 
@@ -134,8 +137,7 @@ test.describe("OpenTutor e2e flows", () => {
     await page.getByTestId("chat-session-select").selectOption({ label: firstPrompt });
     await expect(page.getByTestId("chat-message-user").last()).toContainText(firstPrompt, { timeout: 15_000 });
 
-    await page.getByTestId("scene-selector-trigger").click();
-    await page.getByTestId("scene-option-exam_prep").click();
+    await page.locator('button[title="Plan"]').first().click();
     await expect(page.getByTestId("study-plan-panel")).toBeVisible({ timeout: 15_000 });
 
     await page.getByTestId("study-plan-days-input").fill("5");
@@ -151,7 +153,7 @@ test.describe("OpenTutor e2e flows", () => {
     await expect(page.getByText("Replaced plan with version 2")).toBeVisible({ timeout: 15_000 });
 
     await page.reload();
-    await expect(page.getByTestId("scene-selector-trigger")).toContainText("Exam Prep", { timeout: 15_000 });
+    await page.locator('button[title="Plan"]').first().click();
     await expect(page.getByTestId("study-plan-panel")).toBeVisible({ timeout: 15_000 });
     await expect(page.getByTestId("chat-session-select")).toHaveValue(/.+/, { timeout: 15_000 });
     await expect(page.getByTestId("chat-message-user").last()).toContainText(firstPrompt, { timeout: 15_000 });
@@ -166,7 +168,7 @@ test.describe("OpenTutor e2e flows", () => {
     await page.getByTestId("workspace-upload-url-submit").click();
 
     await expect(page.getByText("Scraped URL:")).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByRole("button", { name: "Binary Search Notes" })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText("Binary Search Notes").first()).toBeVisible({ timeout: 30_000 });
   });
 
   test("rejected internal URL shows SSRF error", async ({ page }) => {
@@ -183,6 +185,7 @@ test.describe("OpenTutor e2e flows", () => {
   });
 
   test("wrong-answer diagnosis flows through review, progress, and analytics", async ({ page, request }) => {
+    test.skip(!hasRealLlmEnv(), "Requires a real LLM provider");
     const courseId = await createCourseViaApi(request, "E2E Diagnosis Flow", {
       workspace_features: {
         wrong_answer: true,
@@ -205,7 +208,8 @@ test.describe("OpenTutor e2e flows", () => {
     await diagnoseLatestWrongAnswer(page);
     await expect(page.getByTestId("review-stats")).toContainText("trap vulnerability: 1", { timeout: 30_000 });
 
-    await page.getByTestId("right-tab-progress").last().click();
+    await page.locator('button[title="Analytics"]').first().click();
+    await page.getByTestId("right-tab-progress").click();
     await expect(page.getByTestId("progress-panel")).toBeVisible({ timeout: 30_000 });
     await expect(page.getByTestId("progress-gap-breakdown")).toContainText("fundamental gap: 1", {
       timeout: 30_000,
@@ -220,6 +224,7 @@ test.describe("OpenTutor e2e flows", () => {
   });
 
   test("multiple diagnoses accumulate into course analytics", async ({ page, request }) => {
+    test.skip(!hasRealLlmEnv(), "Requires a real LLM provider");
     const courseId = await createCourseViaApi(request, "E2E Diagnosis Trend", {
       workspace_features: {
         wrong_answer: true,

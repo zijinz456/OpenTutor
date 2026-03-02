@@ -29,18 +29,18 @@ import {
 } from "recharts";
 
 const GAP_COLORS: Record<string, string> = {
-  fundamental_gap: "var(--color-destructive, #ef4444)",
-  transfer_gap: "var(--color-warning, #f59e0b)",
-  trap_vulnerability: "var(--color-brand, #8b5cf6)",
-  mastered: "var(--color-success, #22c55e)",
+  fundamental_gap: "var(--color-destructive, #404040)",
+  transfer_gap: "var(--color-warning, #737373)",
+  trap_vulnerability: "var(--color-brand, #262626)",
+  mastered: "var(--color-success, #525252)",
 };
 
 const ERROR_COLORS = [
-  "var(--color-destructive, #ef4444)",
-  "var(--color-warning, #f59e0b)",
-  "var(--color-info, #3b82f6)",
-  "var(--color-brand, #8b5cf6)",
-  "var(--color-muted-foreground, #6b7280)",
+  "var(--color-destructive, #404040)",
+  "var(--color-warning, #737373)",
+  "var(--color-info, #525252)",
+  "var(--color-brand, #262626)",
+  "var(--color-muted-foreground, #a3a3a3)",
 ];
 
 export default function AnalyticsPage() {
@@ -109,7 +109,7 @@ export default function AnalyticsPage() {
   const gapPieData = gapEntries.map(([name, value]) => ({
     name: name.replaceAll("_", " "),
     value,
-    color: GAP_COLORS[name] || "var(--color-muted-foreground, #6b7280)",
+    color: GAP_COLORS[name] || "var(--color-muted-foreground, #a3a3a3)",
   }));
 
   const errorPieData = errorEntries.map(([name, value], i) => ({
@@ -206,8 +206,8 @@ export default function AnalyticsPage() {
                       name === "quiz_correct" ? "Correct" : "Total",
                     ]}
                   />
-                  <Bar dataKey="quiz_total" fill="var(--color-muted-foreground, #94a3b8)" name="quiz_total" radius={[2, 2, 0, 0]} />
-                  <Bar dataKey="quiz_correct" fill="var(--color-success, #22c55e)" name="quiz_correct" radius={[2, 2, 0, 0]} />
+                  <Bar dataKey="quiz_total" fill="var(--color-muted-foreground, #a3a3a3)" name="quiz_total" radius={[2, 2, 0, 0]} />
+                  <Bar dataKey="quiz_correct" fill="var(--color-success, #404040)" name="quiz_correct" radius={[2, 2, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>

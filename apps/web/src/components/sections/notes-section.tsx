@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { useCourseStore } from "@/store/course";
 import { useT } from "@/lib/i18n-context";
 import {
@@ -10,83 +11,132 @@ import {
   restructureNotes,
   saveGeneratedNotes,
   type ContentNode,
-  type GeneratedAssetBatchSummary,
-  type RestructuredNotes,
 } from "@/lib/api";
-import { ChevronRight, ChevronDown, FileText, Sparkles } from "lucide-react";
+import { useBatchManager } from "@/hooks/use-batch-manager";
+import { MarkdownRenderer } from "@/components/shared/markdown-renderer";
+import { toast } from "sonner";
 
 interface NotesSectionProps {
   courseId: string;
 }
 
-function findNode(nodes: ContentNode[], nodeId: string | null): ContentNode | null {
-  if (!nodeId) return null;
+interface GeneratedNoteDraft {
+  title: string;
+  markdown: string;
+  format: string;
+  sourceNodeId: string;
+}
+
+function findFirstContentNode(nodes: ContentNode[]): ContentNode | null {
   for (const node of nodes) {
-    if (node.id === nodeId) return node;
-    const child = findNode(node.children ?? [], nodeId);
+    if (node.content?.trim()) return node;
+    const child = findFirstContentNode(node.children ?? []);
     if (child) return child;
   }
   return null;
 }
 
-function extractBatchMarkdown(batch: GeneratedAssetBatchSummary | null): string {
-  const preview = batch?.preview as { markdown?: unknown } | undefined;
-  return typeof preview?.markdown === "string" ? preview.markdown : "";
+function findNodeById(nodes: ContentNode[], nodeId: string | null): ContentNode | null {
+  if (!nodeId) return null;
+  for (const node of nodes) {
+    if (node.id === nodeId) return node;
+    const child = findNodeById(node.children ?? [], nodeId);
+    if (child) return child;
+  }
+  return null;
 }
 
-function ContentTreeNode({
+function TocItem({
   node,
   depth,
-  selectedId,
+  activeId,
   onSelect,
 }: {
   node: ContentNode;
   depth: number;
-  selectedId: string | null;
-  onSelect: (node: ContentNode) => void;
+  activeId: string | null;
+  onSelect: (id: string) => void;
 }) {
-  const [expanded, setExpanded] = useState(depth < 1);
-  const hasChildren = node.children && node.children.length > 0;
-  const isSelected = selectedId === node.id;
+  const [expanded, setExpanded] = useState(depth < 2);
+  const hasChildren = !!node.children?.length;
+  const isActive = activeId === node.id;
 
   return (
     <div>
       <button
-        type="button"
-        className={`flex items-center gap-1.5 w-full text-left px-3 py-2 text-sm rounded-md transition-colors ${
-          isSelected ? "bg-primary/10 text-foreground" : "hover:bg-muted/60"
+        className={`flex items-center gap-1 w-full text-left px-2 py-1 text-xs rounded hover:bg-muted transition-colors ${
+          isActive ? "bg-muted font-medium" : "text-muted-foreground"
         }`}
-        style={{ paddingLeft: `${12 + depth * 16}px` }}
+        style={{ paddingLeft: `${8 + depth * 12}px` }}
         onClick={() => {
+          onSelect(node.id);
           if (hasChildren) setExpanded((value) => !value);
-          onSelect(node);
         }}
       >
         {hasChildren ? (
-          expanded ? (
-            <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
-          ) : (
-            <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
-          )
+          <span className="w-3 shrink-0 text-[10px] leading-none">
+            {expanded ? "▼" : "▶"}
+          </span>
         ) : (
-          <FileText className="size-3.5 shrink-0 text-muted-foreground/50" />
+          <span className="w-3 shrink-0" />
         )}
-        <span className="truncate font-medium">{node.title}</span>
+        <span className="truncate">{node.title}</span>
       </button>
-
-      {expanded && hasChildren && (
+      {expanded && hasChildren ? (
         <div>
-          {node.children.map((child) => (
-            <ContentTreeNode
+          {node.children?.map((child) => (
+            <TocItem
               key={child.id}
               node={child}
               depth={depth + 1}
-              selectedId={selectedId}
+              activeId={activeId}
               onSelect={onSelect}
             />
           ))}
         </div>
-      )}
+      ) : null}
+    </div>
+  );
+}
+
+function ContentNodeItem({
+  node,
+  depth = 0,
+}: {
+  node: ContentNode;
+  depth?: number;
+}) {
+  const headingLevel = Math.min(node.level + 1, 6);
+
+  const headingClass = `font-semibold mb-1 ${
+    headingLevel === 1
+      ? "text-xl"
+      : headingLevel === 2
+        ? "text-lg"
+        : headingLevel === 3
+          ? "text-base"
+          : "text-sm"
+  }`;
+
+  return (
+    <div
+      id={`content-${node.id}`}
+      className="mb-4"
+      style={{ paddingLeft: depth > 0 ? `${depth * 16}px` : undefined }}
+    >
+      {(() => {
+        const Tag = `h${headingLevel}` as keyof React.JSX.IntrinsicElements;
+        return <Tag className={headingClass}>{node.title}</Tag>;
+      })()}
+      {node.content ? (
+        <MarkdownRenderer
+          content={node.content}
+          className="text-sm leading-relaxed prose prose-sm max-w-none dark:prose-invert"
+        />
+      ) : null}
+      {node.children?.map((child) => (
+        <ContentNodeItem key={child.id} node={child} depth={depth + 1} />
+      ))}
     </div>
   );
 }
@@ -95,14 +145,32 @@ export function NotesSection({ courseId }: NotesSectionProps) {
   const t = useT();
   const contentTree = useCourseStore((s) => s.contentTree);
   const fetchContentTree = useCourseStore((s) => s.fetchContentTree);
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  const [savedBatches, setSavedBatches] = useState<GeneratedAssetBatchSummary[]>([]);
-  const [generatedNotes, setGeneratedNotes] = useState<RestructuredNotes | null>(null);
-  const [loadingSaved, setLoadingSaved] = useState(false);
+  const { saving, latestBatch, wrapSave } = useBatchManager({
+    courseId,
+    refreshSection: "notes",
+    listFn: listGeneratedNoteBatches,
+  });
+  const [showToc, setShowToc] = useState(true);
+  const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
+  const [draft, setDraft] = useState<GeneratedNoteDraft | null>(null);
   const [generating, setGenerating] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const scrollAreaRef = useRef<HTMLDivElement>(null);
+
+  const scrollToNode = useCallback((nodeId: string) => {
+    setActiveNodeId(nodeId);
+    setDraft((current) => (
+      current && current.sourceNodeId === nodeId ? current : null
+    ));
+    const el = document.getElementById(`content-${nodeId}`);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, []);
+
+  const selectedNode = useMemo(
+    () => findNodeById(contentTree, activeNodeId) ?? findFirstContentNode(contentTree),
+    [activeNodeId, contentTree],
+  );
 
   useEffect(() => {
     if (contentTree.length === 0) {
@@ -111,196 +179,169 @@ export function NotesSection({ courseId }: NotesSectionProps) {
   }, [courseId, contentTree.length, fetchContentTree]);
 
   useEffect(() => {
-    if (selectedNodeId || contentTree.length === 0) return;
-
-    const stack = [...contentTree];
-    while (stack.length > 0) {
-      const node = stack.shift();
-      if (!node) continue;
-      if (node.content) {
-        setSelectedNodeId(node.id);
-        return;
-      }
-      stack.unshift(...(node.children ?? []));
+    const firstNode = findFirstContentNode(contentTree);
+    if (!firstNode) {
+      if (activeNodeId) setActiveNodeId(null);
+      if (draft) setDraft(null);
+      return;
     }
-  }, [contentTree, selectedNodeId]);
 
-  useEffect(() => {
-    let cancelled = false;
+    const resolvedNode = findNodeById(contentTree, activeNodeId) ?? firstNode;
+    if (resolvedNode.id !== activeNodeId) {
+      setActiveNodeId(resolvedNode.id);
+    }
+    if (draft && draft.sourceNodeId !== resolvedNode.id) {
+      setDraft(null);
+    }
+  }, [activeNodeId, contentTree, draft]);
 
-    const loadSaved = async () => {
-      setLoadingSaved(true);
-      try {
-        const data = await listGeneratedNoteBatches(courseId);
-        if (!cancelled) setSavedBatches(data);
-      } catch {
-        if (!cancelled) setSavedBatches([]);
-      } finally {
-        if (!cancelled) setLoadingSaved(false);
-      }
-    };
+  const handleGenerate = useCallback(async () => {
+    if (!selectedNode) {
+      toast.error("Select a section with content first");
+      return;
+    }
 
-    void loadSaved();
-    return () => {
-      cancelled = true;
-    };
-  }, [courseId]);
-
-  const selectedNode = useMemo(
-    () => findNode(contentTree, selectedNodeId),
-    [contentTree, selectedNodeId],
-  );
-
-  const latestSavedBatch = savedBatches[0] ?? null;
-  const previewContent = generatedNotes?.ai_content
-    || extractBatchMarkdown(latestSavedBatch)
-    || selectedNode?.content
-    || "";
-
-  const handleGenerate = async () => {
-    if (!selectedNode?.content) return;
     setGenerating(true);
-    setMessage(null);
-    setError(null);
     try {
       const result = await restructureNotes(selectedNode.id);
-      setGeneratedNotes(result);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to generate notes");
+      setDraft({
+        title: result.original_title,
+        markdown: result.ai_content,
+        format: result.format_used,
+        sourceNodeId: selectedNode.id,
+      });
+      toast.success("Generated AI notes");
+    } catch (error) {
+      toast.error((error as Error).message || "Failed to generate notes");
     } finally {
       setGenerating(false);
     }
-  };
+  }, [selectedNode]);
 
-  const handleSave = async () => {
-    if (!generatedNotes?.ai_content) return;
-    setSaving(true);
-    setMessage(null);
-    setError(null);
-    try {
-      await saveGeneratedNotes(
-        courseId,
-        generatedNotes.ai_content,
-        selectedNode?.title || generatedNotes.original_title,
-        selectedNode?.id,
-        latestSavedBatch?.batch_id,
+  const handleSave = useCallback(
+    async (replaceBatchId?: string) => {
+      if (!draft) return;
+      await wrapSave(() =>
+        saveGeneratedNotes(courseId, draft.markdown, draft.title, draft.sourceNodeId, replaceBatchId),
       );
-      setMessage("Generated notes saved.");
-      const refreshed = await listGeneratedNoteBatches(courseId);
-      setSavedBatches(refreshed);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to save generated notes");
-    } finally {
-      setSaving(false);
-    }
-  };
+    },
+    [courseId, draft, wrapSave],
+  );
 
   if (contentTree.length === 0) {
     return (
-      <div className="flex-1 flex items-center justify-center p-8 text-center">
+      <div className="flex-1 flex items-center justify-center p-4 text-center">
         <div>
-          <FileText className="size-8 mx-auto mb-3 text-muted-foreground/40" />
-          <p className="text-sm text-muted-foreground">{t("notes.empty")}</p>
+          <p className="text-muted-foreground text-sm">{t("notes.empty")}</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden" data-testid="notes-section">
-      <div className="px-3 py-1.5 border-b flex items-center gap-2 shrink-0">
-        <span className="text-xs text-muted-foreground">{t("notes.toc")}</span>
-        {loadingSaved ? (
-          <span className="text-[11px] text-muted-foreground">Loading saved notes...</span>
-        ) : savedBatches.length > 0 ? (
-          <span className="text-[11px] text-muted-foreground">
-            {savedBatches.length} saved batch{savedBatches.length > 1 ? "es" : ""}
-          </span>
-        ) : null}
-        <div className="ml-auto flex items-center gap-2">
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-6 px-2 text-xs"
-            onClick={() => void handleGenerate()}
-            disabled={!selectedNode?.content || generating}
-          >
-            {generating ? "Generating..." : t("notes.regenerate")}
-          </Button>
-          <Button
-            size="sm"
-            className="h-6 px-2 text-xs"
-            onClick={() => void handleSave()}
-            disabled={!generatedNotes?.ai_content || saving}
-          >
-            {saving ? "Saving..." : "Save AI Notes"}
-          </Button>
-        </div>
-      </div>
-
-      <div className="flex-1 grid min-h-0 lg:grid-cols-[320px,1fr]">
-        <ScrollArea className="border-r border-border">
-          <div className="py-2">
-            {contentTree.map((node) => (
-              <ContentTreeNode
-                key={node.id}
-                node={node}
-                depth={0}
-                selectedId={selectedNodeId}
-                onSelect={(nextNode) => {
-                  setSelectedNodeId(nextNode.id);
-                  setGeneratedNotes(null);
-                  setMessage(null);
-                  setError(null);
-                }}
-              />
-            ))}
+    <div className="flex-1 flex overflow-hidden" data-testid="notes-panel">
+      {showToc ? (
+        <div className="w-48 border-r shrink-0 flex flex-col">
+          <div className="px-2 py-1.5 border-b flex items-center justify-between">
+            <span className="text-xs font-medium text-muted-foreground">
+              {t("notes.toc")}
+            </span>
           </div>
-        </ScrollArea>
-
-        <div className="min-h-0 flex flex-col">
-          <div className="border-b border-border px-4 py-3">
-            <div className="flex items-center gap-2">
-              <Sparkles className="size-4 text-muted-foreground" />
-              <h3 className="text-sm font-medium">
-                {generatedNotes
-                  ? `${generatedNotes.original_title} · AI Notes`
-                  : selectedNode?.title || t("notes.title")}
-              </h3>
-            </div>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {generatedNotes
-                ? `Generated in ${generatedNotes.format_used} format.`
-                : latestSavedBatch
-                  ? "Showing the latest saved AI notes or selected source content."
-                  : "Select a node with content and generate AI notes."}
-            </p>
-          </div>
-
           <ScrollArea className="flex-1">
-            <div className="p-4">
-              {previewContent ? (
-                <div className="whitespace-pre-wrap text-sm leading-6 text-foreground">
-                  {previewContent}
-                </div>
-              ) : (
-                <div className="py-10 text-center">
-                  <p className="text-sm text-muted-foreground">
-                    {t("notes.empty")}
-                  </p>
-                </div>
-              )}
+            <div className="py-1">
+              {contentTree.map((node) => (
+                <TocItem
+                  key={node.id}
+                  node={node}
+                  depth={0}
+                  activeId={activeNodeId}
+                  onSelect={scrollToNode}
+                />
+              ))}
             </div>
           </ScrollArea>
-
-          {(message || error) && (
-            <div className={`border-t border-border px-4 py-3 text-xs ${
-              error ? "text-destructive" : "text-muted-foreground"
-            }`}>
-              {error || message}
-            </div>
-          )}
         </div>
+      ) : null}
+
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <div className="px-3 py-1.5 border-b flex items-center gap-2 shrink-0">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 px-2"
+            onClick={() => setShowToc((value) => !value)}
+          >
+            <span className="text-xs">{showToc ? "Hide" : "Show"} TOC</span>
+          </Button>
+          <div className="ml-auto flex items-center gap-2">
+            {selectedNode ? (
+              <Badge variant="outline" className="max-w-56 truncate">
+                {selectedNode.title}
+              </Badge>
+            ) : null}
+            {draft && latestBatch?.is_active ? (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-6 px-2 text-xs"
+                onClick={() => void handleSave(latestBatch.batch_id)}
+                disabled={saving || generating}
+              >
+                Replace Latest
+              </Button>
+            ) : null}
+            {draft ? (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-6 px-2 text-xs"
+                onClick={() => void handleSave()}
+                disabled={saving || generating}
+              >
+                Save New
+              </Button>
+            ) : null}
+            <Button
+              data-testid="notes-generate"
+              size="sm"
+              className="h-6 px-2 text-xs"
+              onClick={() => void handleGenerate()}
+              disabled={generating || saving || !selectedNode}
+            >
+              {generating ? <span className="animate-pulse mr-1">...</span> : null}
+              {t("notes.regenerate")}
+            </Button>
+          </div>
+        </div>
+
+        <ScrollArea className="flex-1 p-4" ref={scrollAreaRef}>
+          {draft ? (
+            <div className="mb-6 rounded-lg border bg-muted/20 p-4" data-testid="notes-preview">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <div>
+                  <p className="text-sm font-medium">{draft.title}</p>
+                  <p className="text-xs text-muted-foreground">
+                    AI note preview • {draft.format}
+                  </p>
+                </div>
+                {latestBatch ? (
+                  <Badge variant="secondary">
+                    v{latestBatch.current_version}
+                    {latestBatch.is_active ? " active" : ""}
+                  </Badge>
+                ) : null}
+              </div>
+              <MarkdownRenderer
+                content={draft.markdown}
+                className="prose prose-sm max-w-none dark:prose-invert"
+              />
+            </div>
+          ) : null}
+
+          {contentTree.map((node) => (
+            <ContentNodeItem key={node.id} node={node} />
+          ))}
+        </ScrollArea>
       </div>
     </div>
   );

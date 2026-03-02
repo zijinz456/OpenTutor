@@ -7,7 +7,7 @@
 
 A self-hosted personalized learning agent. Upload any educational material (PDF, PPTX, DOCX, URL) and OpenTutor Zenus creates an interactive multi-panel workspace with AI-generated notes, quizzes, flashcards, and a chat assistant that adapts to your preferences over time.
 
-The default local deployment mode is `single_user`: the first local account becomes the owner profile, durable tasks remain course-scoped, and the settings/health UI surfaces the active deployment mode and sandbox status explicitly.
+This repo is designed to run locally in `single_user` mode, in the same spirit as OpenClaw: no end-user sign-in flow, one local owner profile, and the backend auto-binds requests to that local owner account.
 
 ## Quick Start (Docker)
 
@@ -17,6 +17,7 @@ The default local deployment mode is `single_user`: the first local account beco
 git clone https://github.com/zijinz456/OpenTutor.git && cd OpenTutor
 cp .env.example .env
 # Add at least one LLM API key to .env (OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.)
+bash scripts/check_local_mode.sh --skip-api
 bash scripts/dev_local.sh up --build
 ```
 
@@ -31,12 +32,15 @@ Open [http://localhost:3000](http://localhost:3000) once all services are health
 **macOS / Linux:**
 ```bash
 git clone https://github.com/zijinz456/OpenTutor.git && cd OpenTutor
+cp .env.example .env
+bash scripts/check_local_mode.sh --skip-api
 bash scripts/quickstart.sh
 ```
 
 **Windows (PowerShell):**
 ```powershell
 git clone https://github.com/zijinz456/OpenTutor.git; cd OpenTutor
+Copy-Item .env.example .env
 .\scripts\quickstart.ps1
 ```
 
@@ -74,6 +78,8 @@ npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000).
+
+There is intentionally no normal end-user login page in the default local setup. If requests start failing with auth-like symptoms, check `.env` first and run `bash scripts/check_local_mode.sh`.
 
 ## Architecture
 
@@ -119,7 +125,7 @@ OpenTutor/
 | **Search** | Hybrid keyword + vector search, RAG Fusion |
 | **Testing** | Playwright (E2E), pytest (unit/integration) |
 | **CI/CD** | GitHub Actions (3-stage: checks, smoke, LLM integration) |
-| **Deployment** | Docker Compose (`DEPLOYMENT_MODE=single_user`, strict container sandbox by default) |
+| **Deployment** | Docker Compose (`AUTH_ENABLED=false`, `DEPLOYMENT_MODE=single_user`, strict container sandbox by default) |
 
 ## Multi-Agent System
 
@@ -186,8 +192,8 @@ See [.env.example](.env.example) for the full list. Key variables:
 | `LLM_PROVIDER` | `openai` | LLM provider to use |
 | `LLM_MODEL` | `gpt-4o-mini` | Model name |
 | `DATABASE_URL` | `postgresql+asyncpg://...` | PostgreSQL connection string |
-| `AUTH_ENABLED` | `false` | Enable JWT authentication |
-| `DEPLOYMENT_MODE` | `single_user` | Deployment mode (`single_user` or `multi_user`) |
+| `AUTH_ENABLED` | `false` | Keep `false` for the default local deployment path |
+| `DEPLOYMENT_MODE` | `single_user` | Keep `single_user` for this repo's intended local mode |
 | `APP_AUTO_CREATE_TABLES` | `false` | Auto-create DB tables on startup |
 | `APP_AUTO_SEED_SYSTEM` | `false` | Seed templates and preset scenes |
 | `APP_RUN_ACTIVITY_ENGINE` | `false` | Run the background durable-task worker in-process |
@@ -197,11 +203,15 @@ See [.env.example](.env.example) for the full list. Key variables:
 
 ```bash
 scripts/dev_local.sh up          # Start the full stack with docker compose or docker-compose
+scripts/dev_local.sh check-local-mode  # Verify .env and the running API are still in local single-user mode
 scripts/dev_local.sh verify      # Run smoke + integration + E2E tests
 scripts/dev_local.sh down        # Stop the stack
 scripts/dev_local.sh reset       # Stop and remove volumes
+scripts/check_local_mode.sh      # Standalone local-mode sanity check
 scripts/smoke_test.sh            # Quick API smoke test
 ```
+
+See [docs/local-single-user.md](docs/local-single-user.md) for the local-only deployment contract and common failure modes.
 
 ## Testing
 

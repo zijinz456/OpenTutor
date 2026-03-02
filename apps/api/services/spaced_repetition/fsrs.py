@@ -32,10 +32,7 @@ DEFAULT_W = [
 ]
 
 
-def _as_utc(value: datetime) -> datetime:
-    if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+from libs.datetime_utils import as_utc as _as_utc
 
 
 @dataclass
@@ -117,6 +114,85 @@ def _retrievability(elapsed_days: float, stability: float) -> float:
     return pow(1 + elapsed_days / (9 * stability), -1)
 
 
+def estimate_forgetting_cost(
+    cards: list[FSRSCard],
+    now: datetime | None = None,
+) -> float:
+    """Estimate how many cards the student is expected to forget if they don't review now.
+
+    Inspired by Orbit's session batching algorithm:
+    For each overdue card, compute expected recall probability using FSRS
+    retrievability formula, then sum (1 - R) across all cards.
+
+    Returns:
+        float: Expected number of cards that will be forgotten.
+        A value >= 2.0 is considered urgent for triggering a proactive review.
+    """
+    now = _as_utc(now or datetime.now(timezone.utc))
+    total_expected_forgotten = 0.0
+
+    for card in cards:
+        if card.due is None or card.stability <= 0:
+            continue
+
+        due = _as_utc(card.due)
+        if due > now:
+            continue  # Not yet overdue
+
+        elapsed = max((now - due).total_seconds() / 86400, 0)
+        # Use the scheduled interval as baseline
+        scheduled_interval = max(card.stability, 1.0)
+        # Total elapsed since last review
+        total_elapsed = elapsed + scheduled_interval
+
+        recall_prob = _retrievability(total_elapsed, card.stability)
+        total_expected_forgotten += (1.0 - recall_prob)
+
+    return round(total_expected_forgotten, 2)
+
+
+def estimate_session_urgency(
+    cards: list[FSRSCard],
+    now: datetime | None = None,
+) -> dict:
+    """Determine review session urgency based on forgetting cost.
+
+    Returns:
+        dict with keys:
+        - forgetting_cost: float (expected cards forgotten)
+        - urgency: "none" | "low" | "normal" | "high" | "critical"
+        - due_count: int
+        - recommendation: str
+    """
+    now = _as_utc(now or datetime.now(timezone.utc))
+    due_cards = [c for c in cards if c.due and _as_utc(c.due) <= now]
+    cost = estimate_forgetting_cost(cards, now)
+
+    if cost >= 5.0:
+        urgency = "critical"
+        recommendation = "Immediate review needed — significant knowledge loss risk"
+    elif cost >= 2.0:
+        urgency = "high"
+        recommendation = "Review soon — several items at risk of being forgotten"
+    elif len(due_cards) >= 10:
+        urgency = "normal"
+        recommendation = "Good time for a review — enough cards for a full session"
+    elif len(due_cards) >= 3:
+        urgency = "low"
+        recommendation = "A few items due — consider a quick review"
+    else:
+        urgency = "none"
+        recommendation = "No review needed right now"
+
+    return {
+        "forgetting_cost": cost,
+        "urgency": urgency,
+        "due_count": len(due_cards),
+        "total_cards": len(cards),
+        "recommendation": recommendation,
+    }
+
+
 def review_card(
     card: FSRSCard,
     rating: int,
@@ -142,10 +218,12 @@ def review_card(
         card.stability = _initial_stability(rating)
         card.state = "learning" if rating < 3 else "review"
     else:
-        # Subsequent reviews
+        # Subsequent reviews — compute new values from OLD state before mutating
         r = _retrievability(elapsed_days, card.stability)
-        card.difficulty = _next_difficulty(card.difficulty, rating)
-        card.stability = _next_stability(card.difficulty, card.stability, r, rating)
+        new_d = _next_difficulty(card.difficulty, rating)
+        new_s = _next_stability(card.difficulty, card.stability, r, rating)
+        card.difficulty = new_d
+        card.stability = new_s
 
         if rating == 1:
             card.lapses += 1

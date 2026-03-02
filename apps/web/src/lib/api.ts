@@ -4,6 +4,8 @@
  * Simple fetch-based client. Phase 1 may upgrade to tRPC or orpc.
  */
 
+import { buildAuthHeaders } from "@/lib/auth";
+
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
 type JsonObject = Record<string, unknown>;
@@ -47,22 +49,6 @@ interface LearningProfileSummary {
   inferred_habits: string[];
 }
 
-interface WorkspaceTabPlacement {
-  type: string;
-  position: number;
-}
-
-interface SceneInitAction {
-  type: string;
-  action: string;
-  message: string;
-}
-
-interface SceneSwitchExplanationSummary {
-  workflow?: string;
-  recommended_tabs?: string[];
-  reason?: string;
-}
 
 interface WrongAnswerDetail {
   category?: string;
@@ -108,11 +94,6 @@ export interface WrongAnswerStats {
   by_diagnosis: Record<string, number>;
 }
 
-interface GeneratedQuizSaveResult extends VersionedBatch {
-  saved: number;
-  problem_ids: string[];
-}
-
 interface LearningOverviewCourseSummary {
   course_id: string;
   course_name: string;
@@ -123,25 +104,6 @@ interface LearningOverviewCourseSummary {
   gap_types: Record<string, number>;
 }
 
-interface DateRange {
-  start: string;
-  end: string;
-}
-
-interface WeeklyActivitySnapshot {
-  study_minutes: number;
-  active_days: number;
-  quiz_total: number;
-  quiz_correct: number;
-  accuracy: number;
-}
-
-interface WeeklyActivityDelta {
-  study_minutes: number;
-  accuracy: number;
-  quiz_total: number;
-}
-
 interface FlashcardFsrsState {
   difficulty: number;
   stability: number;
@@ -150,11 +112,6 @@ interface FlashcardFsrsState {
   state: string;
   due: string | null;
   last_review?: string | null;
-}
-
-interface FlashcardGenerationResult {
-  cards: Flashcard[];
-  count: number;
 }
 
 interface FlashcardReviewResult {
@@ -192,10 +149,6 @@ interface PreferenceSignalContext {
   user_message?: string;
 }
 
-interface QuizExtractionResult {
-  problems_created: number;
-}
-
 interface GeneratedBatchSummaryBase {
   batch_id: string;
   title: string;
@@ -216,56 +169,6 @@ interface LlmRuntimeConnectionTestRequest {
   provider: string;
   model?: string;
   api_key?: string;
-}
-
-interface PreferenceUpdateRequest {
-  value?: string;
-  scope?: string;
-  source?: string;
-  scene_type?: string | null;
-}
-
-interface MemoryUpdateRequest {
-  summary?: string;
-  category?: string | null;
-}
-
-interface AgentTaskSubmitRequest {
-  task_type: string;
-  title: string;
-  course_id?: string;
-  goal_id?: string;
-  summary?: string;
-  input_json?: JsonObject;
-  metadata_json?: JsonObject;
-  source?: string;
-  requires_approval?: boolean;
-  max_attempts?: number;
-}
-
-interface StudyGoalCreateRequest {
-  title: string;
-  objective: string;
-  course_id?: string;
-  success_metric?: string;
-  current_milestone?: string;
-  next_action?: string;
-  status?: string;
-  confidence?: string;
-  target_date?: string;
-  metadata_json?: JsonObject;
-}
-
-interface StudyGoalUpdateRequest {
-  title: string;
-  objective: string;
-  success_metric: string;
-  current_milestone: string;
-  next_action: string;
-  status: string;
-  confidence: string;
-  target_date: string | null;
-  metadata_json: JsonObject | null;
 }
 
 interface PushSubscriptionRequest {
@@ -308,9 +211,10 @@ interface NotificationSettingsUpdateRequest {
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const { headers, ...restOptions } = options ?? {};
   const res = await fetch(`${API_BASE}${path}`, {
-    headers: { "Content-Type": "application/json", ...options?.headers },
-    ...options,
+    ...restOptions,
+    headers: buildAuthHeaders({ "Content-Type": "application/json", ...headers }),
   });
   if (!res.ok) {
     const error = await res.json().catch(() => ({ detail: res.statusText }));
@@ -388,6 +292,7 @@ export interface HealthStatus {
   llm_status: "configuration_required" | "mock_fallback" | "degraded" | "ready";
   llm_provider_health: Record<string, boolean>;
   deployment_mode: "single_user" | "multi_user" | string;
+  auth_enabled?: boolean;
   code_sandbox_backend: string;
   code_sandbox_runtime: string;
   code_sandbox_runtime_available: boolean;
@@ -549,6 +454,7 @@ export async function uploadFile(courseId: string, file: File): Promise<ContentM
 
   const res = await fetch(`${API_BASE}/content/upload`, {
     method: "POST",
+    headers: buildAuthHeaders(),
     body: form,
   });
   if (!res.ok) {
@@ -565,6 +471,7 @@ export async function scrapeUrl(courseId: string, url: string): Promise<ContentM
 
   const res = await fetch(`${API_BASE}/content/url`, {
     method: "POST",
+    headers: buildAuthHeaders(),
     body: form,
   });
   if (!res.ok) {
@@ -632,14 +539,6 @@ export async function canvasBrowserLogin(
   });
 }
 
-export async function validateAuthSession(
-  sessionName: string,
-): Promise<{ session_name: string; is_valid: boolean }> {
-  return request(`/scrape/auth/validate/${encodeURIComponent(sessionName)}`, {
-    method: "POST",
-  });
-}
-
 // ── Chat (SSE streaming) ──
 
 type ChatActionType =
@@ -650,7 +549,8 @@ type ChatActionType =
   | "open_flashcards"
   | "load_wrong_answers"
   | "generate_study_plan"
-  | "set_note_format";
+  | "set_note_format"
+  | "data_updated";
 
 export interface ChatAction {
   action: ChatActionType | string;  // Known actions + extensible
@@ -763,6 +663,7 @@ type StreamEvent =
   | { type: "plan_step"; task: PlanProgressEvent }
   | { type: "replace"; content: string }
   | { type: "tool_status"; status: "running" | "complete"; tool: string; explanation?: string }
+  | { type: "tool_progress"; tool: string; message: string; step: number; total: number }
   | { type: "done"; sessionId?: string; agent?: string; intent?: string; tokens?: number; metadata?: ChatMessageMetadata };
 
 export interface ImageAttachment {
@@ -776,7 +677,6 @@ interface ChatStreamOptions {
   message: string;
   activeTab?: string;
   tabContext?: Record<string, unknown>;
-  scene?: string;
   sessionId?: string;
   history?: ChatHistoryMessage[];
   signal?: AbortSignal;
@@ -790,13 +690,12 @@ export async function* streamChat(
 ): AsyncGenerator<StreamEvent, void, unknown> {
   const res = await fetch(`${API_BASE}/chat/`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: buildAuthHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({
       course_id: opts.courseId,
       message: opts.message,
       active_tab: opts.activeTab,
       tab_context: opts.tabContext,
-      scene: opts.scene,
       session_id: opts.sessionId,
       history: opts.history ?? [],
       images: opts.images ?? [],
@@ -879,6 +778,14 @@ export async function* streamChat(
           status: data.status,
           tool: data.tool,
           explanation: data.explanation,
+        };
+      } else if (resolvedEvent === "tool_progress") {
+        yield {
+          type: "tool_progress" as const,
+          tool: data.tool as string,
+          message: data.message as string,
+          step: (data.step ?? 0) as number,
+          total: (data.total ?? 0) as number,
         };
       } else if (resolvedEvent === "done") {
         yield {
@@ -990,11 +897,6 @@ export async function getLearningProfile(courseId?: string): Promise<LearningPro
   return request(`/preferences/profile${params}`);
 }
 
-export async function listPreferences(courseId?: string): Promise<Preference[]> {
-  const params = courseId ? `?course_id=${encodeURIComponent(courseId)}` : "";
-  return request(`/preferences/${params}`);
-}
-
 export async function setPreference(
   dimension: string,
   value: string,
@@ -1010,141 +912,6 @@ export async function setPreference(
       scope,
       course_id: courseId,
       source,
-    }),
-  });
-}
-
-export async function updatePreferenceItem(
-  preferenceId: string,
-  body: PreferenceUpdateRequest,
-): Promise<Preference> {
-  return request(`/preferences/${preferenceId}`, {
-    method: "PATCH",
-    body: JSON.stringify(body),
-  });
-}
-
-export async function dismissPreferenceItem(preferenceId: string, reason?: string): Promise<Preference> {
-  return request(`/preferences/${preferenceId}/dismiss`, {
-    method: "POST",
-    body: JSON.stringify({ reason }),
-  });
-}
-
-export async function restorePreferenceItem(preferenceId: string): Promise<Preference> {
-  return request(`/preferences/${preferenceId}/restore`, {
-    method: "POST",
-  });
-}
-
-export async function dismissPreferenceSignal(signalId: string, reason?: string): Promise<PreferenceSignal> {
-  return request(`/preferences/signals/${signalId}/dismiss`, {
-    method: "POST",
-    body: JSON.stringify({ reason }),
-  });
-}
-
-export async function restorePreferenceSignal(signalId: string): Promise<PreferenceSignal> {
-  return request(`/preferences/signals/${signalId}/restore`, {
-    method: "POST",
-  });
-}
-
-export async function updateMemoryItem(
-  memoryId: string,
-  body: MemoryUpdateRequest,
-): Promise<MemoryProfileItem> {
-  return request(`/preferences/memories/${memoryId}`, {
-    method: "PATCH",
-    body: JSON.stringify(body),
-  });
-}
-
-export async function dismissMemoryItem(memoryId: string, reason?: string): Promise<MemoryProfileItem> {
-  return request(`/preferences/memories/${memoryId}/dismiss`, {
-    method: "POST",
-    body: JSON.stringify({ reason }),
-  });
-}
-
-export async function restoreMemoryItem(memoryId: string): Promise<MemoryProfileItem> {
-  return request(`/preferences/memories/${memoryId}/restore`, {
-    method: "POST",
-  });
-}
-
-// ── Scenes ──
-
-export interface SceneConfig {
-  scene_id: string;
-  display_name: string;
-  icon: string | null;
-  tab_preset: WorkspaceTabPlacement[];
-  workflow: string;
-  ai_behavior: JsonObject;
-  preferences: Record<string, string> | null;
-  layout_policy?: string;
-  reasoning_policy?: string;
-  workflow_policy?: string;
-}
-
-interface ActiveSceneResult {
-  scene_id: string;
-  config: SceneConfig;
-  snapshot: JsonObject | null;
-}
-
-export interface SwitchResult {
-  switched: boolean;
-  scene_id: string;
-  from_scene?: string;
-  config: SceneConfig;
-  tab_layout?: WorkspaceTabPlacement[];
-  init_actions: SceneInitAction[];
-  message?: string;
-  explanation?: SceneSwitchExplanationSummary;
-}
-
-export interface SceneRecommendation {
-  scene_id: string;
-  confidence: number;
-  switch_recommended: boolean;
-  reason: string;
-  scores: Record<string, number>;
-  features: JsonObject;
-  expected_benefit?: string;
-  reversible_action?: string;
-  layout_policy?: string;
-  reasoning_policy?: string;
-  workflow_policy?: string;
-}
-
-export async function listScenes(): Promise<SceneConfig[]> {
-  return request("/scenes/");
-}
-
-export async function getActiveScene(courseId: string): Promise<ActiveSceneResult> {
-  return request(`/scenes/${courseId}/active`);
-}
-
-export async function recommendScene(courseId: string, activeTab?: string, message?: string): Promise<SceneRecommendation> {
-  const params = new URLSearchParams();
-  if (message) params.set("message", message);
-  if (activeTab) params.set("active_tab", activeTab);
-  const query = params.toString();
-  return request(`/scenes/${courseId}/recommend${query ? `?${query}` : ""}`);
-}
-
-export async function switchScene(
-  courseId: string,
-  sceneId: string,
-  currentUiState?: JsonObject,
-): Promise<SwitchResult> {
-  return request(`/scenes/${courseId}/switch`, {
-    method: "POST",
-    body: JSON.stringify({
-      scene_id: sceneId,
-      current_ui_state: currentUiState,
     }),
   });
 }
@@ -1210,16 +977,6 @@ export interface QuizProblem {
   order_index: number;
 }
 
-interface GeneratedQuizDraft {
-  question_type: string;
-  question: string;
-  options: Record<string, string> | null;
-  correct_answer?: string | null;
-  explanation?: string | null;
-  difficulty_layer?: number | null;
-  problem_metadata?: Record<string, unknown> | null;
-}
-
 export interface GeneratedQuizBatchSummary {
   batch_id: GeneratedBatchSummaryBase["batch_id"];
   title: GeneratedBatchSummaryBase["title"];
@@ -1240,75 +997,15 @@ export interface AnswerResult {
   explanation: string | null;
 }
 
-export async function listProblems(courseId: string): Promise<QuizProblem[]> {
-  return request(`/quiz/${courseId}`);
-}
-
-export function parseGeneratedQuizDraft(rawContent: string): GeneratedQuizDraft[] {
-  const normalizeDraftPayload = (payload: unknown): GeneratedQuizDraft[] => {
-    if (Array.isArray(payload)) {
-      return payload.filter(
-        (item): item is GeneratedQuizDraft =>
-          Boolean(item) && typeof item === "object" && typeof item.question === "string" && typeof item.question_type === "string",
-      );
-    }
-    if (
-      payload &&
-      typeof payload === "object" &&
-      typeof (payload as GeneratedQuizDraft).question === "string" &&
-      typeof (payload as GeneratedQuizDraft).question_type === "string"
-    ) {
-      return [payload as GeneratedQuizDraft];
-    }
-    return [];
-  };
-
-  const trimmed = rawContent.trim();
-  const candidates = [trimmed];
-  const start = rawContent.indexOf("[");
-  const end = rawContent.lastIndexOf("]");
-  if (start >= 0 && end > start) {
-    candidates.push(rawContent.slice(start, end + 1));
-  }
-  for (const candidate of candidates) {
-    const normalized = candidate.startsWith("```")
-      ? candidate.split("\n").slice(1, -1).join("\n")
-      : candidate;
-    try {
-      const parsed = JSON.parse(normalized);
-      const drafts = normalizeDraftPayload(parsed);
-      if (drafts.length > 0) {
-        return drafts;
-      }
-    } catch {
-      // Try next candidate.
-    }
-  }
-  return [];
-}
-
-export async function extractQuiz(courseId: string): Promise<QuizExtractionResult> {
+export async function extractQuiz(courseId: string, contentNodeId?: string): Promise<{ problems_created: number }> {
   return request("/quiz/extract", {
     method: "POST",
-    body: JSON.stringify({ course_id: courseId }),
+    body: JSON.stringify({ course_id: courseId, content_node_id: contentNodeId }),
   });
 }
 
-export async function saveGeneratedQuiz(
-  courseId: string,
-  rawContent: string,
-  title?: string,
-  replaceBatchId?: string,
-): Promise<GeneratedQuizSaveResult> {
-  return request("/quiz/save-generated", {
-    method: "POST",
-    body: JSON.stringify({
-      course_id: courseId,
-      raw_content: rawContent,
-      title,
-      replace_batch_id: replaceBatchId,
-    }),
-  });
+export async function listProblems(courseId: string): Promise<QuizProblem[]> {
+  return request(`/quiz/${courseId}`);
 }
 
 export async function listGeneratedQuizBatches(courseId: string): Promise<GeneratedQuizBatchSummary[]> {
@@ -1372,21 +1069,6 @@ export async function getGlobalTrends(days = 30): Promise<LearningTrends> {
   return request(`/progress/trends?days=${days}`);
 }
 
-// ── Weekly Report ──
-
-export interface WeeklyReport {
-  period: DateRange;
-  this_week: WeeklyActivitySnapshot;
-  last_week: WeeklyActivitySnapshot;
-  deltas: WeeklyActivityDelta;
-  mastery_avg: number;
-  highlights: string[];
-}
-
-export async function getWeeklyReport(): Promise<WeeklyReport> {
-  return request("/progress/weekly-report");
-}
-
 // ── Memory Stats ──
 
 export interface MemoryStats {
@@ -1422,7 +1104,7 @@ export interface Flashcard {
 export async function generateFlashcards(
   courseId: string,
   count: number = 5,
-): Promise<FlashcardGenerationResult> {
+): Promise<{ cards: Flashcard[]; count: number }> {
   return request("/flashcards/generate", {
     method: "POST",
     body: JSON.stringify({ course_id: courseId, count }),
@@ -1500,15 +1182,6 @@ export function getFileUrl(jobId: string): string {
   return `${API_BASE}/content/files/${jobId}`;
 }
 
-interface UploadedCourseFile {
-  id: string;
-  job_id?: string;
-  filename: string;
-  file_name?: string;
-  mime_type: string | null;
-  created_at: string | null;
-}
-
 export interface IngestionJobSummary {
   id: string;
   filename: string;
@@ -1523,10 +1196,6 @@ export interface IngestionJobSummary {
   dispatched_to: Record<string, number> | null;
   created_at: NullableDateTime;
   updated_at: NullableDateTime;
-}
-
-export async function getFilesByCourseId(courseId: string): Promise<UploadedCourseFile[]> {
-  return request(`/content/files/by-course/${courseId}`);
 }
 
 export async function listIngestionJobs(courseId: string): Promise<IngestionJobSummary[]> {
@@ -1656,7 +1325,18 @@ export async function listAgentTasks(courseId?: string): Promise<AgentTask[]> {
   return request(`/tasks/${query}`);
 }
 
-export async function submitAgentTask(body: AgentTaskSubmitRequest): Promise<AgentTask> {
+export async function submitAgentTask(body: {
+  task_type: string;
+  title: string;
+  course_id?: string;
+  goal_id?: string;
+  summary?: string;
+  input_json?: JsonObject;
+  metadata_json?: JsonObject;
+  source?: string;
+  requires_approval?: boolean;
+  max_attempts?: number;
+}): Promise<AgentTask> {
   return request("/tasks/submit", {
     method: "POST",
     body: JSON.stringify(body),
@@ -1671,21 +1351,7 @@ export async function rejectAgentTask(taskId: string): Promise<AgentTask> {
   return request(`/tasks/${taskId}/reject`, { method: "POST" });
 }
 
-export async function cancelAgentTask(taskId: string): Promise<AgentTask> {
-  return request(`/tasks/${taskId}/cancel`, { method: "POST" });
-}
 
-export async function resumeAgentTask(taskId: string): Promise<AgentTask> {
-  return request(`/tasks/${taskId}/resume`, { method: "POST" });
-}
-
-export async function retryAgentTask(taskId: string): Promise<AgentTask> {
-  return request(`/tasks/${taskId}/retry`, { method: "POST" });
-}
-
-export async function queueTaskFollowUp(taskId: string): Promise<AgentTask> {
-  return request(`/tasks/${taskId}/follow-up`, { method: "POST" });
-}
 
 export interface StudyGoal {
   id: string;
@@ -1718,25 +1384,7 @@ export async function getNextAction(courseId: string): Promise<NextActionRespons
   return request(`/goals/${courseId}/next-action`);
 }
 
-export async function queueNextAction(courseId: string): Promise<AgentTask> {
-  return request(`/goals/${courseId}/next-action/queue`, {
-    method: "POST",
-  });
-}
 
-export async function createStudyGoal(body: StudyGoalCreateRequest): Promise<StudyGoal> {
-  return request("/goals/", {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
-}
-
-export async function updateStudyGoal(goalId: string, body: Partial<StudyGoalUpdateRequest>): Promise<StudyGoal> {
-  return request(`/goals/${goalId}`, {
-    method: "PATCH",
-    body: JSON.stringify(body),
-  });
-}
 
 export interface PreferenceSignal {
   id: string;
@@ -1844,6 +1492,21 @@ export function getExportSessionUrl(courseId?: string): string {
   return `${API_BASE}/export/session${params}`;
 }
 
+export function getAnkiExportUrl(courseId: string, batchId?: string): string {
+  let url = `${API_BASE}/export/anki?course_id=${courseId}`;
+  if (batchId) url += `&batch_id=${batchId}`;
+  return url;
+}
+
+export function getCalendarExportUrl(
+  courseId: string,
+  planBatchId?: string
+): string {
+  let url = `${API_BASE}/export/calendar?course_id=${courseId}`;
+  if (planBatchId) url += `&plan_batch_id=${planBatchId}`;
+  return url;
+}
+
 // ── Learning Templates ──
 
 interface LearningTemplate {
@@ -1861,20 +1524,5 @@ export async function applyTemplate(templateId: string): Promise<void> {
   return request("/progress/templates/apply", {
     method: "POST",
     body: JSON.stringify({ template_id: templateId }),
-  });
-}
-
-// ── NL Preference Parsing ──
-
-interface NLPreferenceResult {
-  dimension: string | null;
-  value: string | null;
-  label: string | null;
-}
-
-export async function parseNLPreference(text: string): Promise<NLPreferenceResult> {
-  return request("/preferences/parse-nl", {
-    method: "POST",
-    body: JSON.stringify({ text }),
   });
 }

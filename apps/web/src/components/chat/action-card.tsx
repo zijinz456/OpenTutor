@@ -26,37 +26,37 @@ const ACTION_MAP: Record<
   open_quiz: {
     section: "practice",
     icon: ClipboardList,
-    color: "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400",
+    color: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800/50 dark:text-zinc-400",
   },
   add_to_quiz: {
     section: "practice",
     icon: ClipboardList,
-    color: "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400",
+    color: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800/50 dark:text-zinc-400",
   },
   open_plan: {
     section: "plan",
     icon: CalendarCheck,
-    color: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
+    color: "bg-zinc-200 text-zinc-800 dark:bg-zinc-700/50 dark:text-zinc-300",
   },
   show_plan: {
     section: "plan",
     icon: CalendarCheck,
-    color: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
+    color: "bg-zinc-200 text-zinc-800 dark:bg-zinc-700/50 dark:text-zinc-300",
   },
   open_notes: {
     section: "notes",
     icon: StickyNote,
-    color: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400",
+    color: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800/50 dark:text-zinc-400",
   },
   add_to_notes: {
     section: "notes",
     icon: StickyNote,
-    color: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400",
+    color: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800/50 dark:text-zinc-400",
   },
   open_section: {
     section: "notes",
     icon: BookOpen,
-    color: "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400",
+    color: "bg-zinc-200 text-zinc-800 dark:bg-zinc-700/50 dark:text-zinc-300",
   },
   switch_tab: {
     section: "notes",

@@ -117,6 +117,15 @@ class Settings(BaseSettings):
     activity_engine_max_concurrency: int = 3
     activity_use_redis_notify: bool = False
 
+    # Phase 3: Multi-modal
+    screenpipe_enabled: bool = False  # Enable Screenpipe screen context integration
+
+    # Web search
+    tavily_api_key: str = ""
+
+    # Workspace (agent file operations)
+    workspace_max_size_mb: int = 500
+
     # Code sandbox
     code_sandbox_backend: str = "container"  # container | auto | process
     code_sandbox_runtime: str = "docker"  # docker | podman

@@ -1,15 +1,22 @@
 """MCP Server — exposes OpenTutor tools via Model Context Protocol.
 
-Provides a JSON-RPC endpoint compatible with MCP clients (Claude Desktop, etc.)
-that allows external AI agents to use OpenTutor's education tools.
+Two MCP servers run in parallel:
+
+1. **FastApiMCP** (mounted in main.py) — auto-exposes all FastAPI routes as
+   MCP tools via Streamable HTTP at ``/mcp``.
+
+2. **edu_mcp** (this module) — curated high-level education tools via
+   FastMCP.  Exposed as a sub-application at ``/mcp/education``.
+
+Legacy JSON-RPC handler is kept for backward compatibility with clients
+that use the ``POST /api/mcp/`` endpoint directly.
 """
 
 import logging
-from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# MCP protocol version
+# MCP protocol version (legacy endpoint)
 MCP_PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -29,11 +36,56 @@ def _list_tools() -> list[dict]:
             "inputSchema": func.get("parameters", {"type": "object", "properties": {}}),
         })
 
+    # Note: education MCP tools are NOT included here — they are served
+    # via the dedicated /mcp/education endpoint.  Including them in this
+    # legacy list would be misleading because tools/call only dispatches
+    # through the main ToolRegistry.
+
     return mcp_tools
 
 
+def _list_education_tools() -> list[dict]:
+    """List tools from the education FastMCP server.
+
+    Uses the public ``list_tools()`` method on the FastMCP instance
+    (available since mcp SDK 1.0).  Falls back gracefully if the SDK
+    version differs.
+    """
+    try:
+        from services.mcp.education_server import edu_mcp
+
+        tools = []
+        # FastMCP exposes list_tools() as a public coroutine in some versions
+        # and as a sync accessor in others.  Try the public API first.
+        tool_list = None
+        if hasattr(edu_mcp, "list_tools"):
+            tool_list = edu_mcp.list_tools()
+        elif hasattr(edu_mcp, "_tool_manager"):
+            tool_list = edu_mcp._tool_manager.list_tools()
+
+        if tool_list is None:
+            return []
+
+        for tool in tool_list:
+            schema = {"type": "object", "properties": {}}
+            if hasattr(tool, "parameters") and tool.parameters:
+                try:
+                    schema = tool.parameters.model_json_schema()
+                except Exception:
+                    pass
+            tools.append({
+                "name": f"edu_{tool.name}",
+                "description": getattr(tool, "description", "") or "",
+                "inputSchema": schema,
+            })
+        return tools
+    except Exception as e:
+        logger.debug("Could not list education MCP tools: %s", e)
+        return []
+
+
 async def handle_mcp_request(request_body: dict) -> dict | None:
-    """Handle a single MCP JSON-RPC request.
+    """Handle a single MCP JSON-RPC request (legacy endpoint).
 
     Supports:
     - initialize
@@ -56,7 +108,7 @@ async def handle_mcp_request(request_body: dict) -> dict | None:
                     },
                     "serverInfo": {
                         "name": "opentutor-mcp",
-                        "version": "1.0.0",
+                        "version": "2.0.0",
                     },
                 },
             }
@@ -118,3 +170,27 @@ async def handle_mcp_request(request_body: dict) -> dict | None:
                 "message": str(e),
             },
         }
+
+
+def mount_education_mcp(app) -> None:
+    """Mount the education FastMCP server as a sub-application.
+
+    This provides the curated education tools at ``/mcp/education``
+    using the official MCP SDK's Streamable HTTP transport.
+    """
+    try:
+        from services.mcp.education_server import edu_mcp
+
+        # FastMCP provides a streamable HTTP app (mcp SDK >= 1.0)
+        if hasattr(edu_mcp, "streamable_http_app"):
+            mcp_app = edu_mcp.streamable_http_app()
+        elif hasattr(edu_mcp, "http_app"):
+            mcp_app = edu_mcp.http_app()
+        else:
+            logger.warning("Education MCP: no compatible HTTP app method found on FastMCP")
+            return
+
+        app.mount("/mcp/education", mcp_app)
+        logger.info("Education MCP server mounted at /mcp/education")
+    except Exception as exc:
+        logger.warning("Education MCP server mount failed: %s", exc)

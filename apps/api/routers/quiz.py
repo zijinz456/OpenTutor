@@ -19,7 +19,11 @@ from services.auth.dependency import get_current_user
 from services.course_access import get_course_or_404
 from services.parser.quiz import extract_questions
 from services.practice.annotation import build_practice_problem, normalize_question_options, parse_question_array
-from libs.exceptions import NotFoundError, ValidationError
+from libs.exceptions import (
+    NotFoundError,
+    ValidationError,
+    reraise_as_app_error,
+)
 
 router = APIRouter()
 
@@ -176,32 +180,52 @@ async def extract_quiz(body: ExtractRequest, user: User = Depends(get_current_us
     # Verify course ownership
     await get_course_or_404(db, body.course_id, user_id=user.id)
 
-    if body.content_node_id:
-        result = await db.execute(
-            select(CourseContentTree).where(CourseContentTree.id == body.content_node_id)
-        )
-        node = result.scalar_one_or_none()
-        if not node or not node.content:
-            raise NotFoundError("Content node not found or empty")
+    try:
+        if body.content_node_id:
+            result = await db.execute(
+                select(CourseContentTree).where(CourseContentTree.id == body.content_node_id)
+            )
+            node = result.scalar_one_or_none()
+            if not node or not node.content:
+                raise NotFoundError("Content node not found or empty")
 
-        problems = await extract_questions(
-            node.content, node.title, body.course_id, body.content_node_id
-        )
-    else:
-        # Extract from all content nodes in the course
-        result = await db.execute(
-            select(CourseContentTree)
-            .where(CourseContentTree.course_id == body.course_id)
-            .where(CourseContentTree.content.isnot(None))
-        )
-        nodes = result.scalars().all()
-        problems = []
-        for node in nodes[:50]:  # Limit to 50 nodes to prevent excessive LLM calls
-            if node.content and len(node.content) > 100:
-                node_problems = await extract_questions(
-                    node.content, node.title, body.course_id, node.id
+            problems = await extract_questions(
+                node.content, node.title, body.course_id, body.content_node_id
+            )
+        else:
+            # Extract from all content nodes in the course
+            result = await db.execute(
+                select(CourseContentTree)
+                .where(CourseContentTree.course_id == body.course_id)
+                .where(CourseContentTree.content.isnot(None))
+            )
+            nodes = result.scalars().all()
+            import asyncio
+            sem = asyncio.Semaphore(5)
+
+            async def _extract(n):
+                async with sem:
+                    return await extract_questions(n.content, n.title, body.course_id, n.id)
+
+            eligible = [n for n in nodes[:50] if n.content and len(n.content) > 100]
+            results = await asyncio.gather(*[_extract(n) for n in eligible], return_exceptions=True)
+            problems = []
+            failures = []
+            for r in results:
+                if isinstance(r, list):
+                    problems.extend(r)
+                elif isinstance(r, Exception):
+                    failures.append(r)
+            if failures and not problems:
+                raise failures[0]
+            if failures:
+                logger.warning(
+                    "Quiz extraction skipped %d/%d node(s) due to errors",
+                    len(failures),
+                    len(results),
                 )
-                problems.extend(node_problems)
+    except Exception as exc:
+        reraise_as_app_error(exc, "Quiz extraction failed")
 
     for p in problems:
         db.add(p)
@@ -412,7 +436,40 @@ async def submit_answer(
     except Exception as e:
         logger.warning("Progress update failed (best-effort): %s", e)
 
+    # Phase 4: Record quiz_accuracy metric for strategy experiments
+    try:
+        from services.experiment.engine import get_experiment_config, record_metric
+        exp_config = await get_experiment_config(db, user.id, "strategy")
+        if exp_config:
+            await record_metric(
+                db,
+                experiment_id=uuid.UUID(exp_config["experiment_id"]),
+                user_id=user.id,
+                variant_id=exp_config["variant_id"],
+                metric_name="quiz_accuracy",
+                metric_value=1.0 if is_correct else 0.0,
+            )
+    except Exception:
+        pass  # Best-effort, non-blocking
+
     await db.commit()
+
+    # Emit standardized learning event for analytics + plugin hooks
+    try:
+        from services.analytics.events import emit_quiz_answered
+        await emit_quiz_answered(
+            db,
+            user_id=user.id,
+            course_id=problem.course_id,
+            quiz_id=str(problem.id),
+            score=1.0 if is_correct else 0.0,
+            correct=is_correct,
+            agent_name="quiz_router",
+            answers={"user_answer": body.user_answer, "error_category": error_category},
+        )
+        await db.commit()
+    except Exception:
+        logger.debug("Learning event emission failed (best-effort)")
 
     # Auto-derive diagnostic pair in background for wrong answers
     if not is_correct and wa:
@@ -423,3 +480,52 @@ async def submit_answer(
         correct_answer=problem.correct_answer,
         explanation=problem.explanation,
     )
+
+
+# ── Phase 4: Mastery history time-series endpoint ──
+
+
+class MasterySnapshotResponse(BaseModel):
+    mastery_score: float
+    gap_type: str | None
+    content_node_id: str | None
+    recorded_at: str
+
+
+@router.get("/{course_id}/mastery-history", response_model=list[MasterySnapshotResponse])
+async def mastery_history(
+    course_id: uuid.UUID,
+    content_node_id: uuid.UUID | None = None,
+    limit: int = 50,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return mastery score time-series for analytics charts."""
+    from models.mastery_snapshot import MasterySnapshot
+
+    await get_course_or_404(db, course_id, user.id)
+
+    query = (
+        select(MasterySnapshot)
+        .where(
+            MasterySnapshot.user_id == user.id,
+            MasterySnapshot.course_id == course_id,
+        )
+        .order_by(MasterySnapshot.recorded_at.desc())
+        .limit(limit)
+    )
+    if content_node_id:
+        query = query.where(MasterySnapshot.content_node_id == content_node_id)
+
+    result = await db.execute(query)
+    snapshots = result.scalars().all()
+
+    return [
+        MasterySnapshotResponse(
+            mastery_score=s.mastery_score,
+            gap_type=s.gap_type,
+            content_node_id=str(s.content_node_id) if s.content_node_id else None,
+            recorded_at=s.recorded_at.isoformat(),
+        )
+        for s in reversed(snapshots)  # Return in chronological order
+    ]

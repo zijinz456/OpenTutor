@@ -136,7 +136,7 @@ class SceneAgent(BaseAgent):
 
         system_prompt = self.build_system_prompt(ctx)
         client = get_llm_client("fast")
-        ctx.response, _ = await client.chat(system_prompt, ctx.user_message)
+        ctx.response, _ = await client.chat(system_prompt, ctx.user_message, images=ctx.images or None)
         return ctx
 
     async def stream(self, ctx: AgentContext, db: AsyncSession) -> AsyncIterator[str]:
@@ -160,7 +160,7 @@ class SceneAgent(BaseAgent):
 
         ctx.transition(TaskPhase.STREAMING)
         full_response = ""
-        async for chunk in client.stream_chat(system_prompt, ctx.user_message):
+        async for chunk in client.stream_chat(system_prompt, ctx.user_message, images=ctx.images or None):
             full_response += chunk
             yield chunk
         ctx.response = full_response

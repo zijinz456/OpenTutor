@@ -360,6 +360,14 @@ class _ScalarCollectionResult:
         return self._items[0] if self._items else None
 
 
+class _RowCollectionResult:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def all(self):
+        return list(self._rows)
+
+
 class _SchedulerSession:
     def __init__(self, user: User):
         self.user = user
@@ -367,6 +375,9 @@ class _SchedulerSession:
         self.tasks: list[AgentTask] = []
 
     async def execute(self, query):
+        first_col = query.column_descriptions[0]
+        if first_col.get("name") == "id" and first_col.get("entity") is User:
+            return _RowCollectionResult([(self.user.id,)])
         entity = query.column_descriptions[0].get("entity")
         if entity is User:
             return _ScalarCollectionResult([self.user])
@@ -621,57 +632,69 @@ def test_jwt_refresh_token_roundtrip():
     assert payload["type"] == "refresh"
 
 
-# ── Scene switching ──
+def test_scene_policy_prefers_review_drill_for_wrong_answer_recovery():
+    features = {
+        "matched_cues": {
+            "study_session": [],
+            "exam_prep": [],
+            "assignment": [],
+            "review_drill": ["wrong answers"],
+            "note_organize": [],
+        },
+        "upcoming_assignments": 0,
+        "unmastered_wrong_answers": 5,
+        "low_mastery_count": 2,
+        "content_nodes": 3,
+        "active_tab": "review",
+        "course_active_scene": "study_session",
+        "active_goal_title": None,
+        "active_goal_next_action": None,
+        "active_goal_target_days": None,
+        "nearest_deadline_days": None,
+        "recent_failed_tasks": 0,
+        "pending_approval_count": 0,
+        "running_task_count": 0,
+        "urgent_forgetting_count": 2,
+        "warning_forgetting_count": 0,
+    }
 
-from services.scene import manager as scene_manager
+    decision = decide_scene_policy_from_features(features=features, current_scene="study_session")
 
-
-@pytest.mark.asyncio
-async def test_switch_scene_uses_snapshot_open_tabs_for_tab_layout(monkeypatch):
-    course_id = uuid.uuid4()
-    user_id = uuid.uuid4()
-    fake_course = MagicMock(active_scene="study_session")
-    fake_result = MagicMock()
-    fake_result.scalar_one_or_none.return_value = fake_course
-    db = MagicMock()
-    db.execute = AsyncMock(return_value=fake_result)
-    db.flush = AsyncMock()
-    db.add = MagicMock()
-
-    async def fake_get_scene_config(_db, _scene_id):
-        return {
-            "scene_id": "exam_prep",
-            "tab_preset": [{"type": "plan", "position": 0}],
-        }
-
-    async def fake_load_snapshot(_db, _course_id, _scene_id):
-        return {
-            "open_tabs": [{"type": "review", "position": 0}],
-            "layout_state": {"panel_sizes": [50, 50]},
-        }
-
-    async def fake_get_init_actions(_db, _course_id, _user_id, _scene_id):
-        return []
-
-    monkeypatch.setattr(scene_manager, "get_scene_config", fake_get_scene_config)
-    monkeypatch.setattr(scene_manager, "load_snapshot", fake_load_snapshot)
-    monkeypatch.setattr(scene_manager, "get_init_actions", fake_get_init_actions)
-
-    result = await scene_manager.switch_scene(
-        db=db,
-        course_id=course_id,
-        user_id=user_id,
-        new_scene_id="exam_prep",
-    )
-
-    assert result["tab_layout"] == [{"type": "review", "position": 0}]
+    assert decision.scene_id == "review_drill"
+    assert decision.switch_recommended is True
+    assert "wrong answers" in decision.reason
 
 
-def test_resolve_tab_layout_falls_back_to_scene_defaults():
-    scene_config = {"tab_preset": [{"type": "notes", "position": 0}]}
+def test_scene_policy_stays_put_when_running_task_exists():
+    features = {
+        "matched_cues": {
+            "study_session": [],
+            "exam_prep": [],
+            "assignment": [],
+            "review_drill": [],
+            "note_organize": [],
+        },
+        "upcoming_assignments": 0,
+        "unmastered_wrong_answers": 0,
+        "low_mastery_count": 0,
+        "content_nodes": 2,
+        "active_tab": "activity",
+        "course_active_scene": "study_session",
+        "active_goal_title": None,
+        "active_goal_next_action": None,
+        "active_goal_target_days": None,
+        "nearest_deadline_days": None,
+        "recent_failed_tasks": 0,
+        "pending_approval_count": 0,
+        "running_task_count": 1,
+        "urgent_forgetting_count": 0,
+        "warning_forgetting_count": 0,
+    }
 
-    assert scene_manager._resolve_tab_layout(scene_config, None) == scene_config["tab_preset"]
-    assert scene_manager._resolve_tab_layout(scene_config, {"open_tabs": []}) == scene_config["tab_preset"]
+    decision = decide_scene_policy_from_features(features=features, current_scene="study_session")
+
+    assert decision.scene_id == "study_session"
+    assert decision.switch_recommended is False
 
 
 @pytest.mark.asyncio

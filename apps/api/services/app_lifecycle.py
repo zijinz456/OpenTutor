@@ -120,10 +120,63 @@ async def _stop_health_monitor() -> None:
     await registry.stop_health_monitor()
 
 
+async def _maybe_setup_checkpointer() -> None:
+    """Initialise LangGraph checkpoint persistence (PostgreSQL-backed).
+
+    After setup, invalidates cached graph singletons so they re-compile
+    with the now-available checkpointer.
+    """
+    try:
+        from services.workflow.checkpoint import setup_checkpointer
+        await setup_checkpointer()
+        # Invalidate any graphs that were compiled before the checkpointer was ready
+        from services.workflow.graph import invalidate_graph_singletons
+        invalidate_graph_singletons()
+    except Exception as exc:
+        logger.warning("Checkpoint setup failed (workflows will run without persistence): %s", exc)
+
+
+async def _maybe_teardown_checkpointer() -> None:
+    try:
+        from services.workflow.checkpoint import teardown_checkpointer
+        await teardown_checkpointer()
+    except Exception:
+        pass
+
+
+async def _start_plugin_system() -> None:
+    """Initialize pluggy-based plugin system and call startup hooks."""
+    try:
+        from services.plugin.manager import get_plugin_manager
+
+        pm = get_plugin_manager()
+        pm.load_all()
+        await pm.startup()
+        logger.info(
+            "Plugin system started (%d plugin(s): %s)",
+            len(pm.manifests),
+            ", ".join(pm.manifests.keys()) or "none",
+        )
+    except Exception as exc:
+        logger.warning("Plugin system startup failed (graceful degradation): %s", exc)
+
+
+async def _stop_plugin_system() -> None:
+    try:
+        from services.plugin.manager import get_plugin_manager
+
+        pm = get_plugin_manager()
+        await pm.shutdown()
+    except Exception as exc:
+        logger.debug("Plugin system shutdown: %s", exc)
+
+
 async def run_startup_hooks() -> None:
     await _maybe_create_tables()
     await _maybe_seed_system_data()
+    await _maybe_setup_checkpointer()
     await _maybe_connect_mcp_servers()
+    await _start_plugin_system()
     _maybe_start_scheduler()
     _maybe_start_activity_engine()
     _start_health_monitor()
@@ -136,7 +189,9 @@ async def run_shutdown_hooks() -> None:
     await _maybe_stop_activity_engine()
     _maybe_stop_scheduler()
     await wait_for_background_tasks()
+    await _stop_plugin_system()
     await _maybe_disconnect_mcp_servers()
+    await _maybe_teardown_checkpointer()
     await engine.dispose()
 
 

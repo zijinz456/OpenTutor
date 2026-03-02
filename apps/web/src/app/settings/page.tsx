@@ -377,6 +377,9 @@ export default function SettingsPage() {
                   <Badge variant="outline">
                     {t("settings.deployment")}: {health.deployment_mode === "single_user" ? t("settings.singleUser") : health.deployment_mode}
                   </Badge>
+                  <Badge variant="outline">
+                    {t("settings.authMode")}: {health.auth_enabled ? t("settings.authJwt") : t("settings.authLocalOwner")}
+                  </Badge>
                   <Badge variant={health.migration_required ? "destructive" : "secondary"}>
                     {t("settings.schema")}: {health.migration_required ? t("settings.schemaMigrationRequired") : t("settings.schemaReady")}
                   </Badge>
@@ -400,7 +403,8 @@ export default function SettingsPage() {
                 <p className="text-sm text-muted-foreground">{statusMeta.description}</p>
                 {health.deployment_mode === "single_user" && (
                   <div className="rounded-md border border-dashed border-border p-3 text-xs text-muted-foreground">
-                    {t("settings.singleUserNote")}
+                    <p>{t("settings.singleUserNote")}</p>
+                    <p className="mt-2">{t("settings.localModeHelp")}</p>
                   </div>
                 )}
                 {health.migration_required && (

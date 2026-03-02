@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { useParams } from "next/navigation";
 import { useCourseStore } from "@/store/course";
 import { useChatStore } from "@/store/chat";
-import { useSceneStore } from "@/store/scene";
+import { useWorkspaceStore, type SectionId } from "@/store/workspace";
+import { resolveWorkspaceFeatures } from "@/lib/course-config";
 import { AppShell } from "@/components/shell/app-shell";
 import { WorkspaceHeader } from "@/components/shell/workspace-header";
 import { CourseTree } from "@/components/course-tree/course-tree";
@@ -16,36 +17,67 @@ export default function CoursePage() {
   const params = useParams();
   const courseId = params.id as string;
 
-  const { activeCourse, setActiveCourse, courses, fetchCourses, fetchIngestionJobs } =
-    useCourseStore();
-  const { fetchScenes, fetchActiveScene } = useSceneStore();
+  const {
+    activeCourse,
+    setActiveCourse,
+    courses,
+    fetchCourses,
+    fetchIngestionJobs,
+  } = useCourseStore();
+  const activeSection = useWorkspaceStore((s) => s.activeSection);
+  const setActiveSection = useWorkspaceStore((s) => s.setActiveSection);
 
-  // Register global keyboard shortcuts
   useKeyboardShortcuts();
 
-  // Load course data on mount
   useEffect(() => {
-    if (courses.length === 0) fetchCourses();
+    if (courses.length === 0) {
+      void fetchCourses();
+    }
   }, [courses.length, fetchCourses]);
 
-  // Set active course when courses are loaded
   useEffect(() => {
     const course = courses.find((c) => c.id === courseId);
-    if (course) setActiveCourse(course);
+    if (course) {
+      setActiveCourse(course);
+    }
   }, [courseId, courses, setActiveCourse]);
 
-  // Load scenes (content tree is loaded by setActiveCourse in the course store)
   useEffect(() => {
-    fetchScenes();
-    fetchActiveScene(courseId);
-  }, [courseId, fetchScenes, fetchActiveScene]);
-
-  // Load ingestion jobs (file list with categories)
-  useEffect(() => {
-    fetchIngestionJobs(courseId);
+    void fetchIngestionJobs(courseId);
   }, [courseId, fetchIngestionJobs]);
 
-  // Auto-send init prompt if present in localStorage
+  const course = activeCourse ?? courses.find((item) => item.id === courseId) ?? null;
+
+  const features = useMemo(
+    () => resolveWorkspaceFeatures(course?.metadata),
+    [course?.metadata],
+  );
+
+  const visibleSections = useMemo<SectionId[]>(
+    () => [
+      ...(features.notes ? (["notes"] as const) : []),
+      ...(features.practice ? (["practice"] as const) : []),
+      "analytics",
+      ...(features.study_plan ? (["plan"] as const) : []),
+    ],
+    [features.notes, features.practice, features.study_plan],
+  );
+
+  useEffect(() => {
+    if (course && visibleSections.length > 0) {
+      setActiveSection(visibleSections[0]);
+    }
+  }, [course, courseId, setActiveSection, visibleSections]);
+
+  useEffect(() => {
+    if (!course || visibleSections.length === 0) {
+      return;
+    }
+    if (!visibleSections.includes(activeSection)) {
+      setActiveSection(visibleSections[0]);
+    }
+  }, [activeSection, course, setActiveSection, visibleSections]);
+
   useEffect(() => {
     const promptKey = `course_init_prompt_${courseId}`;
     const consumedKey = `course_init_prompt_consumed_${courseId}`;
@@ -55,8 +87,7 @@ export default function CoursePage() {
       sessionStorage.setItem(consumedKey, "true");
       localStorage.removeItem(promptKey);
       const timer = setTimeout(() => {
-        const scene = useSceneStore.getState().activeScene;
-        void useChatStore.getState().sendMessage(courseId, initPrompt, { scene });
+        void useChatStore.getState().sendMessage(courseId, initPrompt);
       }, 500);
       return () => clearTimeout(timer);
     }
@@ -64,16 +95,18 @@ export default function CoursePage() {
 
   return (
     <div className="h-screen flex flex-col bg-background">
-      <WorkspaceHeader
-        courseId={courseId}
-        courseName={activeCourse?.name || "Course"}
-      />
+      <WorkspaceHeader courseName={course?.name || "Course"} />
       <AppShell
         courseId={courseId}
         tree={<CourseTree courseId={courseId} />}
-        chat={<ChatView courseId={courseId} />}
+        chat={features.free_qa ? <ChatView courseId={courseId} /> : undefined}
       >
-        <SectionContainer courseId={courseId} />
+        <SectionContainer
+          courseId={courseId}
+          visibleSections={visibleSections}
+          chatEnabled={features.free_qa}
+          reviewEnabled={features.wrong_answer}
+        />
       </AppShell>
     </div>
   );

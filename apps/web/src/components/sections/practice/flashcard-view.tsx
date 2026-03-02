@@ -3,12 +3,18 @@
 import { useCallback, useEffect, useState } from "react";
 import { useT } from "@/lib/i18n-context";
 import {
+  generateFlashcards,
   getDueFlashcards,
+  listGeneratedFlashcardBatches,
   reviewFlashcard,
+  saveGeneratedFlashcards,
   type Flashcard,
-  type DueFlashcardsResult,
 } from "@/lib/api";
+import { useBatchManager } from "@/hooks/use-batch-manager";
+import { useWorkspaceStore } from "@/store/workspace";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { toast } from "sonner";
 
 interface FlashcardViewProps {
   courseId: string;
@@ -23,36 +29,77 @@ const RATINGS = [
 
 export function FlashcardView({ courseId }: FlashcardViewProps) {
   const t = useT();
+  const refreshKey = useWorkspaceStore((s) => s.sectionRefreshKey["practice"]);
+  const { saving, latestBatch, wrapSave } = useBatchManager({
+    courseId,
+    refreshSection: "practice",
+    listFn: listGeneratedFlashcardBatches,
+  });
   const [cards, setCards] = useState<Flashcard[]>([]);
   const [index, setIndex] = useState(0);
   const [flipped, setFlipped] = useState(false);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [reviewed, setReviewed] = useState(0);
+  const [dueCount, setDueCount] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    getDueFlashcards(courseId)
-      .then((res: DueFlashcardsResult) => {
+
+    (async () => {
+      try {
+        const due = await getDueFlashcards(courseId);
+        if (cancelled) return;
+        setCards(due.cards);
+        setDueCount(due.due_count);
+        setIndex(0);
+        setFlipped(false);
+        setReviewed(0);
+      } catch {
         if (!cancelled) {
-          setCards(res.cards);
-          setIndex(0);
-          setFlipped(false);
-          setReviewed(0);
+          setCards([]);
+          setDueCount(0);
         }
-      })
-      .catch(() => {
-        if (!cancelled) setCards([]);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => { cancelled = true; };
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [courseId, refreshKey]);
+
+  const handleGenerate = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await generateFlashcards(courseId, 5);
+      setCards(data.cards);
+      setIndex(0);
+      setFlipped(false);
+      setReviewed(0);
+      toast.success(`Generated ${data.count} flashcards`);
+    } catch (error) {
+      toast.error((error as Error).message || "Failed to generate flashcards");
+    } finally {
+      setLoading(false);
+    }
   }, [courseId]);
 
+  const handleSave = useCallback(
+    async (replaceBatchId?: string) => {
+      if (cards.length === 0) return;
+      await wrapSave(() =>
+        saveGeneratedFlashcards(courseId, cards, "Flashcard Set", replaceBatchId),
+      );
+    },
+    [cards, courseId, wrapSave],
+  );
+
   const handleFlip = useCallback(() => {
-    if (!submitting) setFlipped((f) => !f);
+    if (!submitting) setFlipped((value) => !value);
   }, [submitting]);
 
   const handleRate = useCallback(
@@ -63,12 +110,12 @@ export function FlashcardView({ courseId }: FlashcardViewProps) {
       try {
         await reviewFlashcard(card, value);
       } catch {
-        /* best-effort */
+        // best-effort
       }
       setSubmitting(false);
       setFlipped(false);
-      setReviewed((r) => r + 1);
-      setIndex((i) => i + 1);
+      setReviewed((count) => count + 1);
+      setIndex((current) => current + 1);
     },
     [cards, index, submitting],
   );
@@ -84,10 +131,18 @@ export function FlashcardView({ courseId }: FlashcardViewProps) {
   if (cards.length === 0) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
+        {dueCount > 0 ? (
+          <Badge variant="destructive" className="mb-3">
+            {dueCount} cards due today
+          </Badge>
+        ) : null}
         <h3 className="text-sm font-medium mb-1">{t("flashcard.title")}</h3>
         <p className="text-xs text-muted-foreground max-w-xs">
           {t("flashcard.empty")}
         </p>
+        <Button className="mt-3" size="sm" onClick={() => void handleGenerate()}>
+          {t("flashcard.generate")}
+        </Button>
       </div>
     );
   }
@@ -107,27 +162,47 @@ export function FlashcardView({ courseId }: FlashcardViewProps) {
 
   return (
     <div className="flex-1 flex flex-col items-center justify-center gap-6 p-6">
-      {/* Progress counter */}
-      <p className="text-xs text-muted-foreground">
-        {reviewed}/{cards.length} reviewed
-      </p>
+      <div className="flex w-full max-w-md items-center justify-between gap-2">
+        <Badge variant="outline">
+          {reviewed}/{cards.length} reviewed
+        </Badge>
+        <div className="flex items-center gap-2">
+          {latestBatch ? (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => void handleSave(latestBatch.batch_id)}
+              disabled={saving || submitting}
+            >
+              Replace Latest
+            </Button>
+          ) : null}
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => void handleSave()}
+            disabled={saving || submitting}
+          >
+            Save New
+          </Button>
+        </div>
+      </div>
 
-      {/* Card with flip animation */}
       <div
         className="flashcard-perspective w-full max-w-md cursor-pointer"
         onClick={handleFlip}
         role="button"
         tabIndex={0}
-        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") handleFlip(); }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") handleFlip();
+        }}
       >
         <div className={`flashcard-inner relative w-full min-h-[200px] ${flipped ? "flipped" : ""}`}>
-          {/* Front */}
           <div className="flashcard-face absolute inset-0 flex flex-col items-center justify-center rounded-lg border border-border bg-card p-6 text-center">
             <p className="text-xs text-muted-foreground mb-2">Question</p>
             <p className="text-sm font-medium whitespace-pre-wrap">{card.front}</p>
           </div>
 
-          {/* Back */}
           <div className="flashcard-back absolute inset-0 flex flex-col items-center justify-center rounded-lg border border-border bg-card p-6 text-center">
             <p className="text-xs text-muted-foreground mb-2">Answer</p>
             <p className="text-sm font-medium whitespace-pre-wrap">{card.back}</p>
@@ -135,23 +210,22 @@ export function FlashcardView({ courseId }: FlashcardViewProps) {
         </div>
       </div>
 
-      {/* Tap hint or rating buttons */}
       {!flipped ? (
         <p className="text-xs text-muted-foreground">Tap card to reveal answer</p>
       ) : (
         <div className="flex gap-2">
-          {RATINGS.map((r) => (
+          {RATINGS.map((rating) => (
             <Button
-              key={r.value}
+              key={rating.value}
               size="sm"
-              variant={r.variant}
+              variant={rating.variant}
               disabled={submitting}
               onClick={(e) => {
                 e.stopPropagation();
-                handleRate(r.value);
+                void handleRate(rating.value);
               }}
             >
-              {r.label}
+              {rating.label}
             </Button>
           ))}
         </div>

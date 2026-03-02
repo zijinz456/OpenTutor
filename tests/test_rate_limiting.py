@@ -20,20 +20,20 @@ def test_cost_matrix_health_is_zero():
 def test_cost_matrix_chat_stream_is_high():
     from middleware.cost_matrix import get_endpoint_cost
 
-    cost = get_endpoint_cost("/api/chat/stream")
+    cost = get_endpoint_cost("/api/chat/")
     assert cost == 30
 
 
-def test_cost_matrix_quiz_generate():
+def test_cost_matrix_quiz_extract():
     from middleware.cost_matrix import get_endpoint_cost
 
-    assert get_endpoint_cost("/api/quiz/generate") == 50
+    assert get_endpoint_cost("/api/quiz/extract") == 50
 
 
-def test_cost_matrix_workflow_run_is_very_high():
+def test_cost_matrix_exam_prep_workflow_is_very_high():
     from middleware.cost_matrix import get_endpoint_cost
 
-    assert get_endpoint_cost("/api/workflows/run") == 80
+    assert get_endpoint_cost("/api/workflows/exam-prep") == 80
 
 
 def test_cost_matrix_write_method_multiplier():

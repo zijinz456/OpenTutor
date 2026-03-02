@@ -33,7 +33,7 @@ export function MessageList({ messages }: MessageListProps) {
             No messages yet
           </p>
           <p className="mt-1 text-xs text-muted-foreground/70">
-            Ask a question about your course materials
+            AI will reference your uploaded materials while answering
           </p>
         </div>
       </div>

@@ -3,7 +3,6 @@
 import { useEffect } from "react";
 import { useChatStore } from "@/store/chat";
 import { useWorkspaceStore, type SectionId } from "@/store/workspace";
-import { useSceneStore } from "@/store/scene";
 import { ChatHeader } from "@/components/chat/chat-header";
 import { MessageList } from "@/components/chat/message-list";
 import { ChatInput } from "@/components/chat/chat-input";
@@ -22,12 +21,12 @@ interface ChatViewProps {
  */
 export function ChatView({ courseId }: ChatViewProps) {
   const messages = useChatStore((s) => s.messages);
-  const isStreaming = useChatStore((s) => s.isStreaming);
   const toolStatus = useChatStore((s) => s.toolStatus);
   const setCourseContext = useChatStore((s) => s.setCourseContext);
   const loadSessions = useChatStore((s) => s.loadSessions);
   const setOnAction = useChatStore((s) => s.setOnAction);
   const setActiveSection = useWorkspaceStore((s) => s.setActiveSection);
+  const triggerRefresh = useWorkspaceStore((s) => s.triggerRefresh);
 
   // Set course context and load sessions on mount / courseId change.
   useEffect(() => {
@@ -62,10 +61,20 @@ export function ChatView({ courseId }: ChatViewProps) {
         setActiveSection("notes");
         return;
       }
+
+      // Agent tool completed — refresh the target section and switch to it.
+      if (type === "data_updated") {
+        const section = action.value as SectionId | undefined;
+        if (section) {
+          triggerRefresh(section);
+          setActiveSection(section);
+        }
+        return;
+      }
     };
 
     setOnAction(handleAction);
-  }, [setOnAction, setActiveSection]);
+  }, [setOnAction, setActiveSection, triggerRefresh]);
 
   return (
     <div className="flex h-full flex-col bg-background">

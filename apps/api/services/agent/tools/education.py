@@ -1,24 +1,27 @@
 """Built-in education-domain tools for ReAct agent loop.
 
-These tools give agents factual access to student data, course content,
-and code execution. They are the "out-of-the-box" defaults that non-technical
-users get automatically.
+Tools are classified by side-effect category:
+- READ:    No side effects (search, lookup, list)
+- WRITE:   Creates / mutates data (generate flashcards, quiz, notes, plan)
+- COMPUTE: Sandboxed computation (run_code)
 
-Each tool:
-- Reads from existing DB models (LearningProgress, WrongAnswer, etc.)
-- Returns structured text that the LLM can reason about
-- Is read-only (no side effects) except run_code which is sandboxed
+Write tools:
+- Use db.flush() (not commit) — orchestrator commits atomically after streaming.
+- Support idempotency via ToolCategory.WRITE base-class dedup.
+- Emit ctx.emit_progress() events for frontend progress display.
+- Emit ctx.actions for frontend section refresh after successful flush.
 """
 
 import asyncio
 import json
 import logging
+import re
 from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.agent.tools.base import Tool, ToolParameter, ToolResult
+from services.agent.tools.base import Tool, ToolCategory, ToolParameter, ToolResult
 
 logger = logging.getLogger(__name__)
 
@@ -331,6 +334,7 @@ class RunCodeTool(Tool):
     """Execute Python code in a safe sandbox."""
 
     name = "run_code"
+    category = ToolCategory.COMPUTE
     description = (
         "Execute Python code safely and return the output. "
         "Supports math, collections, statistics, and other standard library modules. "
@@ -777,6 +781,500 @@ class ListAssignmentsTool(Tool):
             return ToolResult(success=False, output="", error=str(e))
 
 
+# ── Tool 13: generate_flashcards (write) ──
+
+
+class GenerateFlashcardsTool(Tool):
+    """Generate flashcards from course content and save them."""
+
+    name = "generate_flashcards"
+    category = ToolCategory.WRITE
+    description = (
+        "Generate spaced-repetition flashcards from course materials. "
+        "Creates cards with question/answer pairs and saves them for review. "
+        "Use when the student asks for flashcards or study cards."
+    )
+    domain = "education"
+
+    def get_parameters(self) -> list[ToolParameter]:
+        return [
+            ToolParameter(
+                name="count",
+                type="integer",
+                description="Number of flashcards to generate (1-20). Default 5.",
+                required=False,
+                default=5,
+            ),
+        ]
+
+    async def run(self, parameters: dict[str, Any], ctx: Any, db: AsyncSession) -> ToolResult:
+        try:
+            count = min(max(int(parameters.get("count", 5)), 1), 20)
+
+            ctx.emit_progress(self.name, "Analysing course content...", step=1, total=3)
+
+            from services.spaced_repetition.flashcards import generate_flashcards
+
+            cards = await generate_flashcards(db, ctx.course_id, count=count)
+
+            if not cards:
+                return ToolResult(success=True, output="No flashcards could be generated. The course may lack sufficient content.")
+
+            ctx.emit_progress(self.name, f"Saving {len(cards)} flashcards...", step=2, total=3)
+
+            from services.generated_assets import save_generated_asset
+
+            await save_generated_asset(
+                db,
+                user_id=ctx.user_id,
+                course_id=ctx.course_id,
+                asset_type="flashcards",
+                title="AI-Generated Flashcards",
+                content={"cards": cards},
+                metadata={"count": len(cards)},
+            )
+            await db.flush()
+
+            ctx.emit_progress(self.name, "Done", step=3, total=3)
+            ctx.actions.append({"action": "data_updated", "value": "practice"})
+
+            summary_lines = [f"- Q: {c.get('front', '')[:60]}..." for c in cards[:5]]
+            return ToolResult(
+                success=True,
+                output=f"Generated {len(cards)} flashcards:\n" + "\n".join(summary_lines),
+            )
+        except Exception as e:
+            await db.rollback()
+            logger.error("generate_flashcards tool failed: %s", e)
+            return ToolResult(success=False, output="", error=str(e))
+
+
+# ── Tool 14: generate_quiz (write) ──
+
+
+class GenerateQuizTool(Tool):
+    """Generate quiz questions from course content."""
+
+    name = "generate_quiz"
+    category = ToolCategory.WRITE
+    description = (
+        "Generate practice quiz questions from course materials. "
+        "Creates multiple-choice, true/false, or short-answer questions and saves them. "
+        "Use when the student asks for quiz questions, practice problems, or test prep."
+    )
+    domain = "education"
+
+    def get_parameters(self) -> list[ToolParameter]:
+        return [
+            ToolParameter(
+                name="topic",
+                type="string",
+                description="Optional topic to focus questions on. Leave empty for general questions.",
+                required=False,
+            ),
+            ToolParameter(
+                name="count",
+                type="integer",
+                description="Number of questions to generate (1-10). Default 3.",
+                required=False,
+                default=3,
+            ),
+        ]
+
+    async def run(self, parameters: dict[str, Any], ctx: Any, db: AsyncSession) -> ToolResult:
+        try:
+            topic = parameters.get("topic", "").strip()
+            count = min(max(int(parameters.get("count", 3)), 1), 10)
+
+            ctx.emit_progress(self.name, "Searching course content...", step=1, total=3)
+
+            from services.search.hybrid import hybrid_search
+
+            query = topic or "key concepts"
+            results = await hybrid_search(db, ctx.course_id, query, limit=3)
+            if not results:
+                return ToolResult(success=True, output="No course content found to generate questions from.")
+
+            content = "\n\n".join(r.get("content", "")[:2000] for r in results)
+            title = topic or results[0].get("title", "Course Content")
+
+            ctx.emit_progress(self.name, "Generating questions...", step=2, total=3)
+
+            from services.parser.quiz import extract_questions
+
+            problems = await extract_questions(content, title, ctx.course_id)
+
+            if not problems:
+                return ToolResult(success=True, output="No questions could be extracted from the content.")
+
+            problems = problems[:count]
+            for p in problems:
+                db.add(p)
+            await db.flush()
+
+            ctx.emit_progress(self.name, "Done", step=3, total=3)
+            ctx.actions.append({"action": "data_updated", "value": "practice"})
+
+            summary_lines = [
+                f"- [{p.question_type}] {(p.question or '')[:60]}..."
+                for p in problems
+            ]
+            return ToolResult(
+                success=True,
+                output=f"Generated {len(problems)} quiz questions:\n" + "\n".join(summary_lines),
+            )
+        except Exception as e:
+            await db.rollback()
+            logger.error("generate_quiz tool failed: %s", e)
+            return ToolResult(success=False, output="", error=str(e))
+
+
+# ── Tool 15: generate_notes (write) ──
+
+
+class GenerateNotesTool(Tool):
+    """Generate structured notes from course content."""
+
+    name = "generate_notes"
+    category = ToolCategory.WRITE
+    description = (
+        "Generate structured study notes from course materials in various formats. "
+        "Supports bullet points, tables, mind maps, step-by-step, and summaries. "
+        "Use when the student asks for notes, summaries, or study guides."
+    )
+    domain = "education"
+
+    def get_parameters(self) -> list[ToolParameter]:
+        return [
+            ToolParameter(
+                name="topic",
+                type="string",
+                description="Topic to generate notes about.",
+                required=True,
+            ),
+            ToolParameter(
+                name="format",
+                type="string",
+                description="Note format: bullet_point, table, mind_map, step_by_step, or summary.",
+                required=False,
+                default="bullet_point",
+                enum=["bullet_point", "table", "mind_map", "step_by_step", "summary"],
+            ),
+        ]
+
+    async def run(self, parameters: dict[str, Any], ctx: Any, db: AsyncSession) -> ToolResult:
+        try:
+            topic = parameters.get("topic", "").strip()
+            if not topic:
+                return ToolResult(success=False, output="", error="Topic is required.")
+
+            note_format = parameters.get("format", "bullet_point")
+
+            ctx.emit_progress(self.name, f"Searching content for '{topic}'...", step=1, total=3)
+
+            from services.search.hybrid import hybrid_search
+
+            results = await hybrid_search(db, ctx.course_id, topic, limit=5)
+            if not results:
+                return ToolResult(success=True, output=f"No course content found for topic '{topic}'.")
+
+            content = "\n\n".join(r.get("content", "")[:2000] for r in results)
+            title = topic
+
+            ctx.emit_progress(self.name, f"Generating {note_format} notes...", step=2, total=3)
+
+            from services.parser.notes import restructure_notes
+
+            notes_md = await restructure_notes(content, title, note_format=note_format)
+
+            if not notes_md or not notes_md.strip():
+                return ToolResult(success=True, output="Could not generate notes from the available content.")
+
+            from services.generated_assets import save_generated_asset
+
+            await save_generated_asset(
+                db,
+                user_id=ctx.user_id,
+                course_id=ctx.course_id,
+                asset_type="notes",
+                title=f"Notes: {title}",
+                content={"markdown": notes_md, "format": note_format},
+                metadata={"topic": topic, "format": note_format},
+            )
+            await db.flush()
+
+            ctx.emit_progress(self.name, "Done", step=3, total=3)
+            ctx.actions.append({"action": "data_updated", "value": "notes"})
+
+            preview = notes_md[:300] + ("..." if len(notes_md) > 300 else "")
+            return ToolResult(
+                success=True,
+                output=f"Generated {note_format} notes for '{topic}':\n\n{preview}",
+            )
+        except Exception as e:
+            await db.rollback()
+            logger.error("generate_notes tool failed: %s", e)
+            return ToolResult(success=False, output="", error=str(e))
+
+
+# ── Tool 16: create_study_plan (write) ──
+
+
+class CreateStudyPlanTool(Tool):
+    """Create a study/exam prep plan."""
+
+    name = "create_study_plan"
+    category = ToolCategory.WRITE
+    description = (
+        "Create a personalized study plan or exam preparation plan. "
+        "Analyzes the student's progress and generates a day-by-day schedule. "
+        "Use when the student asks for a study plan, exam prep, or revision schedule."
+    )
+    domain = "education"
+
+    def get_parameters(self) -> list[ToolParameter]:
+        return [
+            ToolParameter(
+                name="exam_topic",
+                type="string",
+                description="Optional specific exam topic to focus on.",
+                required=False,
+            ),
+            ToolParameter(
+                name="days_until_exam",
+                type="integer",
+                description="Number of days until the exam (1-90). Default 7.",
+                required=False,
+                default=7,
+            ),
+        ]
+
+    async def run(self, parameters: dict[str, Any], ctx: Any, db: AsyncSession) -> ToolResult:
+        try:
+            exam_topic = parameters.get("exam_topic", "").strip() or None
+            days = min(max(int(parameters.get("days_until_exam", 7)), 1), 90)
+
+            ctx.emit_progress(self.name, "Assessing readiness...", step=1, total=3)
+
+            from services.workflow.exam_prep import run_exam_prep
+
+            result = await run_exam_prep(
+                db, ctx.user_id, ctx.course_id,
+                exam_topic=exam_topic,
+                days_until_exam=days,
+            )
+
+            plan_md = result.get("plan", "")
+            if not plan_md:
+                return ToolResult(success=True, output="Could not generate a study plan.")
+
+            ctx.emit_progress(self.name, "Saving study plan...", step=2, total=3)
+
+            from services.generated_assets import save_generated_asset
+
+            await save_generated_asset(
+                db,
+                user_id=ctx.user_id,
+                course_id=ctx.course_id,
+                asset_type="study_plan",
+                title=f"{'Exam Prep' if exam_topic else 'Study'} Plan ({days} days)",
+                content={"markdown": plan_md, "readiness": result.get("readiness")},
+                metadata={
+                    "days_until_exam": days,
+                    "exam_topic": exam_topic,
+                    "topics_count": result.get("topics_count", 0),
+                },
+            )
+            await db.flush()
+
+            ctx.emit_progress(self.name, "Done", step=3, total=3)
+            ctx.actions.append({"action": "data_updated", "value": "plan"})
+
+            preview = plan_md[:400] + ("..." if len(plan_md) > 400 else "")
+            return ToolResult(
+                success=True,
+                output=f"Created {days}-day study plan:\n\n{preview}",
+            )
+        except Exception as e:
+            await db.rollback()
+            logger.error("create_study_plan tool failed: %s", e)
+            return ToolResult(success=False, output="", error=str(e))
+
+
+# ── Tool 17: derive_diagnostic (write) ──
+
+
+class DeriveDiagnosticTool(Tool):
+    """Generate a simplified diagnostic question from a wrong answer."""
+
+    name = "derive_diagnostic"
+    category = ToolCategory.WRITE
+    description = (
+        "Generate a simplified diagnostic follow-up question based on a student's wrong answer. "
+        "The diagnostic version removes traps/distractors while preserving the core concept, "
+        "helping determine if the error was due to a concept gap or carelessness. "
+        "Use when reviewing wrong answers and wanting to create targeted follow-up practice."
+    )
+    domain = "education"
+
+    def get_parameters(self) -> list[ToolParameter]:
+        return [
+            ToolParameter(
+                name="wrong_answer_id",
+                type="string",
+                description="UUID of the wrong answer record to derive a diagnostic question from.",
+                required=True,
+            ),
+        ]
+
+    async def run(self, parameters: dict[str, Any], ctx: Any, db: AsyncSession) -> ToolResult:
+        import uuid as uuid_mod
+
+        from models.practice import PracticeProblem, WrongAnswer
+        from services.practice.annotation import build_practice_problem
+
+        try:
+            wa_id_str = parameters.get("wrong_answer_id", "")
+            try:
+                wa_id = uuid_mod.UUID(wa_id_str)
+            except (ValueError, AttributeError):
+                return ToolResult(success=False, output="", error=f"Invalid wrong_answer_id: {wa_id_str}")
+
+            result = await db.execute(
+                select(WrongAnswer, PracticeProblem)
+                .join(PracticeProblem, WrongAnswer.problem_id == PracticeProblem.id)
+                .where(
+                    WrongAnswer.id == wa_id,
+                    WrongAnswer.user_id == ctx.user_id,
+                )
+            )
+            row = result.one_or_none()
+            if not row:
+                return ToolResult(success=False, output="", error="Wrong answer not found.")
+
+            wa, problem = row
+
+            # Check for existing diagnostic (filter in DB to avoid loading all rows)
+            existing_result = await db.execute(
+                select(PracticeProblem)
+                .where(
+                    PracticeProblem.parent_problem_id == problem.id,
+                    PracticeProblem.is_diagnostic == True,  # noqa: E712
+                    PracticeProblem.problem_metadata["wrong_answer_id"].astext == str(wa.id),
+                )
+                .limit(1)
+            )
+            existing = existing_result.scalar_one_or_none()
+            if existing:
+                ctx.actions.append({"action": "data_updated", "value": "practice"})
+                return ToolResult(
+                    success=True,
+                    output=f"Diagnostic already exists: {existing.question}",
+                )
+
+            # Build LLM prompt
+            metadata_str = ""
+            if problem.problem_metadata:
+                meta = problem.problem_metadata
+                parts = []
+                if meta.get("core_concept"):
+                    parts.append(f"Core concept: {meta['core_concept']}")
+                if meta.get("potential_traps"):
+                    parts.append(f"Known traps to remove: {', '.join(meta['potential_traps'])}")
+                if parts:
+                    metadata_str = "\nQuestion metadata:\n" + "\n".join(parts)
+
+            ctx.emit_progress(self.name, "Generating diagnostic question...", step=1, total=2)
+
+            from services.llm.router import get_llm_client
+
+            client = get_llm_client()
+            prompt = (
+                f"You are a diagnostic question designer. A student got this question wrong.\n"
+                f"Generate a SIMPLIFIED diagnostic version that:\n"
+                f"1. Tests the EXACT SAME core concept\n"
+                f"2. Removes all distractors, traps, and misleading wording\n"
+                f"3. Uses simpler numbers/context\n\n"
+                f"Original question: {problem.question}\n"
+                f"Question type: {problem.question_type}\n"
+                f"Correct answer: {wa.correct_answer}\n"
+                f"Student's wrong answer: {wa.user_answer}\n"
+                f"Error category: {wa.error_category or 'unknown'}\n"
+                f"{metadata_str}\n\n"
+                f'Return JSON only:\n'
+                f'{{"question": "...", "options": {{"A": "...", "B": "...", "C": "...", "D": "..."}} or null, '
+                f'"correct_answer": "...", "explanation": "...", '
+                f'"simplifications_made": ["list"], "core_concept_preserved": "..."}}'
+            )
+
+            response, _ = await client.chat(
+                "You design diagnostic questions. Output valid JSON only.",
+                prompt,
+            )
+
+            try:
+                derived = json.loads(response)
+            except json.JSONDecodeError:
+                match = re.search(r"\{.*\}", response, re.DOTALL)
+                derived = json.loads(match.group()) if match else {}
+
+            if not derived.get("question"):
+                derived["question"] = f"Diagnostic check: {problem.question}"
+            if derived.get("options") is None and problem.options:
+                derived["options"] = problem.options
+            if not derived.get("correct_answer"):
+                derived["correct_answer"] = wa.correct_answer or problem.correct_answer
+
+            extra_metadata = {
+                "simplifications_made": derived.get("simplifications_made", []),
+                "core_concept_preserved": derived.get("core_concept_preserved", ""),
+                "original_problem_id": str(problem.id),
+                "wrong_answer_id": str(wa.id),
+            }
+            new_problem = build_practice_problem(
+                course_id=problem.course_id,
+                content_node_id=problem.content_node_id,
+                title=(problem.problem_metadata or {}).get("core_concept", problem.question[:80] or "Diagnostic"),
+                question={
+                    "question_type": problem.question_type,
+                    "question": derived.get("question", ""),
+                    "options": derived.get("options"),
+                    "correct_answer": derived.get("correct_answer"),
+                    "explanation": derived.get("explanation", "Simplified diagnostic follow-up."),
+                    "difficulty_layer": 1,
+                    "problem_metadata": {
+                        "core_concept": derived.get("core_concept_preserved", ""),
+                        "bloom_level": "understand",
+                        "potential_traps": [],
+                        "layer_justification": "Simplified diagnostic variant.",
+                        "skill_focus": "core concept check",
+                        "source_section": (problem.problem_metadata or {}).get("source_section", "Diagnostic"),
+                    },
+                },
+                order_index=problem.order_index,
+                knowledge_points=wa.knowledge_points or problem.knowledge_points,
+                source="derived",
+                parent_problem_id=problem.id,
+                is_diagnostic=True,
+                difficulty_layer_default=1,
+                extra_metadata=extra_metadata,
+            )
+            db.add(new_problem)
+            await db.flush()
+
+            ctx.emit_progress(self.name, "Done", step=2, total=2)
+            ctx.actions.append({"action": "data_updated", "value": "practice"})
+
+            return ToolResult(
+                success=True,
+                output=f"Created diagnostic question: {derived.get('question', '')[:100]}",
+            )
+        except Exception as e:
+            await db.rollback()
+            logger.error("derive_diagnostic tool failed: %s", e)
+            return ToolResult(success=False, output="", error=str(e))
+
+
 # ── Registry Helper ──
 
 
@@ -795,4 +1293,10 @@ def get_builtin_tools() -> list[Tool]:
         CheckPrerequisitesTool(),
         SuggestRelatedTopicsTool(),
         GetForgettingForecastTool(),
+        # Write tools
+        GenerateFlashcardsTool(),
+        GenerateQuizTool(),
+        GenerateNotesTool(),
+        CreateStudyPlanTool(),
+        DeriveDiagnosticTool(),
     ]

@@ -55,6 +55,7 @@ canvasapi>=3.3.0
 
 # Workflow Engine
 langgraph>=0.2.0
+langgraph-checkpoint-postgres>=3.0.0
 
 # Scheduler
 apscheduler>=3.10.0
@@ -75,6 +76,34 @@ tenacity==9.0.0
 httpx==0.28.1
 python-dotenv==1.0.1
 sse-starlette==2.2.1
+
+# MCP Protocol (Phase 5: Agent Ecosystem)
+mcp>=1.0.0
+fastapi-mcp>=0.1.0
+
+# Plugin System (Phase 5: Agent Ecosystem)
+pluggy>=1.5.0
+
+# Web Search (Phase 2: Action Space)
+tavily-python>=0.5.0
+
+# Anki Export (Phase 2: Action Space)
+genanki>=0.13.0
+
+# Calendar Export (Phase 2: Action Space)
+icalendar>=6.0.0
+
+# Phase 3: Multi-Modal Agent
+# LaTeX-OCR (optional: math formula recognition from images)
+# pip install pix2tex
+# pix2tex>=0.1.2
+
+# Phase 4: Adaptive Teaching Strategy (Thompson Sampling)
+contextualbandits>=0.4.0
+scikit-learn>=1.4.0
+
+# Phase 4: Bayesian Knowledge Tracing
+pyBKT>=1.4
 
 # Testing (dev)
 pytest-asyncio>=0.23.0

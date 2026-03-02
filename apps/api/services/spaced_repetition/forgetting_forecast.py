@@ -38,10 +38,7 @@ class ForgettingPrediction:
     mastery_score: float
 
 
-def _as_utc(value: datetime) -> datetime:
-    if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+from libs.datetime_utils import as_utc as _as_utc
 
 
 def _retrievability(elapsed_days: float, stability: float) -> float:

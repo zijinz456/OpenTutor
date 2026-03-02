@@ -70,7 +70,7 @@ def test_unknown_agent_is_allowed():
 
 def test_get_allowed_tools_teaching():
     tools = get_allowed_tools("teaching")
-    assert tools == {"search_content", "lookup_progress", "get_course_outline"}
+    assert tools == AGENT_CAPABILITIES["teaching"]
 
 
 def test_get_allowed_tools_preference_empty():
@@ -94,12 +94,11 @@ def test_delegation_teaching_to_review_allowed():
     assert "list_wrong_answers" in reason
 
 
-def test_delegation_exercise_to_review_allowed():
-    """Exercise has {search_content, lookup_progress, get_mastery_report, list_wrong_answers}.
-    Review has {list_wrong_answers, search_content, lookup_progress}.
-    Review is a subset → allowed."""
+def test_delegation_exercise_to_review_blocked():
+    """Review can use derive_diagnostic, which exercise cannot."""
     allowed, reason = check_delegation_escalation("exercise", "review")
-    assert allowed is True
+    assert allowed is False
+    assert "derive_diagnostic" in reason
 
 
 def test_delegation_preference_to_code_execution_blocked():
@@ -198,10 +197,10 @@ async def test_registry_execute_no_agent_name_skips_check():
 
 
 def test_all_capability_tools_exist_in_builtin():
-    """Every tool in AGENT_CAPABILITIES should be a real builtin tool name."""
-    from services.agent.tools.education import get_builtin_tools
+    """Every tool in AGENT_CAPABILITIES should be registered in the global tool registry."""
+    from services.agent.tools.base import get_tool_registry
 
-    builtin_names = {t.name for t in get_builtin_tools()}
+    builtin_names = set(get_tool_registry().tool_names)
 
     for agent, tools in AGENT_CAPABILITIES.items():
         for tool_name in tools:

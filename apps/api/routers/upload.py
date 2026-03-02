@@ -508,6 +508,63 @@ async def list_course_files(
     ]
 
 
+@router.post("/image")
+async def upload_image(
+    file: UploadFile = File(...),
+    course_id: str = Form(...),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Upload an image for chat context (e.g., math problem photo).
+
+    Supports: JPEG, PNG, WebP, GIF. Returns base64 for LLM consumption.
+    """
+    import base64
+    import hashlib
+
+    try:
+        cid = uuid.UUID(course_id)
+    except ValueError as e:
+        raise ValidationError("Invalid course_id") from e
+
+    await get_course_or_404(db, cid, user_id=user.id)
+
+    if not file.filename:
+        raise ValidationError("No filename provided")
+
+    supported_types = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+    content_type = file.content_type or ""
+    if content_type not in supported_types:
+        ext = os.path.splitext(file.filename)[1].lower()
+        ext_to_mime = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp", ".gif": "image/gif"}
+        content_type = ext_to_mime.get(ext, "")
+        if content_type not in supported_types:
+            raise ValidationError("Unsupported image type. Supported: JPEG, PNG, WebP, GIF")
+
+    file_bytes = await file.read()
+    max_image_size = 10 * 1024 * 1024  # 10MB
+    if len(file_bytes) > max_image_size:
+        raise ValidationError("Image too large (max 10MB)")
+
+    file_hash = hashlib.sha256(file_bytes).hexdigest()[:16]
+    os.makedirs(settings.upload_dir, exist_ok=True)
+    save_path = os.path.join(settings.upload_dir, f"img_{file_hash}_{file.filename}")
+    with open(save_path, "wb") as f:
+        f.write(file_bytes)
+
+    b64_data = base64.b64encode(file_bytes).decode("utf-8")
+
+    return {
+        "status": "ok",
+        "filename": file.filename,
+        "content_type": content_type,
+        "size_bytes": len(file_bytes),
+        "base64": b64_data,
+        "media_type": content_type,
+        "course_id": str(cid),
+    }
+
+
 @router.get("/files/{job_id}")
 async def get_uploaded_file(
     job_id: uuid.UUID,

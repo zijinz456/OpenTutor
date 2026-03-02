@@ -46,7 +46,7 @@ class ReviewAgent(ReActMixin, BaseAgent):
     """Analyzes errors, provides feedback on wrong answers, and identifies knowledge gaps."""
 
     name = "review"
-    react_tools = ["list_wrong_answers", "search_content", "lookup_progress"]
+    react_tools = ["list_wrong_answers", "search_content", "lookup_progress", "derive_diagnostic"]
     profile = (
         "You are OpenTutor Zenus's Review Specialist.\n"
         "Analyze student errors using structured data and diagnostic results.\n\n"
@@ -75,7 +75,16 @@ class ReviewAgent(ReActMixin, BaseAgent):
         # Inject grounding context from structured annotations if available
         extra_context = self._build_grounding_context(ctx)
         if extra_context:
-            return base + "\n\n" + extra_context
+            base = base + "\n\n" + extra_context
+
+        # Phase 4: Inject error pattern analytics
+        error_patterns = ctx.metadata.get("error_patterns")
+        if error_patterns:
+            lines = ["\n## Student's Recurring Error Patterns (aggregated from past wrong answers)"]
+            for ep in error_patterns:
+                lines.append(f"- {ep['category']}: {ep['count']} errors ({ep['percentage']}%)")
+            lines.append("\nUse these patterns to prioritize your feedback. Address the most frequent error category first.")
+            base = base + "\n".join(lines)
 
         return base
 
@@ -132,5 +141,5 @@ class ReviewAgent(ReActMixin, BaseAgent):
     async def execute(self, ctx: AgentContext, db: AsyncSession) -> AgentContext:
         system_prompt = self.build_system_prompt(ctx)
         client = self.get_llm_client(ctx)
-        ctx.response, _ = await client.chat(system_prompt, ctx.user_message)
+        ctx.response, _ = await client.chat(system_prompt, ctx.user_message, images=ctx.images or None)
         return ctx

@@ -355,6 +355,7 @@ async def _react_function_calling(
     async for chunk in client.stream_chat(
         system_prompt,
         _messages_to_user_content(messages),
+        images=ctx.images or None,
     ):
         full_answer += chunk
         yield {"type": "answer", "content": chunk}
@@ -388,10 +389,11 @@ async def _react_text_parsing(
         ctx.transition(TaskPhase.REASONING)
         ctx.react_iterations = iteration + 1
 
-        # Call LLM
+        # Call LLM (pass images on first iteration so LLM can see attachments)
         full_text = ""
         combined_user = "\n\n".join(conversation_parts)
-        async for chunk in client.stream_chat(enhanced_prompt, combined_user):
+        iter_images = (ctx.images or None) if iteration == 0 else None
+        async for chunk in client.stream_chat(enhanced_prompt, combined_user, images=iter_images):
             full_text += chunk
 
         # Check for Finish[answer]
@@ -458,7 +460,7 @@ async def _react_text_parsing(
     )
     full_text = ""
     combined_user = "\n\n".join(conversation_parts)
-    async for chunk in client.stream_chat(enhanced_prompt, combined_user):
+    async for chunk in client.stream_chat(enhanced_prompt, combined_user, images=ctx.images or None):
         full_text += chunk
 
     # Try to extract Finish[...] from forced answer

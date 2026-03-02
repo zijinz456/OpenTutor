@@ -64,7 +64,7 @@ class PreferenceAgent(BaseAgent):
 
         ctx.transition(TaskPhase.STREAMING)
         full_response = ""
-        async for chunk in client.stream_chat(system_prompt, ctx.user_message):
+        async for chunk in client.stream_chat(system_prompt, ctx.user_message, images=ctx.images or None):
             full_response += chunk
             yield chunk
         ctx.response = full_response

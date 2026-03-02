@@ -1,8 +1,7 @@
 "use client";
 
-import { Suspense, lazy } from "react";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useT } from "@/lib/i18n-context";
+import { lazy, useMemo } from "react";
+import { TabbedSection, type TabDef } from "./tabbed-section";
 
 const QuizView = lazy(() =>
   import("./practice/quiz-view").then((m) => ({ default: m.QuizView })),
@@ -13,63 +12,43 @@ const FlashcardView = lazy(() =>
 const ReviewView = lazy(() =>
   import("./practice/review-view").then((m) => ({ default: m.ReviewView })),
 );
+const PodcastView = lazy(() =>
+  import("./practice/podcast-view").then((m) => ({ default: m.PodcastView })),
+);
 
 interface PracticeSectionProps {
   courseId: string;
+  showReview?: boolean;
 }
 
-function SubViewSkeleton() {
-  return (
-    <div className="flex-1 flex items-center justify-center p-8">
-      <div className="h-4 w-32 bg-muted animate-pulse rounded" />
-    </div>
+type PracticeTab = "quiz" | "flashcards" | "review" | "podcast";
+
+const ALL_TABS: TabDef<PracticeTab>[] = [
+  { id: "quiz", label: "Quiz", testId: "right-tab-quiz" },
+  { id: "flashcards", label: "Cards", testId: "right-tab-cards" },
+  { id: "review", label: "Review", testId: "right-tab-review" },
+  { id: "podcast", label: "Podcast", testId: "right-tab-podcast" },
+];
+
+export function PracticeSection({
+  courseId,
+  showReview = true,
+}: PracticeSectionProps) {
+  const tabs = useMemo(
+    () => (showReview ? ALL_TABS : ALL_TABS.filter((t) => t.id !== "review")),
+    [showReview],
   );
-}
-
-/**
- * Practice section -- unified Quiz + Flashcards + Review.
- *
- * Uses internal sub-tabs for switching between the three practice modes.
- * Each sub-view is lazily loaded to reduce initial bundle size.
- */
-export function PracticeSection({ courseId }: PracticeSectionProps) {
-  const t = useT();
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden" data-testid="practice-section">
-      <Tabs defaultValue="quiz" className="flex-1 flex flex-col overflow-hidden">
-        <div className="px-3 py-1.5 border-b shrink-0">
-          <TabsList className="h-7">
-            <TabsTrigger value="quiz" className="text-xs px-2.5 h-6">
-              {t("quiz.title")}
-            </TabsTrigger>
-            <TabsTrigger value="flashcards" className="text-xs px-2.5 h-6">
-              {t("flashcard.title")}
-            </TabsTrigger>
-            <TabsTrigger value="review" className="text-xs px-2.5 h-6">
-              {t("course.review")}
-            </TabsTrigger>
-          </TabsList>
-        </div>
-
-        <TabsContent value="quiz" className="flex-1 flex flex-col overflow-hidden mt-0">
-          <Suspense fallback={<SubViewSkeleton />}>
-            <QuizView courseId={courseId} />
-          </Suspense>
-        </TabsContent>
-
-        <TabsContent value="flashcards" className="flex-1 flex flex-col overflow-hidden mt-0">
-          <Suspense fallback={<SubViewSkeleton />}>
-            <FlashcardView courseId={courseId} />
-          </Suspense>
-        </TabsContent>
-
-        <TabsContent value="review" className="flex-1 flex flex-col overflow-hidden mt-0">
-          <Suspense fallback={<SubViewSkeleton />}>
-            <ReviewView courseId={courseId} />
-          </Suspense>
-        </TabsContent>
-      </Tabs>
-    </div>
+    <TabbedSection tabs={tabs} defaultTab="quiz" testId="practice-section">
+      {(activeTab) => (
+        <>
+          {activeTab === "quiz" ? <QuizView courseId={courseId} /> : null}
+          {activeTab === "flashcards" ? <FlashcardView courseId={courseId} /> : null}
+          {activeTab === "review" && showReview ? <ReviewView courseId={courseId} /> : null}
+          {activeTab === "podcast" ? <PodcastView courseId={courseId} /> : null}
+        </>
+      )}
+    </TabbedSection>
   );
 }

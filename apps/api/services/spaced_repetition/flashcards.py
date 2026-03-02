@@ -86,12 +86,8 @@ async def generate_flashcards(
     import json
 
     # Handle markdown code blocks
-    text = response.strip()
-    if text.startswith("```"):
-        text = text.split("\n", 1)[1] if "\n" in text else text[3:]
-        if text.endswith("```"):
-            text = text[:-3]
-        text = text.strip()
+    from libs.text_utils import strip_code_fences
+    text = strip_code_fences(response)
 
     try:
         flashcards = json.loads(text)

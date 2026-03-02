@@ -52,7 +52,11 @@ export function ChatHeader({ courseId }: ChatHeaderProps) {
         }}
         disabled={isStreaming || isLoadingSessions}
       >
-        <SelectTrigger size="sm" className="h-7 min-w-[160px] flex-1 text-xs">
+        <SelectTrigger
+          size="sm"
+          className="h-7 min-w-[160px] flex-1 text-xs"
+          data-testid="chat-session-select"
+        >
           <SelectValue placeholder="Current conversation" />
         </SelectTrigger>
         <SelectContent>
@@ -68,12 +72,13 @@ export function ChatHeader({ courseId }: ChatHeaderProps) {
       <Button
         type="button"
         variant="ghost"
-        size="icon-xs"
+        size="sm"
         onClick={() => startNewSession(courseId)}
         disabled={isStreaming}
         title="New Chat"
       >
-        <Plus className="size-3.5" />
+        <Plus className="mr-1 size-3.5" />
+        New
       </Button>
     </div>
   );

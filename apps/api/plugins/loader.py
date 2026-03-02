@@ -1,11 +1,13 @@
 """Plugin auto-discovery and registration.
 
-Scans the plugins/ directory for Python files, imports them, finds all
-Tool subclasses, and registers them into the global ToolRegistry.
+Scans the plugins/ directory for Python files, finds all Tool subclasses,
+and registers them into the global ToolRegistry.  Also initializes the
+pluggy-based plugin manager for lifecycle hooks.
 
-Borrows from:
-- MetaGPT ToolRegistry: file-scan + class introspection pattern
-- NanoBot: progressive skill loading at startup
+Two systems work together:
+1. **Tool loader** (this file) — registers Tool subclasses from plugins/.
+2. **Plugin manager** (services/plugin/manager.py) — pluggy-based hook
+   system for lifecycle hooks, integrations, and entry_point plugins.
 
 Usage:
     from plugins.loader import load_plugins
@@ -29,6 +31,9 @@ _PLUGINS_DIR = Path(__file__).parent
 def load_plugins(registry: ToolRegistry | None = None) -> int:
     """Scan plugins/ directory and register all Tool subclasses.
 
+    Also triggers the pluggy plugin manager to load hook-based plugins
+    and call ``register_tools`` hooks.
+
     Args:
         registry: Target registry. If None, uses the global singleton.
 
@@ -38,6 +43,21 @@ def load_plugins(registry: ToolRegistry | None = None) -> int:
     if registry is None:
         registry = get_tool_registry()
 
+    count = 0
+
+    # 1. Classic file-scan for Tool subclasses
+    count += _scan_tool_subclasses(registry)
+
+    # 2. Pluggy-based plugin loading (hooks, entry_points, manifests)
+    count += _load_pluggy_plugins(registry)
+
+    if count:
+        logger.info("Loaded %d plugin tool(s) total", count)
+    return count
+
+
+def _scan_tool_subclasses(registry: ToolRegistry) -> int:
+    """Original file-scan approach: find Tool subclasses in plugins/."""
     count = 0
     package_name = "plugins"
 
@@ -50,6 +70,9 @@ def load_plugins(registry: ToolRegistry | None = None) -> int:
         # Skip examples/ directory — these are reference implementations
         # that must be copied to plugins/ root to activate
         if ".examples." in module_name or module_name.endswith(".examples"):
+            continue
+        # Skip extensions/ — handled by pluggy bridge
+        if ".extensions." in module_name or module_name.endswith(".extensions"):
             continue
 
         try:
@@ -79,6 +102,24 @@ def load_plugins(registry: ToolRegistry | None = None) -> int:
                         module_name, attr_name, e,
                     )
 
-    if count:
-        logger.info("Loaded %d plugin tool(s) from %s", count, _PLUGINS_DIR)
     return count
+
+
+def _load_pluggy_plugins(registry: ToolRegistry) -> int:
+    """Load pluggy-based plugins and call register_tools hooks."""
+    try:
+        from services.plugin.manager import get_plugin_manager
+
+        pm = get_plugin_manager()
+        pm.load_all()
+
+        # Let plugins register their tools via the hook
+        try:
+            pm.hook.register_tools(registry=registry)
+        except Exception as e:
+            logger.warning("Plugin register_tools hooks failed: %s", e)
+
+        return 0  # Tools registered via hooks are counted by the hook callers
+    except Exception as e:
+        logger.debug("Pluggy plugin loading skipped: %s", e)
+        return 0

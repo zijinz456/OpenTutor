@@ -79,8 +79,7 @@ class TaskCancelledError(RuntimeError):
         self.summary = summary
 
 
-def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+from libs.datetime_utils import utcnow as _utcnow
 
 
 def _normalize_uuid(value: Any) -> uuid.UUID | None:
@@ -784,6 +783,70 @@ async def _dispatch_task(
                     raise ValueError(str(result["error"]))
                 return result, (result.get("analysis", "") or "Assignment analysis generated.")[:300]
 
+            if task_type == "generate_quiz":
+                from services.course_access import get_course_or_404
+                from services.parser.quiz import extract_questions
+                from services.search.hybrid import hybrid_search
+
+                course_id = _normalize_uuid(payload.get("course_id"))
+                if not course_id:
+                    raise ValueError("generate_quiz requires course_id")
+
+                query = str(payload.get("topic") or payload.get("description") or "key concepts").strip()
+                count = min(max(int(payload.get("count") or 3), 1), 10)
+                await get_course_or_404(db, course_id, user_id=user_id)
+                results = await hybrid_search(db, course_id, query or "key concepts", limit=3)
+                if not results:
+                    return {
+                        "problem_ids": [],
+                        "count": 0,
+                        "query": query,
+                    }, "No course content found to generate questions from."
+
+                content = "\n\n".join(str(item.get("content", ""))[:2000] for item in results)
+                title = str(payload.get("title") or payload.get("description") or results[0].get("title") or "Course Content")
+                problems = await extract_questions(content, title, course_id)
+                persisted = problems[:count]
+                for problem in persisted:
+                    db.add(problem)
+                await db.commit()
+                return {
+                    "problem_ids": [str(problem.id) for problem in persisted],
+                    "count": len(persisted),
+                    "query": query,
+                }, f"Generated {len(persisted)} quiz question(s)."
+
+            if task_type in {"create_flashcard", "create_flashcards"}:
+                from services.course_access import get_course_or_404
+                from services.generated_assets import save_generated_asset
+                from services.spaced_repetition.flashcards import generate_flashcards
+
+                course_id = _normalize_uuid(payload.get("course_id"))
+                if not course_id:
+                    raise ValueError("create_flashcard requires course_id")
+
+                content_node_id = _normalize_uuid(payload.get("content_node_id"))
+                count = min(max(int(payload.get("count") or 5), 1), 20)
+                course = await get_course_or_404(db, course_id, user_id=user_id)
+                cards = await generate_flashcards(db, course_id, content_node_id, count)
+                batch = None
+                if cards:
+                    batch = await save_generated_asset(
+                        db,
+                        user_id=user_id,
+                        course_id=course_id,
+                        asset_type="flashcards",
+                        title=str(payload.get("title") or course.name),
+                        content={"cards": cards},
+                        metadata={"count": len(cards), "source": "agent_task"},
+                    )
+                await db.commit()
+                return {
+                    "cards": cards,
+                    "count": len(cards),
+                    "batch_id": str(batch["batch_id"]) if batch else None,
+                }, f"Generated {len(cards)} flashcard(s)."
+
             if task_type == "multi_step":
                 return await _run_multi_step_plan(db, task_id, user_id, payload, async_session)
 
@@ -837,6 +900,18 @@ async def _dispatch_task(
                     "agent": agent_name,
                     "response": ctx.response or "",
                 }, (ctx.response or "Agent subtask completed.")[:300]
+
+            if task_type == "review_session":
+                from services.agent.agenda_tasks import run_review_session
+
+                result = await run_review_session(db, user_id, payload)
+                return result, (result.get("summary", "") or "Review session completed.")[:300]
+
+            if task_type == "reentry_session":
+                from services.agent.agenda_tasks import run_reentry_session
+
+                result = await run_reentry_session(db, user_id, payload)
+                return result, (result.get("summary", "") or "Re-entry session prepared.")[:300]
 
             raise ValueError(f"Unsupported task_type: {task_type}")
 

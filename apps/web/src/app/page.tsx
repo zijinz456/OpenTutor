@@ -58,7 +58,7 @@ export default function DashboardPage() {
   const router = useRouter();
   const t = useT();
   const { locale, setLocale } = useLocale();
-  const { courses, loading, fetchCourses } = useCourseStore();
+  const { courses, loading } = useCourseStore();
   const totalActiveGoals = courses.reduce((sum, c) => sum + (c.active_goal_count ?? 0), 0);
   const totalPendingApprovals = courses.reduce((sum, c) => sum + (c.pending_approval_count ?? 0), 0);
   const totalRunningTasks = courses.reduce((sum, c) => sum + (c.pending_task_count ?? 0), 0);
@@ -92,7 +92,7 @@ export default function DashboardPage() {
 
   // Load courses and health (poll every 30s for live status)
   useEffect(() => {
-    fetchCourses();
+    useCourseStore.getState().fetchCourses();
     const refreshHealth = () =>
       getHealthStatus()
         .then((d) => { ttlCache.set("dash:health", d, 30_000); setHealth(d); })
@@ -100,7 +100,7 @@ export default function DashboardPage() {
     refreshHealth();
     const id = setInterval(refreshHealth, 30_000);
     return () => clearInterval(id);
-  }, [fetchCourses]);
+  }, []);
 
   return (
     <div className="min-h-screen bg-background">

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Bell } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -15,18 +15,24 @@ export function NotificationBell() {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
-  const fetchNotifications = useCallback(async () => {
-    try {
-      const data = await listNotifications(true, 50);
-      setNotifications(data);
-    } catch {
-      // Silently ignore fetch errors
-    }
-  }, []);
-
   useEffect(() => {
-    fetchNotifications();
-  }, [fetchNotifications]);
+    let active = true;
+
+    void (async () => {
+      try {
+        const data = await listNotifications(true, 50);
+        if (active) {
+          setNotifications(data);
+        }
+      } catch {
+        // Silently ignore fetch errors
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   // Close dropdown when clicking outside
   useEffect(() => {

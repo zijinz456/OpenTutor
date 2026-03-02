@@ -26,36 +26,38 @@ EXACT_COSTS: dict[str, int] = {
     # Data reads (low cost)
     "/api/courses": 2,
     "/api/preferences": 2,
-    "/api/scenes": 2,
     "/api/goals": 3,
     "/api/notifications": 2,
 
     # LLM-heavy operations (high cost)
-    "/api/chat/stream": 30,
-    "/api/quiz/generate": 50,
+    "/api/chat/": 30,
+    "/api/quiz/extract": 50,
     "/api/flashcards/generate": 40,
+    "/api/notes/restructure": 35,
 
     # Workflow execution (very high cost)
-    "/api/workflows/run": 80,
+    "/api/workflows/exam-prep": 80,
 
     # File upload / scrape (medium cost — I/O bound)
-    "/api/upload": 15,
-    "/api/scrape": 20,
+    "/api/content/files": 15,
+    "/api/content/url": 20,
 
     # Evaluation (high cost — involves LLM)
-    "/api/evaluation/run": 100,
+    "/api/eval/regression": 100,
 }
 
 # ── Prefix-Based Costs (for parameterised routes) ──
 # Checked in order; first match wins.
 
 PREFIX_COSTS: list[tuple[re.Pattern[str], int]] = [
+    (re.compile(r"^/api/chat/?$"), 30),
     (re.compile(r"^/api/courses/[^/]+/chat"), 30),
     (re.compile(r"^/api/courses/[^/]+"), 3),
     (re.compile(r"^/api/progress"), 3),
     (re.compile(r"^/api/wrong-answers"), 3),
     (re.compile(r"^/api/tasks"), 5),
-    (re.compile(r"^/api/push"), 2),
+    (re.compile(r"^/api/voice"), 30),
+    (re.compile(r"^/api/notifications/push"), 2),
     (re.compile(r"^/api/experiments"), 10),
     (re.compile(r"^/api/usage"), 2),
 ]

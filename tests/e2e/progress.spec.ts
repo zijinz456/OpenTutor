@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { skipOnboarding, createCourseWithContent, ensureRightPanelVisible } from "./helpers/test-utils";
+import { skipOnboarding, createCourseWithContent, ensureAnalyticsSectionVisible } from "./helpers/test-utils";
 
 test.describe.serial("Progress Panel", () => {
   test.beforeEach(async ({ page }) => {
@@ -8,14 +8,14 @@ test.describe.serial("Progress Panel", () => {
 
   test("Stats tab is visible in right panel", async ({ page }) => {
     await createCourseWithContent(page);
-    await ensureRightPanelVisible(page);
+    await ensureAnalyticsSectionVisible(page);
     const statsTab = page.getByRole("button", { name: "Stats" });
     await expect(statsTab).toBeVisible({ timeout: 15_000 });
   });
 
   test("Stats panel shows content after loading", async ({ page }) => {
     await createCourseWithContent(page);
-    await ensureRightPanelVisible(page);
+    await ensureAnalyticsSectionVisible(page);
     await page.getByRole("button", { name: "Stats" }).click();
     // After loading, shows either progress data or the empty state
     const content = page.getByText("Course Completion").or(page.getByText("Upload course materials"));
@@ -24,7 +24,7 @@ test.describe.serial("Progress Panel", () => {
 
   test("shows completion percentage or empty state", async ({ page }) => {
     await createCourseWithContent(page);
-    await ensureRightPanelVisible(page);
+    await ensureAnalyticsSectionVisible(page);
     await page.getByRole("button", { name: "Stats" }).click();
     // Wait for either state to appear — progress data or empty state
     const progressContent = page.getByText("Course Completion").or(page.getByText("Upload course materials"));
@@ -33,7 +33,7 @@ test.describe.serial("Progress Panel", () => {
 
   test("stats grid shows metric cards or empty state", async ({ page }) => {
     await createCourseWithContent(page);
-    await ensureRightPanelVisible(page);
+    await ensureAnalyticsSectionVisible(page);
     await page.getByRole("button", { name: "Stats" }).click();
     // Wait for content to load — either progress data or empty state
     const progressContent = page.getByText("Course Completion").or(page.getByText("Upload course materials"));
@@ -50,7 +50,7 @@ test.describe.serial("Progress Panel", () => {
 
   test("progress bar or empty state renders", async ({ page }) => {
     await createCourseWithContent(page);
-    await ensureRightPanelVisible(page);
+    await ensureAnalyticsSectionVisible(page);
     await page.getByRole("button", { name: "Stats" }).click();
     const progressContent = page.getByText("Course Completion").or(page.getByText("Upload course materials"));
     await expect(progressContent.first()).toBeVisible({ timeout: 15_000 });
@@ -62,15 +62,15 @@ test.describe.serial("Progress Panel", () => {
 
   test("legend shows status labels when progress exists", async ({ page }) => {
     await createCourseWithContent(page);
-    await ensureRightPanelVisible(page);
+    await ensureAnalyticsSectionVisible(page);
     await page.getByRole("button", { name: "Stats" }).click();
     const progressContent = page.getByText("Course Completion").or(page.getByText("Upload course materials"));
     await expect(progressContent.first()).toBeVisible({ timeout: 15_000 });
     if (await page.getByText("Course Completion").isVisible()) {
-      await expect(page.getByText(/Mastered:\s*\d+/)).toBeVisible({ timeout: 5_000 });
-      await expect(page.getByText(/Reviewed:\s*\d+/)).toBeVisible({ timeout: 5_000 });
-      await expect(page.getByText(/In Progress:\s*\d+/)).toBeVisible({ timeout: 5_000 });
-      await expect(page.getByText(/Not Started:\s*\d+/)).toBeVisible({ timeout: 5_000 });
+      await expect(page.getByText(/mastered\s+\d+/i)).toBeVisible({ timeout: 5_000 });
+      await expect(page.getByText(/reviewed\s+\d+/i)).toBeVisible({ timeout: 5_000 });
+      await expect(page.getByText(/in progress\s+\d+/i)).toBeVisible({ timeout: 5_000 });
+      await expect(page.getByText(/not started\s+\d+/i)).toBeVisible({ timeout: 5_000 });
     }
   });
 });
@@ -82,7 +82,7 @@ test.describe.serial("Knowledge Graph", () => {
 
   test("Graph tab is visible", async ({ page }) => {
     await createCourseWithContent(page);
-    await ensureRightPanelVisible(page);
+    await ensureAnalyticsSectionVisible(page);
     const graphTab = page.getByRole("button", { name: "Graph" });
     await expect(graphTab).toBeVisible({ timeout: 15_000 });
   });
@@ -90,7 +90,7 @@ test.describe.serial("Knowledge Graph", () => {
   test("graph canvas renders or shows empty state", async ({ page }) => {
     test.setTimeout(150_000);
     await createCourseWithContent(page);
-    await ensureRightPanelVisible(page);
+    await ensureAnalyticsSectionVisible(page);
     await page.getByRole("button", { name: "Graph" }).click();
     // GraphView renders SVG (not canvas). Three possible states:
     //   loading → "Loading graph..."

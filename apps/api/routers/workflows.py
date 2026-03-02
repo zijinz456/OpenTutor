@@ -22,7 +22,13 @@ from services.auth.dependency import get_current_user
 from services.course_access import get_course_or_404
 from services.activity.tasks import create_task
 from services.provenance import build_provenance
-from libs.exceptions import AppError, NotFoundError, ValidationError
+from libs.exceptions import (
+    AppError,
+    LLMUnavailableError,
+    NotFoundError,
+    ValidationError,
+    is_llm_unavailable_error,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -67,6 +73,11 @@ def _raise_if_service_error(result: dict) -> None:
     raise ValidationError(error)
 
 
+def _raise_if_llm_unavailable(exc: BaseException) -> None:
+    if is_llm_unavailable_error(exc):
+        raise LLMUnavailableError(str(exc)) from exc
+
+
 # ── Endpoints ──
 
 
@@ -98,6 +109,7 @@ async def semester_init(body: SemesterInitRequest, user: User = Depends(get_curr
     except AppError:
         raise
     except Exception as e:
+        _raise_if_llm_unavailable(e)
         logger.exception("WF-1 failed: user_id=%s semester=%s", user.id, body.semester_name)
         raise AppError("Semester init failed") from e
 
@@ -129,6 +141,7 @@ async def weekly_prep(user: User = Depends(get_current_user), db: AsyncSession =
         await db.commit()
         return result
     except Exception as e:
+        _raise_if_llm_unavailable(e)
         logger.exception("WF-2 failed: user_id=%s", user.id)
         raise AppError("Weekly prep failed") from e
 
@@ -164,6 +177,7 @@ async def assignment_analysis(body: AssignmentAnalysisRequest, user: User = Depe
     except AppError:
         raise
     except Exception as e:
+        _raise_if_llm_unavailable(e)
         logger.exception(
             "WF-3 failed: user_id=%s assignment_id=%s",
             user.id,
@@ -204,6 +218,7 @@ async def wrong_answer_review(
         await db.commit()
         return result
     except Exception as e:
+        _raise_if_llm_unavailable(e)
         logger.exception("WF-5 failed: user_id=%s course_id=%s", user.id, course_id)
         raise AppError("Wrong-answer review failed") from e
 
@@ -260,6 +275,7 @@ async def exam_prep(body: ExamPrepRequest, user: User = Depends(get_current_user
         await db.commit()
         return result
     except Exception as e:
+        _raise_if_llm_unavailable(e)
         logger.exception(
             "WF-6 failed: user_id=%s course_id=%s days_until_exam=%d",
             user.id,

@@ -206,7 +206,7 @@ def infer_task_policy(
         risk_level = "high"
         approval_reason = "This task would trigger an external web action."
         approval_action = "Perform an outbound web or browser action."
-    elif task_type in {"semester_init"}:
+    elif task_type in {"semester_init", "generate_quiz", "create_flashcard", "create_flashcards"}:
         task_kind = TASK_KIND_CONTENT_MUTATION
         risk_level = "medium" if requires_approval else "low"
 
