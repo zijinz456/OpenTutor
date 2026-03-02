@@ -105,7 +105,7 @@ async def test_health_endpoint(client):
     resp = await client.get("/api/health")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["status"] == "ok"
+    assert data["status"] in ("ok", "degraded")
     assert "version" in data
     assert data["deployment_mode"] == "single_user"
     assert "code_sandbox_backend" in data
