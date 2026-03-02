@@ -32,6 +32,7 @@ interface QuizPanelProps {
 export function QuizPanel({ courseId }: QuizPanelProps) {
   const t = useT();
   const [problems, setProblems] = useState<QuizProblem[]>([]);
+  const [extractStatus, setExtractStatus] = useState<string | null>(null);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [selectedAnswer, setSelectedAnswer] = useState<string | null>(null);
   const [result, setResult] = useState<AnswerResult | null>(null);
@@ -57,12 +58,17 @@ export function QuizPanel({ courseId }: QuizPanelProps) {
 
   const handleExtract = async () => {
     setExtracting(true);
+    setExtractStatus(null);
     try {
       const res = await extractQuiz(courseId);
-      toast.success(`Generated ${res.problems_created} questions`);
+      const message = `Generated ${res.problems_created} questions`;
+      toast.success(message);
+      setExtractStatus(message);
       await loadProblems();
     } catch (err) {
-      toast.error(`Extraction failed: ${(err as Error).message}`);
+      const message = `Extraction failed: ${(err as Error).message}`;
+      toast.error(message);
+      setExtractStatus(message);
     } finally {
       setExtracting(false);
     }
@@ -164,6 +170,11 @@ export function QuizPanel({ courseId }: QuizPanelProps) {
               </>
             )}
           </Button>
+          {extractStatus ? (
+            <p className="mt-3 text-xs text-muted-foreground" data-testid="quiz-extract-status">
+              {extractStatus}
+            </p>
+          ) : null}
         </div>
       </div>
     );

@@ -7,19 +7,27 @@ Run with: pytest tests/test_api_integration.py -v
 import asyncio
 import uuid
 import json
+from datetime import datetime, timezone
 
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from main import app
 from config import settings
+import database as database_module
 from database import get_db, Base
+from models.agent_task import AgentTask
+from models.ingestion import StudySession
+from models.progress import LearningProgress
+from models.practice import PracticeProblem, PracticeResult
 from models.preference import PreferenceSignal
+from models.user import User
 from services.agent.state import AgentContext
+from services.migrations import get_expected_migration_heads
 
 TEST_EMAIL = f"test-{uuid.uuid4().hex[:8]}@opentutor.dev"
 
@@ -47,7 +55,21 @@ async def client():
             await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         except Exception as exc:
             pytest.skip(f"pgvector extension unavailable for integration tests: {exc}")
-        await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(
+            lambda sync_conn: Base.metadata.create_all(
+                sync_conn.execution_options(schema_translate_map={None: schema})
+            )
+        )
+        await conn.execute(
+            text(
+                f'CREATE TABLE "{schema}".alembic_version (version_num VARCHAR(64) PRIMARY KEY)'
+            )
+        )
+        for head in get_expected_migration_heads():
+            await conn.execute(
+                text(f'INSERT INTO "{schema}".alembic_version (version_num) VALUES (:head)'),
+                {"head": head},
+            )
 
     async def _override_get_db():
         async with test_session_factory() as session:
@@ -55,16 +77,23 @@ async def client():
 
     app.dependency_overrides[get_db] = _override_get_db
     app.state.test_session_factory = test_session_factory
+    original_async_session = database_module.async_session
+    database_module.async_session = test_session_factory
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
 
     app.dependency_overrides.pop(get_db, None)
+    database_module.async_session = original_async_session
     if hasattr(app.state, "test_session_factory"):
         delattr(app.state, "test_session_factory")
     async with test_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(
+            lambda sync_conn: Base.metadata.drop_all(
+                sync_conn.execution_options(schema_translate_map={None: schema})
+            )
+        )
         await conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
     await test_engine.dispose()
 
@@ -78,6 +107,11 @@ async def test_health_endpoint(client):
     data = resp.json()
     assert data["status"] == "ok"
     assert "version" in data
+    assert data["deployment_mode"] == "single_user"
+    assert "code_sandbox_backend" in data
+    assert data["migration_required"] is False
+    assert data["migration_status"] == "ready"
+    assert data["alembic_version_present"] is True
 
 
 # ── Course CRUD ──
@@ -310,6 +344,118 @@ async def test_weekly_prep_creates_agent_task(client, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_queue_next_action_from_active_goal_creates_multi_step_task(client, monkeypatch):
+    create_resp = await client.post("/api/courses/", json={"name": "Next Action Course", "description": "queue"})
+    assert create_resp.status_code == 201
+    course_id = create_resp.json()["id"]
+
+    goal_resp = await client.post(
+        "/api/goals/",
+        json={
+            "course_id": course_id,
+            "title": "Pass the final",
+            "objective": "Score above 85%.",
+            "next_action": "Review weak points from chapter 3 tonight.",
+        },
+    )
+    assert goal_resp.status_code == 201
+    goal_id = goal_resp.json()["id"]
+
+    async def fake_create_plan(_prompt, _user_id, _course_id, mastery_summary=None):
+        return [
+            {
+                "step_index": 0,
+                "step_type": "identify_weak_points",
+                "title": "Review weak points",
+                "description": "Find weak areas from recent performance",
+                "agent": "assessment",
+                "depends_on": [],
+                "status": "pending",
+                "input_params": {},
+            }
+        ]
+
+    monkeypatch.setattr("services.agent.task_planner.create_plan", fake_create_plan)
+
+    queue_resp = await client.post(f"/api/goals/{course_id}/next-action/queue")
+    assert queue_resp.status_code == 200
+    payload = queue_resp.json()
+    assert payload["task_type"] == "multi_step"
+    assert payload["goal_id"] == goal_id
+    assert payload["title"] == "Execute next step: Pass the final"
+    assert payload["input_json"]["steps"][0]["title"] == "Review weak points"
+    assert payload["metadata_json"]["next_action"]["queue_label"] == "Queue next step"
+
+
+@pytest.mark.asyncio
+async def test_queue_next_action_retries_failed_task(client):
+    create_resp = await client.post("/api/courses/", json={"name": "Recover Course", "description": "recover"})
+    assert create_resp.status_code == 201
+    course_id = uuid.UUID(create_resp.json()["id"])
+
+    async with app.state.test_session_factory() as session:
+        user_result = await session.execute(select(User).limit(1))
+        user = user_result.scalar_one()
+        failed_task = AgentTask(
+            user_id=user.id,
+            course_id=course_id,
+            task_type="exam_prep",
+            status="failed",
+            title="Queued exam prep",
+            summary="Task failed previously.",
+            source="test",
+            attempts=1,
+            max_attempts=2,
+            requires_approval=False,
+            task_kind="read_only",
+            risk_level="low",
+            approval_status="not_required",
+            error_message="boom",
+            completed_at=datetime.now(timezone.utc),
+        )
+        session.add(failed_task)
+        await session.commit()
+        await session.refresh(failed_task)
+
+    queue_resp = await client.post(f"/api/goals/{course_id}/next-action/queue")
+    assert queue_resp.status_code == 200
+    payload = queue_resp.json()
+    assert payload["id"] == str(failed_task.id)
+    assert payload["status"] == "queued"
+    assert payload["attempts"] == 0
+    assert payload["error_message"] is None
+
+
+@pytest.mark.asyncio
+async def test_next_action_handles_legacy_naive_progress_timestamps(client):
+    create_resp = await client.post("/api/courses/", json={"name": "Forecast Course", "description": "forecast"})
+    assert create_resp.status_code == 201
+    course_id = uuid.UUID(create_resp.json()["id"])
+
+    async with app.state.test_session_factory() as session:
+        user_result = await session.execute(select(User).limit(1))
+        user = user_result.scalar_one()
+        session.add(
+            LearningProgress(
+                user_id=user.id,
+                course_id=course_id,
+                content_node_id=None,
+                status="reviewed",
+                mastery_score=0.42,
+                fsrs_reps=2,
+                fsrs_stability=1.5,
+                last_studied_at=datetime.utcnow(),
+            )
+        )
+        await session.commit()
+
+    next_action_resp = await client.get(f"/api/goals/{course_id}/next-action")
+    assert next_action_resp.status_code == 200
+    payload = next_action_resp.json()
+    assert payload["source"] in {"forgetting_risk", "manual"}
+
+
+@pytest.mark.asyncio
 async def test_save_generated_quiz_persists_questions(client):
     create_resp = await client.post("/api/courses/", json={"name": "Generated Quiz Course", "description": "x"})
     assert create_resp.status_code == 201
@@ -346,6 +492,97 @@ async def test_save_generated_quiz_persists_questions(client):
     problems = list_resp.json()
     assert len(problems) == 1
     assert problems[0]["question"] == "What is 2 + 2?"
+
+
+@pytest.mark.asyncio
+async def test_save_generated_quiz_accepts_single_object_payload(client):
+    create_resp = await client.post("/api/courses/", json={"name": "Singleton Quiz Course", "description": "x"})
+    assert create_resp.status_code == 201
+    course_id = create_resp.json()["id"]
+
+    raw_content = json.dumps(
+        {
+            "question_type": "mc",
+            "question": "What is the loop invariant?",
+            "options": {"A": "Sorted prefix", "B": "Target stays inside bounds"},
+            "correct_answer": "B",
+            "explanation": "Binary search preserves the candidate interval.",
+            "difficulty_layer": 1,
+            "problem_metadata": {"core_concept": "binary search"},
+        }
+    )
+
+    save_resp = await client.post(
+        "/api/quiz/save-generated",
+        json={"course_id": course_id, "raw_content": raw_content, "title": "Singleton"},
+    )
+    assert save_resp.status_code == 200
+    assert save_resp.json()["saved"] == 1
+
+    list_resp = await client.get(f"/api/quiz/{course_id}")
+    assert list_resp.status_code == 200
+    problems = list_resp.json()
+    assert len(problems) == 1
+    assert problems[0]["question"] == "What is the loop invariant?"
+
+
+@pytest.mark.asyncio
+async def test_quiz_list_normalizes_legacy_list_options(client):
+    create_resp = await client.post("/api/courses/", json={"name": "Legacy Quiz Course", "description": "x"})
+    assert create_resp.status_code == 201
+    course_id = create_resp.json()["id"]
+
+    async with app.state.test_session_factory() as session:
+        session.add(
+            PracticeProblem(
+                course_id=uuid.UUID(course_id),
+                content_node_id=None,
+                question_type="mc",
+                question="Pick the correct bound update",
+                options=["A: Move left", "B: Move right", None],
+                correct_answer="A",
+                explanation="Legacy list-shaped options should still render.",
+                order_index=1,
+            )
+        )
+        await session.commit()
+
+    list_resp = await client.get(f"/api/quiz/{course_id}")
+    assert list_resp.status_code == 200
+    problems = list_resp.json()
+    assert len(problems) == 1
+    assert problems[0]["options"] == {"A": "Move left", "B": "Move right"}
+
+
+@pytest.mark.asyncio
+async def test_quiz_list_drops_null_option_values_from_legacy_dicts(client):
+    create_resp = await client.post("/api/courses/", json={"name": "Legacy Dict Quiz Course", "description": "x"})
+    assert create_resp.status_code == 201
+    course_id = create_resp.json()["id"]
+
+    async with app.state.test_session_factory() as session:
+        session.add(
+            PracticeProblem(
+                course_id=uuid.UUID(course_id),
+                content_node_id=None,
+                question_type="mc",
+                question="Which invariant is preserved?",
+                options={"A": "Left side stays sorted", "B": "Bounds keep target inside", "C": "", "D": None},
+                correct_answer="B",
+                explanation="Legacy dict options may contain blank/null values.",
+                order_index=1,
+            )
+        )
+        await session.commit()
+
+    list_resp = await client.get(f"/api/quiz/{course_id}")
+    assert list_resp.status_code == 200
+    problems = list_resp.json()
+    assert len(problems) == 1
+    assert problems[0]["options"] == {
+        "A": "Left side stays sorted",
+        "B": "Bounds keep target inside",
+    }
 
 
 @pytest.mark.asyncio
@@ -407,6 +644,58 @@ async def test_learning_overview_returns_cross_course_summary(client):
     assert "gap_type_breakdown" in data
     assert "diagnosis_breakdown" in data
     assert len(data["course_summaries"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_progress_trend_endpoints_handle_practice_results_with_answered_at(client):
+    create_resp = await client.post("/api/courses/", json={"name": "Progress Course", "description": "progress"})
+    assert create_resp.status_code == 201
+    course_id = uuid.UUID(create_resp.json()["id"])
+
+    async with app.state.test_session_factory() as session:
+        user_result = await session.execute(select(User).limit(1))
+        user = user_result.scalar_one()
+        problem = PracticeProblem(
+            course_id=course_id,
+            question_type="mc",
+            question="What is binary search?",
+            correct_answer="A search algorithm",
+        )
+        session.add(problem)
+        await session.flush()
+        session.add(
+            PracticeResult(
+                problem_id=problem.id,
+                user_id=user.id,
+                user_answer="A search algorithm",
+                is_correct=True,
+                answered_at=datetime.now(timezone.utc),
+            )
+        )
+        session.add(
+            StudySession(
+                user_id=user.id,
+                course_id=course_id,
+                duration_minutes=25,
+                started_at=datetime.now(timezone.utc),
+                ended_at=datetime.now(timezone.utc),
+            )
+        )
+        await session.commit()
+
+    course_trends = await client.get(f"/api/progress/courses/{course_id}/trends")
+    assert course_trends.status_code == 200
+    course_payload = course_trends.json()
+    assert course_payload["course_id"] == str(course_id)
+    assert any(entry["quiz_total"] >= 1 for entry in course_payload["trend"])
+
+    global_trends = await client.get("/api/progress/trends")
+    assert global_trends.status_code == 200
+    assert any(entry["quiz_total"] >= 1 for entry in global_trends.json()["trend"])
+
+    weekly_report = await client.get("/api/progress/weekly-report")
+    assert weekly_report.status_code == 200
+    assert weekly_report.json()["this_week"]["quiz_total"] >= 1
 
 
 @pytest.mark.asyncio
@@ -552,6 +841,8 @@ async def test_agent_task_submit_approve_and_drain(client, monkeypatch):
     task_id = submit_resp.json()["id"]
     assert submit_resp.json()["status"] == "pending_approval"
     assert submit_resp.json()["approval_status"] == "pending"
+    assert submit_resp.json()["approval_reason"]
+    assert submit_resp.json()["approval_action"]
 
     approve_resp = await client.post(f"/api/tasks/{task_id}/approve")
     assert approve_resp.status_code == 200
@@ -566,6 +857,105 @@ async def test_agent_task_submit_approve_and_drain(client, monkeypatch):
     assert tasks[0]["id"] == task_id
     assert tasks[0]["status"] == "completed"
     assert tasks[0]["result_json"]["plan"] == "Queued plan"
+    assert tasks[0]["result_json"]["task_review"]["follow_up"]["ready"] is True
+    assert tasks[0]["result_json"]["task_review"]["next_recommended_action"]
+
+
+@pytest.mark.asyncio
+async def test_completed_task_review_includes_goal_update_and_follow_up_queue(client, monkeypatch):
+    import services.activity.engine as activity_engine
+
+    async def fake_weekly_prep(_db, _user_id):
+        return {
+            "deadlines": [
+                {
+                    "title": "Problem Set 4",
+                    "course": "Follow Up Course",
+                    "days_until_due": 3,
+                    "type": "assignment",
+                }
+            ],
+            "stats": {
+                "sessions_count": 2,
+                "total_minutes": 55,
+                "problems_attempted": 18,
+                "problems_correct": 14,
+                "accuracy": 0.78,
+            },
+            "plan": "## Weekly Plan\n- Monday: review graphs\n- Tuesday: practice proofs",
+            "next_action": "Monday: review graphs",
+        }
+
+    async def fake_create_plan(_prompt, _user_id, _course_id, mastery_summary=None):
+        return [
+            {
+                "step_index": 0,
+                "step_type": "identify_weak_points",
+                "title": "Review graphs",
+                "description": "Review graph weak points from the weekly plan",
+                "agent": "assessment",
+                "depends_on": [],
+                "status": "pending",
+                "input_params": {},
+            }
+        ]
+
+    monkeypatch.setattr("services.workflow.weekly_prep.run_weekly_prep", fake_weekly_prep)
+    monkeypatch.setattr("services.agent.task_planner.create_plan", fake_create_plan)
+    monkeypatch.setattr(activity_engine, "async_session", app.state.test_session_factory)
+
+    create_resp = await client.post("/api/courses/", json={"name": "Follow Up Course", "description": "queue"})
+    assert create_resp.status_code == 201
+    course_id = create_resp.json()["id"]
+
+    goal_resp = await client.post(
+        "/api/goals/",
+        json={
+            "course_id": course_id,
+            "title": "Finish the weekly priority",
+            "objective": "Complete the first high-value study block from the weekly review.",
+        },
+    )
+    assert goal_resp.status_code == 201
+    goal_id = goal_resp.json()["id"]
+
+    submit_resp = await client.post(
+        "/api/tasks/submit",
+        json={
+            "task_type": "weekly_prep",
+            "title": "Queued weekly prep",
+            "course_id": course_id,
+            "goal_id": goal_id,
+            "input_json": {"course_id": course_id},
+            "max_attempts": 1,
+        },
+    )
+    assert submit_resp.status_code == 201
+    task_id = submit_resp.json()["id"]
+
+    processed = await activity_engine.drain_once()
+    assert processed is True
+
+    tasks_resp = await client.get(f"/api/tasks/?course_id={course_id}")
+    assert tasks_resp.status_code == 200
+    task = next(item for item in tasks_resp.json() if item["id"] == task_id)
+    review = task["result_json"]["task_review"]
+    assert task["status"] == "completed"
+    assert review["outcome"].startswith("Weekly prep refreshed")
+    assert review["next_recommended_action"] == "Monday: review graphs"
+    assert review["goal_update"]["goal_id"] == goal_id
+    assert review["goal_update"]["next_action"] == "Monday: review graphs"
+    assert review["follow_up"]["ready"] is True
+    assert review["follow_up"]["label"] == "Queue first task"
+
+    follow_up_resp = await client.post(f"/api/tasks/{task_id}/follow-up")
+    assert follow_up_resp.status_code == 200
+    queued = follow_up_resp.json()
+    assert queued["task_type"] == "multi_step"
+    assert queued["goal_id"] == goal_id
+    assert queued["source"] == "task_follow_up"
+    assert queued["metadata_json"]["parent_task_id"] == task_id
+    assert queued["input_json"]["steps"][0]["title"] == "Review graphs"
 
 
 @pytest.mark.asyncio

@@ -20,7 +20,13 @@ import {
   Loader,
   FolderPlus,
 } from "lucide-react";
-import { IngestionJobSummary, listIngestionJobs, uploadFile, scrapeUrl } from "@/lib/api";
+import {
+  IngestionJobSummary,
+  createScrapeSource,
+  uploadFile,
+  scrapeUrl,
+  type CourseMetadata,
+} from "@/lib/api";
 import { useCourseStore } from "@/store/course";
 
 type Mode = "upload" | "url" | "both";
@@ -108,7 +114,7 @@ function deriveParseProgress(
 const FEATURE_CARDS = [
   { id: "notes", label: "Organize Notes", description: "Restructure your materials into clean, organized notes in your preferred format.", icon: FileText, iconBg: "bg-indigo-50", iconColor: "text-indigo-600", enabled: true },
   { id: "practice", label: "Practice Mode", description: "Generate practice questions from your materials. Interactive Q&A with instant feedback.", icon: Pencil, iconBg: "bg-indigo-50", iconColor: "text-indigo-600", enabled: true },
-  { id: "wrong_answer", label: "Wrong Answer Review", description: "Track and revisit incorrect answers. Coming in Phase 2.", icon: RotateCcw, iconBg: "bg-amber-50", iconColor: "text-amber-600", enabled: false, phase: "Phase 2" },
+  { id: "wrong_answer", label: "Wrong Answer Review", description: "Track, diagnose, and revisit incorrect answers from generated quizzes.", icon: RotateCcw, iconBg: "bg-amber-50", iconColor: "text-amber-600", enabled: true },
   { id: "study_plan", label: "Study Plan", description: "Generate a personalized study plan with scheduled reviews.", icon: Calendar, iconBg: "bg-indigo-50", iconColor: "text-indigo-600", enabled: true },
   { id: "free_qa", label: "Free Q&A", description: "Ask any question about your materials and get AI-powered answers with source references.", icon: MessageCircle, iconBg: "bg-indigo-50", iconColor: "text-indigo-600", enabled: true },
 ];
@@ -127,6 +133,8 @@ export default function NewProjectPage() {
   });
   const [nlInput, setNlInput] = useState("");
   const [createdCourseId, setCreatedCourseId] = useState<string | null>(null);
+  const [nameError, setNameError] = useState<string | null>(null);
+  const [urlError, setUrlError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const [ingestionJobs, setIngestionJobs] = useState<IngestionJobSummary[]>([]);
   const [isSubmittingContent, setIsSubmittingContent] = useState(false);
@@ -146,6 +154,26 @@ export default function NewProjectPage() {
     if (bytes < 1048576) return (bytes / 1024).toFixed(1) + " KB";
     return (bytes / 1048576).toFixed(1) + " MB";
   };
+
+  const validateName = (value: string) => {
+    if (!value.trim()) {
+      setNameError("Project name is required");
+    } else if (value.length > 100) {
+      setNameError("Project name must be 100 characters or fewer");
+    } else {
+      setNameError(null);
+    }
+  };
+
+  const validateUrl = (value: string) => {
+    if (value.trim() && !/^https?:\/\//i.test(value.trim())) {
+      setUrlError("URL must start with http:// or https://");
+    } else {
+      setUrlError(null);
+    }
+  };
+
+  const hasUploadErrors = nameError !== null || urlError !== null;
 
   const handleFileAdd = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selected = e.target.files;
@@ -263,18 +291,21 @@ export default function NewProjectPage() {
     let nextCourseId: string | null = null;
 
     try {
+      const metadata: CourseMetadata = {
+        workspace_features: features,
+        auto_scrape: {
+          enabled: Boolean(autoScrape && url.trim() && (mode === "url" || mode === "both")),
+          interval_hours: 24,
+        },
+      };
+
       // Create the course
       addLog(`${new Date().toLocaleTimeString()}  Creating project "${projectName || "Untitled"}"...`, "text-gray-400");
       const description = nlInput.trim() || undefined;
-      const course = await addCourse(projectName.trim() || "Untitled Project", description);
+      const course = await addCourse(projectName.trim() || "Untitled Project", description, metadata);
       nextCourseId = course.id;
       setCreatedCourseId(course.id);
 
-      // Persist feature toggles and auto-scrape preference for workspace
-      localStorage.setItem(`course_features_${course.id}`, JSON.stringify(features));
-      if (autoScrape) {
-        localStorage.setItem(`course_autoscrape_${course.id}`, "true");
-      }
       addLog(`${new Date().toLocaleTimeString()}  Project created`, "text-green-500");
       const hasSources = files.length > 0 || (url.trim() && (mode === "url" || mode === "both"));
       if (!hasSources) {
@@ -310,6 +341,18 @@ export default function NewProjectPage() {
             `${new Date().toLocaleTimeString()}  URL content accepted: ${result.nodes_created} nodes queued`,
             "text-green-500",
           );
+          if (autoScrape) {
+            await createScrapeSource({
+              course_id: course.id,
+              url: url.trim(),
+              label: projectName.trim() || "Project source",
+              interval_hours: 24,
+            });
+            addLog(
+              `${new Date().toLocaleTimeString()}  Auto-scrape enabled for this URL (every 24 hours)`,
+              "text-green-500",
+            );
+          }
         } catch (err) {
           addLog(`${new Date().toLocaleTimeString()}  Scrape failed: ${(err as Error).message}`, "text-red-500");
         }
@@ -331,9 +374,6 @@ export default function NewProjectPage() {
     if (nlInput.trim()) {
       localStorage.setItem(`course_init_prompt_${createdCourseId}`, nlInput.trim());
     }
-
-    // Persist latest feature selections (may have changed since parsing)
-    localStorage.setItem(`course_features_${createdCourseId}`, JSON.stringify(features));
 
     router.push(`/course/${createdCourseId}`);
   };
@@ -423,11 +463,17 @@ export default function NewProjectPage() {
             <label className="font-semibold text-sm text-gray-900" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Project Name</label>
             <input
               data-testid="project-name-input"
-              className="w-full h-11 px-4 border border-gray-200 rounded-lg bg-white text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-600/20 focus:border-indigo-600"
+              className={`w-full h-11 px-4 border rounded-lg bg-white text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-600/20 focus:border-indigo-600 ${nameError ? "border-red-400" : "border-gray-200"}`}
               value={projectName}
-              onChange={(e) => setProjectName(e.target.value)}
+              onChange={(e) => {
+                setProjectName(e.target.value);
+                validateName(e.target.value);
+              }}
+              onBlur={() => validateName(projectName)}
               placeholder="CS101 Computer Science"
+              maxLength={100}
             />
+            {nameError && <p className="text-xs text-destructive mt-1">{nameError}</p>}
           </div>
 
           {/* Upload Section */}
@@ -484,13 +530,18 @@ export default function NewProjectPage() {
               <h3 className="text-base font-semibold text-gray-900" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Add URL</h3>
               <div className="flex gap-2">
                 <input
-                  className="flex-1 h-11 px-4 border border-gray-200 rounded-lg bg-white text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-600/20 focus:border-indigo-600"
+                  className={`flex-1 h-11 px-4 border rounded-lg bg-white text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-600/20 focus:border-indigo-600 ${urlError ? "border-red-400" : "border-gray-200"}`}
                   placeholder="https://professor-site.edu/cs101/"
                   value={url}
-                  onChange={(e) => setUrl(e.target.value)}
+                  onChange={(e) => {
+                    setUrl(e.target.value);
+                    validateUrl(e.target.value);
+                  }}
+                  onBlur={() => validateUrl(url)}
                 />
                 <button className="h-11 px-5 bg-indigo-600 text-white rounded-lg font-semibold text-sm hover:bg-indigo-700">Add</button>
               </div>
+              {urlError && <p className="text-xs text-destructive mt-1">{urlError}</p>}
             </div>
           )}
 
@@ -533,7 +584,8 @@ export default function NewProjectPage() {
             <button
               onClick={startParsing}
               data-testid="start-parsing"
-              className="h-11 px-7 bg-indigo-600 text-white rounded-lg flex items-center gap-2 font-semibold text-sm hover:bg-indigo-700"
+              disabled={hasUploadErrors}
+              className={`h-11 px-7 text-white rounded-lg flex items-center gap-2 font-semibold text-sm ${hasUploadErrors ? "bg-indigo-400 cursor-not-allowed" : "bg-indigo-600 hover:bg-indigo-700"}`}
             >
               Start Parsing <ArrowRight className="w-4 h-4" />
             </button>

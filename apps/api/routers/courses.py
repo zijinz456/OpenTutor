@@ -134,6 +134,7 @@ async def list_course_overview(
             Course.id,
             Course.name,
             Course.description,
+            Course.metadata_.label("metadata"),
             Course.created_at,
             Course.updated_at,
             func.coalesce(file_counts.c.file_count, literal(0)).label("file_count"),
@@ -160,6 +161,7 @@ async def list_course_overview(
             id=row.id,
             name=row.name,
             description=row.description,
+            metadata=row.metadata,
             created_at=row.created_at,
             updated_at=row.updated_at,
             file_count=int(row.file_count or 0),
@@ -176,7 +178,12 @@ async def list_course_overview(
 
 @router.post("/", response_model=CourseResponse, status_code=201)
 async def create_course(body: CourseCreate, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    course = Course(user_id=user.id, name=body.name, description=body.description)
+    course = Course(
+        user_id=user.id,
+        name=body.name,
+        description=body.description,
+        metadata_=body.metadata.model_dump(exclude_none=True) if body.metadata else None,
+    )
     db.add(course)
     await db.commit()
     await db.refresh(course)

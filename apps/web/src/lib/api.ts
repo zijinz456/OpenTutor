@@ -6,6 +6,278 @@
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
+type JsonObject = Record<string, unknown>;
+type NullableDateTime = string | null;
+
+interface VersionedBatch {
+  batch_id: string;
+  version: number;
+  replaced: boolean;
+}
+
+interface SavedGeneratedAsset extends VersionedBatch {
+  id: string;
+}
+
+interface ContentMutationResult {
+  nodes_created: number;
+}
+
+interface ChatVerifierResult {
+  status: "pass" | "repaired" | "failed";
+  code: string;
+  message: string;
+}
+
+interface ChatTaskLink {
+  task_id: string;
+  task_type: string;
+  status: string;
+}
+
+interface SessionMessagesResponse {
+  session: ChatSessionSummary;
+  messages: PersistedChatMessage[];
+}
+
+interface LearningProfileSummary {
+  strength_areas: string[];
+  weak_areas: string[];
+  recurring_errors: string[];
+  inferred_habits: string[];
+}
+
+interface WorkspaceTabPlacement {
+  type: string;
+  position: number;
+}
+
+interface SceneInitAction {
+  type: string;
+  action: string;
+  message: string;
+}
+
+interface SceneSwitchExplanationSummary {
+  workflow?: string;
+  recommended_tabs?: string[];
+  reason?: string;
+}
+
+interface WrongAnswerDetail {
+  category?: string;
+  confidence?: number;
+  evidence?: string;
+  related_concept?: string;
+  diagnosis?: string;
+  original_correct?: boolean;
+  clean_correct?: boolean;
+  diagnostic_problem_id?: string;
+}
+
+interface RetryWrongAnswerResult {
+  is_correct: boolean;
+  correct_answer: string | null;
+  explanation: string | null;
+}
+
+interface DerivedQuestionResult {
+  problem_id: string;
+  question: string;
+  question_type: string;
+  options: Record<string, string> | null;
+  correct_answer: string | null;
+  explanation: string | null;
+}
+
+interface WrongAnswerDiagnosisResult {
+  diagnosis?: string;
+  original_correct?: boolean;
+  clean_correct?: boolean | null;
+  interpretation?: string;
+  status?: string;
+  diagnostic_problem_id?: string;
+  message?: string;
+}
+
+interface WrongAnswerStats {
+  total: number;
+  mastered: number;
+  unmastered: number;
+  by_category: Record<string, number>;
+  by_diagnosis: Record<string, number>;
+}
+
+interface GeneratedQuizSaveResult extends VersionedBatch {
+  saved: number;
+  problem_ids: string[];
+}
+
+interface LearningOverviewCourseSummary {
+  course_id: string;
+  course_name: string;
+  average_mastery: number;
+  study_minutes: number;
+  wrong_answers: number;
+  diagnosed_count: number;
+  gap_types: Record<string, number>;
+}
+
+interface DateRange {
+  start: string;
+  end: string;
+}
+
+interface WeeklyActivitySnapshot {
+  study_minutes: number;
+  active_days: number;
+  quiz_total: number;
+  quiz_correct: number;
+  accuracy: number;
+}
+
+interface WeeklyActivityDelta {
+  study_minutes: number;
+  accuracy: number;
+  quiz_total: number;
+}
+
+interface FlashcardFsrsState {
+  difficulty: number;
+  stability: number;
+  reps: number;
+  state: string;
+  due: string | null;
+  last_review?: string | null;
+}
+
+interface FlashcardGenerationResult {
+  cards: Flashcard[];
+  count: number;
+}
+
+interface FlashcardReviewResult {
+  card: Flashcard;
+  next_review: string | null;
+}
+
+interface DueFlashcardsResult {
+  cards: Flashcard[];
+  due_count: number;
+  total_batches: number;
+}
+
+interface KnowledgeGraphData {
+  nodes: KnowledgeGraphNode[];
+  edges: KnowledgeGraphEdge[];
+}
+
+interface WrongAnswerReviewResult {
+  review: string;
+  wrong_answer_count: number;
+  wrong_answer_ids: string[];
+}
+
+interface ExamPrepPlan {
+  course: string;
+  topics_count: number;
+  readiness: Record<string, number>;
+  days_until_exam: number;
+  plan: string;
+}
+
+interface PreferenceSignalContext {
+  evidence?: string;
+  user_message?: string;
+}
+
+interface QuizExtractionResult {
+  problems_created: number;
+}
+
+interface GeneratedBatchSummaryBase {
+  batch_id: string;
+  title: string;
+  current_version: number;
+  is_active: boolean;
+  updated_at: NullableDateTime;
+}
+
+interface LlmRuntimeUpdateRequest {
+  provider?: string;
+  model?: string;
+  llm_required?: boolean;
+  provider_keys?: Record<string, string>;
+  base_url?: string;
+}
+
+interface LlmRuntimeConnectionTestRequest {
+  provider: string;
+  model?: string;
+  api_key?: string;
+}
+
+interface PreferenceUpdateRequest {
+  value?: string;
+  scope?: string;
+  source?: string;
+  scene_type?: string | null;
+}
+
+interface MemoryUpdateRequest {
+  summary?: string;
+  category?: string | null;
+}
+
+interface AgentTaskSubmitRequest {
+  task_type: string;
+  title: string;
+  course_id?: string;
+  goal_id?: string;
+  summary?: string;
+  input_json?: JsonObject;
+  metadata_json?: JsonObject;
+  source?: string;
+  requires_approval?: boolean;
+  max_attempts?: number;
+}
+
+interface StudyGoalCreateRequest {
+  title: string;
+  objective: string;
+  course_id?: string;
+  success_metric?: string;
+  current_milestone?: string;
+  next_action?: string;
+  status?: string;
+  confidence?: string;
+  target_date?: string;
+  metadata_json?: JsonObject;
+}
+
+interface StudyGoalUpdateRequest {
+  title: string;
+  objective: string;
+  success_metric: string;
+  current_milestone: string;
+  next_action: string;
+  status: string;
+  confidence: string;
+  target_date: string | null;
+  metadata_json: JsonObject | null;
+}
+
+interface PushSubscriptionRequest {
+  endpoint: string;
+  p256dh_key: string;
+  auth_key: string;
+  user_agent: string;
+}
+
+interface PushUnsubscribeRequest {
+  endpoint: string;
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     headers: { "Content-Type": "application/json", ...options?.headers },
@@ -25,10 +297,29 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
 // ── Courses ──
 
+export interface CourseWorkspaceFeatures {
+  notes: boolean;
+  practice: boolean;
+  wrong_answer: boolean;
+  study_plan: boolean;
+  free_qa: boolean;
+}
+
+export interface CourseAutoScrapeSettings {
+  enabled: boolean;
+  interval_hours: number;
+}
+
+export interface CourseMetadata {
+  workspace_features?: Partial<CourseWorkspaceFeatures> | null;
+  auto_scrape?: CourseAutoScrapeSettings | null;
+}
+
 export interface Course {
   id: string;
   name: string;
   description: string | null;
+  metadata?: CourseMetadata | null;
   created_at: string;
   updated_at?: string | null;
   file_count?: number;
@@ -54,18 +345,30 @@ export interface CourseOverviewCard extends Course {
 export interface HealthStatus {
   status: string;
   version: string;
+  database: string;
+  schema?: "ready" | "missing" | "unknown" | string;
+  migration_required?: boolean;
+  migration_status?: string;
+  alembic_version_present?: boolean;
+  migration_current_revisions?: string[];
+  migration_expected_revisions?: string[];
   llm_providers: string[];
   llm_primary: string | null;
   llm_required: boolean;
   llm_available: boolean;
   llm_status: "configuration_required" | "mock_fallback" | "degraded" | "ready";
   llm_provider_health: Record<string, boolean>;
+  deployment_mode: "single_user" | "multi_user" | string;
+  code_sandbox_backend: string;
+  code_sandbox_runtime: string;
+  code_sandbox_runtime_available: boolean;
 }
 
-export interface LlmRuntimeProviderStatus {
+interface LlmRuntimeProviderStatus {
   provider: string;
   has_key: boolean;
   masked_key: string | null;
+  requires_key?: boolean;
 }
 
 export interface LlmRuntimeConfig {
@@ -83,10 +386,6 @@ export interface LlmConnectionTestResult {
   usage: Record<string, number>;
 }
 
-export async function listCourses(): Promise<Course[]> {
-  return request("/courses/");
-}
-
 export async function listCourseOverview(): Promise<CourseOverviewCard[]> {
   return request("/courses/overview");
 }
@@ -99,33 +398,39 @@ export async function getLlmRuntimeConfig(): Promise<LlmRuntimeConfig> {
   return request("/preferences/runtime/llm");
 }
 
-export async function updateLlmRuntimeConfig(body: {
-  provider?: string;
-  model?: string;
-  llm_required?: boolean;
-  provider_keys?: Record<string, string>;
-}): Promise<LlmRuntimeConfig> {
+export async function updateLlmRuntimeConfig(body: LlmRuntimeUpdateRequest): Promise<LlmRuntimeConfig> {
   return request("/preferences/runtime/llm", {
     method: "PUT",
     body: JSON.stringify(body),
   });
 }
 
-export async function testLlmRuntimeConnection(body: {
-  provider: string;
-  model?: string;
-  api_key?: string;
-}): Promise<LlmConnectionTestResult> {
+export async function testLlmRuntimeConnection(body: LlmRuntimeConnectionTestRequest): Promise<LlmConnectionTestResult> {
   return request("/preferences/runtime/llm/test", {
     method: "POST",
     body: JSON.stringify(body),
   });
 }
 
-export async function createCourse(name: string, description?: string): Promise<Course> {
+export interface OllamaModel {
+  name: string;
+  size: number;
+  modified_at: string;
+}
+
+export async function getOllamaModels(baseUrl?: string): Promise<OllamaModel[]> {
+  const params = baseUrl ? `?base_url=${encodeURIComponent(baseUrl)}` : "";
+  return request(`/preferences/runtime/ollama/models${params}`);
+}
+
+export async function createCourse(
+  name: string,
+  description?: string,
+  metadata?: CourseMetadata,
+): Promise<Course> {
   return request("/courses/", {
     method: "POST",
-    body: JSON.stringify({ name, description }),
+    body: JSON.stringify({ name, description, metadata }),
   });
 }
 
@@ -149,7 +454,7 @@ export async function getContentTree(courseId: string): Promise<ContentNode[]> {
   return request(`/courses/${courseId}/content-tree`);
 }
 
-export interface RestructuredNotes {
+interface RestructuredNotes {
   original_title: string;
   ai_content: string;
   format_used: string;
@@ -174,7 +479,7 @@ export async function saveGeneratedNotes(
   title: string,
   sourceNodeId?: string,
   replaceBatchId?: string,
-): Promise<{ id: string; batch_id: string; version: number; replaced: boolean }> {
+): Promise<SavedGeneratedAsset> {
   return request("/notes/generated/save", {
     method: "POST",
     body: JSON.stringify({
@@ -191,7 +496,7 @@ export async function listGeneratedNoteBatches(courseId: string): Promise<Genera
   return request(`/notes/generated/${courseId}`);
 }
 
-export async function uploadFile(courseId: string, file: File): Promise<{ nodes_created: number }> {
+export async function uploadFile(courseId: string, file: File): Promise<ContentMutationResult> {
   const form = new FormData();
   form.append("file", file);
   form.append("course_id", courseId);
@@ -202,12 +507,12 @@ export async function uploadFile(courseId: string, file: File): Promise<{ nodes_
   });
   if (!res.ok) {
     const error = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(error.detail || "Upload failed");
+    throw new Error(error.detail || error.message || "Upload failed");
   }
   return res.json();
 }
 
-export async function scrapeUrl(courseId: string, url: string): Promise<{ nodes_created: number }> {
+export async function scrapeUrl(courseId: string, url: string): Promise<ContentMutationResult> {
   const form = new FormData();
   form.append("url", url);
   form.append("course_id", courseId);
@@ -218,14 +523,48 @@ export async function scrapeUrl(courseId: string, url: string): Promise<{ nodes_
   });
   if (!res.ok) {
     const error = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(error.detail || "Scrape failed");
+    throw new Error(error.detail || error.message || "Scrape failed");
   }
   return res.json();
 }
 
+export interface ScrapeSource {
+  id: string;
+  url: string;
+  label: string | null;
+  course_id: string;
+  source_type: string;
+  requires_auth: boolean;
+  auth_domain: string | null;
+  session_name: string | null;
+  enabled: boolean;
+  interval_hours: number;
+  last_scraped_at: string | null;
+  last_status: string | null;
+  last_content_hash: string | null;
+  consecutive_failures: number;
+  created_at: string;
+}
+
+export async function createScrapeSource(body: {
+  course_id: string;
+  url: string;
+  label?: string;
+  source_type?: "generic" | "canvas";
+  requires_auth?: boolean;
+  auth_domain?: string;
+  session_name?: string;
+  interval_hours?: number;
+}): Promise<ScrapeSource> {
+  return request("/scrape/sources", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
 // ── Chat (SSE streaming) ──
 
-export type ChatActionType =
+type ChatActionType =
   | "set_layout_preset"
   | "set_preference"
   | "suggest_scene_switch"
@@ -256,7 +595,7 @@ export interface ChatSessionSummary {
   message_count: number;
 }
 
-export interface PersistedChatMessage {
+interface PersistedChatMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
@@ -264,7 +603,7 @@ export interface PersistedChatMessage {
   created_at: string | null;
 }
 
-export interface ChatSceneExplanation {
+interface ChatSceneExplanation {
   scene?: string;
   mode?: string;
   matched_text?: string | null;
@@ -279,13 +618,13 @@ export interface ChatSceneExplanation {
   workflow_policy?: string;
 }
 
-export interface ChatPreferenceDetail {
+interface ChatPreferenceDetail {
   dimension: string;
   value: string;
   source: string;
 }
 
-export interface ChatContentReference {
+interface ChatContentReference {
   title?: string;
   source_type?: string;
   preview?: string;
@@ -317,21 +656,13 @@ export interface ChatMessageMetadata {
   intent?: string;
   tokens?: number;
   actions?: ChatAction[];
-  reflection?: Record<string, unknown> | null;
+  reflection?: JsonObject | null;
   provenance?: ChatProvenance | null;
-  verifier?: {
-    status: "pass" | "repaired" | "failed";
-    code: string;
-    message: string;
-  } | null;
-  task_link?: {
-    task_id: string;
-    task_type: string;
-    status: string;
-  } | null;
+  verifier?: ChatVerifierResult | null;
+  task_link?: ChatTaskLink | null;
 }
 
-export interface PlanStepProgress {
+interface PlanStepProgress {
   step_index: number;
   step_type: string;
   title: string;
@@ -347,13 +678,13 @@ export interface PlanProgressEvent {
   message?: string;
 }
 
-export type StreamEvent =
+type StreamEvent =
   | { type: "content"; content: string }
   | { type: "action"; action: ChatAction }
   | { type: "status"; phase: string; intent?: string; confidence?: number; agent?: string }
   | { type: "plan_step"; task: PlanProgressEvent }
   | { type: "replace"; content: string }
-  | { type: "tool_status"; status: "running" | "complete"; tool: string }
+  | { type: "tool_status"; status: "running" | "complete"; tool: string; explanation?: string }
   | { type: "done"; sessionId?: string; agent?: string; intent?: string; tokens?: number; metadata?: ChatMessageMetadata };
 
 export interface ImageAttachment {
@@ -362,7 +693,7 @@ export interface ImageAttachment {
   filename?: string;
 }
 
-export interface ChatStreamOptions {
+interface ChatStreamOptions {
   courseId: string;
   message: string;
   activeTab?: string;
@@ -372,18 +703,13 @@ export interface ChatStreamOptions {
   history?: ChatHistoryMessage[];
   signal?: AbortSignal;
   images?: ImageAttachment[];
+  /** When true, indicates the user interrupted a previous streaming response. */
+  interrupt?: boolean;
 }
 
 export async function* streamChat(
-  courseIdOrOptions: string | ChatStreamOptions,
-  message?: string,
+  opts: ChatStreamOptions,
 ): AsyncGenerator<StreamEvent, void, unknown> {
-  // Support both legacy (courseId, message) and new options-based signature
-  const opts: ChatStreamOptions =
-    typeof courseIdOrOptions === "string"
-      ? { courseId: courseIdOrOptions, message: message! }
-      : courseIdOrOptions;
-
   const res = await fetch(`${API_BASE}/chat/`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -396,11 +722,18 @@ export async function* streamChat(
       session_id: opts.sessionId,
       history: opts.history ?? [],
       images: opts.images ?? [],
+      ...(opts.interrupt ? { interrupt: true } : {}),
     }),
     signal: opts.signal,
   });
 
   if (!res.ok || !res.body) {
+    if (res.status === 429) {
+      const retryAfter = res.headers.get("Retry-After");
+      const error = await res.json().catch(() => ({}));
+      const seconds = retryAfter || error.retry_after || "a few";
+      throw new Error(`Rate limit exceeded. Please wait ${seconds} seconds before trying again.`);
+    }
     const error = await res.json().catch(() => ({ detail: "Chat stream failed" }));
     throw new Error(error.detail || "Chat stream failed");
   }
@@ -467,6 +800,7 @@ export async function* streamChat(
           type: "tool_status",
           status: data.status,
           tool: data.tool,
+          explanation: data.explanation,
         };
       } else if (resolvedEvent === "done") {
         yield {
@@ -529,7 +863,7 @@ export async function listChatSessions(courseId: string): Promise<ChatSessionSum
 
 export async function getChatSessionMessages(
   sessionId: string,
-): Promise<{ session: ChatSessionSummary; messages: PersistedChatMessage[] }> {
+): Promise<SessionMessagesResponse> {
   return request(`/chat/sessions/${sessionId}/messages`);
 }
 
@@ -556,9 +890,9 @@ export interface MemoryProfileItem {
   importance: number;
   access_count: number;
   source_message: string | null;
-  metadata_json: Record<string, unknown> | null;
-  created_at: string | null;
-  updated_at: string | null;
+  metadata_json: JsonObject | null;
+  created_at: NullableDateTime;
+  updated_at: NullableDateTime;
   dismissed_at?: string | null;
   dismissal_reason?: string | null;
 }
@@ -570,21 +904,7 @@ export interface LearningProfile {
   dismissed_signals: PreferenceSignal[];
   memories: MemoryProfileItem[];
   dismissed_memories: MemoryProfileItem[];
-  summary: {
-    strength_areas: string[];
-    weak_areas: string[];
-    recurring_errors: string[];
-    inferred_habits: string[];
-  };
-}
-
-export interface ResolvedPreferences {
-  preferences: Record<string, string>;
-  sources: Record<string, string>;
-}
-
-export async function listPreferences(): Promise<Preference[]> {
-  return request("/preferences/");
+  summary: LearningProfileSummary;
 }
 
 export async function getLearningProfile(courseId?: string): Promise<LearningProfile> {
@@ -611,14 +931,9 @@ export async function setPreference(
   });
 }
 
-export async function resolvePreferences(courseId?: string): Promise<ResolvedPreferences> {
-  const params = courseId ? `?course_id=${courseId}` : "";
-  return request(`/preferences/resolve${params}`);
-}
-
 export async function updatePreferenceItem(
   preferenceId: string,
-  body: Partial<{ value: string; scope: string; source: string; scene_type: string | null }>,
+  body: PreferenceUpdateRequest,
 ): Promise<Preference> {
   return request(`/preferences/${preferenceId}`, {
     method: "PATCH",
@@ -654,7 +969,7 @@ export async function restorePreferenceSignal(signalId: string): Promise<Prefere
 
 export async function updateMemoryItem(
   memoryId: string,
-  body: Partial<{ summary: string; category: string | null }>,
+  body: MemoryUpdateRequest,
 ): Promise<MemoryProfileItem> {
   return request(`/preferences/memories/${memoryId}`, {
     method: "PATCH",
@@ -681,19 +996,19 @@ export interface SceneConfig {
   scene_id: string;
   display_name: string;
   icon: string | null;
-  tab_preset: Array<{ type: string; position: number }>;
+  tab_preset: WorkspaceTabPlacement[];
   workflow: string;
-  ai_behavior: Record<string, unknown>;
+  ai_behavior: JsonObject;
   preferences: Record<string, string> | null;
   layout_policy?: string;
   reasoning_policy?: string;
   workflow_policy?: string;
 }
 
-export interface ActiveSceneResult {
+interface ActiveSceneResult {
   scene_id: string;
   config: SceneConfig;
-  snapshot: Record<string, unknown> | null;
+  snapshot: JsonObject | null;
 }
 
 export interface SwitchResult {
@@ -701,14 +1016,10 @@ export interface SwitchResult {
   scene_id: string;
   from_scene?: string;
   config: SceneConfig;
-  tab_layout?: Array<{ type: string; position: number }>;
-  init_actions: Array<{ type: string; action: string; message: string }>;
+  tab_layout?: WorkspaceTabPlacement[];
+  init_actions: SceneInitAction[];
   message?: string;
-  explanation?: {
-    workflow?: string;
-    recommended_tabs?: string[];
-    reason?: string;
-  };
+  explanation?: SceneSwitchExplanationSummary;
 }
 
 export interface SceneRecommendation {
@@ -717,7 +1028,7 @@ export interface SceneRecommendation {
   switch_recommended: boolean;
   reason: string;
   scores: Record<string, number>;
-  features: Record<string, unknown>;
+  features: JsonObject;
   expected_benefit?: string;
   reversible_action?: string;
   layout_policy?: string;
@@ -744,7 +1055,7 @@ export async function recommendScene(courseId: string, activeTab?: string, messa
 export async function switchScene(
   courseId: string,
   sceneId: string,
-  currentUiState?: Record<string, unknown>,
+  currentUiState?: JsonObject,
 ): Promise<SwitchResult> {
   return request(`/scenes/${courseId}/switch`, {
     method: "POST",
@@ -767,16 +1078,7 @@ export interface WrongAnswer {
   explanation: string | null;
   error_category: string | null;
   diagnosis: string | null;
-  error_detail: {
-    category?: string;
-    confidence?: number;
-    evidence?: string;
-    related_concept?: string;
-    diagnosis?: string;
-    original_correct?: boolean;
-    clean_correct?: boolean;
-    diagnostic_problem_id?: string;
-  } | null;
+  error_detail: WrongAnswerDetail | null;
   knowledge_points: string[] | null;
   review_count: number;
   mastered: boolean;
@@ -794,49 +1096,26 @@ export async function listWrongAnswers(
 }
 
 export async function retryWrongAnswer(id: string, userAnswer: string) {
-  return request<{ is_correct: boolean; correct_answer: string | null; explanation: string | null }>(
+  return request<RetryWrongAnswerResult>(
     `/wrong-answers/${id}/retry`,
     { method: "POST", body: JSON.stringify({ user_answer: userAnswer }) },
   );
 }
 
 export async function deriveQuestion(id: string) {
-  return request<{
-    problem_id: string;
-    question: string;
-    question_type: string;
-    options: Record<string, string> | null;
-    correct_answer: string | null;
-    explanation: string | null;
-  }>(
+  return request<DerivedQuestionResult>(
     `/wrong-answers/${id}/derive`,
     { method: "POST" },
   );
 }
 
-export async function diagnoseWrongAnswer(id: string): Promise<{
-  diagnosis?: string;
-  original_correct?: boolean;
-  clean_correct?: boolean | null;
-  interpretation?: string;
-  status?: string;
-  diagnostic_problem_id?: string;
-  message?: string;
-}> {
+export async function diagnoseWrongAnswer(id: string): Promise<WrongAnswerDiagnosisResult> {
   return request(`/wrong-answers/${id}/diagnose`, {
     method: "POST",
   });
 }
 
-export async function getWrongAnswerStats(
-  courseId: string,
-): Promise<{
-  total: number;
-  mastered: number;
-  unmastered: number;
-  by_category: Record<string, number>;
-  by_diagnosis: Record<string, number>;
-}> {
+export async function getWrongAnswerStats(courseId: string): Promise<WrongAnswerStats> {
   return request(`/wrong-answers/${courseId}/stats`);
 }
 
@@ -848,7 +1127,7 @@ export interface QuizProblem {
   order_index: number;
 }
 
-export interface GeneratedQuizDraft {
+interface GeneratedQuizDraft {
   question_type: string;
   question: string;
   options: Record<string, string> | null;
@@ -859,22 +1138,17 @@ export interface GeneratedQuizDraft {
 }
 
 export interface GeneratedQuizBatchSummary {
-  batch_id: string;
-  title: string;
-  current_version: number;
+  batch_id: GeneratedBatchSummaryBase["batch_id"];
+  title: GeneratedBatchSummaryBase["title"];
+  current_version: GeneratedBatchSummaryBase["current_version"];
   problem_count: number;
-  is_active: boolean;
-  updated_at: string | null;
+  is_active: GeneratedBatchSummaryBase["is_active"];
+  updated_at: GeneratedBatchSummaryBase["updated_at"];
 }
 
-export interface GeneratedAssetBatchSummary {
-  batch_id: string;
-  title: string;
-  current_version: number;
-  is_active: boolean;
-  updated_at: string | null;
+export interface GeneratedAssetBatchSummary extends GeneratedBatchSummaryBase {
   asset_count: number;
-  preview: Record<string, unknown>;
+  preview: JsonObject;
 }
 
 export interface AnswerResult {
@@ -888,6 +1162,24 @@ export async function listProblems(courseId: string): Promise<QuizProblem[]> {
 }
 
 export function parseGeneratedQuizDraft(rawContent: string): GeneratedQuizDraft[] {
+  const normalizeDraftPayload = (payload: unknown): GeneratedQuizDraft[] => {
+    if (Array.isArray(payload)) {
+      return payload.filter(
+        (item): item is GeneratedQuizDraft =>
+          Boolean(item) && typeof item === "object" && typeof item.question === "string" && typeof item.question_type === "string",
+      );
+    }
+    if (
+      payload &&
+      typeof payload === "object" &&
+      typeof (payload as GeneratedQuizDraft).question === "string" &&
+      typeof (payload as GeneratedQuizDraft).question_type === "string"
+    ) {
+      return [payload as GeneratedQuizDraft];
+    }
+    return [];
+  };
+
   const trimmed = rawContent.trim();
   const candidates = [trimmed];
   const start = rawContent.indexOf("[");
@@ -901,11 +1193,9 @@ export function parseGeneratedQuizDraft(rawContent: string): GeneratedQuizDraft[
       : candidate;
     try {
       const parsed = JSON.parse(normalized);
-      if (
-        Array.isArray(parsed) &&
-        parsed.every((item) => item && typeof item.question === "string" && typeof item.question_type === "string")
-      ) {
-        return parsed as GeneratedQuizDraft[];
+      const drafts = normalizeDraftPayload(parsed);
+      if (drafts.length > 0) {
+        return drafts;
       }
     } catch {
       // Try next candidate.
@@ -914,7 +1204,7 @@ export function parseGeneratedQuizDraft(rawContent: string): GeneratedQuizDraft[
   return [];
 }
 
-export async function extractQuiz(courseId: string): Promise<{ problems_created: number }> {
+export async function extractQuiz(courseId: string): Promise<QuizExtractionResult> {
   return request("/quiz/extract", {
     method: "POST",
     body: JSON.stringify({ course_id: courseId }),
@@ -926,7 +1216,7 @@ export async function saveGeneratedQuiz(
   rawContent: string,
   title?: string,
   replaceBatchId?: string,
-): Promise<{ saved: number; problem_ids: string[]; batch_id: string; version: number; replaced: boolean }> {
+): Promise<GeneratedQuizSaveResult> {
   return request("/quiz/save-generated", {
     method: "POST",
     body: JSON.stringify({
@@ -969,15 +1259,7 @@ export interface LearningOverview {
   gap_type_breakdown: Record<string, number>;
   diagnosis_breakdown: Record<string, number>;
   error_category_breakdown: Record<string, number>;
-  course_summaries: Array<{
-    course_id: string;
-    course_name: string;
-    average_mastery: number;
-    study_minutes: number;
-    wrong_answers: number;
-    diagnosed_count: number;
-    gap_types: Record<string, number>;
-  }>;
+  course_summaries: LearningOverviewCourseSummary[];
 }
 
 export async function getCourseProgress(courseId: string): Promise<CourseProgress> {
@@ -988,7 +1270,7 @@ export async function getLearningOverview(): Promise<LearningOverview> {
   return request("/progress/overview");
 }
 
-export interface TrendDataPoint {
+interface TrendDataPoint {
   date: string;
   study_minutes: number;
   quiz_total: number;
@@ -1007,8 +1289,19 @@ export async function getGlobalTrends(days = 30): Promise<LearningTrends> {
   return request(`/progress/trends?days=${days}`);
 }
 
-export async function getCourseTrends(courseId: string, days = 30): Promise<LearningTrends> {
-  return request(`/progress/courses/${courseId}/trends?days=${days}`);
+// ── Weekly Report ──
+
+export interface WeeklyReport {
+  period: DateRange;
+  this_week: WeeklyActivitySnapshot;
+  last_week: WeeklyActivitySnapshot;
+  deltas: WeeklyActivityDelta;
+  mastery_avg: number;
+  highlights: string[];
+}
+
+export async function getWeeklyReport(): Promise<WeeklyReport> {
+  return request("/progress/weekly-report");
 }
 
 // ── Memory Stats ──
@@ -1038,20 +1331,13 @@ export interface Flashcard {
   front: string;
   back: string;
   difficulty: string;
-  fsrs: {
-    difficulty: number;
-    stability: number;
-    reps: number;
-    state: string;
-    due: string | null;
-    last_review?: string | null;
-  };
+  fsrs: FlashcardFsrsState;
 }
 
 export async function generateFlashcards(
   courseId: string,
   count: number = 10,
-): Promise<{ cards: Flashcard[]; count: number }> {
+): Promise<FlashcardGenerationResult> {
   return request("/flashcards/generate", {
     method: "POST",
     body: JSON.stringify({ course_id: courseId, count }),
@@ -1063,7 +1349,7 @@ export async function saveGeneratedFlashcards(
   cards: Flashcard[],
   title?: string,
   replaceBatchId?: string,
-): Promise<{ id: string; batch_id: string; version: number; replaced: boolean }> {
+): Promise<SavedGeneratedAsset> {
   return request("/flashcards/generated/save", {
     method: "POST",
     body: JSON.stringify({
@@ -1082,7 +1368,7 @@ export async function listGeneratedFlashcardBatches(courseId: string): Promise<G
 export async function reviewFlashcard(
   card: Flashcard,
   rating: number,
-): Promise<{ card: Flashcard; next_review: string | null }> {
+): Promise<FlashcardReviewResult> {
   return request("/flashcards/review", {
     method: "POST",
     body: JSON.stringify({ card, rating }),
@@ -1091,7 +1377,7 @@ export async function reviewFlashcard(
 
 export async function getDueFlashcards(
   courseId: string,
-): Promise<{ cards: Flashcard[]; due_count: number; total_batches: number }> {
+): Promise<DueFlashcardsResult> {
   return request(`/flashcards/due/${courseId}`);
 }
 
@@ -1115,45 +1401,11 @@ export interface KnowledgeGraphEdge {
 
 export async function getKnowledgeGraph(
   courseId: string,
-): Promise<{ nodes: KnowledgeGraphNode[]; edges: KnowledgeGraphEdge[] }> {
+): Promise<KnowledgeGraphData> {
   return request(`/progress/courses/${courseId}/knowledge-graph`);
 }
 
-// ── Learning Path Optimization ──
-
-export interface LearningPathNode {
-  id: string;
-  name: string;
-  description: string | null;
-  mastery: number;
-  estimated_minutes: number;
-  priority: number;
-  on_critical_path: boolean;
-  depth: number;
-  prerequisites: string[];
-}
-
-export interface LearningPath {
-  path: LearningPathNode[];
-  critical_path: { id: string; name: string; mastery: number; estimated_minutes: number }[];
-  critical_path_minutes: number;
-  parallel_groups: { id: string; name: string }[][];
-  total_estimated_minutes: number;
-  skipped_mastered: number;
-  total_knowledge_points: number;
-  cycle_detected: boolean;
-}
-
-export async function getOptimizedLearningPath(
-  courseId: string,
-  skipMastered = true,
-): Promise<LearningPath> {
-  return request(`/progress/courses/${courseId}/learning-path?skip_mastered=${skipMastered}`);
-}
-
-export async function getWrongAnswerReview(
-  courseId: string,
-): Promise<{ review: string; wrong_answer_count: number; wrong_answer_ids: string[] }> {
+export async function getWrongAnswerReview(courseId: string): Promise<WrongAnswerReviewResult> {
   return request(`/workflows/wrong-answer-review?course_id=${courseId}`);
 }
 
@@ -1161,7 +1413,7 @@ export function getFileUrl(jobId: string): string {
   return `${API_BASE}/content/files/${jobId}`;
 }
 
-export interface UploadedCourseFile {
+interface UploadedCourseFile {
   id: string;
   job_id?: string;
   filename: string;
@@ -1182,8 +1434,8 @@ export interface IngestionJobSummary {
   embedding_status: "pending" | "running" | "completed" | "failed";
   error_message: string | null;
   dispatched_to: Record<string, number> | null;
-  created_at: string | null;
-  updated_at: string | null;
+  created_at: NullableDateTime;
+  updated_at: NullableDateTime;
 }
 
 export async function getFilesByCourseId(courseId: string): Promise<UploadedCourseFile[]> {
@@ -1194,20 +1446,11 @@ export async function listIngestionJobs(courseId: string): Promise<IngestionJobS
   return request(`/content/jobs/${courseId}`);
 }
 
-// Preserve the existing misspelled export until all call sites are migrated.
-export const getFilesByCoursId = getFilesByCourseId;
-
 export async function getExamPrepPlan(
   courseId: string,
   daysUntilExam: number = 7,
   examTopic?: string,
-): Promise<{
-  course: string;
-  topics_count: number;
-  readiness: Record<string, number>;
-  days_until_exam: number;
-  plan: string;
-}> {
+): Promise<ExamPrepPlan> {
   return request("/workflows/exam-prep", {
     method: "POST",
     body: JSON.stringify({
@@ -1223,7 +1466,7 @@ export async function saveStudyPlan(
   markdown: string,
   title?: string,
   replaceBatchId?: string,
-): Promise<{ id: string; batch_id: string; version: number; replaced: boolean }> {
+): Promise<SavedGeneratedAsset> {
   return request("/workflows/study-plans/save", {
     method: "POST",
     body: JSON.stringify({
@@ -1259,9 +1502,9 @@ export interface AgentTask {
   title: string;
   summary: string | null;
   source: string;
-  input_json: Record<string, unknown> | null;
-  metadata_json: Record<string, unknown> | null;
-  result_json: Record<string, unknown> | null;
+  input_json: JsonObject | null;
+  metadata_json: JsonObject | null;
+  result_json: JsonObject | null;
   error_message: string | null;
   attempts: number;
   max_attempts: number;
@@ -1269,15 +1512,44 @@ export interface AgentTask {
   task_kind: "read_only" | "content_mutation" | "notification" | "external_side_effect" | string;
   risk_level: "low" | "medium" | "high" | string;
   approval_status: "not_required" | "pending" | "approved" | "rejected" | string;
-  checkpoint_json: Record<string, unknown> | null;
-  step_results: Array<Record<string, unknown>>;
-  provenance: Record<string, unknown> | null;
-  approved_at: string | null;
-  started_at: string | null;
-  cancel_requested_at: string | null;
-  created_at: string | null;
-  updated_at: string | null;
-  completed_at: string | null;
+  approval_reason: string | null;
+  approval_action: string | null;
+  checkpoint_json: JsonObject | null;
+  step_results: JsonObject[];
+  provenance: JsonObject | null;
+  approved_at: NullableDateTime;
+  started_at: NullableDateTime;
+  cancel_requested_at: NullableDateTime;
+  created_at: NullableDateTime;
+  updated_at: NullableDateTime;
+  completed_at: NullableDateTime;
+}
+
+interface AgentTaskReviewGoalUpdate {
+  goal_id: string;
+  title: string;
+  status: string;
+  current_milestone: string | null;
+  next_action: string | null;
+}
+
+interface AgentTaskReviewFollowUp {
+  ready: boolean;
+  label?: string | null;
+  task_type?: string | null;
+  title?: string | null;
+  summary?: string | null;
+  input_json?: JsonObject | null;
+  plan_prompt?: string | null;
+}
+
+export interface AgentTaskReview {
+  status: string;
+  outcome: string;
+  blockers: string[];
+  next_recommended_action: string | null;
+  follow_up: AgentTaskReviewFollowUp;
+  goal_update: AgentTaskReviewGoalUpdate | null;
 }
 
 export interface NextActionResponse {
@@ -1288,6 +1560,8 @@ export interface NextActionResponse {
   source: "deadline" | "task_failure" | "forgetting_risk" | "recent_goal" | "manual" | string;
   recommended_action: string;
   suggested_task_type: string | null;
+  queue_label: string | null;
+  queue_ready: boolean;
 }
 
 export async function listAgentTasks(courseId?: string): Promise<AgentTask[]> {
@@ -1295,18 +1569,7 @@ export async function listAgentTasks(courseId?: string): Promise<AgentTask[]> {
   return request(`/tasks/${query}`);
 }
 
-export async function submitAgentTask(body: {
-  task_type: string;
-  title: string;
-  course_id?: string;
-  goal_id?: string;
-  summary?: string;
-  input_json?: Record<string, unknown>;
-  metadata_json?: Record<string, unknown>;
-  source?: string;
-  requires_approval?: boolean;
-  max_attempts?: number;
-}): Promise<AgentTask> {
+export async function submitAgentTask(body: AgentTaskSubmitRequest): Promise<AgentTask> {
   return request("/tasks/submit", {
     method: "POST",
     body: JSON.stringify(body),
@@ -1333,6 +1596,10 @@ export async function retryAgentTask(taskId: string): Promise<AgentTask> {
   return request(`/tasks/${taskId}/retry`, { method: "POST" });
 }
 
+export async function queueTaskFollowUp(taskId: string): Promise<AgentTask> {
+  return request(`/tasks/${taskId}/follow-up`, { method: "POST" });
+}
+
 export interface StudyGoal {
   id: string;
   user_id: string;
@@ -1345,11 +1612,11 @@ export interface StudyGoal {
   status: string;
   confidence: string | null;
   target_date: string | null;
-  metadata_json: Record<string, unknown> | null;
+  metadata_json: JsonObject | null;
   linked_task_count: number;
-  created_at: string | null;
-  updated_at: string | null;
-  completed_at: string | null;
+  created_at: NullableDateTime;
+  updated_at: NullableDateTime;
+  completed_at: NullableDateTime;
 }
 
 export async function listStudyGoals(courseId?: string, status?: string): Promise<StudyGoal[]> {
@@ -1364,35 +1631,20 @@ export async function getNextAction(courseId: string): Promise<NextActionRespons
   return request(`/goals/${courseId}/next-action`);
 }
 
-export async function createStudyGoal(body: {
-  title: string;
-  objective: string;
-  course_id?: string;
-  success_metric?: string;
-  current_milestone?: string;
-  next_action?: string;
-  status?: string;
-  confidence?: string;
-  target_date?: string;
-  metadata_json?: Record<string, unknown>;
-}): Promise<StudyGoal> {
+export async function queueNextAction(courseId: string): Promise<AgentTask> {
+  return request(`/goals/${courseId}/next-action/queue`, {
+    method: "POST",
+  });
+}
+
+export async function createStudyGoal(body: StudyGoalCreateRequest): Promise<StudyGoal> {
   return request("/goals/", {
     method: "POST",
     body: JSON.stringify(body),
   });
 }
 
-export async function updateStudyGoal(goalId: string, body: Partial<{
-  title: string;
-  objective: string;
-  success_metric: string;
-  current_milestone: string;
-  next_action: string;
-  status: string;
-  confidence: string;
-  target_date: string | null;
-  metadata_json: Record<string, unknown> | null;
-}>): Promise<StudyGoal> {
+export async function updateStudyGoal(goalId: string, body: Partial<StudyGoalUpdateRequest>): Promise<StudyGoal> {
   return request(`/goals/${goalId}`, {
     method: "PATCH",
     body: JSON.stringify(body),
@@ -1405,11 +1657,8 @@ export interface PreferenceSignal {
   value: string;
   signal_type: string;
   course_id: string | null;
-  context: {
-    evidence?: string;
-    user_message?: string;
-  } | null;
-  created_at: string | null;
+  context: PreferenceSignalContext | null;
+  created_at: NullableDateTime;
   dismissed_at?: string | null;
   dismissal_reason?: string | null;
 }
@@ -1421,7 +1670,7 @@ export async function listPreferenceSignals(courseId?: string): Promise<Preferen
 
 // ── Push Notifications ──
 
-export interface VapidKeyResponse {
+interface VapidKeyResponse {
   public_key: string;
 }
 
@@ -1429,19 +1678,14 @@ export async function getVapidKey(): Promise<VapidKeyResponse> {
   return request("/notifications/push/vapid-key");
 }
 
-export async function subscribePush(body: {
-  endpoint: string;
-  p256dh_key: string;
-  auth_key: string;
-  user_agent: string;
-}): Promise<void> {
+export async function subscribePush(body: PushSubscriptionRequest): Promise<void> {
   return request("/notifications/push/subscribe", {
     method: "POST",
     body: JSON.stringify(body),
   });
 }
 
-export async function unsubscribePush(body: { endpoint: string }): Promise<void> {
+export async function unsubscribePush(body: PushUnsubscribeRequest): Promise<void> {
   return request("/notifications/push/unsubscribe", {
     method: "DELETE",
     body: JSON.stringify(body),
@@ -1450,7 +1694,7 @@ export async function unsubscribePush(body: { endpoint: string }): Promise<void>
 
 // ── Learning Templates ──
 
-export interface LearningTemplate {
+interface LearningTemplate {
   id: string;
   name: string;
   description?: string;
@@ -1470,7 +1714,7 @@ export async function applyTemplate(templateId: string): Promise<void> {
 
 // ── NL Preference Parsing ──
 
-export interface NLPreferenceResult {
+interface NLPreferenceResult {
   dimension: string | null;
   value: string | null;
   label: string | null;

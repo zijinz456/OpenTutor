@@ -1,34 +1,21 @@
 import path from "node:path";
 
 import { expect, test } from "@playwright/test";
-import { expectAssistantMessage, expectGeneratedNotes, expectGeneratedStudyPlan } from "./helpers/test-utils";
+import {
+  createCourse,
+  expectAssistantMessage,
+  expectGeneratedNotes,
+  expectGeneratedStudyPlan,
+  seedCourseFixture,
+} from "./helpers/test-utils";
 
 const fixturePath = path.join(process.cwd(), "tests/e2e/fixtures/sample-course.md");
 const apiBaseUrl = process.env.PLAYWRIGHT_API_URL || "http://127.0.0.1:8005/api";
 
-async function createCourse(page: import("@playwright/test").Page, projectName: string) {
-  await page.goto("/new");
-  await page.getByTestId("mode-option-upload").click();
-  await page.getByTestId("mode-continue").click();
-  await page.getByTestId("project-name-input").fill(projectName);
-  await page.getByTestId("start-parsing").click();
-  await expect(page.getByTestId("continue-to-features")).toBeVisible({ timeout: 60_000 });
-  await page.getByTestId("continue-to-features").click();
-  await page.getByTestId("enter-workspace").click();
-  await expect(page).toHaveURL(/\/course\//);
-}
-
-function getCourseIdFromUrl(page: import("@playwright/test").Page): string {
-  const match = page.url().match(/\/course\/([^/?#]+)/);
-  if (!match) throw new Error(`Course ID not found in URL: ${page.url()}`);
-  return match[1];
-}
-
-async function uploadFixture(page: import("@playwright/test").Page) {
-  await page.getByTestId("workspace-upload-trigger").click();
-  await page.getByTestId("workspace-upload-file-input").setInputFiles(fixturePath);
-  await expect(page.getByText("Uploaded sample-course.md")).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByTestId("notes-panel")).toContainText("Binary Search Basics", { timeout: 30_000 });
+async function uploadFixture(page: import("@playwright/test").Page, courseId: string) {
+  await seedCourseFixture(courseId, fixturePath);
+  await page.reload();
+  await expect(page.getByText("Binary Search Basics").first()).toBeVisible({ timeout: 30_000 });
 }
 
 function buildSeedQuestion(question: string, sourceSection: string) {
@@ -85,8 +72,8 @@ async function diagnoseLatestWrongAnswer(page: import("@playwright/test").Page) 
 
 test.describe("OpenTutor e2e flows", () => {
   test("create course, chat, switch scene, and generate a study plan", async ({ page }) => {
-    await createCourse(page, "E2E Study Flow");
-    await uploadFixture(page);
+    const courseId = await createCourse(page, "E2E Study Flow");
+    await uploadFixture(page, courseId);
 
     await page.getByTestId("chat-input").fill("Summarize binary search in one paragraph.");
     await page.getByTestId("chat-send").click();
@@ -104,8 +91,8 @@ test.describe("OpenTutor e2e flows", () => {
   });
 
   test("generate and save AI notes from uploaded content", async ({ page }) => {
-    await createCourse(page, "E2E Notes Flow");
-    await uploadFixture(page);
+    const courseId = await createCourse(page, "E2E Notes Flow");
+    await uploadFixture(page, courseId);
     await page.getByTestId("notes-generate").click();
     await expectGeneratedNotes(page);
 
@@ -114,8 +101,8 @@ test.describe("OpenTutor e2e flows", () => {
   });
 
   test("replace generated study plan, restore chat session, and persist active scene across reload", async ({ page }) => {
-    await createCourse(page, "E2E Restore Flow");
-    await uploadFixture(page);
+    const courseId = await createCourse(page, "E2E Restore Flow");
+    await uploadFixture(page, courseId);
 
     const firstPrompt = "Summarize binary search in one paragraph.";
     await page.getByTestId("chat-input").fill(firstPrompt);
@@ -172,14 +159,14 @@ test.describe("OpenTutor e2e flows", () => {
     await page.getByTestId("workspace-upload-url-input").fill("http://127.0.0.1/private");
     await page.getByTestId("workspace-upload-url-submit").click();
 
-    await expect(page.getByText(/Scrape failed: Internal URLs are not allowed/i)).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("workspace-upload-url-error")).toContainText("Internal URLs are not allowed", {
+      timeout: 15_000,
+    });
   });
 
   test("wrong-answer diagnosis flows through review, progress, and analytics", async ({ page, request }) => {
-    await createCourse(page, "E2E Diagnosis Flow");
-    await uploadFixture(page);
-
-    const courseId = getCourseIdFromUrl(page);
+    const courseId = await createCourse(page, "E2E Diagnosis Flow");
+    await uploadFixture(page, courseId);
     await seedQuizSet(request, courseId);
     await page.reload();
 
@@ -210,10 +197,8 @@ test.describe("OpenTutor e2e flows", () => {
   });
 
   test("multiple diagnoses accumulate into course analytics", async ({ page, request }) => {
-    await createCourse(page, "E2E Diagnosis Trend");
-    await uploadFixture(page);
-
-    const courseId = getCourseIdFromUrl(page);
+    const courseId = await createCourse(page, "E2E Diagnosis Trend");
+    await uploadFixture(page, courseId);
     await seedQuizSet(request, courseId, [
       buildSeedQuestion("What must be true before binary search can be used correctly?", "Binary Search Basics"),
       buildSeedQuestion("Why does binary search require sorted data before halving the range?", "Binary Search Basics"),
@@ -227,8 +212,8 @@ test.describe("OpenTutor e2e flows", () => {
     await diagnoseLatestWrongAnswer(page);
     await expect(page.getByTestId("review-stats")).toContainText("trap vulnerability: 1", { timeout: 15_000 });
 
-    await page.getByRole("button", { name: "Quiz" }).click();
-    await page.getByRole("button", { name: "Next" }).click();
+    await page.getByRole("button", { name: "Quiz", exact: true }).click();
+    await page.getByTestId("quiz-panel").getByRole("button", { name: "Next", exact: true }).click();
     await expect(page.getByTestId("quiz-question")).toContainText("binary search require sorted data", { timeout: 15_000 });
     await page.getByTestId("quiz-option-A").click();
     await expect(page.getByText("Binary search relies on ordering")).toBeVisible({ timeout: 15_000 });

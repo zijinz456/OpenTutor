@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { useRef, useEffect, useState, useCallback } from "react";
-import { CheckCircle2, Clock3, Download, ImagePlus, MessageSquarePlus, Send, Workflow, X, XCircle } from "lucide-react";
+import { AlertTriangle, BookOpen, CheckCircle2, Clock3, Download, FileText, ImagePlus, Layers, MessageSquarePlus, Send, SkipForward, Workflow, X, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -20,6 +20,7 @@ import {
 import { toast } from "sonner";
 import { MarkdownRenderer } from "@/components/course/markdown-renderer";
 import { ProvenanceBadges } from "@/components/provenance-badges";
+import { LlmStatusBanner } from "@/components/chat/llm-status-banner";
 
 /**
  * Chat Panel — AI conversation with SSE streaming.
@@ -311,7 +312,7 @@ export function ChatPanel({ courseId, activeTab, scene }: ChatPanelProps) {
 
   const handleSend = async () => {
     const text = input.trim();
-    if ((!text && imageAttachments.length === 0) || isStreaming) return;
+    if (!text && imageAttachments.length === 0) return;
     const images = imageAttachments.length > 0 ? [...imageAttachments] : undefined;
     setInput("");
     setImageAttachments([]);
@@ -320,6 +321,7 @@ export function ChatPanel({ courseId, activeTab, scene }: ChatPanelProps) {
 
   return (
     <div className="flex-1 flex flex-col">
+      <LlmStatusBanner />
       <div className="border-b p-3 flex items-center gap-2">
         <select
           data-testid="chat-session-select"
@@ -420,10 +422,38 @@ export function ChatPanel({ courseId, activeTab, scene }: ChatPanelProps) {
         ))}
       </ScrollArea>
 
-      {/* Streaming / connection error */}
+      {/* Streaming / connection error with degradation suggestions */}
       {chatError && !isStreaming && (
-        <div className="flex items-center gap-2 px-3 py-2 text-xs text-destructive bg-destructive/10 border-t">
-          <span>Error: {chatError}</span>
+        <div className="border-t bg-destructive/5 px-3 py-3">
+          <div className="flex items-start gap-2 text-sm">
+            <AlertTriangle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <p className="font-medium text-destructive text-xs">
+                {useChatStore.getState().errorCategory === "rate_limit"
+                  ? "Rate limit reached — try again in a moment"
+                  : useChatStore.getState().errorCategory === "auth_error"
+                    ? "API key issue — check Settings"
+                    : useChatStore.getState().errorCategory === "timeout"
+                      ? "Request timed out — try a shorter question"
+                      : "AI service temporarily unavailable"}
+              </p>
+              <p className="text-[11px] text-muted-foreground mt-1 truncate">{chatError}</p>
+              <div className="flex gap-2 mt-2">
+                <Button type="button" variant="outline" size="sm" className="h-7 text-xs"
+                  onClick={() => useChatStore.getState().onAction?.({ action: "set_layout_preset", value: "quizFocused" })}>
+                  <BookOpen className="h-3 w-3 mr-1" />Quiz
+                </Button>
+                <Button type="button" variant="outline" size="sm" className="h-7 text-xs"
+                  onClick={() => useChatStore.getState().onAction?.({ action: "set_layout_preset", value: "quizFocused" })}>
+                  <Layers className="h-3 w-3 mr-1" />Flashcards
+                </Button>
+                <Button type="button" variant="outline" size="sm" className="h-7 text-xs"
+                  onClick={() => useChatStore.getState().onAction?.({ action: "set_layout_preset", value: "notesFocused" })}>
+                  <FileText className="h-3 w-3 mr-1" />Notes
+                </Button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
@@ -433,10 +463,10 @@ export function ChatPanel({ courseId, activeTab, scene }: ChatPanelProps) {
           {toolStatus.status === "running" ? (
             <>
               <span className="animate-spin h-3 w-3 border-2 border-primary border-t-transparent rounded-full inline-block" />
-              <span>{toolStatus.tool.replace(/_/g, " ")}...</span>
+              <span>{toolStatus.explanation || toolStatus.tool.replace(/_/g, " ")}...</span>
             </>
           ) : (
-            <span className="text-green-600">&#10003; {toolStatus.tool.replace(/_/g, " ")}</span>
+            <span className="text-green-600">&#10003; {toolStatus.explanation || toolStatus.tool.replace(/_/g, " ")}</span>
           )}
         </div>
       )}
@@ -506,9 +536,11 @@ export function ChatPanel({ courseId, activeTab, scene }: ChatPanelProps) {
             data-testid="chat-send"
             size="icon"
             onClick={handleSend}
-            disabled={isStreaming || (!input.trim() && imageAttachments.length === 0)}
+            disabled={!input.trim() && imageAttachments.length === 0}
+            title={isStreaming ? "Interrupt and send" : "Send message"}
+            variant={isStreaming ? "destructive" : "default"}
           >
-            <Send className="h-4 w-4" />
+            {isStreaming ? <SkipForward className="h-4 w-4" /> : <Send className="h-4 w-4" />}
           </Button>
         </div>
       </div>

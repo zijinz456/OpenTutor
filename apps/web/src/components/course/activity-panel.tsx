@@ -24,12 +24,15 @@ import {
   approveAgentTask,
   cancelAgentTask,
   createStudyGoal,
+  queueNextAction,
+  queueTaskFollowUp,
   rejectAgentTask,
   resumeAgentTask,
   retryAgentTask,
   submitAgentTask,
   updateStudyGoal,
   type AgentTask,
+  type AgentTaskReview,
 } from "@/lib/api";
 
 interface ActivityPanelProps {
@@ -44,7 +47,15 @@ interface TaskStepProgress {
   agent?: string | null;
 }
 
-const RUNNING_STATUSES = new Set(["queued", "running", "resuming", "cancel_requested"]);
+interface TaskStatusHistoryEntry {
+  event: string;
+  status: string;
+  at: string;
+  details?: Record<string, unknown> | null;
+}
+
+const NOW_STATUSES = new Set(["running", "resuming", "cancel_requested"]);
+const CANCELLABLE_STATUSES = new Set(["queued", "running", "resuming"]);
 const COMPLETED_STATUSES = new Set(["completed", "failed", "cancelled", "rejected"]);
 
 function formatTime(value: string | null): string {
@@ -97,6 +108,23 @@ function extractTaskSteps(task: AgentTask): TaskStepProgress[] {
   return [];
 }
 
+function extractStatusHistory(task: AgentTask): TaskStatusHistoryEntry[] {
+  const rawHistory = task.metadata_json?.["status_history"];
+  if (!Array.isArray(rawHistory)) return [];
+  return rawHistory
+    .filter((item): item is TaskStatusHistoryEntry => Boolean(item && typeof item === "object"))
+    .slice(-5)
+    .reverse();
+}
+
+function extractTaskReview(task: AgentTask): AgentTaskReview | null {
+  const rawReview = task.result_json?.["task_review"];
+  if (!rawReview || typeof rawReview !== "object" || Array.isArray(rawReview)) {
+    return null;
+  }
+  return rawReview as AgentTaskReview;
+}
+
 function StepList({ task }: { task: AgentTask }) {
   const steps = extractTaskSteps(task);
   if (steps.length === 0) return null;
@@ -118,21 +146,88 @@ function StepList({ task }: { task: AgentTask }) {
   );
 }
 
+function TaskReviewSummary({
+  task,
+  review,
+  busyTaskId,
+  actionTestIdPrefix,
+  queueFollowUpTask,
+}: {
+  task: AgentTask;
+  review: AgentTaskReview;
+  busyTaskId: string | null;
+  actionTestIdPrefix: string;
+  queueFollowUpTask: (taskId: string) => Promise<void>;
+}) {
+  const followUpReady = task.status === "completed" && review.follow_up?.ready;
+
+  return (
+    <div className="mt-3 rounded-md border border-primary/20 bg-primary/5 p-3" data-testid={`${actionTestIdPrefix}-review-${task.id}`}>
+      <p className="text-xs font-medium uppercase tracking-wide text-primary">Review</p>
+      <p className="mt-1 text-sm text-foreground">{review.outcome}</p>
+      {review.blockers.length > 0 && (
+        <div className="mt-2 space-y-1">
+          <p className="text-xs font-medium text-foreground/80">Blockers</p>
+          {review.blockers.map((blocker, index) => (
+            <p key={`${task.id}-blocker-${index}`} className="text-xs text-muted-foreground">
+              {blocker}
+            </p>
+          ))}
+        </div>
+      )}
+      {review.next_recommended_action && (
+        <div className="mt-2">
+          <p className="text-xs font-medium text-foreground/80">Next recommended action</p>
+          <p className="text-xs text-muted-foreground">{review.next_recommended_action}</p>
+        </div>
+      )}
+      {review.goal_update && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          <Badge variant="outline">Goal: {review.goal_update.title}</Badge>
+          {review.goal_update.current_milestone && (
+            <Badge variant="outline">Milestone: {review.goal_update.current_milestone}</Badge>
+          )}
+          {review.goal_update.next_action && (
+            <Badge variant="outline">Goal next: {review.goal_update.next_action}</Badge>
+          )}
+        </div>
+      )}
+      {followUpReady && (
+        <div className="mt-3">
+          <Button
+            size="sm"
+            data-testid={`${actionTestIdPrefix}-follow-up-${task.id}`}
+            onClick={() => void queueFollowUpTask(task.id)}
+            disabled={busyTaskId === `follow-up:${task.id}`}
+          >
+            <Workflow className="mr-1 h-4 w-4" />
+            {busyTaskId === `follow-up:${task.id}` ? "Queueing..." : (review.follow_up.label || "Queue follow-up")}
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TaskCard({
   task,
   busyTaskId,
   mutateTask,
+  queueFollowUpTask,
   testIdPrefix = "agent-task",
   actionTestIdPrefix = "agent-task",
 }: {
   task: AgentTask;
   busyTaskId: string | null;
   mutateTask: (taskId: string, action: "approve" | "reject" | "cancel" | "resume" | "retry") => Promise<void>;
+  queueFollowUpTask: (taskId: string) => Promise<void>;
   testIdPrefix?: string;
   actionTestIdPrefix?: string;
 }) {
   const checkpoint = task.checkpoint_json ?? null;
-  const showCancel = RUNNING_STATUSES.has(task.status);
+  const showCancel = CANCELLABLE_STATUSES.has(task.status);
+  const statusHistory = extractStatusHistory(task);
+  const taskReview = extractTaskReview(task);
 
   return (
     <div key={task.id} className="rounded-lg border p-3" data-testid={`${testIdPrefix}-${task.id}`}>
@@ -156,6 +251,23 @@ function TaskCard({
         <Badge variant="outline">{formatTime(task.completed_at || task.started_at || task.created_at)}</Badge>
       </div>
 
+      {(task.approval_reason || task.approval_action) && (
+        <div className="mt-3 rounded-md border border-dashed px-2.5 py-2 text-xs text-muted-foreground">
+          {task.approval_reason && (
+            <p>
+              <span className="font-medium text-foreground/80">Why approval is needed:</span>{" "}
+              {task.approval_reason}
+            </p>
+          )}
+          {task.approval_action && (
+            <p className="mt-1">
+              <span className="font-medium text-foreground/80">Exact action:</span>{" "}
+              {task.approval_action}
+            </p>
+          )}
+        </div>
+      )}
+
       {checkpoint && (
         <div className="mt-3 rounded-md border border-dashed px-2.5 py-2 text-xs text-muted-foreground">
           Resume checkpoint:
@@ -170,6 +282,31 @@ function TaskCard({
       )}
 
       <StepList task={task} />
+
+      {taskReview && (
+        <TaskReviewSummary
+          task={task}
+          review={taskReview}
+          busyTaskId={busyTaskId}
+          actionTestIdPrefix={actionTestIdPrefix}
+          queueFollowUpTask={queueFollowUpTask}
+        />
+      )}
+
+      {statusHistory.length > 0 && (
+        <div className="mt-3 rounded-md bg-muted/40 p-2">
+          <p className="text-xs font-medium text-foreground/80">Recent status history</p>
+          <div className="mt-2 space-y-1.5">
+            {statusHistory.map((entry, index) => (
+              <div key={`${task.id}-status-${index}`} className="text-xs text-muted-foreground">
+                <span className="font-medium text-foreground/85">{formatLabel(entry.event)}</span>
+                {` • ${formatLabel(entry.status)}`}
+                {entry.at ? ` • ${formatTime(entry.at)}` : ""}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {task.status === "pending_approval" && (
         <div className="mt-3 flex gap-2">
@@ -271,7 +408,8 @@ export function ActivityPanel({ courseId }: ActivityPanelProps) {
   const activeGoal = goals.find((goal) => goal.status === "active") ?? null;
   const inactiveGoals = goals.filter((goal) => goal.id !== activeGoal?.id);
   const pendingApprovals = tasks.filter((task) => task.status === "pending_approval");
-  const runningTasks = tasks.filter((task) => RUNNING_STATUSES.has(task.status));
+  const waitingTasks = tasks.filter((task) => task.status === "queued");
+  const nowTasks = tasks.filter((task) => NOW_STATUSES.has(task.status));
   const recentCompleted = tasks.filter((task) => COMPLETED_STATUSES.has(task.status)).slice(0, 6);
 
   const mutateTask = async (taskId: string, action: "approve" | "reject" | "cancel" | "resume" | "retry") => {
@@ -358,6 +496,32 @@ export function ActivityPanel({ courseId }: ActivityPanelProps) {
       await refresh();
     } catch (error) {
       toast.error((error as Error).message || "Failed to update goal");
+    } finally {
+      setBusyTaskId(null);
+    }
+  };
+
+  const queueRecommendedTask = async () => {
+    setBusyTaskId("queue-next-action");
+    try {
+      const task = await queueNextAction(courseId);
+      toast.success(`Queued ${task.title}`);
+      await refresh();
+    } catch (error) {
+      toast.error((error as Error).message || "Failed to queue next action");
+    } finally {
+      setBusyTaskId(null);
+    }
+  };
+
+  const queueCompletedTaskFollowUp = async (taskId: string) => {
+    setBusyTaskId(`follow-up:${taskId}`);
+    try {
+      const queued = await queueTaskFollowUp(taskId);
+      toast.success(`Queued ${queued.title}`);
+      await refresh();
+    } catch (error) {
+      toast.error((error as Error).message || "Failed to queue follow-up");
     } finally {
       setBusyTaskId(null);
     }
@@ -503,6 +667,17 @@ export function ActivityPanel({ courseId }: ActivityPanelProps) {
                   <Badge variant="outline">{nextAction.suggested_task_type}</Badge>
                 )}
               </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  data-testid="next-action-queue-button"
+                  onClick={() => void queueRecommendedTask()}
+                  disabled={!nextAction.queue_ready || busyTaskId === "queue-next-action"}
+                >
+                  <Workflow className="mr-1 h-4 w-4" />
+                  {busyTaskId === "queue-next-action" ? "Queueing..." : (nextAction.queue_label || "Queue task")}
+                </Button>
+              </div>
             </div>
           )}
         </CardContent>
@@ -512,32 +687,9 @@ export function ActivityPanel({ courseId }: ActivityPanelProps) {
         <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2 text-sm">
             <ShieldCheck className="h-4 w-4 text-primary" />
-            Pending Approvals
+            Waiting
           </CardTitle>
-          <CardDescription>Actions blocked until you explicitly approve them.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {pendingApprovals.length === 0 && <p className="text-sm text-muted-foreground">No approvals pending.</p>}
-          {pendingApprovals.map((task) => (
-            <TaskCard
-              key={task.id}
-              task={task}
-              busyTaskId={busyTaskId}
-              mutateTask={mutateTask}
-              testIdPrefix="approval-inbox-task"
-              actionTestIdPrefix="approval-inbox"
-            />
-          ))}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="flex items-center gap-2 text-sm">
-            <Workflow className="h-4 w-4 text-primary" />
-            Running Tasks
-          </CardTitle>
-          <CardDescription>Durable work the agent is currently executing or preparing to resume.</CardDescription>
+          <CardDescription>Queued work and approvals waiting for the next explicit step.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="flex items-center justify-between rounded-lg border border-dashed p-3">
@@ -550,9 +702,50 @@ export function ActivityPanel({ courseId }: ActivityPanelProps) {
               Queue
             </Button>
           </div>
-          {runningTasks.length === 0 && <p className="text-sm text-muted-foreground">No running tasks right now.</p>}
-          {runningTasks.map((task) => (
-            <TaskCard key={task.id} task={task} busyTaskId={busyTaskId} mutateTask={mutateTask} />
+          {pendingApprovals.length === 0 && waitingTasks.length === 0 && (
+            <p className="text-sm text-muted-foreground">No queued or approval-blocked tasks right now.</p>
+          )}
+          {pendingApprovals.map((task) => (
+            <TaskCard
+              key={task.id}
+              task={task}
+              busyTaskId={busyTaskId}
+              mutateTask={mutateTask}
+              queueFollowUpTask={queueCompletedTaskFollowUp}
+              testIdPrefix="approval-inbox-task"
+              actionTestIdPrefix="approval-inbox"
+            />
+          ))}
+          {waitingTasks.map((task) => (
+            <TaskCard
+              key={task.id}
+              task={task}
+              busyTaskId={busyTaskId}
+              mutateTask={mutateTask}
+              queueFollowUpTask={queueCompletedTaskFollowUp}
+            />
+          ))}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2 text-sm">
+            <Workflow className="h-4 w-4 text-primary" />
+            Now
+          </CardTitle>
+          <CardDescription>Durable work the agent is actively executing, resuming, or winding down.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {nowTasks.length === 0 && <p className="text-sm text-muted-foreground">No active execution right now.</p>}
+          {nowTasks.map((task) => (
+            <TaskCard
+              key={task.id}
+              task={task}
+              busyTaskId={busyTaskId}
+              mutateTask={mutateTask}
+              queueFollowUpTask={queueCompletedTaskFollowUp}
+            />
           ))}
         </CardContent>
       </Card>
@@ -568,7 +761,13 @@ export function ActivityPanel({ courseId }: ActivityPanelProps) {
         <CardContent className="space-y-3">
           {recentCompleted.length === 0 && <p className="text-sm text-muted-foreground">No completed task history yet.</p>}
           {recentCompleted.map((task) => (
-            <TaskCard key={task.id} task={task} busyTaskId={busyTaskId} mutateTask={mutateTask} />
+            <TaskCard
+              key={task.id}
+              task={task}
+              busyTaskId={busyTaskId}
+              mutateTask={mutateTask}
+              queueFollowUpTask={queueCompletedTaskFollowUp}
+            />
           ))}
         </CardContent>
       </Card>

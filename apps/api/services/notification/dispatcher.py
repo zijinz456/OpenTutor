@@ -18,6 +18,7 @@ from services.notification.dedup import check_dedup
 from services.notification.channels import NotificationChannel
 from services.notification.channels.sse import SSEChannel
 from services.notification.channels.web_push import WebPushChannel
+from services.notification.channels.telegram import TelegramChannel
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,7 @@ logger = logging.getLogger(__name__)
 _CHANNEL_REGISTRY: dict[str, NotificationChannel] = {
     "sse": SSEChannel(),
     "web_push": WebPushChannel(),
+    "telegram": TelegramChannel(),
 }
 
 

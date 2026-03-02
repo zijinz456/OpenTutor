@@ -24,6 +24,9 @@ from models.notification_delivery import NotificationDelivery
 from models.study_habit import StudyHabitLog
 from models.experiment import Experiment, ExperimentAssignment, ExperimentEvent
 from models.channel_binding import ChannelBinding
+from models.audit_log import AuditLog
+from models.agent_kv import AgentKV
+from models.tool_call_event import ToolCallEvent
 
 __all__ = [
     "User",
@@ -61,4 +64,7 @@ __all__ = [
     "ExperimentAssignment",
     "ExperimentEvent",
     "ChannelBinding",
+    "AuditLog",
+    "AgentKV",
+    "ToolCallEvent",
 ]

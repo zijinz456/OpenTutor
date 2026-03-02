@@ -26,6 +26,7 @@ export function UploadDialog({ open, onOpenChange, courseId }: UploadDialogProps
   const t = useT();
   const [uploading, setUploading] = useState(false);
   const [url, setUrl] = useState("");
+  const [urlError, setUrlError] = useState("");
   const [dragging, setDragging] = useState(false);
   const { fetchContentTree } = useCourseStore();
 
@@ -83,14 +84,18 @@ export function UploadDialog({ open, onOpenChange, courseId }: UploadDialogProps
     if (!url.trim()) return;
 
     setUploading(true);
+    setUrlError("");
     try {
       const result = await scrapeUrl(courseId, url.trim());
       toast.success(`Scraped URL: ${result.nodes_created} sections created`);
       setUrl("");
+      setUrlError("");
       await fetchContentTree(courseId);
       onOpenChange(false);
     } catch (err) {
-      toast.error(`Scrape failed: ${(err as Error).message}`);
+      const message = (err as Error).message;
+      setUrlError(message);
+      toast.error(`Scrape failed: ${message}`);
     } finally {
       setUploading(false);
     }
@@ -161,10 +166,18 @@ export function UploadDialog({ open, onOpenChange, courseId }: UploadDialogProps
               data-testid="workspace-upload-url-input"
               placeholder="https://example.com/lecture-notes"
               value={url}
-              onChange={(e) => setUrl(e.target.value)}
+              onChange={(e) => {
+                setUrl(e.target.value);
+                if (urlError) setUrlError("");
+              }}
               onKeyDown={(e) => e.key === "Enter" && handleUrlScrape()}
               disabled={uploading}
             />
+            {urlError ? (
+              <p className="text-sm text-destructive" data-testid="workspace-upload-url-error">
+                {urlError}
+              </p>
+            ) : null}
             <Button
               data-testid="workspace-upload-url-submit"
               onClick={handleUrlScrape}

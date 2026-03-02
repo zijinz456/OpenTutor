@@ -43,9 +43,9 @@ test.describe.serial("NL Tuning FAB", () => {
     await page.getByPlaceholder('e.g. "simplify notes"').fill("change style");
     await page.keyboard.press("Enter");
     // 3 clarify options
-    await expect(page.getByText("Notes panel: change formatting style")).toBeVisible();
-    await expect(page.getByText("AI responses: adjust detail level")).toBeVisible();
-    await expect(page.getByText("AI responses: adjust tone and style")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Notes panel: change formatting style" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "AI responses: adjust detail level" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "AI responses: adjust tone and style" })).toBeVisible();
   });
 
   test("clarify view shows user's original input text", async ({ page }) => {
@@ -62,14 +62,14 @@ test.describe.serial("NL Tuning FAB", () => {
     await page.getByPlaceholder('e.g. "simplify notes"').fill("change format");
     await page.keyboard.press("Enter");
     // Wait for clarify view to appear
-    await expect(page.getByText("Notes panel: change formatting style")).toBeVisible({ timeout: 10_000 });
-    await page.getByText("Notes panel: change formatting style").click();
+    await expect(page.getByRole("button", { name: "Notes panel: change formatting style" })).toBeVisible({ timeout: 10_000 });
+    await page.getByRole("button", { name: "Notes panel: change formatting style" }).click();
     // Sub-options for note_format
-    await expect(page.getByText("Bullet Points")).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByText("Table", { exact: true })).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByText("Mind Map")).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByText("Step-by-Step")).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByText("Summary", { exact: true })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole("button", { name: "Bullet Points" })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole("button", { name: "Table" })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole("button", { name: "Mind Map" })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole("button", { name: "Step-by-Step" })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole("button", { name: "Summary" })).toBeVisible({ timeout: 10_000 });
   });
 
   test("selecting a sub-option calls setPreference and shows toast", async ({ page }) => {
@@ -77,8 +77,8 @@ test.describe.serial("NL Tuning FAB", () => {
     await page.locator('button[title="Fine-tune Agent"]').click();
     await page.getByPlaceholder('e.g. "simplify notes"').fill("change format");
     await page.keyboard.press("Enter");
-    await page.getByText("Notes panel: change formatting style").click();
-    await page.getByText("Bullet Points").click();
+    await page.getByRole("button", { name: "Notes panel: change formatting style" }).click();
+    await page.getByRole("button", { name: "Bullet Points" }).click();
     // Should show success toast and close popup
     await expect(page.getByText('Set note_format to "Bullet Points"')).toBeVisible({ timeout: 10_000 });
   });
@@ -88,7 +88,7 @@ test.describe.serial("NL Tuning FAB", () => {
     await page.locator('button[title="Fine-tune Agent"]').click();
     await page.getByPlaceholder('e.g. "simplify notes"').fill("change");
     await page.keyboard.press("Enter");
-    await page.getByText("AI responses: adjust detail level").click();
+    await page.getByRole("button", { name: "AI responses: adjust detail level" }).click();
     // Should be in sub-options view with Back button
     const backBtn = page.getByRole("button", { name: "Back" });
     await expect(backBtn).toBeVisible();

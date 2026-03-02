@@ -7,6 +7,8 @@
 
 A self-hosted personalized learning agent. Upload any educational material (PDF, PPTX, DOCX, URL) and OpenTutor Zenus creates an interactive multi-panel workspace with AI-generated notes, quizzes, flashcards, and a chat assistant that adapts to your preferences over time.
 
+The default local deployment mode is `single_user`: the first local account becomes the owner profile, durable tasks remain course-scoped, and the settings/health UI surfaces the active deployment mode and sandbox status explicitly.
+
 ## Quick Start (Docker)
 
 > **Prerequisites:** [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed and running.
@@ -15,25 +17,27 @@ A self-hosted personalized learning agent. Upload any educational material (PDF,
 git clone https://github.com/zijinz456/OpenTutor.git && cd OpenTutor
 cp .env.example .env
 # Add at least one LLM API key to .env (OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.)
-docker compose up -d
+bash scripts/dev_local.sh up --build
 ```
 
 Open [http://localhost:3000](http://localhost:3000) once all services are healthy.
 
 ## Quick Start (Local Development)
 
-> **Prerequisites:** Python 3.11, Node 20+, PostgreSQL 16 with pgvector extension.
+> **Prerequisites:** Python 3.11, Node 20+, PostgreSQL 17 with pgvector extension, Redis 7+.
 
 ```bash
 # Database
 createdb opentutor
 psql opentutor -c "CREATE EXTENSION IF NOT EXISTS vector;"
+redis-server
 
 # API
 cd apps/api
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 cp ../../.env.example .env   # edit .env with your API keys
+python -m alembic upgrade head
 uvicorn main:app --reload --port 8000
 
 # Web (separate terminal)
@@ -50,8 +54,8 @@ Open [http://localhost:3000](http://localhost:3000).
 OpenTutor/
 ├── apps/
 │   ├── api/          # FastAPI backend (Python 3.11)
-│   │   ├── routers/       # 23 API route modules
-│   │   ├── models/        # 25 SQLAlchemy ORM models
+│   │   ├── routers/       # 25 API route modules
+│   │   ├── models/        # 28 SQLAlchemy ORM models
 │   │   ├── schemas/       # Pydantic request/response schemas
 │   │   ├── services/      # Core business logic
 │   │   │   ├── agent/          # Multi-agent system (6 specialists + orchestrator)
@@ -69,8 +73,8 @@ OpenTutor/
 │           ├── store/          # Zustand state stores
 │           └── lib/            # Utilities + API client
 ├── tests/
-│   ├── e2e/          # 27 Playwright E2E specs
-│   └── test_*.py     # 11 Python unit/integration tests
+│   ├── e2e/          # 22 Playwright E2E specs
+│   └── test_*.py     # 16 Python unit/integration tests
 ├── scripts/          # Dev, CI, and verification scripts
 ├── docs/             # Detailed specifications and roadmaps
 └── docker-compose.yml
@@ -82,13 +86,13 @@ OpenTutor/
 |-------|-------------|
 | **Frontend** | Next.js 16, React 19, TypeScript, Tailwind CSS 4, Zustand, shadcn/ui, Radix UI |
 | **Backend** | FastAPI, Python 3.11, Pydantic 2, SQLAlchemy 2 (async), Alembic |
-| **Database** | PostgreSQL 16 + pgvector |
+| **Database** | PostgreSQL 17 + pgvector + Redis 7 |
 | **LLM** | Multi-provider (OpenAI, Anthropic, DeepSeek, Ollama, OpenRouter, Gemini, Groq, vLLM, LM Studio, TextGen WebUI, or any OpenAI-compatible endpoint) |
 | **Agents** | 6 specialist agents (Teaching, Exercise, Planning, Review, Preference, Scene) + 2-stage intent routing + LangGraph workflows |
 | **Search** | Hybrid keyword + vector search, RAG Fusion |
 | **Testing** | Playwright (E2E), pytest (unit/integration) |
 | **CI/CD** | GitHub Actions (3-stage: checks, smoke, LLM integration) |
-| **Deployment** | Docker Compose |
+| **Deployment** | Docker Compose (`DEPLOYMENT_MODE=single_user`, strict container sandbox by default) |
 
 ## Multi-Agent System
 
@@ -156,13 +160,16 @@ See [.env.example](.env.example) for the full list. Key variables:
 | `LLM_MODEL` | `gpt-4o-mini` | Model name |
 | `DATABASE_URL` | `postgresql+asyncpg://...` | PostgreSQL connection string |
 | `AUTH_ENABLED` | `false` | Enable JWT authentication |
+| `DEPLOYMENT_MODE` | `single_user` | Deployment mode (`single_user` or `multi_user`) |
 | `APP_AUTO_CREATE_TABLES` | `false` | Auto-create DB tables on startup |
 | `APP_AUTO_SEED_SYSTEM` | `false` | Seed templates and preset scenes |
+| `APP_RUN_ACTIVITY_ENGINE` | `false` | Run the background durable-task worker in-process |
+| `CODE_SANDBOX_BACKEND` | `container` | Secure sandbox backend (`process` only for pytest or explicit local override) |
 
 ## Scripts
 
 ```bash
-scripts/dev_local.sh up          # Start the full stack with Docker Compose
+scripts/dev_local.sh up          # Start the full stack with docker compose or docker-compose
 scripts/dev_local.sh verify      # Run smoke + integration + E2E tests
 scripts/dev_local.sh down        # Stop the stack
 scripts/dev_local.sh reset       # Stop and remove volumes

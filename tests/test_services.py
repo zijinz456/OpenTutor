@@ -22,7 +22,9 @@ from services.activity.tasks import (
     APPROVAL_PENDING,
     APPROVAL_REQUIRED_STATUS,
     CANCEL_REQUESTED_STATUS,
+    infer_task_policy,
 )
+from services.audit import record_audit_log
 from services.scheduler import engine as scheduler_engine
 from routers.preferences import build_learning_profile_summary
 from services.preference.engine import resolve_preferences
@@ -229,6 +231,72 @@ def test_scene_policy_decision_exposes_strategy_bundle():
     assert decision.workflow_policy
 
 
+def test_task_policy_requires_approval_for_persistent_code_execution():
+    policy = infer_task_policy(
+        "code_execution",
+        {"code": "print('hi')", "persist": True, "output_path": "/tmp/out.txt"},
+        requires_approval=False,
+        title="Persist code output",
+    )
+
+    assert policy.requires_approval is True
+    assert policy.task_kind == "external_side_effect"
+    assert policy.risk_level == "high"
+    assert "persist output" in (policy.approval_reason or "")
+    assert "write" in (policy.approval_action or "").lower()
+
+
+def test_task_policy_keeps_read_only_code_execution_without_approval():
+    policy = infer_task_policy(
+        "code_execution",
+        {"code": "print(sum([1,2,3]))"},
+        requires_approval=False,
+        title="Read-only code run",
+    )
+
+    assert policy.requires_approval is False
+    assert policy.task_kind == "read_only"
+    assert policy.risk_level == "low"
+    assert policy.approval_reason is None
+
+
+class _AuditSession:
+    def __init__(self):
+        self.added = []
+        self.flushes = 0
+
+    def add(self, obj):
+        self.added.append(obj)
+
+    async def flush(self):
+        self.flushes += 1
+
+
+@pytest.mark.asyncio
+async def test_record_audit_log_creates_row():
+    session = _AuditSession()
+    actor_user_id = uuid.uuid4()
+    task_id = uuid.uuid4()
+
+    row = await record_audit_log(
+        session,
+        actor_user_id=actor_user_id,
+        task_id=task_id,
+        tool_name="run_code",
+        action_kind="task_execute_complete",
+        approval_status="approved",
+        outcome="completed",
+        details_json={"backend": "container"},
+    )
+
+    assert row.actor_user_id == actor_user_id
+    assert row.task_id == task_id
+    assert row.tool_name == "run_code"
+    assert row.action_kind == "task_execute_complete"
+    assert session.flushes == 1
+    assert session.added and session.added[0] is row
+
+
 class _ScalarResult:
     def __init__(self, task):
         self._task = task
@@ -242,9 +310,17 @@ class _FakeSession:
         self.task = task
         self.commits = 0
         self.refreshes = 0
+        self.added = []
+        self.flushes = 0
 
     async def execute(self, _query):
         return _ScalarResult(self.task)
+
+    def add(self, obj):
+        self.added.append(obj)
+
+    async def flush(self):
+        self.flushes += 1
 
     async def commit(self):
         self.commits += 1

@@ -73,7 +73,7 @@ class CurriculumAgent(ReActMixin, BaseAgent):
         """Analyze course content and extract knowledge structure."""
         content_summary = await self._load_course_structure(ctx, db)
 
-        client = self.get_llm_client()
+        client = self.get_llm_client(ctx)
         system_prompt = self.build_system_prompt(ctx)
         system_prompt += f"\n\n## Course Structure:\n{content_summary}"
 

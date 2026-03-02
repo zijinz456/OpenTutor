@@ -8,6 +8,7 @@ This module centralizes normalization of question metadata so every source of
 """
 
 import json
+import re
 import uuid
 from typing import Any
 
@@ -43,8 +44,52 @@ def _default_skill_focus(question_type: str) -> str:
     return _DEFAULT_SKILL_BY_TYPE.get(question_type, "understanding")
 
 
+def normalize_question_options(value: Any) -> dict[str, str] | None:
+    """Normalize legacy/mixed option payloads into a clean string map."""
+    if value is None:
+        return None
+
+    if isinstance(value, dict):
+        normalized_dict: dict[str, str] = {}
+        for key, item in value.items():
+            label = str(key or "").strip()
+            if not label or item is None:
+                continue
+            text = str(item).strip()
+            if not text:
+                continue
+            normalized_dict[label] = text
+        return normalized_dict or None
+
+    if isinstance(value, list):
+        normalized_list: dict[str, str] = {}
+        for index, item in enumerate(value):
+            if item is None:
+                continue
+            text = str(item).strip()
+            if not text:
+                continue
+            key = chr(ord("A") + index) if index < 26 else str(index + 1)
+            match = re.match(r"^([A-Z])\s*[:.)-]\s*(.+)$", text)
+            if match:
+                key = match.group(1)
+                text = match.group(2).strip()
+            if text:
+                normalized_list[key] = text
+        return normalized_list or None
+
+    return None
+
+
 def parse_question_array(text: str) -> list[dict[str, Any]]:
     """Extract a JSON array of question objects from raw LLM output."""
+    def _normalize_question_payload(payload: Any) -> list[dict[str, Any]]:
+        if isinstance(payload, list):
+            return [item for item in payload if isinstance(item, dict)]
+        if isinstance(payload, dict):
+            return [payload]
+        return []
+
     json_str = text.strip()
     if json_str.startswith("```"):
         lines = json_str.split("\n")
@@ -52,14 +97,23 @@ def parse_question_array(text: str) -> list[dict[str, Any]]:
 
     try:
         parsed = json.loads(json_str)
-        return parsed if isinstance(parsed, list) else []
+        return _normalize_question_payload(parsed)
     except json.JSONDecodeError:
         start = text.find("[")
         end = text.rfind("]") + 1
         if start >= 0 and end > start:
             try:
                 parsed = json.loads(text[start:end])
-                return parsed if isinstance(parsed, list) else []
+                return _normalize_question_payload(parsed)
+            except json.JSONDecodeError:
+                pass
+
+        start = text.find("{")
+        end = text.rfind("}") + 1
+        if start >= 0 and end > start:
+            try:
+                parsed = json.loads(text[start:end])
+                return _normalize_question_payload(parsed)
             except json.JSONDecodeError:
                 return []
         return []
@@ -116,7 +170,7 @@ def normalize_problem_annotation(
     return {
         "question_type": question_type,
         "question": str(question.get("question") or "").strip(),
-        "options": question.get("options"),
+        "options": normalize_question_options(question.get("options")),
         "correct_answer": question.get("correct_answer"),
         "explanation": question.get("explanation"),
         "difficulty_layer": difficulty_layer,

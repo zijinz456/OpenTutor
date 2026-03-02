@@ -124,8 +124,8 @@ test.describe("Dashboard", () => {
     await page.goto("/");
     await expect(page.getByText(`GridA ${uid}`)).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText(`GridB ${uid}`)).toBeVisible({ timeout: 15_000 });
-    const grid = page.locator(".grid");
-    await expect(grid).toBeVisible();
+    await expect(page.getByRole("button", { name: new RegExp(`GridA ${uid}`) })).toBeVisible();
+    await expect(page.getByRole("button", { name: new RegExp(`GridB ${uid}`) })).toBeVisible();
   });
 
   test("newly created course appears on dashboard", async ({ page }) => {

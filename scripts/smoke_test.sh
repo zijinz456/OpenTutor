@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/_common.sh"
+
 API_BASE="${API_BASE:-http://localhost:8000}"
 UPLOAD_FILE="${UPLOAD_FILE:-}"
 SCRAPE_URL="${SCRAPE_URL:-}"
@@ -10,24 +13,20 @@ PASS_COUNT=0
 WARN_COUNT=0
 FAIL_COUNT=0
 
-TMP_DIR="$(mktemp -d)"
+TMP_DIR="$(create_temp_dir)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
-log() {
-  printf '%s\n' "$*"
-}
-
-pass() {
+record_pass() {
   PASS_COUNT=$((PASS_COUNT + 1))
   log "PASS: $*"
 }
 
-warn() {
+record_warn() {
   WARN_COUNT=$((WARN_COUNT + 1))
   log "WARN: $*"
 }
 
-fail() {
+record_fail() {
   FAIL_COUNT=$((FAIL_COUNT + 1))
   log "FAIL: $*"
 }
@@ -54,35 +53,14 @@ api_call() {
   API_BODY="$(cat "$out_file")"
 }
 
-json_get() {
-  # usage: json_get "<json>" "field"
-  local json="$1"
-  local field="$2"
-  JSON_INPUT="$json" python3 - "$field" <<'PY'
-import json, os, sys
-field = sys.argv[1]
-raw = os.environ.get("JSON_INPUT", "")
-try:
-    data = json.loads(raw)
-except Exception:
-    print("")
-    raise SystemExit(0)
-if isinstance(data, dict):
-    value = data.get(field, "")
-    print("" if value is None else str(value))
-else:
-    print("")
-PY
-}
-
 run_step_required() {
   local name="$1"
   local status="$2"
   local body="$3"
   if [[ "$status" =~ ^2 ]]; then
-    pass "$name (HTTP $status)"
+    record_pass "$name (HTTP $status)"
   else
-    fail "$name (HTTP $status) body=${body:0:300}"
+    record_fail "$name (HTTP $status) body=${body:0:300}"
   fi
 }
 
@@ -91,14 +69,14 @@ run_step_optional() {
   local status="$2"
   local body="$3"
   if [[ "$status" =~ ^2 ]]; then
-    pass "$name (HTTP $status)"
+    record_pass "$name (HTTP $status)"
     return
   fi
 
   if [[ "$STRICT_LLM" == "1" ]]; then
-    fail "$name (HTTP $status) body=${body:0:300}"
+    record_fail "$name (HTTP $status) body=${body:0:300}"
   else
-    warn "$name (HTTP $status) body=${body:0:300}"
+    record_warn "$name (HTTP $status) body=${body:0:300}"
   fi
 }
 
@@ -118,14 +96,14 @@ course_name="Smoke Course $(date +%Y%m%d-%H%M%S)"
 payload="{\"name\":\"${course_name}\",\"description\":\"smoke test\"}"
 api_call "POST" "/api/courses/" "$payload"
 run_step_required "create course" "$API_STATUS" "$API_BODY"
-course_id="$(json_get "$API_BODY" "id")"
+course_id="$(json_get_field "$API_BODY" "id")"
 if [[ -z "$course_id" ]]; then
-  fail "cannot parse created course id"
+  record_fail "cannot parse created course id"
   log ""
   log "Summary: pass=${PASS_COUNT} warn=${WARN_COUNT} fail=${FAIL_COUNT}"
   exit 1
 fi
-pass "course id parsed: ${course_id}"
+record_pass "course id parsed: ${course_id}"
 
 # 3) List courses
 api_call "GET" "/api/courses/"
@@ -157,7 +135,7 @@ if [[ -n "$UPLOAD_FILE" ]]; then
     run_step_required "upload file" "$status" "$API_BODY"
   fi
 else
-  warn "skip upload: set UPLOAD_FILE=/abs/path/to/file.pdf"
+  record_warn "skip upload: set UPLOAD_FILE=/abs/path/to/file.pdf"
 fi
 
 # 7) URL scrape (optional when SCRAPE_URL provided)
@@ -170,7 +148,7 @@ if [[ -n "$SCRAPE_URL" ]]; then
   API_BODY="$(cat "$out_file")"
   run_step_optional "scrape url" "$status" "$API_BODY"
 else
-  warn "skip scrape: set SCRAPE_URL=https://example.com/page"
+  record_warn "skip scrape: set SCRAPE_URL=https://example.com/page"
 fi
 
 # 8) Quiz extraction/list (LLM-dependent)

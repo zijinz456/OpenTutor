@@ -17,6 +17,10 @@ import {
   type ChatSessionSummary,
   type ImageAttachment,
 } from "@/lib/api";
+import { ttlCache } from "@/lib/cache";
+
+/** TTL for cached chat session lists (per course). */
+const SESSIONS_TTL_MS = 30_000; // 30 seconds
 
 export interface ChatMessage {
   id: string;
@@ -31,6 +35,8 @@ export interface SendMessageOptions {
   tabContext?: Record<string, unknown>;
   scene?: string;
   images?: ImageAttachment[];
+  /** Internal flag: set automatically when the user interrupts an active stream. */
+  interrupt?: boolean;
 }
 
 interface ChatState {
@@ -44,12 +50,13 @@ interface ChatState {
   isStreaming: boolean;
   isLoadingSessions: boolean;
   error: string | null;
+  errorCategory: "rate_limit" | "auth_error" | "timeout" | "llm_unavailable" | "generic" | null;
   /** AbortController for cancelling active stream */
   _abortController: AbortController | null;
   abortStream: () => void;
 
   /** Active tool status from ReAct agent loop (null when no tool running). */
-  toolStatus: { tool: string; status: "running" | "complete" } | null;
+  toolStatus: { tool: string; status: "running" | "complete"; explanation?: string } | null;
 
   /** Callback for NL actions (layout changes, preference updates, scene switch). Set by CoursePage. */
   onAction: ((action: ChatAction) => void) | null;
@@ -63,7 +70,9 @@ interface ChatState {
   clearMessages: (courseId?: string) => void;
 }
 
+// Use timestamp + random suffix to ensure unique IDs across page refreshes
 let messageCounter = 0;
+const sessionPrefix = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 
 /**
  * Helper: compute the derived `messages` and `activePlan` fields from the
@@ -92,6 +101,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   isStreaming: false,
   isLoadingSessions: false,
   error: null,
+  errorCategory: null,
   toolStatus: null,
   onAction: null,
   _abortController: null,
@@ -110,9 +120,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return { activeCourseId: courseId, ...deriveActive(next), error: null };
     }),
   loadSessions: async (courseId, options) => {
+    const cacheKey = `chat:sessions:${courseId}`;
+
+    // Use cached session list when available and we don't need to restore.
+    const cached = ttlCache.get<ChatSessionSummary[]>(cacheKey);
+    if (cached && !options?.restoreLatest) {
+      set((s) => ({
+        sessionsByCourse: { ...s.sessionsByCourse, [courseId]: cached },
+      }));
+      return;
+    }
+
     set({ isLoadingSessions: true, error: null });
     try {
       const sessions = await listChatSessions(courseId);
+      ttlCache.set(cacheKey, sessions, SESSIONS_TTL_MS);
       set((s) => ({
         sessionsByCourse: { ...s.sessionsByCourse, [courseId]: sessions },
       }));
@@ -177,15 +199,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
       get().setCourseContext(courseId);
     }
 
+    // ── Interrupt handling: if already streaming, abort current stream and
+    //    finalize the partial assistant message before starting a new one. ──
+    const wasInterrupted = get().isStreaming && get()._abortController;
+    if (wasInterrupted) {
+      const ctrl = get()._abortController;
+      if (ctrl) ctrl.abort();
+      set({ _abortController: null, isStreaming: false, toolStatus: null });
+    }
+
     const userMsg: ChatMessage = {
-      id: `msg-${++messageCounter}`,
+      id: `msg-${sessionPrefix}-${++messageCounter}`,
       role: "user",
       content,
       timestamp: new Date(),
     };
 
     const assistantMsg: ChatMessage = {
-      id: `msg-${++messageCounter}`,
+      id: `msg-${sessionPrefix}-${++messageCounter}`,
       role: "assistant",
       content: "",
       timestamp: new Date(),
@@ -224,6 +255,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         history,
         signal: controller.signal,
         images: options?.images,
+        interrupt: wasInterrupted ? true : undefined,
       })) {
         if (event.type === "content") {
           set((s) => {
@@ -249,7 +281,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             },
           }));
         } else if (event.type === "tool_status") {
-          set({ toolStatus: { tool: event.tool, status: event.status } });
+          set({ toolStatus: { tool: event.tool, status: event.status, explanation: event.explanation } });
           if (event.status === "complete") {
             setTimeout(() => set({ toolStatus: null }), 1500);
           }
@@ -279,9 +311,23 @@ export const useChatStore = create<ChatState>((set, get) => ({
           });
         }
       }
+      // Invalidate session cache so loadSessions fetches the fresh list
+      // (a new session may have been created during the exchange).
+      ttlCache.invalidate(`chat:sessions:${courseId}`);
       await get().loadSessions(courseId);
     } catch (e) {
-      set({ error: (e as Error).message });
+      // Suppress abort errors caused by user interrupt — not a real failure.
+      if (e instanceof DOMException && e.name === "AbortError") {
+        return;
+      }
+      const msg = (e as Error).message || "";
+      const category: ChatState["errorCategory"] =
+        /rate.?limit|429/i.test(msg) ? "rate_limit" :
+        /auth|401|403|api.?key|unauthorized/i.test(msg) ? "auth_error" :
+        /timeout|timed?\s?out|abort/i.test(msg) ? "timeout" :
+        /llm|model|provider|mock|circuit/i.test(msg) ? "llm_unavailable" :
+        "generic";
+      set({ error: msg, errorCategory: category });
     } finally {
       set({ isStreaming: false, toolStatus: null, _abortController: null });
     }

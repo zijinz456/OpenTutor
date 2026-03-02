@@ -32,6 +32,15 @@ const EMPTY: ActivityData = {
   nextAction: null,
 };
 
+async function withTimeout<T>(promise: Promise<T>, timeoutMs = 4000): Promise<T> {
+  return Promise.race<T>([
+    promise,
+    new Promise<T>((_, reject) => {
+      window.setTimeout(() => reject(new Error("timeout")), timeoutMs);
+    }),
+  ]);
+}
+
 /**
  * Polls activity data for a course with visibility-aware start/stop.
  * Returns the latest data and a `refresh` function for manual re-fetching.
@@ -40,22 +49,32 @@ export function useActivityPolling(courseId: string, intervalMs = 5000) {
   const [data, setData] = useState<ActivityData>(EMPTY);
 
   const refresh = useCallback(async () => {
-    const [tasks, goals, jobs, sessions, signals, nextAction] = await Promise.all([
-      listAgentTasks(courseId),
-      listStudyGoals(courseId),
-      listIngestionJobs(courseId),
-      listChatSessions(courseId),
-      listPreferenceSignals(courseId),
-      getNextAction(courseId).catch(() => null),
+    const [tasks, goals, jobs, sessions, signals, nextAction] = await Promise.allSettled([
+      withTimeout(listAgentTasks(courseId)),
+      withTimeout(listStudyGoals(courseId)),
+      withTimeout(listIngestionJobs(courseId)),
+      withTimeout(listChatSessions(courseId)),
+      withTimeout(listPreferenceSignals(courseId)),
+      withTimeout(getNextAction(courseId)),
     ]);
-    setData({
-      tasks,
-      goals,
-      jobs,
-      sessions: sessions.slice(0, 5),
-      signals: signals.slice(0, 5),
-      nextAction,
-    });
+
+    setData((previous) => ({
+      tasks: tasks.status === "fulfilled" ? tasks.value : previous.tasks,
+      goals: goals.status === "fulfilled" ? goals.value : previous.goals,
+      jobs: jobs.status === "fulfilled" ? jobs.value : previous.jobs,
+      sessions:
+        sessions.status === "fulfilled"
+          ? sessions.value.slice(0, 5)
+          : previous.sessions,
+      signals:
+        signals.status === "fulfilled"
+          ? signals.value.slice(0, 5)
+          : previous.signals,
+      nextAction:
+        nextAction.status === "fulfilled"
+          ? nextAction.value
+          : previous.nextAction,
+    }));
   }, [courseId]);
 
   useEffect(() => {
@@ -67,7 +86,6 @@ export function useActivityPolling(courseId: string, intervalMs = 5000) {
         await refresh();
       } catch {
         if (cancelled) return;
-        setData(EMPTY);
       }
     };
 

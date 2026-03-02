@@ -124,7 +124,7 @@ async def get_due_flashcards(
             GeneratedAsset.user_id == user.id,
             GeneratedAsset.course_id == course_id,
             GeneratedAsset.asset_type == "flashcards",
-            GeneratedAsset.is_active == True,  # noqa: E712
+            GeneratedAsset.is_archived == False,  # noqa: E712
         )
     )
     batches = result.scalars().all()
@@ -133,7 +133,7 @@ async def get_due_flashcards(
     due_cards: list[dict] = []
 
     for batch in batches:
-        cards = (batch.content_json or {}).get("cards", [])
+        cards = (batch.content or {}).get("cards", [])
         for card in cards:
             fsrs = card.get("fsrs")
             if not fsrs:

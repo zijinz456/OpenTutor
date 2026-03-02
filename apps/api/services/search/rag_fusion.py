@@ -35,7 +35,7 @@ async def generate_query_variants(
     course_context: str = "",
 ) -> list[str]:
     """Generate N query variants using LLM (rag-fusion pattern)."""
-    client = get_llm_client()
+    client = get_llm_client("fast")
     try:
         result, _ = await client.extract(
             "You are a search query generator. Output only a JSON array of strings.",

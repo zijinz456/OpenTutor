@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, BookOpen, BrainCircuit, Clock, Loader2, RefreshCw, Target } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
@@ -28,6 +28,7 @@ import {
   Pie,
   Cell,
 } from "recharts";
+import { ShareReportButton } from "@/components/share-report-button";
 
 const GAP_COLORS: Record<string, string> = {
   fundamental_gap: "#ef4444",
@@ -40,6 +41,7 @@ const ERROR_COLORS = ["#ef4444", "#f59e0b", "#3b82f6", "#8b5cf6", "#6b7280"];
 
 export default function AnalyticsPage() {
   const router = useRouter();
+  const statsRef = useRef<HTMLDivElement>(null);
   const [overview, setOverview] = useState<LearningOverview | null>(null);
   const [trends, setTrends] = useState<LearningTrends | null>(null);
   const [memStats, setMemStats] = useState<MemoryStats | null>(null);
@@ -47,14 +49,30 @@ export default function AnalyticsPage() {
   const [consolidating, setConsolidating] = useState(false);
 
   useEffect(() => {
-    Promise.all([getLearningOverview(), getGlobalTrends(30), getMemoryStats()])
-      .then(([ov, tr, ms]) => {
-        setOverview(ov);
-        setTrends(tr);
-        setMemStats(ms);
+    let cancelled = false;
+
+    Promise.allSettled([getLearningOverview(), getGlobalTrends(30), getMemoryStats()])
+      .then(([overviewResult, trendsResult, memoryResult]) => {
+        if (cancelled) return;
+        if (overviewResult.status === "fulfilled") {
+          setOverview(overviewResult.value);
+        }
+        if (trendsResult.status === "fulfilled") {
+          setTrends(trendsResult.value);
+        }
+        if (memoryResult.status === "fulfilled") {
+          setMemStats(memoryResult.value);
+        }
       })
-      .catch(() => {})
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const handleConsolidate = async () => {
@@ -79,6 +97,7 @@ export default function AnalyticsPage() {
   }
 
   const gapEntries = Object.entries(overview?.gap_type_breakdown ?? {}).sort((a, b) => b[1] - a[1]);
+  const diagnosisEntries = Object.entries(overview?.diagnosis_breakdown ?? {}).sort((a, b) => b[1] - a[1]);
   const errorEntries = Object.entries(overview?.error_category_breakdown ?? {}).sort((a, b) => b[1] - a[1]);
   const totalMinutes = overview?.total_study_minutes ?? 0;
   const trendData = trends?.trend ?? [];
@@ -104,9 +123,12 @@ export default function AnalyticsPage() {
           <ArrowLeft className="h-4 w-4" />
         </Button>
         <h1 className="text-lg font-semibold">Learning Analytics</h1>
+        <div className="ml-auto">
+          <ShareReportButton targetRef={statsRef} />
+        </div>
       </header>
 
-      <div className="max-w-6xl mx-auto p-6 space-y-6" data-testid="analytics-page">
+      <div ref={statsRef} className="max-w-6xl mx-auto p-6 space-y-6" data-testid="analytics-page">
         {/* Key Metrics */}
         <div className="grid md:grid-cols-4 gap-4">
           <MetricCard
@@ -257,6 +279,21 @@ export default function AnalyticsPage() {
             )}
           </section>
         </div>
+
+        <section className="rounded-xl border bg-card p-4">
+          <h2 className="font-medium mb-4">Diagnosed Patterns</h2>
+          <div className="flex flex-wrap gap-2" data-testid="analytics-breakdown-diagnoses">
+            {diagnosisEntries.length > 0 ? (
+              diagnosisEntries.map(([name, count]) => (
+                <Badge key={name} variant="secondary" className="capitalize">
+                  {name.replaceAll("_", " ")}: {count}
+                </Badge>
+              ))
+            ) : (
+              <p className="text-sm text-muted-foreground">No diagnosis data yet</p>
+            )}
+          </div>
+        </section>
 
         {/* Memory Health */}
         {memStats && memStats.total > 0 && (

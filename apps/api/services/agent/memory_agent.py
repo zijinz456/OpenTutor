@@ -23,7 +23,7 @@ from sqlalchemy import select, func, case, literal_column
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.memory import ConversationMemory, MEMCELL_TYPES
-from services.memory.pipeline import consolidate_memories, generate_embedding
+from services.memory.pipeline import consolidate_memories, smart_consolidate, generate_embedding
 from services.llm.router import get_llm_client
 
 logger = logging.getLogger(__name__)
@@ -99,7 +99,7 @@ async def categorize_uncategorized(
         for m in memories
     )
 
-    client = get_llm_client()
+    client = get_llm_client("fast")
     try:
         response, _ = await client.extract(
             "You are a memory organizer. Output valid JSON array.",
@@ -155,10 +155,13 @@ async def run_full_consolidation(
     # Step 1: Consolidate (dedup + decay)
     consolidation_result = await consolidate_memories(db, user_id, course_id)
 
-    # Step 2: Categorize uncategorized
+    # Step 2: AI-powered smart consolidation (semantic merge)
+    smart_merged = await smart_consolidate(db, user_id, course_id)
+
+    # Step 3: Categorize uncategorized
     categorization_result = await categorize_uncategorized(db, user_id)
 
-    # Step 3: Collect stats
+    # Step 4: Collect stats
     count_result = await db.execute(
         select(func.count(ConversationMemory.id))
         .where(ConversationMemory.user_id == user_id)
@@ -170,6 +173,7 @@ async def run_full_consolidation(
     return {
         **consolidation_result,
         **categorization_result,
+        "smart_merged": smart_merged,
         "total_memories": total_memories,
     }
 
@@ -211,7 +215,7 @@ async def create_session_episodic_memory(
         for m in session_messages[-20:]  # Last 20 messages max
     )
 
-    client = get_llm_client()
+    client = get_llm_client("fast")
     try:
         result, _ = await client.extract(
             "You are a learning session summarizer. Output a brief summary or NONE.",

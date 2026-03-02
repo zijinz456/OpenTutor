@@ -127,7 +127,7 @@ Student message: {message}"""
 
 async def llm_classify(message: str) -> tuple[IntentType, float]:
     """Stage 2: LLM-based classification for ambiguous messages."""
-    client = get_llm_client()
+    client = get_llm_client("fast")
     try:
         result, _ = await client.extract(
             "You are an intent classifier. Output only valid JSON.",

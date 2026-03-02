@@ -43,6 +43,6 @@ class TeachingAgent(ReActMixin, BaseAgent):
     async def execute(self, ctx: AgentContext, db: AsyncSession) -> AgentContext:
         """Generate teaching response using RAG context."""
         system_prompt = self.build_system_prompt(ctx)
-        client = self.get_llm_client()
+        client = self.get_llm_client(ctx)
         ctx.response, _ = await client.chat(system_prompt, ctx.user_message, images=ctx.images or None)
         return ctx

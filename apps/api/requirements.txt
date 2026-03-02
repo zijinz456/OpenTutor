@@ -67,6 +67,9 @@ python-jose[cryptography]>=3.3.0
 pywebpush>=2.0.0
 py-vapid>=1.9.0
 
+# YAML parsing (skills system frontmatter)
+pyyaml>=6.0
+
 # Utilities
 tenacity==9.0.0
 httpx==0.28.1

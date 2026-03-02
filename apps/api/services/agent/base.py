@@ -34,22 +34,43 @@ class BaseAgent(ABC):
     profile: str = "A generic learning assistant agent."
     model_preference: str | None = None  # None = use default, "small" / "large"
 
-    def get_llm_client(self):
-        """Get LLM client respecting model_preference.
+    def get_llm_client(self, ctx: AgentContext | None = None):
+        """Get LLM client with 3-tier complexity routing when context is available.
 
-        Maps model_preference to provider selection:
-        - "large": use primary provider (best model)
-        - "small": try lightweight/cheaper provider first
-        - None: use default
+        When ctx is provided, uses complexity scoring to select fast/standard/frontier.
+        Falls back to legacy model_preference ("large"/"small") when ctx is None.
         """
         from services.llm.router import get_llm_client
-        # model_preference is a hint; the registry decides the actual provider
+
+        if ctx is not None:
+            from services.llm.complexity import resolve_tier
+
+            tier = resolve_tier(
+                agent_name=self.name,
+                message=ctx.user_message,
+                intent=ctx.intent.value if ctx.intent else "general",
+                scene=ctx.scene or "study_session",
+                history_length=len(ctx.conversation_history),
+                has_rag_context=bool(ctx.content_docs),
+            )
+            return get_llm_client(tier.value)
+
+        # Legacy fallback
         return get_llm_client(self.model_preference)
 
     async def run(self, ctx: AgentContext, db: AsyncSession) -> AgentContext:
         """Execute the agent's task. Template method pattern."""
         ctx.delegated_agent = self.name
         ctx.transition(TaskPhase.REASONING)
+
+        # Attach unified facade for convenient subsystem access.
+        # Agents can optionally use ctx.metadata["facade"] instead of
+        # importing individual service modules.
+        if "facade" not in ctx.metadata:
+            from services.agent.context_facade import AgentContextFacade
+
+            ctx.metadata["facade"] = AgentContextFacade(ctx, db)
+
         try:
             ctx = await self.execute(ctx, db)
             return ctx
@@ -81,6 +102,14 @@ class BaseAgent(ABC):
         if not target:
             logger.warning("Delegation target '%s' not found", target_agent_name)
             return f"[delegation failed: unknown agent '{target_agent_name}']"
+
+        # Capability escalation check
+        from services.agent.capabilities import check_delegation_escalation
+
+        allowed, reason = check_delegation_escalation(self.name, target_agent_name)
+        if not allowed:
+            logger.warning("Delegation blocked: %s → %s: %s", self.name, target_agent_name, reason)
+            return f"[delegation blocked: {reason}]"
 
         # Create a sub-context preserving identity but with new message
         sub_ctx = AgentContext(
@@ -266,16 +295,106 @@ class BaseAgent(ABC):
 
         return results
 
+    async def spawn_background_task(
+        self,
+        ctx: AgentContext,
+        db: AsyncSession,
+        task_type: str,
+        title: str,
+        payload: dict | None = None,
+    ) -> uuid.UUID | None:
+        """Spawn a background task via the activity engine.
+
+        Creates an AgentTask record that the activity engine will pick up
+        and execute asynchronously. Returns the task ID or None on failure.
+        """
+        try:
+            from services.activity.engine import submit_task
+
+            task_id = await submit_task(
+                db=db,
+                user_id=ctx.user_id,
+                course_id=ctx.course_id,
+                task_type=task_type,
+                title=title,
+                input_json=payload or {},
+                source="agent",
+            )
+            spawned = ctx.metadata.setdefault("spawned_tasks", [])
+            spawned.append({"task_id": str(task_id), "type": task_type, "title": title})
+            logger.info("Agent '%s' spawned background task: %s (%s)", self.name, title, task_id)
+            return task_id
+        except Exception as e:
+            logger.warning("Failed to spawn background task '%s': %s", title, e)
+            return None
+
     async def stream(self, ctx: AgentContext, db: AsyncSession) -> AsyncIterator[str]:
         """Stream response chunks for SSE. Default: run then yield full response."""
         ctx = await self.run(ctx, db)
         if ctx.response:
             yield ctx.response
 
+    def _build_memory_text(self, ctx: AgentContext) -> str:
+        """Build a formatted memory section from ctx.memories for template use."""
+        if not ctx.memories:
+            return "No prior knowledge about this student yet."
+        lines: list[str] = []
+        profile_mems: list[str] = []
+        preference_mems: list[str] = []
+        history_mems: list[str] = []
+        for mem in ctx.memories:
+            mtype = mem.get("memory_type", "")
+            summary = mem.get("summary", "")
+            if not summary:
+                continue
+            if mtype == "profile":
+                profile_mems.append(summary)
+            elif mtype == "preference":
+                preference_mems.append(summary)
+            else:
+                history_mems.append(summary)
+        if profile_mems:
+            lines.append("### Student Profile")
+            for s in profile_mems:
+                lines.append(f"- {s}")
+        if history_mems:
+            lines.append("### Learning History")
+            for s in history_mems:
+                lines.append(f"- {s}")
+        if preference_mems:
+            lines.append("### Known Preferences")
+            for s in preference_mems:
+                lines.append(f"- {s}")
+        return "\n".join(lines) if lines else "No prior knowledge about this student yet."
+
+    def _build_tutor_notes_text(self, ctx: AgentContext) -> str:
+        """Build tutor notes section from ctx.metadata for template use."""
+        tutor_notes = ctx.metadata.get("tutor_notes")
+        if tutor_notes:
+            return f"## Tutor Notes (Your Private Observations)\n{tutor_notes}"
+        return ""
+
     def build_system_prompt(self, ctx: AgentContext) -> str:
-        """Build agent-specific system prompt with context + scene behavior injection."""
+        """Build agent-specific system prompt with context + scene behavior injection.
+
+        Tries file-based prompt template first (from prompts/{name}.md),
+        falling back to the original Python-based prompt construction.
+        """
+        from services.agent.prompt_loader import render_prompt
         from services.agent.scene_behavior import get_scene_with_tab_context
 
+        # --- File-based template path (preferred) ---
+        template_result = render_prompt(
+            self.name,
+            course_name=ctx.metadata.get("course_name", "Unknown"),
+            scene=ctx.scene or "study_session",
+            memory_section=self._build_memory_text(ctx),
+            tutor_notes_section=self._build_tutor_notes_text(ctx),
+        )
+        if template_result is not None:
+            return template_result
+
+        # --- Fallback: original Python-based prompt construction ---
         parts = [self.profile]
         parts.append(f"\n## User Goal\n{ctx.user_message}")
 
@@ -304,14 +423,54 @@ class BaseAgent(ABC):
             for doc in ctx.content_docs:
                 parts.append(f"### {doc.get('title', '')}\n{doc.get('content', '')[:1500]}\n")
 
-        # Memory context
+        # Memory context — organized by type for clarity
         if ctx.memories:
-            parts.append("\n## Memory\n")
+            # Group memories by type
+            profile_mems = []
+            preference_mems = []
+            history_mems = []  # episode, knowledge, skill, error, fact, conversation
             for mem in ctx.memories:
-                parts.append(f"- {mem.get('summary', '')}")
+                mtype = mem.get("memory_type", "")
+                summary = mem.get("summary", "")
+                if not summary:
+                    continue
+                if mtype == "profile":
+                    profile_mems.append(summary)
+                elif mtype == "preference":
+                    preference_mems.append(summary)
+                else:
+                    history_mems.append(summary)
+
+            if profile_mems:
+                parts.append("\n## Student Profile")
+                for s in profile_mems:
+                    parts.append(f"- {s}")
+            if history_mems:
+                parts.append("\n## Learning History")
+                for s in history_mems:
+                    parts.append(f"- {s}")
+            if preference_mems:
+                parts.append("\n## Known Preferences")
+                for s in preference_mems:
+                    parts.append(f"- {s}")
+
+        # Tutor notes (private evolving observations about the student)
+        tutor_notes = ctx.metadata.get("tutor_notes")
+        if tutor_notes:
+            parts.append(f"\n## Tutor Notes (Your Private Observations)\n{tutor_notes}")
 
         recent_task_context = ctx.metadata.get("recent_task_context") or ctx.metadata.get("plan_progress")
         if recent_task_context:
             parts.append(f"\n## Recent Task Context\n{recent_task_context}")
+
+        # Match and inject teaching strategies
+        try:
+            from services.agent.skills import match_skills
+            matched = match_skills(ctx.user_message, scene=ctx.scene, limit=2)
+            if matched:
+                skills_text = "\n\n".join(s.content for s in matched)
+                parts.append(f"\n## Teaching Strategies\n{skills_text}")
+        except Exception as e:
+            logger.debug("Skills matching skipped: %s", e)
 
         return "\n".join(parts)

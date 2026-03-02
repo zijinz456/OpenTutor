@@ -135,7 +135,7 @@ class SceneAgent(BaseAgent):
             return await TeachingAgent().run(ctx, db)
 
         system_prompt = self.build_system_prompt(ctx)
-        client = get_llm_client()
+        client = get_llm_client("fast")
         ctx.response, _ = await client.chat(system_prompt, ctx.user_message)
         return ctx
 
@@ -156,7 +156,7 @@ class SceneAgent(BaseAgent):
             return
 
         system_prompt = self.build_system_prompt(ctx)
-        client = get_llm_client()
+        client = get_llm_client("fast")
 
         ctx.transition(TaskPhase.STREAMING)
         full_response = ""

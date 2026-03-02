@@ -17,7 +17,7 @@ Rating scale:
 
 import math
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -30,6 +30,12 @@ DEFAULT_W = [
     2.18, 0.05, 0.34, 1.26,  # w11-w14: retrievability parameters
     0.29, 2.61,  # w15-w16: additional parameters
 ]
+
+
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 @dataclass
@@ -120,11 +126,11 @@ def review_card(
 
     Rating: 1=Again, 2=Hard, 3=Good, 4=Easy
     """
-    now = now or datetime.utcnow()
+    now = _as_utc(now or datetime.now(timezone.utc))
 
     # Calculate elapsed days since last review
     if card.last_review:
-        elapsed_days = max((now - card.last_review).total_seconds() / 86400, 0)
+        elapsed_days = max((now - _as_utc(card.last_review)).total_seconds() / 86400, 0)
     else:
         elapsed_days = 0
 

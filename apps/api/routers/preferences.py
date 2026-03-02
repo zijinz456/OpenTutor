@@ -17,7 +17,7 @@ from models.preference import PreferenceSignal, UserPreference
 from models.user import User
 from schemas.preference import PreferenceCreate, PreferenceResponse, ResolvedPreferences
 from services.auth.dependency import get_current_user
-from services.llm.local_config import get_llm_runtime_config, test_llm_connection, update_llm_runtime_config
+from services.llm.local_config import get_llm_runtime_config, get_ollama_models, test_llm_connection, update_llm_runtime_config
 from services.preference.engine import resolve_preferences
 
 logger = logging.getLogger(__name__)
@@ -29,6 +29,7 @@ class LlmProviderStatus(BaseModel):
     provider: str
     has_key: bool
     masked_key: str | None = None
+    requires_key: bool = True
 
 
 class LlmRuntimeConfigResponse(BaseModel):
@@ -43,6 +44,7 @@ class LlmRuntimeConfigUpdate(BaseModel):
     model: str | None = None
     llm_required: bool | None = None
     provider_keys: dict[str, str] | None = None
+    base_url: str | None = None
 
 
 class LlmConnectionTestRequest(BaseModel):
@@ -520,6 +522,25 @@ async def test_runtime_llm_config(
         raise AppError(message=str(exc)) from exc
 
 
+class OllamaModelEntry(BaseModel):
+    name: str
+    size: int = 0
+    modified_at: str = ""
+
+
+@router.get("/runtime/ollama/models", response_model=list[OllamaModelEntry])
+async def list_ollama_models(
+    base_url: str | None = None,
+    user: User = Depends(get_current_user),
+):
+    """List models available on a running Ollama instance."""
+    _ = user
+    try:
+        return await get_ollama_models(base_url)
+    except Exception as exc:
+        raise AppError(message=f"Cannot reach Ollama: {exc}") from exc
+
+
 # ── NL Preference Parsing ──
 
 _NL_PREFERENCE_PROMPT = """\
@@ -535,6 +556,45 @@ Available dimensions and valid values:
 Return ONLY a JSON object like {"dimension": "...", "value": "..."}.
 If you cannot determine the intent, return {"dimension": null, "value": null}.
 """
+
+_DIRECT_PARSE_SIGNALS: dict[tuple[str, str], tuple[str, ...]] = {
+    ("note_format", "bullet_point"): ("bullet", "bullets", "bullet points"),
+    ("note_format", "table"): ("table", "tabular"),
+    ("note_format", "mind_map"): ("mind map", "mind-map"),
+    ("note_format", "step_by_step"): ("step by step", "step-by-step"),
+    ("note_format", "summary"): ("summary", "summaries"),
+    ("detail_level", "concise"): ("concise", "brief", "short", "shorter", "simplify", "simple"),
+    ("detail_level", "balanced"): ("balanced",),
+    ("detail_level", "detailed"): ("detailed", "detail", "longer", "more detail", "more details"),
+    ("explanation_style", "formal"): ("formal",),
+    ("explanation_style", "conversational"): ("conversational", "casual"),
+    ("explanation_style", "socratic"): ("socratic",),
+    ("explanation_style", "example_heavy"): ("example", "examples"),
+    ("language", "en"): ("english", "en"),
+    ("language", "zh"): ("chinese", "mandarin", "zh", "中文"),
+    ("language", "ja"): ("japanese", "ja", "日本語"),
+    ("language", "ko"): ("korean", "ko", "한국어"),
+    ("language", "es"): ("spanish", "es", "español"),
+    ("language", "fr"): ("french", "fr", "français"),
+}
+
+_DIMENSION_CONTEXT_SIGNALS: dict[str, tuple[str, ...]] = {
+    "note_format": ("note", "notes", "format", "outline"),
+    "detail_level": ("detail", "short", "shorter", "brief", "simple", "detailed", "longer"),
+    "explanation_style": ("style", "tone", "voice", "explain", "responses"),
+    "language": ("language", "english", "chinese", "japanese", "korean", "spanish", "french", "中文", "日本語", "한국어", "español", "français"),
+}
+
+
+def _is_direct_parse_confident(text: str, dimension: str | None, value: str | None) -> bool:
+    if not dimension or not value:
+        return False
+    normalized = text.casefold().strip()
+    value_signals = _DIRECT_PARSE_SIGNALS.get((dimension, value), ())
+    context_signals = _DIMENSION_CONTEXT_SIGNALS.get(dimension, ())
+    has_value_signal = any(signal in normalized for signal in value_signals)
+    has_context_signal = any(signal in normalized for signal in context_signals)
+    return has_value_signal and has_context_signal
 
 
 class NLPreferenceRequest(BaseModel):
@@ -558,17 +618,8 @@ async def parse_nl_preference(
 
     registry = get_registry()
     try:
-        client, model = registry.get_client("small")
-        resp = await client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": _NL_PREFERENCE_PROMPT},
-                {"role": "user", "content": body.text},
-            ],
-            temperature=0,
-            max_tokens=100,
-        )
-        raw = resp.choices[0].message.content or "{}"
+        client = registry.get("small")
+        raw, _usage = await client.extract(_NL_PREFERENCE_PROMPT, body.text)
         # Strip markdown fences if present
         raw = raw.strip()
         if raw.startswith("```"):
@@ -576,6 +627,8 @@ async def parse_nl_preference(
         parsed = json.loads(raw)
         dim = parsed.get("dimension")
         val = parsed.get("value")
+        if not _is_direct_parse_confident(body.text, dim, val):
+            return NLPreferenceResult()
         label = f"{(dim or '').replace('_', ' ')}: {val}" if dim and val else None
         return NLPreferenceResult(dimension=dim, value=val, label=label)
     except Exception as e:

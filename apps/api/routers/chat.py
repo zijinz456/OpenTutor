@@ -16,7 +16,7 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
@@ -83,7 +83,7 @@ async def _resolve_chat_session(
 
 async def _persist_chat_turn(
     db: AsyncSession,
-    session: ChatSession,
+    session_id: uuid.UUID,
     user_message: str,
     assistant_message: str,
     assistant_metadata: dict | None = None,
@@ -92,16 +92,20 @@ async def _persist_chat_turn(
         return
     db.add_all(
         [
-            ChatMessageLog(session_id=session.id, role="user", content=user_message),
+            ChatMessageLog(session_id=session_id, role="user", content=user_message),
             ChatMessageLog(
-                session_id=session.id,
+                session_id=session_id,
                 role="assistant",
                 content=assistant_message,
                 metadata_json=assistant_metadata,
             ),
         ]
     )
-    session.updated_at = datetime.now(timezone.utc)
+    # Update session timestamp via query to avoid needing the ORM object in this session
+    from sqlalchemy import update
+    await db.execute(
+        update(ChatSession).where(ChatSession.id == session_id).values(updated_at=datetime.now(timezone.utc))
+    )
     await db.commit()
 
 
@@ -178,7 +182,12 @@ async def get_chat_session_messages(
 
 
 @router.post("/")
-async def chat_stream(body: ChatRequest, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def chat_stream(
+    body: ChatRequest,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     """Stream chat response using multi-agent orchestrator via SSE."""
     from middleware.security import detect_prompt_injection, sanitize_user_input
 
@@ -186,7 +195,21 @@ async def chat_stream(body: ChatRequest, user: User = Depends(get_current_user),
     if detect_prompt_injection(body.message):
         logger.warning("Prompt injection detected from user %s: %.100s", user.id, body.message)
 
+        async def injection_error():
+            yield {
+                "event": "error",
+                "data": json.dumps({"error": "Your message was flagged by our safety filter. Please rephrase your request."}),
+            }
+
+        return EventSourceResponse(injection_error())
+
+    # v3.2: User interrupt/steering — give the agent context that the user
+    # interrupted a previous response to redirect the conversation.
+    if body.interrupt:
+        body.message = f"[User interrupted the previous response to say:] {body.message}"
+
     course = await get_course_or_404(db, body.course_id, user_id=user.id)
+    session_factory = getattr(request.app.state, "test_session_factory", None) or async_session
 
     resolved_scene = body.scene or course.active_scene
     session = await _resolve_chat_session(
@@ -209,7 +232,7 @@ async def chat_stream(body: ChatRequest, user: User = Depends(get_current_user),
                 course_id=body.course_id,
                 message=body.message,
                 db=db,
-                db_factory=async_session,
+                db_factory=session_factory,
                 conversation_id=body.conversation_id,
                 session_id=session.id,
                 history=[m.model_dump() for m in body.history],
@@ -248,9 +271,14 @@ async def chat_stream(body: ChatRequest, user: User = Depends(get_current_user),
                         payload = {}
                     assistant_content = payload.get("content", assistant_content)
                 yield event
-            await _persist_chat_turn(db, session, body.message, assistant_content, assistant_metadata)
+            # Use a fresh DB session for persistence to avoid stale state after SSE streaming
+            try:
+                async with session_factory() as persist_db:
+                    await _persist_chat_turn(persist_db, session.id, body.message, assistant_content, assistant_metadata)
+            except Exception as persist_err:
+                logger.error("Failed to persist chat turn: %s", persist_err, exc_info=True)
         except Exception as e:
             logger.error("Orchestrator error: %s", e, exc_info=True)
-            yield {"event": "error", "data": json.dumps({"error": str(e)})}
+            yield {"event": "error", "data": json.dumps({"error": "An internal error occurred. Please try again."})}
 
     return EventSourceResponse(event_generator())

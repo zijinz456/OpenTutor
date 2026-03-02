@@ -51,7 +51,7 @@ class ReActMixin:
         # If no tools or ReAct disabled, fall back to normal BaseAgent.stream()
         if not self.react_tools or not self.react_enabled:
             system_prompt = self.build_system_prompt(ctx)  # type: ignore[attr-defined]
-            client = self.get_llm_client()  # type: ignore[attr-defined]
+            client = self.get_llm_client(ctx)  # type: ignore[attr-defined]
             ctx.transition(TaskPhase.STREAMING)
             full_response = ""
             async for chunk in client.stream_chat(system_prompt, ctx.user_message, images=ctx.images or None):
@@ -62,7 +62,7 @@ class ReActMixin:
 
         # ReAct mode
         system_prompt = self.build_system_prompt(ctx)  # type: ignore[attr-defined]
-        client = self.get_llm_client()  # type: ignore[attr-defined]
+        client = self.get_llm_client(ctx)  # type: ignore[attr-defined]
         ctx.transition(TaskPhase.STREAMING)
 
         async for event in react_stream(
@@ -83,10 +83,18 @@ class ReActMixin:
 
             elif event_type == "tool_start":
                 # Emit marker for orchestrator to parse as tool_status SSE event
-                yield f'[TOOL_START:{event["tool"]}]'
+                explanation = event.get("explanation", "")
+                if explanation:
+                    yield f'[TOOL_START:{event["tool"]}|{explanation}]'
+                else:
+                    yield f'[TOOL_START:{event["tool"]}]'
 
             elif event_type == "tool_result":
-                yield f'[TOOL_DONE:{event["tool"]}]'
+                explanation = event.get("explanation", "")
+                if explanation:
+                    yield f'[TOOL_DONE:{event["tool"]}|{explanation}]'
+                else:
+                    yield f'[TOOL_DONE:{event["tool"]}]'
 
             elif event_type == "answer":
                 yield event["content"]

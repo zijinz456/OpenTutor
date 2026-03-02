@@ -3,6 +3,8 @@
 Each platform has different capabilities and constraints:
 - WhatsApp: limited markdown (*bold* only), 4096 char limit, no LaTeX
 - iMessage: plain text only, 10000 char limit, no markdown/LaTeX
+- Telegram: Markdown V1 support, 4096 char limit
+- Discord: full markdown, 2000 char limit
 - Web: full markdown, no limit (passthrough)
 
 Strips internal markers ([ACTION:...], [TOOL_START/DONE:...]) before formatting.
@@ -14,6 +16,8 @@ import re
 CHANNEL_MAX_LENGTH: dict[str, int | None] = {
     "whatsapp": 4096,
     "imessage": 10000,
+    "telegram": 4096,
+    "discord": 2000,
     "web": None,
 }
 
@@ -38,6 +42,8 @@ def format_for_channel(text: str, channel_type: str) -> str:
     formatters = {
         "whatsapp": _format_whatsapp,
         "imessage": _format_imessage,
+        "telegram": _format_telegram,
+        "discord": _format_discord,
     }
     formatter = formatters.get(channel_type)
     if formatter:
@@ -146,6 +152,96 @@ def _format_imessage(text: str) -> str:
 
     # Strip blockquotes
     result = re.sub(r"^>\s?", "", result, flags=re.MULTILINE)
+
+    # Clean excessive newlines
+    result = re.sub(r"\n{3,}", "\n\n", result)
+
+    return result
+
+
+def _format_telegram(text: str) -> str:
+    """Format text for Telegram's Markdown (V1) support.
+
+    Telegram Bot API Markdown V1 supports:
+    - *bold* (single asterisks)
+    - _italic_ (underscores)
+    - `inline code` (backticks)
+    - ```code blocks``` (triple backticks)
+    - [link text](url) (hyperlinks)
+
+    Transformations:
+    - ### headings -> *bold* text
+    - **bold** -> *bold* (Telegram uses single asterisks)
+    - Strip $LaTeX$ blocks (not supported)
+    - Clean excessive newlines
+    """
+    result = text
+
+    # Headings: ### Title -> *Title*
+    result = re.sub(r"^#{1,6}\s+(.+)$", r"*\1*", result, flags=re.MULTILINE)
+
+    # Bold: **text** -> *text*
+    result = re.sub(r"\*\*(.+?)\*\*", r"*\1*", result)
+
+    # Images: ![alt](url) -> (Image: alt)
+    result = re.sub(r"!\[([^\]]*)\]\([^)]+\)", r"(Image: \1)", result)
+
+    # Hyperlinks: [text](url) — Telegram Markdown V1 supports these natively
+
+    # Strip inline LaTeX: $formula$ -> (formula)
+    result = re.sub(r"\$([^$]+)\$", r"(\1)", result)
+
+    # Strip block LaTeX: $$...$$ -> (formula)
+    result = re.sub(r"\$\$([^$]+)\$\$", r"(\1)", result, flags=re.DOTALL)
+
+    # Horizontal rules: --- or *** -> simple separator
+    result = re.sub(r"^[-*]{3,}\s*$", "---", result, flags=re.MULTILINE)
+
+    # Bullet lists: normalize various markdown bullets
+    result = re.sub(r"^(\s*)[*+-]\s+", r"\1- ", result, flags=re.MULTILINE)
+
+    # Clean excessive newlines
+    result = re.sub(r"\n{3,}", "\n\n", result)
+
+    return result
+
+
+def _format_discord(text: str) -> str:
+    """Format text for Discord's markdown support.
+
+    Discord supports a rich subset of markdown:
+    - **bold**, *italic*, __underline__, ~~strikethrough~~
+    - `inline code`, ```code blocks```
+    - [text](url) hyperlinks (in embeds), plain URLs auto-link
+    - > blockquotes
+    - Headings (in forum/thread posts only, not regular messages)
+
+    Transformations:
+    - ### headings -> **bold** text (headings not rendered in messages)
+    - Strip $LaTeX$ blocks
+    - Convert images to plain text
+    - Clean excessive newlines
+    """
+    result = text
+
+    # Headings: ### Title -> **Title** (headings not rendered in regular messages)
+    result = re.sub(r"^#{1,6}\s+(.+)$", r"**\1**", result, flags=re.MULTILINE)
+
+    # Images: ![alt](url) -> (Image: alt)
+    result = re.sub(r"!\[([^\]]*)\]\([^)]+\)", r"(Image: \1)", result)
+
+    # Hyperlinks: [text](url) -> text (<url>) — Discord auto-links plain URLs
+    # but does not render [text](url) in regular messages
+    result = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"\1 (<\2>)", result)
+
+    # Strip inline LaTeX: $formula$ -> (formula)
+    result = re.sub(r"\$([^$]+)\$", r"(\1)", result)
+
+    # Strip block LaTeX: $$...$$ -> (formula)
+    result = re.sub(r"\$\$([^$]+)\$\$", r"(\1)", result, flags=re.DOTALL)
+
+    # Horizontal rules: --- or *** -> simple separator
+    result = re.sub(r"^[-*]{3,}\s*$", "---", result, flags=re.MULTILINE)
 
     # Clean excessive newlines
     result = re.sub(r"\n{3,}", "\n\n", result)

@@ -6,7 +6,7 @@ will drop below the retention threshold.
 
 import uuid
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass
 
 from sqlalchemy import select
@@ -36,6 +36,12 @@ class ForgettingPrediction:
     urgency: str  # ok | warning | urgent | overdue
     last_reviewed: str | None
     mastery_score: float
+
+
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 def _retrievability(elapsed_days: float, stability: float) -> float:
@@ -74,7 +80,7 @@ async def predict_forgetting(
     )
     rows = result.all()
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     predictions: list[dict] = []
     urgent_count = 0
     warning_count = 0
@@ -86,7 +92,7 @@ async def predict_forgetting(
         if not last_review or stability <= 0:
             continue
 
-        elapsed_days = max((now - last_review).total_seconds() / 86400, 0)
+        elapsed_days = max((now - _as_utc(last_review)).total_seconds() / 86400, 0)
         current_r = _retrievability(elapsed_days, stability)
 
         # Days from last review until threshold
@@ -116,7 +122,7 @@ async def predict_forgetting(
             "days_until_threshold": round(remaining_days, 1),
             "predicted_drop_date": predicted_drop_date,
             "urgency": urgency,
-            "last_reviewed": last_review.isoformat() if last_review else None,
+            "last_reviewed": _as_utc(last_review).isoformat() if last_review else None,
             "mastery_score": round(progress.mastery_score, 3),
         })
 

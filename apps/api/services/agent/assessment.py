@@ -253,7 +253,7 @@ class AssessmentAgent(ReActMixin, BaseAgent):
         """Generate comprehensive learning assessment."""
         ctx.metadata["assessment_data"] = await self._build_assessment_data(ctx, db)
         system_prompt = self.build_system_prompt(ctx)
-        client = self.get_llm_client()
+        client = self.get_llm_client(ctx)
         ctx.response, _ = await client.chat(system_prompt, ctx.user_message)
         return ctx
 

@@ -481,16 +481,13 @@ sendMessage() — SSE streaming iteration, parses content/action events
 | `src/components/course/pdf-viewer.tsx` | PDF viewer (placeholder, Phase 1) |
 | `src/components/course/nl-tuning-fab.tsx` | Natural language tuning floating action button |
 | `src/components/chat/chat-panel.tsx` | Chat panel (SSE streaming + message bubbles) |
-| `src/components/preference/onboarding-wizard.tsx` | Preference onboarding wizard component |
 | `src/components/preference/preference-confirm-dialog.tsx` | Preference confirmation dialog |
 | `src/components/workspace/activity-bar.tsx` | Left activity bar (VS Code style) |
 | `src/components/workspace/status-bar.tsx` | Bottom status bar |
-| `src/components/workspace/breadcrumbs.tsx` | Breadcrumb navigation |
-| `src/components/ui/*.tsx` | 11 shadcn/ui base components |
+| `src/components/ui/*.tsx` | Shared shadcn/ui base components |
 | `src/store/course.ts` | Zustand course state management |
 | `src/store/chat.ts` | Zustand chat state management |
 | `src/lib/api.ts` | REST API client + SSE stream parsing |
-| `src/lib/quiz-api.ts` | Quiz API client |
 | `src/lib/i18n.ts` | Internationalization (6 languages, 100+ keys) |
 | `src/lib/utils.ts` | Tailwind class name merging utility |
 | `src/app/globals.css` | OKLCH color system + design tokens |

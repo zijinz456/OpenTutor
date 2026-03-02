@@ -158,7 +158,8 @@ class IMessageAdapter(BaseChannelAdapter):
                 })
 
             # Detect group conversations
-            chat_guid = data.get("chats", [{}])[0].get("guid", "") if data.get("chats") else ""
+            chats = data.get("chats") or []
+            chat_guid = chats[0].get("guid", "") if chats else ""
             is_group = ";+;" in chat_guid if chat_guid else False
 
             return IncomingMessage(

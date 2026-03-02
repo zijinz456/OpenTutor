@@ -564,6 +564,16 @@ class ProviderRegistry:
     def available_providers(self) -> list[str]:
         return list(self._providers.keys())
 
+    @property
+    def primary_name(self) -> str | None:
+        """Name of the primary provider (public accessor)."""
+        return self._primary
+
+    @property
+    def provider_health(self) -> dict[str, bool]:
+        """Health status of all registered providers (public accessor)."""
+        return {name: client.is_healthy for name, client in self._providers.items()}
+
 
 # ──────────────────────────────────────────────────────────────
 # Global singleton (nanobot pattern: create once, reuse)
@@ -725,13 +735,39 @@ def _build_registry() -> ProviderRegistry:
         )
         registry.register("custom", client, primary=(provider == "custom"))
 
+    # --- LiteLLM (opt-in universal adapter) ---
+    if settings.use_litellm and settings.litellm_model:
+        try:
+            from services.llm.litellm_client import LiteLLMClient
+            client = LiteLLMClient(
+                model=settings.litellm_model,
+                api_base=settings.litellm_api_base or None,
+                api_key=settings.litellm_api_key or None,
+            )
+            registry.register("litellm", client, primary=True)
+            logger.info("LiteLLM provider registered with model: %s", settings.litellm_model)
+        except ImportError:
+            logger.warning("LiteLLM requested but not installed. Run: pip install litellm")
+        except Exception as e:
+            logger.warning("LiteLLM registration failed: %s", e)
+
     # --- Model size variants (agent preference routing) ---
     if settings.llm_model_large and settings.llm_model_large != model:
         _register_variant(registry, provider, settings.llm_model_large, "large")
     if settings.llm_model_small and settings.llm_model_small != model:
         _register_variant(registry, provider, settings.llm_model_small, "small")
-    if "small" in registry._model_variants:
+
+    # --- 3-tier model routing (overrides legacy large/small when set) ---
+    if settings.llm_model_fast and settings.llm_model_fast != model:
+        _register_variant(registry, provider, settings.llm_model_fast, "fast")
+    elif "small" in registry._model_variants and "fast" not in registry._model_variants:
         registry.register_variant("fast", registry._model_variants["small"])
+    if settings.llm_model_standard and settings.llm_model_standard != model:
+        _register_variant(registry, provider, settings.llm_model_standard, "standard")
+    if settings.llm_model_frontier and settings.llm_model_frontier != model:
+        _register_variant(registry, provider, settings.llm_model_frontier, "frontier")
+    elif "large" in registry._model_variants and "frontier" not in registry._model_variants:
+        registry.register_variant("frontier", registry._model_variants["large"])
 
     # --- Mock fallback ---
     if not registry.available_providers:

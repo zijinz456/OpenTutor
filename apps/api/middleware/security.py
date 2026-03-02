@@ -2,22 +2,34 @@
 
 Adds:
 1. Security headers (CSP, HSTS, X-Frame-Options, etc.)
-2. Rate limiting (per-IP, sliding window)
+2. Rate limiting (per-IP, sliding window — simple or GCRA cost-aware)
 3. Audit logging (who accessed what, when)
 4. Prompt injection detection (pattern-based pre-filter)
 """
 
+import json
 import logging
 import os
 import re
 import time
+import uuid
 from collections import defaultdict
 from dataclasses import dataclass, field
 
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from config import settings
+from database import async_session
+from services.audit import record_audit_log
+
 logger = logging.getLogger(__name__)
+
+# ── Constants ──
+
+HSTS_MAX_AGE = 31_536_000  # 1 year in seconds
+STALE_BUCKET_SECONDS = 120.0  # evict rate-limit buckets after 2 min inactivity
+MAX_USER_INPUT_LENGTH = 10_000
 
 
 # ── Security Headers ──
@@ -49,7 +61,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             response.headers[header] = value
         # HSTS only in production
         if not request.url.hostname or request.url.hostname != "localhost":
-            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+            response.headers["Strict-Transport-Security"] = f"max-age={HSTS_MAX_AGE}; includeSubDomains"
         return response
 
 
@@ -64,37 +76,74 @@ class _RateBucket:
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """Token bucket rate limiter per client IP.
 
-    Default: 60 requests per minute for general endpoints,
-    10 requests per minute for LLM-heavy endpoints (/chat, /quiz/generate).
+    Two modes (controlled by ``cost_aware`` flag):
+
+    **Simple mode** (default, backward-compatible):
+      60 RPM for general endpoints, 10 RPM for LLM-heavy endpoints.
+
+    **Cost-aware GCRA mode** (inspired by OpenFang):
+      Each endpoint has a cost (0-100). Budget is ``cost_budget_per_minute``
+      cost units per IP per minute.  Health checks cost 0 (exempt), data
+      reads cost 2-3, LLM calls cost 30-50, workflow runs cost 80-100.
     """
 
-    def __init__(self, app, default_rpm: int = 60, llm_rpm: int = 10):
+    _LLM_PATHS = {"/api/chat/stream", "/api/quiz/generate", "/api/flashcards/generate"}
+    _EXEMPT_PREFIXES = ("/api/webhooks/", "/api/health", "/docs", "/openapi.json")
+
+    def __init__(
+        self,
+        app,
+        default_rpm: int = 60,
+        llm_rpm: int = 10,
+        cost_budget_per_minute: int = 500,
+        cost_aware: bool = False,
+    ):
         super().__init__(app)
+        # Simple mode
         self.default_rpm = default_rpm
         self.llm_rpm = llm_rpm
+        # Cost-aware mode
+        self.cost_budget = cost_budget_per_minute
+        self.cost_aware = cost_aware
         self._buckets: dict[str, _RateBucket] = defaultdict(_RateBucket)
-
-    # LLM-heavy endpoints that need stricter limits
-    _LLM_PATHS = {"/api/chat/stream", "/api/quiz/generate", "/api/flashcards/generate"}
+        self._last_cleanup: float = time.monotonic()
+        self._max_buckets: int = 10000
+        self._cleanup_interval: float = 300.0  # 5 minutes
 
     def _get_client_ip(self, request: Request) -> str:
-        forwarded = request.headers.get("x-forwarded-for")
-        if forwarded:
-            return forwarded.split(",")[0].strip()
+        # Only trust X-Forwarded-For when behind a known reverse proxy.
+        # In direct-access mode, attackers can spoof this header to bypass rate limits.
+        if settings.trust_proxy_headers:
+            forwarded = request.headers.get("x-forwarded-for")
+            if forwarded:
+                return forwarded.split(",")[0].strip()
         return request.client.host if request.client else "unknown"
 
-    def _check_rate(self, key: str, rpm: int) -> bool:
-        """Token bucket algorithm. Returns True if request is allowed."""
+    def _maybe_cleanup_buckets(self) -> None:
+        """Evict stale rate limit buckets to prevent unbounded memory growth."""
+        now = time.monotonic()
+        if now - self._last_cleanup < self._cleanup_interval:
+            return
+        self._last_cleanup = now
+        stale_threshold = STALE_BUCKET_SECONDS
+        stale_keys = [k for k, b in self._buckets.items() if now - b.last_refill > stale_threshold]
+        for k in stale_keys:
+            del self._buckets[k]
+        if stale_keys:
+            logger.debug("Rate limiter: evicted %d stale buckets (%d remaining)", len(stale_keys), len(self._buckets))
+
+    # ── Simple mode ──
+
+    def _check_simple_rate(self, key: str, rpm: int) -> bool:
+        """Original token bucket algorithm. Returns True if allowed."""
         bucket = self._buckets[key]
         now = time.monotonic()
         elapsed = now - bucket.last_refill
         bucket.last_refill = now
 
-        # First request: start with a full bucket
         if bucket.tokens < 0:
             bucket.tokens = float(rpm)
 
-        # Refill tokens (1 token per second * rpm/60)
         refill_rate = rpm / 60.0
         bucket.tokens = min(rpm, bucket.tokens + elapsed * refill_rate)
 
@@ -103,30 +152,86 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             return True
         return False
 
+    # ── Cost-aware GCRA mode ──
+
+    def _check_cost_rate(self, key: str, cost: int) -> tuple[bool, float]:
+        """Cost-weighted token bucket. Returns (allowed, retry_after_seconds)."""
+        bucket = self._buckets[key]
+        now = time.monotonic()
+        elapsed = now - bucket.last_refill
+        bucket.last_refill = now
+
+        if bucket.tokens < 0:
+            bucket.tokens = float(self.cost_budget)
+
+        refill_rate = self.cost_budget / 60.0
+        bucket.tokens = min(self.cost_budget, bucket.tokens + elapsed * refill_rate)
+
+        if bucket.tokens >= cost:
+            bucket.tokens -= cost
+            return True, 0.0
+
+        deficit = cost - bucket.tokens
+        retry_after = deficit / refill_rate if refill_rate > 0 else 60.0
+        return False, retry_after
+
+    # ── Dispatch ──
+
     async def dispatch(self, request: Request, call_next):
-        if os.environ.get("DISABLE_RATE_LIMIT") == "1":
+        if (
+            os.environ.get("DISABLE_RATE_LIMIT") == "1"
+            or (settings.environment != "production" and settings.deployment_mode == "single_user")
+        ):
+            return await call_next(request)
+
+        path = request.url.path
+
+        # Exempt paths
+        if any(path.startswith(prefix) for prefix in self._EXEMPT_PREFIXES):
             return await call_next(request)
 
         client_ip = self._get_client_ip(request)
-        path = request.url.path
+        self._maybe_cleanup_buckets()
 
-        # Webhook endpoints have their own verification; exempt from rate limiting
-        if path.startswith("/api/webhooks/"):
-            return await call_next(request)
+        if self.cost_aware:
+            from middleware.cost_matrix import get_endpoint_cost
 
-        # Determine rate limit
-        is_llm = any(path.startswith(p) for p in self._LLM_PATHS)
-        rpm = self.llm_rpm if is_llm else self.default_rpm
-        key = f"{client_ip}:{'llm' if is_llm else 'general'}"
+            cost = get_endpoint_cost(path, request.method)
+            if cost == 0:
+                return await call_next(request)
 
-        if not self._check_rate(key, rpm):
-            logger.warning("Rate limited: %s on %s", client_ip, path)
-            return Response(
-                content='{"detail":"Rate limit exceeded. Please slow down."}',
-                status_code=429,
-                media_type="application/json",
-                headers={"Retry-After": "10"},
-            )
+            key = f"cost:{client_ip}"
+            allowed, retry_after = self._check_cost_rate(key, cost)
+
+            if not allowed:
+                logger.warning(
+                    "Rate limited (cost-aware): %s on %s (cost=%d, retry=%.1fs)",
+                    client_ip, path, cost, retry_after,
+                )
+                return Response(
+                    content=json.dumps({
+                        "detail": "Rate limit exceeded. Please slow down.",
+                        "cost": cost,
+                        "retry_after": round(retry_after, 1),
+                    }),
+                    status_code=429,
+                    media_type="application/json",
+                    headers={"Retry-After": str(max(1, int(retry_after)))},
+                )
+        else:
+            # Simple mode (backward-compatible)
+            is_llm = any(path.startswith(p) for p in self._LLM_PATHS)
+            rpm = self.llm_rpm if is_llm else self.default_rpm
+            key = f"{client_ip}:{'llm' if is_llm else 'general'}"
+
+            if not self._check_simple_rate(key, rpm):
+                logger.warning("Rate limited: %s on %s", client_ip, path)
+                return Response(
+                    content='{"detail":"Rate limit exceeded. Please slow down."}',
+                    status_code=429,
+                    media_type="application/json",
+                    headers={"Retry-After": "10"},
+                )
 
         return await call_next(request)
 
@@ -141,6 +246,7 @@ class AuditLogMiddleware(BaseHTTPMiddleware):
     """
 
     _SKIP_PATHS = {"/api/health", "/docs", "/openapi.json", "/favicon.ico"}
+    _MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
@@ -159,6 +265,38 @@ class AuditLogMiddleware(BaseHTTPMiddleware):
             "AUDIT | %s %s | status=%d | ip=%s | %.0fms",
             request.method, path, response.status_code, client_ip, duration_ms,
         )
+        if request.method in self._MUTATING_METHODS:
+            actor_user_id = None
+            raw_user_id = getattr(request.state, "user_id", None)
+            if raw_user_id:
+                try:
+                    actor_user_id = uuid.UUID(str(raw_user_id))
+                except ValueError:
+                    actor_user_id = None
+            try:
+                session_factory = getattr(request.app.state, "test_session_factory", None) or async_session
+                async with session_factory() as db:
+                    await record_audit_log(
+                        db,
+                        actor_user_id=actor_user_id,
+                        task_id=None,
+                        tool_name=None,
+                        action_kind=getattr(request.state, "audit_action_kind", "http_request"),
+                        approval_status=getattr(request.state, "approval_status", None),
+                        outcome="success" if response.status_code < 400 else "error",
+                        details_json={
+                            "method": request.method,
+                            "path": path,
+                            "status_code": response.status_code,
+                            "duration_ms": round(duration_ms, 1),
+                            "client_ip": client_ip or None,
+                            "deployment_mode": getattr(request.state, "deployment_mode", None),
+                            "task_id": getattr(request.state, "audit_task_id", None),
+                        },
+                    )
+                    await db.commit()
+            except Exception:
+                logger.exception("Failed to persist audit row for %s %s", request.method, path)
         return response
 
 
@@ -203,5 +341,4 @@ def sanitize_user_input(text: str) -> str:
     """
     # Remove null bytes and control characters (except newlines/tabs)
     cleaned = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)
-    # Limit to 10K characters
-    return cleaned[:10000]
+    return cleaned[:MAX_USER_INPUT_LENGTH]

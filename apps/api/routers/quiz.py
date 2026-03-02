@@ -2,11 +2,12 @@
 
 import logging
 import uuid
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, BackgroundTasks, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,7 +18,7 @@ from models.user import User
 from services.auth.dependency import get_current_user
 from services.course_access import get_course_or_404
 from services.parser.quiz import extract_questions
-from services.practice.annotation import build_practice_problem, parse_question_array
+from services.practice.annotation import build_practice_problem, normalize_question_options, parse_question_array
 from libs.exceptions import NotFoundError, ValidationError
 
 router = APIRouter()
@@ -44,10 +45,15 @@ class ProblemResponse(BaseModel):
     id: uuid.UUID
     question_type: str
     question: str
-    options: dict | None
+    options: dict[str, str] | None
     order_index: int
 
     model_config = {"from_attributes": True}
+
+    @field_validator("options", mode="before")
+    @classmethod
+    def normalize_options(cls, value: Any) -> dict[str, str] | None:
+        return normalize_question_options(value)
 
 
 class AnswerResponse(BaseModel):

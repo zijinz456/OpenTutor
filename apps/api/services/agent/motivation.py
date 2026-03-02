@@ -92,7 +92,7 @@ class MotivationAgent(BaseAgent):
         progress_summary = await self._get_recent_progress(ctx, db)
         fatigue = ctx.metadata.get("fatigue_level", 0.0)
 
-        client = self.get_llm_client()
+        client = self.get_llm_client(ctx)
         system_prompt = self.build_system_prompt(ctx)
         system_prompt += (
             f"\n\n## Student Context:\n"
@@ -118,7 +118,7 @@ class MotivationAgent(BaseAgent):
             f"- Recent progress: {progress_summary}\n"
         )
 
-        client = self.get_llm_client()
+        client = self.get_llm_client(ctx)
         ctx.transition(TaskPhase.STREAMING)
         full_response = ""
         async for chunk in client.stream_chat(system_prompt, ctx.user_message):

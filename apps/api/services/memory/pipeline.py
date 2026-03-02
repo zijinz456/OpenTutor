@@ -18,7 +18,8 @@ import json
 import logging
 import math
 import uuid
-from datetime import datetime, timezone
+from collections import Counter
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select, text, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -71,7 +72,7 @@ async def encode_memory(
     Upgraded from single-summary to multi-MemCell extraction (EverMemOS pattern).
     Returns list of created memory entries (usually 0-2).
     """
-    client = get_llm_client()
+    client = get_llm_client("fast")
     created = []
 
     try:
@@ -334,6 +335,583 @@ async def consolidate_memories(
 
     await db.flush()
     return {"deduped": len(removed), "decayed": decayed_count}
+
+
+# ── Stage 2b: SMART CONSOLIDATE (AI-powered semantic merge) ──
+
+# Stop words excluded from word-overlap computation
+_STOP_WORDS = frozenset(
+    "a an the is are was were be been being have has had do does did will "
+    "would shall should may might can could of in to for on with at by from "
+    "as into about between through after before during and but or nor not so "
+    "yet both either neither each every all any few more most other some such "
+    "no only own same than too very it its he she they them their this that "
+    "these those i me my we our you your who what which when where how".split()
+)
+
+MAX_SMART_MERGES_PER_RUN = 10
+SMART_CONSOLIDATE_THRESHOLD = 50  # Minimum memories before AI consolidation kicks in
+WORD_OVERLAP_THRESHOLD = 0.30     # 30% shared significant words to form a group
+
+
+def _significant_words(text: str) -> set[str]:
+    """Extract significant (non-stop) words from text, lowercased."""
+    return {
+        w for w in text.lower().split()
+        if w not in _STOP_WORDS and len(w) > 2
+    }
+
+
+def _group_by_word_overlap(
+    memories: list["ConversationMemory"],
+) -> list[list["ConversationMemory"]]:
+    """Group memories by rough word overlap (>30% shared significant words).
+
+    Uses single-linkage clustering: a memory joins a group if it overlaps
+    with *any* existing member of that group.  Groups only contain memories
+    of the same ``memory_type``.
+    """
+    # Pre-compute word sets
+    word_sets: dict[uuid.UUID, set[str]] = {}
+    for mem in memories:
+        word_sets[mem.id] = _significant_words(mem.summary)
+
+    assigned: set[uuid.UUID] = set()
+    groups: list[list["ConversationMemory"]] = []
+
+    for mem in memories:
+        if mem.id in assigned:
+            continue
+        words_a = word_sets[mem.id]
+        if len(words_a) < 2:
+            continue
+
+        group = [mem]
+        assigned.add(mem.id)
+
+        # Scan remaining memories for overlaps with any group member
+        changed = True
+        while changed:
+            changed = False
+            for candidate in memories:
+                if candidate.id in assigned:
+                    continue
+                if candidate.memory_type != mem.memory_type:
+                    continue
+                words_c = word_sets[candidate.id]
+                if len(words_c) < 2:
+                    continue
+                # Check overlap against any group member
+                for member in group:
+                    words_m = word_sets[member.id]
+                    denom = min(len(words_c), len(words_m))
+                    if denom == 0:
+                        continue
+                    overlap = len(words_c & words_m) / denom
+                    if overlap >= WORD_OVERLAP_THRESHOLD:
+                        group.append(candidate)
+                        assigned.add(candidate.id)
+                        changed = True
+                        break  # re-scan with enlarged group
+
+        if len(group) >= 2:
+            groups.append(group)
+
+    return groups
+
+
+MERGE_SYSTEM_PROMPT = (
+    "Merge these related memories into one concise memory. "
+    "Preserve all unique facts. Output only the merged memory text."
+)
+
+
+async def smart_consolidate(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    course_id: uuid.UUID | None = None,
+) -> int:
+    """AI-powered memory consolidation (Phase 5.1).
+
+    Groups semantically similar memories and merges them using LLM.
+    Only runs when user has > 50 memories to avoid unnecessary cost.
+
+    Returns number of memories merged (i.e. old memories replaced).
+    """
+    # ── 1. Count user memories; skip if below threshold ──
+    count_filters = [
+        ConversationMemory.user_id == user_id,
+        ConversationMemory.dismissed_at.is_(None),
+    ]
+    if course_id:
+        count_filters.append(ConversationMemory.course_id == course_id)
+
+    count_q = await db.execute(
+        select(func.count(ConversationMemory.id)).where(*count_filters)
+    )
+    total = count_q.scalar() or 0
+
+    if total < SMART_CONSOLIDATE_THRESHOLD:
+        logger.debug(
+            "smart_consolidate: skipping (only %d memories, threshold %d)",
+            total, SMART_CONSOLIDATE_THRESHOLD,
+        )
+        return 0
+
+    # ── 2. Load all active memories for user+course ──
+    query = (
+        select(ConversationMemory)
+        .where(*count_filters)
+        .order_by(ConversationMemory.created_at.asc())
+    )
+    result = await db.execute(query)
+    memories = list(result.scalars().all())
+
+    # ── 3. Group by word overlap ──
+    groups = _group_by_word_overlap(memories)
+    if not groups:
+        logger.debug("smart_consolidate: no groups found for merging")
+        return 0
+
+    # ── 4. Merge groups using LLM (max MAX_SMART_MERGES_PER_RUN) ──
+    client = get_llm_client("fast")
+    total_merged = 0
+
+    for group in groups[:MAX_SMART_MERGES_PER_RUN]:
+        try:
+            # Build the prompt with all memories in this group
+            mem_lines = "\n".join(
+                f"- {m.summary}" for m in group
+            )
+            user_prompt = (
+                f"Memories to merge ({len(group)} items, type={group[0].memory_type}):\n"
+                f"{mem_lines}"
+            )
+
+            merged_text, _ = await client.extract(
+                MERGE_SYSTEM_PROMPT,
+                user_prompt,
+            )
+            merged_text = merged_text.strip()
+            if not merged_text or len(merged_text) < 5:
+                logger.warning("smart_consolidate: LLM returned empty merge, skipping group")
+                continue
+
+            # Keep the highest importance score from the group
+            best_importance = max(m.importance for m in group)
+            total_access = sum((m.access_count or 0) for m in group)
+
+            # Generate embedding for the new merged memory
+            embedding = await generate_embedding(merged_text)
+
+            # Create the merged memory
+            merged_memory = ConversationMemory(
+                user_id=user_id,
+                course_id=course_id,
+                summary=merged_text,
+                memory_type=group[0].memory_type,  # same type (groups are same-type)
+                embedding=embedding,
+                importance=best_importance,
+                access_count=total_access,
+                source_message=group[0].source_message,
+                metadata_json={
+                    "source": "smart_consolidate",
+                    "merged_from": [str(m.id) for m in group],
+                    "merge_count": len(group),
+                    "merged_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+            db.add(merged_memory)
+            await db.flush()
+
+            # Update BM25 search vector for the new memory
+            await db.execute(
+                text("""
+                    UPDATE conversation_memories
+                    SET search_vector = to_tsvector('simple', :summary)
+                    WHERE id = :id
+                """),
+                {"summary": merged_memory.summary, "id": str(merged_memory.id)},
+            )
+
+            # Soft-delete the old memories (mark as consolidated)
+            now = datetime.now(timezone.utc)
+            for old_mem in group:
+                old_mem.dismissed_at = now
+                old_mem.dismissal_reason = f"smart_consolidated into {merged_memory.id}"
+                # Preserve lineage in metadata
+                meta = old_mem.metadata_json or {}
+                meta["consolidated_into"] = str(merged_memory.id)
+                meta["consolidated_at"] = now.isoformat()
+                old_mem.metadata_json = meta
+
+            total_merged += len(group)
+            logger.info(
+                "smart_consolidate: merged %d memories (type=%s) into %s",
+                len(group), group[0].memory_type, merged_memory.id,
+            )
+
+        except Exception as e:
+            logger.warning(
+                "smart_consolidate: failed to merge group of %d memories: %s",
+                len(group), e,
+            )
+            continue
+
+    if total_merged:
+        await db.flush()
+        logger.info(
+            "smart_consolidate: total %d memories merged for user %s",
+            total_merged, user_id,
+        )
+
+    return total_merged
+
+
+# ── Stage 2c: LONG-TERM MEMORY COMPRESSION ──
+
+COMPRESSION_MERGE_PROMPT = (
+    "Merge these related student memories into a single concise summary. "
+    "Preserve all unique facts and insights. The merged memory should capture "
+    "the essence of all inputs in under 80 words. Output only the merged text."
+)
+
+
+async def compress_old_memories(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    course_id: uuid.UUID | None,
+    age_threshold_days: int = 14,
+) -> int:
+    """Compress old memories by grouping related ones and merging via LLM.
+
+    Finds conversation memories older than *age_threshold_days*, groups them
+    by topic/category using word-overlap clustering, then asks the LLM to
+    merge each group into a single consolidated summary.  Original memories
+    are soft-deleted (dismissed) with lineage metadata preserved.
+
+    Returns the count of original memories that were compressed (replaced).
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(days=age_threshold_days)
+
+    # ── 1. Load old, active memories ──
+    filters = [
+        ConversationMemory.user_id == user_id,
+        ConversationMemory.dismissed_at.is_(None),
+        ConversationMemory.created_at < cutoff,
+    ]
+    if course_id:
+        filters.append(ConversationMemory.course_id == course_id)
+
+    result = await db.execute(
+        select(ConversationMemory)
+        .where(*filters)
+        .order_by(ConversationMemory.created_at.asc())
+    )
+    old_memories = list(result.scalars().all())
+
+    if len(old_memories) < 2:
+        logger.debug(
+            "compress_old_memories: only %d old memories, nothing to compress",
+            len(old_memories),
+        )
+        return 0
+
+    # ── 2. Group by word overlap (reuse existing clustering helper) ──
+    groups = _group_by_word_overlap(old_memories)
+    if not groups:
+        logger.debug("compress_old_memories: no groups formed from old memories")
+        return 0
+
+    # ── 3. Merge each group via LLM ──
+    client = get_llm_client("fast")
+    total_compressed = 0
+
+    for group in groups[:MAX_SMART_MERGES_PER_RUN]:
+        try:
+            mem_lines = "\n".join(f"- {m.summary}" for m in group)
+            user_prompt = (
+                f"Memories to compress ({len(group)} items, "
+                f"type={group[0].memory_type}):\n{mem_lines}"
+            )
+
+            merged_text, _ = await client.extract(
+                COMPRESSION_MERGE_PROMPT,
+                user_prompt,
+            )
+            merged_text = merged_text.strip()
+            if not merged_text or len(merged_text) < 5:
+                continue
+
+            best_importance = max(m.importance for m in group)
+            total_access = sum((m.access_count or 0) for m in group)
+            embedding = await generate_embedding(merged_text)
+
+            # Determine course_id for the merged memory (use the group's if uniform)
+            group_course_ids = {m.course_id for m in group}
+            merged_course_id = group_course_ids.pop() if len(group_course_ids) == 1 else course_id
+
+            merged_memory = ConversationMemory(
+                user_id=user_id,
+                course_id=merged_course_id,
+                summary=merged_text,
+                memory_type=group[0].memory_type,
+                embedding=embedding,
+                importance=best_importance,
+                access_count=total_access,
+                source_message=group[0].source_message,
+                metadata_json={
+                    "source": "long_term_compression",
+                    "compressed_from": [str(m.id) for m in group],
+                    "original_count": len(group),
+                    "compressed_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+            db.add(merged_memory)
+            await db.flush()
+
+            # Update BM25 search vector for the merged memory
+            await db.execute(
+                text("""
+                    UPDATE conversation_memories
+                    SET search_vector = to_tsvector('simple', :summary)
+                    WHERE id = :id
+                """),
+                {"summary": merged_memory.summary, "id": str(merged_memory.id)},
+            )
+
+            # Soft-delete originals with lineage
+            now = datetime.now(timezone.utc)
+            for old_mem in group:
+                old_mem.dismissed_at = now
+                old_mem.dismissal_reason = f"compressed into {merged_memory.id}"
+                meta = old_mem.metadata_json or {}
+                meta["compressed_into"] = str(merged_memory.id)
+                meta["compressed_at"] = now.isoformat()
+                old_mem.metadata_json = meta
+
+            total_compressed += len(group)
+            logger.info(
+                "compress_old_memories: compressed %d memories (type=%s) into %s",
+                len(group), group[0].memory_type, merged_memory.id,
+            )
+
+        except Exception as e:
+            logger.warning(
+                "compress_old_memories: failed to compress group of %d: %s",
+                len(group), e,
+            )
+            continue
+
+    if total_compressed:
+        await db.flush()
+        logger.info(
+            "compress_old_memories: total %d memories compressed for user %s",
+            total_compressed, user_id,
+        )
+
+    return total_compressed
+
+
+# ── Stage 2d: CROSS-COURSE MEMORY LINKING ──
+
+
+async def find_cross_course_patterns(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+) -> list[dict]:
+    """Identify topics/concepts that appear across multiple courses.
+
+    Queries all active memories for the user, groups them by significant
+    keyword overlap across different courses, and returns a list of
+    cross-course connections.  Uses pure text overlap (no LLM call).
+
+    Returns:
+        List of dicts: [
+            {
+                "topic": "<representative keywords>",
+                "courses": [
+                    {"course_id": str, "course_name": str, "memory_summary": str},
+                    ...
+                ],
+            },
+            ...
+        ]
+    """
+    from models.course import Course
+
+    # ── 1. Load all active memories with course info ──
+    result = await db.execute(
+        select(ConversationMemory, Course.name.label("course_name"))
+        .join(Course, ConversationMemory.course_id == Course.id, isouter=True)
+        .where(
+            ConversationMemory.user_id == user_id,
+            ConversationMemory.dismissed_at.is_(None),
+            ConversationMemory.course_id.isnot(None),
+        )
+        .order_by(ConversationMemory.importance.desc())
+    )
+    rows = result.all()
+
+    if len(rows) < 2:
+        return []
+
+    # ── 2. Build per-memory word sets and course mapping ──
+    # Each entry: (memory, course_name, significant_words)
+    entries: list[tuple] = []
+    for row in rows:
+        mem = row[0]
+        course_name = row[1] or "Unknown Course"
+        words = _significant_words(mem.summary)
+        if len(words) >= 2:
+            entries.append((mem, course_name, words))
+
+    if not entries:
+        return []
+
+    # ── 3. Cluster by keyword overlap across different courses ──
+    # We want to find topics that span 2+ courses, so we build topic clusters
+    # where members come from different courses.
+    assigned: set[int] = set()
+    clusters: list[list[int]] = []  # indices into entries
+
+    for i, (mem_a, cname_a, words_a) in enumerate(entries):
+        if i in assigned:
+            continue
+
+        cluster = [i]
+        assigned.add(i)
+        cluster_courses = {mem_a.course_id}
+
+        for j in range(i + 1, len(entries)):
+            if j in assigned:
+                continue
+            mem_b, cname_b, words_b = entries[j]
+
+            # Require overlap with any cluster member
+            for idx in cluster:
+                _, _, words_m = entries[idx]
+                denom = min(len(words_b), len(words_m))
+                if denom == 0:
+                    continue
+                overlap = len(words_b & words_m) / denom
+                if overlap >= WORD_OVERLAP_THRESHOLD:
+                    cluster.append(j)
+                    assigned.add(j)
+                    cluster_courses.add(mem_b.course_id)
+                    break
+
+        # Only keep clusters spanning 2+ courses
+        if len(cluster_courses) >= 2 and len(cluster) >= 2:
+            clusters.append(cluster)
+
+    # ── 4. Build result dicts ──
+    connections: list[dict] = []
+    for cluster in clusters:
+        # Determine representative topic from the most common significant words
+        all_words: list[str] = []
+        for idx in cluster:
+            _, _, words = entries[idx]
+            all_words.extend(words)
+
+        word_counts = Counter(all_words)
+        top_keywords = [w for w, _ in word_counts.most_common(5)]
+        topic = " ".join(top_keywords)
+
+        # Group by course
+        course_map: dict[str, dict] = {}
+        for idx in cluster:
+            mem, course_name, _ = entries[idx]
+            cid = str(mem.course_id)
+            if cid not in course_map:
+                course_map[cid] = {
+                    "course_id": cid,
+                    "course_name": course_name,
+                    "memory_summary": mem.summary,
+                }
+            else:
+                # Append summaries for the same course (keep it concise)
+                existing = course_map[cid]["memory_summary"]
+                if len(existing) < 300:
+                    course_map[cid]["memory_summary"] = (
+                        existing + " | " + mem.summary
+                    )
+
+        connections.append({
+            "topic": topic,
+            "courses": list(course_map.values()),
+        })
+
+    logger.info(
+        "find_cross_course_patterns: found %d cross-course connections for user %s",
+        len(connections), user_id,
+    )
+    return connections
+
+
+# ── Stage 2e: MEMORY IMPORTANCE DECAY ──
+
+
+async def apply_importance_decay(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    decay_rate: float = 0.95,
+) -> int:
+    """Apply time-based importance decay to all active memories.
+
+    For each memory, reduces importance by *decay_rate* per week since the
+    memory was last accessed (updated_at) or created.  Memories that fall
+    below the minimum floor of 0.1 are clamped rather than deleted, so no
+    data is lost.
+
+    Args:
+        db: Async database session.
+        user_id: The user whose memories to decay.
+        decay_rate: Multiplicative decay factor per week (default 0.95).
+
+    Returns:
+        Count of memories whose importance was updated.
+    """
+    result = await db.execute(
+        select(ConversationMemory).where(
+            ConversationMemory.user_id == user_id,
+            ConversationMemory.dismissed_at.is_(None),
+        )
+    )
+    memories = list(result.scalars().all())
+
+    if not memories:
+        return 0
+
+    IMPORTANCE_FLOOR = 0.1
+    now = datetime.now(timezone.utc)
+    decayed_count = 0
+
+    for mem in memories:
+        # Use updated_at as proxy for "last accessed" (it gets bumped on
+        # access_count increments and metadata changes).
+        last_touched = mem.updated_at or mem.created_at
+        weeks_since = (now - last_touched).total_seconds() / (7 * 86400)
+
+        if weeks_since < 0.01:
+            # Touched very recently, skip
+            continue
+
+        decayed_importance = mem.importance * (decay_rate ** weeks_since)
+        decayed_importance = max(IMPORTANCE_FLOOR, decayed_importance)
+
+        if abs(decayed_importance - mem.importance) > 0.001:
+            mem.importance = round(decayed_importance, 4)
+            decayed_count += 1
+
+    if decayed_count:
+        await db.flush()
+        logger.info(
+            "apply_importance_decay: decayed %d memories for user %s (rate=%.3f)",
+            decayed_count, user_id, decay_rate,
+        )
+
+    return decayed_count
 
 
 # ── Stage 3: RETRIEVE (Hybrid BM25 + Vector Search) ──
