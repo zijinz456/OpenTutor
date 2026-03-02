@@ -41,7 +41,7 @@ export default defineConfig({
     ? undefined
     : [
         {
-          command: `cd apps/api && rm -f ${localEnvFile} && touch ${localEnvFile} && LOCAL_ENV_FILE=${localEnvFile} ${backendLlmEnv} APP_AUTO_CREATE_TABLES=false APP_AUTO_SEED_SYSTEM=false APP_RUN_SCHEDULER=0 CORS_ORIGINS=http://127.0.0.1:${frontendPort} SCRAPE_FIXTURE_DIR=../../tests/e2e/fixtures/scrape LLM_REQUIRED=${llmRequired} ${pythonBin} -m alembic upgrade head && LOCAL_ENV_FILE=${localEnvFile} ${backendLlmEnv} APP_AUTO_CREATE_TABLES=false APP_AUTO_SEED_SYSTEM=true APP_RUN_SCHEDULER=0 CORS_ORIGINS=http://127.0.0.1:${frontendPort} SCRAPE_FIXTURE_DIR=../../tests/e2e/fixtures/scrape LLM_REQUIRED=${llmRequired} ${pythonBin} -m uvicorn main:app --host 127.0.0.1 --port ${backendPort}`,
+          command: `cd apps/api && rm -f ${localEnvFile} && touch ${localEnvFile} && LOCAL_ENV_FILE=${localEnvFile} ${backendLlmEnv} APP_AUTO_CREATE_TABLES=true APP_AUTO_SEED_SYSTEM=true APP_RUN_SCHEDULER=0 CORS_ORIGINS=http://127.0.0.1:${frontendPort} SCRAPE_FIXTURE_DIR=../../tests/e2e/fixtures/scrape LLM_REQUIRED=${llmRequired} ${pythonBin} -m uvicorn main:app --host 127.0.0.1 --port ${backendPort}`,
           url: `${apiBaseUrl}/health`,
           reuseExistingServer: false,
           stdout: "ignore",
