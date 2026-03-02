@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { Check, X } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -13,13 +12,13 @@ import { Button } from "@/components/ui/button";
 import { setPreference } from "@/lib/api";
 
 /**
- * Preference Confirmation Dialog — shown after a learning session.
+ * Preference Confirmation Dialog -- shown after a learning session.
  *
  * When the Compiler (openakita pattern) detects a preference change,
  * this dialog asks the user to confirm scope:
- * - "Long-term habit" → scope=global
- * - "Just this course" → scope=course
- * - "Don't change" → dismiss
+ * - "Long-term habit" -> scope=global
+ * - "Just this course" -> scope=course
+ * - "Don't change" -> dismiss
  *
  * Phase 0-C: Simple dialog.
  * Phase 1: Animated toast-style confirmation with undo.
@@ -114,7 +113,7 @@ export function PreferenceConfirmDialog({
                 <p className="text-xs text-muted-foreground">
                   {change.oldValue && (
                     <span>
-                      {VALUE_LABELS[change.oldValue] || change.oldValue} →{" "}
+                      {VALUE_LABELS[change.oldValue] || change.oldValue} {"\u2192"}{" "}
                     </span>
                   )}
                   <span className="font-medium text-foreground">
@@ -122,7 +121,7 @@ export function PreferenceConfirmDialog({
                   </span>
                 </p>
               </div>
-              <Check className="h-4 w-4 text-green-500" />
+              <span className="text-green-500" aria-hidden="true">{"\u2713"}</span>
             </div>
           ))}
         </div>
@@ -151,7 +150,7 @@ export function PreferenceConfirmDialog({
             disabled={saving}
             className="w-full"
           >
-            <X className="h-4 w-4 mr-1" />
+            <span className="mr-1">x</span>
             Don&apos;t Change
           </Button>
         </div>

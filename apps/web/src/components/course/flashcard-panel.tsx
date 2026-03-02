@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Download, Loader2, RotateCcw, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -56,7 +55,7 @@ export function FlashcardPanel({ courseId }: FlashcardPanelProps) {
   const handleGenerate = async () => {
     setGenerating(true);
     try {
-      const data = await generateFlashcards(courseId, 10);
+      const data = await generateFlashcards(courseId, 5);
       setCards(data.cards || []);
       setCurrentIndex(0);
       setFlipped(false);
@@ -137,7 +136,6 @@ export function FlashcardPanel({ courseId }: FlashcardPanelProps) {
               <Badge variant="destructive" className="mb-2">{dueCount} cards due today</Badge>
               <div>
                 <Button onClick={handleLoadDue} disabled={generating} size="sm" variant="default" className="mb-3">
-                  <RotateCcw className="h-4 w-4 mr-1" />
                   Review Due Cards
                 </Button>
               </div>
@@ -147,12 +145,11 @@ export function FlashcardPanel({ courseId }: FlashcardPanelProps) {
           <Button onClick={handleGenerate} disabled={generating} size="sm">
             {generating ? (
               <>
-                <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                <span className="animate-pulse mr-1">...</span>
                 {t("quiz.generating")}
               </>
             ) : (
               <>
-                <Sparkles className="h-4 w-4 mr-1" />
                 {t("flashcard.generate")}
               </>
             )}
@@ -178,12 +175,10 @@ export function FlashcardPanel({ courseId }: FlashcardPanelProps) {
         <div className="flex gap-2">
           {latestBatch?.is_active && (
             <Button size="sm" variant="outline" onClick={() => handleSave(latestBatch.batch_id)} disabled={saving || generating || reviewing}>
-              <Download className="h-4 w-4 mr-1" />
               Replace Latest
             </Button>
           )}
           <Button size="sm" variant="outline" onClick={() => handleSave()} disabled={saving || generating || reviewing}>
-            <Download className="h-4 w-4 mr-1" />
             Save New
           </Button>
           <Badge variant="outline">{currentDueCount} {t("flashcard.due")}</Badge>
@@ -213,7 +208,6 @@ export function FlashcardPanel({ courseId }: FlashcardPanelProps) {
               </p>
             </div>
             <div className="absolute bottom-2 right-3 text-xs text-muted-foreground">
-              <RotateCcw className="h-3 w-3 inline mr-1" />
               {t("flashcard.flip")}
             </div>
           </div>

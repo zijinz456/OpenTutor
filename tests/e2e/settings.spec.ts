@@ -6,7 +6,7 @@ import { skipOnboarding } from "./helpers/test-utils";
  *
  * The settings page at /settings includes:
  *   - Back button (ArrowLeft icon) -> /
- *   - Language section:  English button, toast on change
+ *   - Language section:  English / 中文 buttons, toast on change
  *   - Appearance section:  Light, Dark, System buttons
  *   - Learning Templates section:  loads from /api/progress/templates, Apply button
  */
@@ -50,9 +50,10 @@ test.describe("Settings", () => {
 
   // ---- language section -------------------------------------------------
 
-  test("language section shows English button", async ({ page }) => {
+  test("language section shows English and Chinese buttons", async ({ page }) => {
     await page.goto("/settings");
     await expect(page.getByRole("button", { name: "English" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "中文" })).toBeVisible();
   });
 
   test("clicking English shows English toast", async ({ page }) => {
@@ -65,6 +66,14 @@ test.describe("Settings", () => {
     await page.goto("/settings");
     await page.getByRole("button", { name: "English" }).click();
     await expect(page.getByText("Switched to English")).toBeVisible({ timeout: 15_000 });
+  });
+
+  test("clicking Chinese switches the shell language", async ({ page }) => {
+    await page.goto("/settings");
+    await page.getByRole("button", { name: "中文" }).click();
+    await expect(page.getByText("已切换为中文")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("通知")).toBeVisible();
+    await expect(page.locator("html")).toHaveAttribute("lang", "zh");
   });
 
   // ---- appearance section -----------------------------------------------

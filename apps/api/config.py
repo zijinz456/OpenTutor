@@ -1,7 +1,7 @@
 """Application configuration via environment variables."""
 
 from pydantic import model_validator
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -122,18 +122,23 @@ class Settings(BaseSettings):
     code_sandbox_runtime: str = "docker"  # docker | podman
     code_sandbox_image: str = "python:3.11-alpine"
     code_sandbox_timeout_seconds: int = 5
+    allow_insecure_process_sandbox: bool = False
+
+    @staticmethod
+    def _split_csv(value: str) -> list[str]:
+        return [item.strip() for item in value.split(",") if item.strip()]
 
     @property
     def enabled_channels(self) -> list[str]:
         if not self.channels_enabled.strip():
             return []
-        return [c.strip() for c in self.channels_enabled.split(",") if c.strip()]
+        return self._split_csv(self.channels_enabled)
 
     @property
     def cors_origin_list(self) -> list[str]:
         if self.cors_origins.strip() == "*":
             return ["*"]
-        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+        return self._split_csv(self.cors_origins)
 
     @model_validator(mode="after")
     def _validate_jwt_secret(self):
@@ -148,7 +153,11 @@ class Settings(BaseSettings):
                 )
         return self
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
 
 settings = Settings()

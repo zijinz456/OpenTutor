@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, ArrowLeft, Bell, CheckCircle2, Eye, EyeOff, Globe, Moon, Palette, RefreshCw, Sun, Wrench } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
 import { Button } from "@/components/ui/button";
@@ -9,8 +8,8 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { setLocale, getLocale, type Locale } from "@/lib/i18n";
-import { useT } from "@/lib/i18n-context";
+import { type Locale } from "@/lib/i18n";
+import { useLocale, useT } from "@/lib/i18n-context";
 import {
   applyTemplate,
   getHealthStatus,
@@ -54,25 +53,21 @@ const LLM_STATUS_META = {
   ready: {
     label: "Ready",
     description: "A real LLM provider is configured and healthy.",
-    icon: CheckCircle2,
     badgeVariant: "default" as const,
   },
   degraded: {
     label: "Model Issue",
     description: "A provider is configured, but the active provider is unhealthy or degraded.",
-    icon: AlertTriangle,
     badgeVariant: "destructive" as const,
   },
   configuration_required: {
     label: "Configuration Required",
     description: "This app requires a real LLM provider, but no API key or local backend is configured.",
-    icon: Wrench,
     badgeVariant: "destructive" as const,
   },
   mock_fallback: {
     label: "Fallback Mode",
     description: "No real LLM is configured. The app is running with local mock responses.",
-    icon: AlertTriangle,
     badgeVariant: "secondary" as const,
   },
 };
@@ -80,8 +75,8 @@ const LLM_STATUS_META = {
 export default function SettingsPage() {
   const router = useRouter();
   const t = useT();
+  const { locale, setLocale } = useLocale();
   const { theme, setTheme } = useTheme();
-  const [locale, setLocaleState] = useState<Locale>("en");
   const [templates, setTemplates] = useState<Template[]>([]);
   const [applying, setApplying] = useState<string | null>(null);
   const [health, setHealth] = useState<HealthStatus | null>(null);
@@ -100,7 +95,6 @@ export default function SettingsPage() {
   const [keyErrors, setKeyErrors] = useState<Record<string, string | null>>({});
 
   useEffect(() => {
-    setLocaleState(getLocale());
     void Promise.all([loadTemplates(), loadHealth(), loadRuntimeConfig()]);
   }, []);
 
@@ -141,18 +135,18 @@ export default function SettingsPage() {
   };
 
   const handleLocaleChange = (newLocale: Locale) => {
+    const message = newLocale === "zh" ? t("settings.languageChanged.zh") : t("settings.languageChanged.en");
     setLocale(newLocale);
-    setLocaleState(newLocale);
-    toast.success("Switched to English");
+    toast.success(message);
   };
 
   const handleApplyTemplate = async (templateId: string) => {
     setApplying(templateId);
     try {
       await applyTemplate(templateId);
-      toast.success("Template applied successfully");
+      toast.success(t("settings.templateApplied"));
     } catch {
-      toast.error("Failed to apply template");
+      toast.error(t("settings.templateApplyFailed"));
     } finally {
       setApplying(null);
     }
@@ -172,10 +166,10 @@ export default function SettingsPage() {
       });
       setRuntimeConfig(updated);
       setDraftKeys({});
-      toast.success("Saved local LLM configuration");
+      toast.success(t("settings.runtimeSaved"));
       await loadHealth();
     } catch (error) {
-      toast.error((error as Error).message || "Failed to save LLM configuration");
+      toast.error((error as Error).message || t("settings.runtimeSaveFailed"));
     } finally {
       setSavingRuntime(false);
     }
@@ -220,7 +214,6 @@ export default function SettingsPage() {
 
   const hasKeyErrors = Object.values(keyErrors).some((err) => err !== null);
   const statusMeta = health ? LLM_STATUS_META[health.llm_status] : null;
-  const StatusIcon = statusMeta?.icon;
   const providerStatus = useMemo(() => {
     const byProvider = new Map(runtimeConfig?.providers.map((item) => [item.provider, item]));
     return PROVIDERS.map((name) => ({
@@ -231,24 +224,27 @@ export default function SettingsPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      <header className="border-b px-6 py-3 flex items-center gap-3">
-        <Button variant="ghost" size="icon" onClick={() => router.push("/")}>
-          <ArrowLeft className="h-4 w-4" />
-        </Button>
-        <h1 className="text-lg font-semibold">{t("nav.settings")}</h1>
+      <header className="border-b border-border px-6 py-3 flex items-center gap-3">
+        <button
+          type="button"
+          onClick={() => router.push("/")}
+          className="text-sm text-muted-foreground hover:text-foreground"
+        >
+          &larr; {t("settings.back")}
+        </button>
+        <h1 className="text-lg font-semibold text-foreground">{t("nav.settings")}</h1>
       </header>
 
       <div className="max-w-4xl mx-auto p-6 space-y-8">
         <section data-testid="settings-llm-status">
           <div className="flex items-center gap-2 mb-3">
-            <Wrench className="h-4 w-4" />
-            <h2 className="font-medium">AI Runtime</h2>
+            <h2 className="font-medium text-foreground">{t("settings.runtime")}</h2>
             <Button variant="ghost" size="sm" className="ml-auto h-7 px-2" onClick={() => void loadHealth()} disabled={healthLoading}>
-              <RefreshCw className={`h-3.5 w-3.5 ${healthLoading ? "animate-spin" : ""}`} />
+              {healthLoading ? "..." : t("settings.refresh")}
             </Button>
           </div>
-          <div className="rounded-lg border p-4 space-y-3">
-            {health && statusMeta && StatusIcon ? (
+          <div className="rounded-lg border border-border p-4 space-y-3">
+            {health && statusMeta ? (
               <>
                 <div className="flex flex-wrap gap-2 text-xs">
                   <Badge variant="outline">
@@ -271,13 +267,12 @@ export default function SettingsPage() {
                   </Badge>
                 </div>
                 <div className="flex items-center gap-2">
-                  <StatusIcon className="h-4 w-4" />
-                  <span className="text-sm font-medium">{statusMeta.label}</span>
+                  <span className="text-sm font-medium text-foreground">{statusMeta.label}</span>
                   <Badge variant={statusMeta.badgeVariant}>{health.llm_status}</Badge>
                 </div>
                 <p className="text-sm text-muted-foreground">{statusMeta.description}</p>
                 {health.deployment_mode === "single_user" && (
-                  <div className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
+                  <div className="rounded-md border border-dashed border-border p-3 text-xs text-muted-foreground">
                     Single-user mode is active. The local owner account is automatically bound to requests until you enable auth and switch deployment mode.
                   </div>
                 )}
@@ -305,7 +300,7 @@ export default function SettingsPage() {
               </>
             ) : (
               <p className="text-sm text-muted-foreground">
-                Unable to load runtime health from the API server.
+                {t("settings.runtimeUnavailable")}
               </p>
             )}
           </div>
@@ -313,22 +308,21 @@ export default function SettingsPage() {
 
         <section data-testid="settings-api-keys">
           <div className="flex items-center gap-2 mb-3">
-            <Wrench className="h-4 w-4" />
-            <h2 className="font-medium">Provider Connections</h2>
+            <h2 className="font-medium text-foreground">{t("settings.provider")}</h2>
             <Button variant="ghost" size="sm" className="ml-auto h-7 px-2" onClick={() => void loadRuntimeConfig()} disabled={runtimeLoading}>
-              <RefreshCw className={`h-3.5 w-3.5 ${runtimeLoading ? "animate-spin" : ""}`} />
+              {runtimeLoading ? "..." : t("settings.refresh")}
             </Button>
           </div>
-          <div className="rounded-xl border p-4 space-y-4">
+          <div className="rounded-xl border border-border p-4 space-y-4">
             <p className="text-sm text-muted-foreground">
               Paste provider API keys here for local use. Keys are stored in <code>apps/api/.env</code> on this machine and the backend reloads the LLM registry after saving.
             </p>
             <div className="grid gap-4 md:grid-cols-[180px,1fr,auto] items-end">
               <label className="space-y-2 text-sm">
-                <span className="font-medium">Primary provider</span>
+                <span className="font-medium text-foreground">Primary provider</span>
                 <select
                   data-testid="settings-llm-provider"
-                  className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+                  className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground"
                   value={provider}
                   onChange={(e) => {
                     const nextProvider = e.target.value as ProviderName;
@@ -344,7 +338,7 @@ export default function SettingsPage() {
                 </select>
               </label>
               <label className="space-y-2 text-sm">
-                <span className="font-medium">Model</span>
+                <span className="font-medium text-foreground">Model</span>
                 <Input
                   data-testid="settings-llm-model"
                   value={model}
@@ -369,10 +363,10 @@ export default function SettingsPage() {
                 const testResult = testResults[name];
                 const requiresKey = status?.requires_key ?? PROVIDER_META[name].requiresKey;
                 return (
-                  <div key={name} className="rounded-lg border p-3 space-y-3" data-testid={`provider-card-${name}`}>
+                  <div key={name} className="rounded-lg border border-border p-3 space-y-3" data-testid={`provider-card-${name}`}>
                     <div className="flex items-center justify-between gap-2">
                       <div>
-                        <div className="text-sm font-medium capitalize">{name}</div>
+                        <div className="text-sm font-medium capitalize text-foreground">{name}</div>
                         <div className="text-xs text-muted-foreground">
                           {requiresKey
                             ? status?.has_key ? `Saved: ${status.masked_key}` : "No key saved"
@@ -402,17 +396,17 @@ export default function SettingsPage() {
                           <Button
                             type="button"
                             variant="outline"
-                            size="icon"
+                            size="sm"
                             onClick={() => setShowKeys((prev) => ({ ...prev, [name]: !prev[name] }))}
                             aria-label={`toggle-${name}-visibility`}
                           >
-                            {showing ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                            {showing ? "Hide" : "Show"}
                           </Button>
                         </div>
                         {keyErrors[name] && <p className="text-xs text-destructive mt-1">{keyErrors[name]}</p>}
                       </div>
                     ) : (
-                      <div className="rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">
+                      <div className="rounded-md border border-dashed border-border px-3 py-2 text-xs text-muted-foreground">
                         No API key is needed. Make sure the local backend for {name} is running, then save this provider as primary.
                       </div>
                     )}
@@ -455,8 +449,8 @@ export default function SettingsPage() {
                       </div>
                     </div>
                     {testResult && (
-                      <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs" data-testid={`provider-test-result-${name}`}>
-                        <div className="font-medium">
+                      <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-xs" data-testid={`provider-test-result-${name}`}>
+                        <div className="font-medium text-foreground">
                           {testResult.ok ? "Connection OK" : "Connection returned unexpected response"}
                         </div>
                         <div className="text-muted-foreground">
@@ -481,21 +475,15 @@ export default function SettingsPage() {
         </section>
 
         <section data-testid="settings-ollama-wizard">
-          <div className="flex items-center gap-2 mb-3">
-            <Wrench className="h-4 w-4" />
-            <h2 className="font-medium">Local AI (Ollama)</h2>
-          </div>
+          <h2 className="font-medium text-foreground mb-3">{t("settings.localAi")}</h2>
           <p className="text-sm text-muted-foreground mb-3">
-            Run AI completely free and offline with Ollama. Detect your local Ollama instance, pick a model, and switch in one click.
+            {t("settings.localAiDescription")}
           </p>
           <OllamaSetupWizard onComplete={() => { void loadHealth(); void loadRuntimeConfig(); }} />
         </section>
 
         <section>
-          <div className="flex items-center gap-2 mb-3">
-            <Globe className="h-4 w-4" />
-            <h2 className="font-medium">{t("pref.language")}</h2>
-          </div>
+          <h2 className="font-medium text-foreground mb-3">{t("pref.language")}</h2>
           <div className="flex gap-2">
             <Button variant={locale === "en" ? "default" : "outline"} size="sm" onClick={() => handleLocaleChange("en")}>
               English
@@ -507,48 +495,37 @@ export default function SettingsPage() {
         </section>
 
         <section>
-          <div className="flex items-center gap-2 mb-3">
-            <Palette className="h-4 w-4" />
-            <h2 className="font-medium">Appearance</h2>
-          </div>
+          <h2 className="font-medium text-foreground mb-3">{t("settings.theme")}</h2>
           <div className="flex gap-2">
             <Button variant={theme === "light" ? "default" : "outline"} size="sm" onClick={() => setTheme("light")}>
-              <Sun className="h-3.5 w-3.5 mr-1" />
-              Light
+              {t("settings.appearance.light")}
             </Button>
             <Button variant={theme === "dark" ? "default" : "outline"} size="sm" onClick={() => setTheme("dark")}>
-              <Moon className="h-3.5 w-3.5 mr-1" />
-              Dark
+              {t("settings.appearance.dark")}
             </Button>
             <Button variant={theme === "system" ? "default" : "outline"} size="sm" onClick={() => setTheme("system")}>
-              System
+              {t("settings.appearance.system")}
             </Button>
           </div>
         </section>
 
         <section data-testid="settings-notifications">
-          <div className="flex items-center gap-2 mb-3">
-            <Bell className="h-4 w-4" />
-            <h2 className="font-medium">Notifications</h2>
-          </div>
+          <h2 className="font-medium text-foreground mb-3">{t("settings.notifications")}</h2>
           <PushSubscriptionManager />
         </section>
 
         <section>
-          <div className="flex items-center gap-2 mb-3">
-            <Palette className="h-4 w-4" />
-            <h2 className="font-medium">Learning Templates</h2>
-          </div>
+          <h2 className="font-medium text-foreground mb-3">{t("settings.templates")}</h2>
           <p className="text-sm text-muted-foreground mb-4">
-            Apply a template to set your learning preferences. You can always customize later.
+            {t("settings.templatesDescription")}
           </p>
           <div className="grid gap-3">
             {templates.map((template) => (
-              <div key={template.id} className="border rounded-lg p-4 flex items-start justify-between">
+              <div key={template.id} className="border border-border rounded-lg p-4 flex items-start justify-between">
                 <div className="flex-1">
                   <div className="flex items-center gap-2 mb-1">
-                    <span className="font-medium text-sm">{template.name}</span>
-                    {template.is_builtin && <Badge variant="secondary" className="text-xs">Built-in</Badge>}
+                    <span className="font-medium text-sm text-foreground">{template.name}</span>
+                    {template.is_builtin && <Badge variant="secondary" className="text-xs">{t("settings.builtin")}</Badge>}
                   </div>
                   <p className="text-xs text-muted-foreground mb-2">{template.description}</p>
                   <div className="flex flex-wrap gap-1">
@@ -558,13 +535,13 @@ export default function SettingsPage() {
                   </div>
                 </div>
                 <Button size="sm" variant="outline" onClick={() => handleApplyTemplate(template.id)} disabled={applying === template.id}>
-                  {applying === template.id ? <RefreshCw className="h-3 w-3 animate-spin" /> : "Apply"}
+                  {applying === template.id ? t("settings.applying") : t("settings.apply")}
                 </Button>
               </div>
             ))}
             {templates.length === 0 && (
               <p className="text-sm text-muted-foreground py-4 text-center">
-                No templates available. They will be created on first server start.
+                {t("settings.templatesEmpty")}
               </p>
             )}
           </div>

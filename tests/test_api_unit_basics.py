@@ -69,6 +69,9 @@ def test_llm_router_raises_when_llm_required_without_provider(monkeypatch):
     monkeypatch.setattr(llm_router.settings, "openrouter_api_key", "", raising=False)
     monkeypatch.setattr(llm_router.settings, "gemini_api_key", "", raising=False)
     monkeypatch.setattr(llm_router.settings, "groq_api_key", "", raising=False)
+    monkeypatch.setattr(llm_router.settings, "llm_provider", "openai", raising=False)
+    monkeypatch.setattr(llm_router.settings, "custom_llm_base_url", "", raising=False)
+    monkeypatch.setattr(llm_router.settings, "use_litellm", False, raising=False)
     monkeypatch.setattr(llm_router.settings, "llm_required", True, raising=False)
     monkeypatch.setattr(llm_router, "_registry", None, raising=False)
 
@@ -239,6 +242,12 @@ def test_validate_url_allows_public_dns_resolution(monkeypatch):
     )
 
     assert _validate_url("https://example.com/notes") == "https://example.com/notes"
+
+
+def test_validate_url_allows_configured_scrape_fixture_host(monkeypatch):
+    monkeypatch.setattr("routers.upload.settings.scrape_fixture_dir", "/tmp/scrape-fixtures", raising=False)
+
+    assert _validate_url("https://opentutor-e2e.local/binary-search") == "https://opentutor-e2e.local/binary-search"
 
 
 @pytest.mark.asyncio

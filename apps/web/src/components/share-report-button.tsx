@@ -1,7 +1,6 @@
 "use client";
 
 import { type RefObject, useState } from "react";
-import { Check, Loader2, Share2 } from "lucide-react";
 import { toPng } from "html-to-image";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -43,20 +42,19 @@ export function ShareReportButton({ targetRef, compact }: ShareReportButtonProps
     }
   };
 
-  const Icon = busy ? Loader2 : done ? Check : Share2;
+  const label = busy ? "..." : done ? "\u2713" : "Share";
 
   return (
     <Button
       type="button"
       variant="ghost"
       size="sm"
-      className={compact ? "h-6 w-6 p-0" : "h-7 text-xs px-2"}
+      className={compact ? "h-6 w-auto px-1 text-xs" : "h-7 text-xs px-2"}
       onClick={() => void handleShare()}
       disabled={busy}
       title="Share report"
     >
-      <Icon className={`h-3.5 w-3.5 ${busy ? "animate-spin" : ""}`} />
-      {!compact && <span className="ml-1">Share</span>}
+      <span className={busy ? "animate-pulse" : ""}>{label}</span>
     </Button>
   );
 }

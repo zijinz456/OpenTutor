@@ -1,17 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import {
-  CheckCircle2,
-  Clock3,
-  FileClock,
-  PauseCircle,
-  RotateCcw,
-  ShieldCheck,
-  Square,
-  Workflow,
-  XCircle,
-} from "lucide-react";
 import { toast } from "sonner";
 import { ProvenanceBadges } from "@/components/provenance-badges";
 import { Badge } from "@/components/ui/badge";
@@ -200,7 +189,6 @@ function TaskReviewSummary({
             onClick={() => void queueFollowUpTask(task.id)}
             disabled={busyTaskId === `follow-up:${task.id}`}
           >
-            <Workflow className="mr-1 h-4 w-4" />
             {busyTaskId === `follow-up:${task.id}` ? "Queueing..." : (review.follow_up.label || "Queue follow-up")}
           </Button>
         </div>
@@ -235,7 +223,7 @@ function TaskCard({
         <div>
           <p className="text-sm font-medium">{task.title}</p>
           {task.summary && <p className="mt-1 text-xs text-muted-foreground whitespace-pre-wrap">{task.summary}</p>}
-          {task.error_message && <p className="mt-1 text-xs text-red-600 whitespace-pre-wrap">{task.error_message}</p>}
+          {task.error_message && <p className="mt-1 text-xs text-destructive whitespace-pre-wrap">{task.error_message}</p>}
           <ProvenanceBadges task={task} />
         </div>
         <Badge variant="outline">{formatLabel(task.status)}</Badge>
@@ -316,7 +304,7 @@ function TaskCard({
             onClick={() => void mutateTask(task.id, "approve")}
             disabled={busyTaskId === task.id}
           >
-            <CheckCircle2 className="mr-1 h-4 w-4" />
+            <span className="mr-1">{"\u2713"}</span>
             Approve
           </Button>
           <Button
@@ -326,7 +314,7 @@ function TaskCard({
             onClick={() => void mutateTask(task.id, "reject")}
             disabled={busyTaskId === task.id}
           >
-            <XCircle className="mr-1 h-4 w-4" />
+            <span className="mr-1">x</span>
             Reject
           </Button>
         </div>
@@ -341,7 +329,6 @@ function TaskCard({
             onClick={() => void mutateTask(task.id, "cancel")}
             disabled={busyTaskId === task.id}
           >
-            <Square className="mr-1 h-4 w-4" />
             Cancel
           </Button>
         </div>
@@ -350,7 +337,6 @@ function TaskCard({
       {task.status === "cancel_requested" && (
         <div className="mt-3">
           <Badge variant="outline">
-            <PauseCircle className="mr-1 h-3.5 w-3.5" />
             Cancelling after current step
           </Badge>
         </div>
@@ -364,7 +350,7 @@ function TaskCard({
             onClick={() => void mutateTask(task.id, "resume")}
             disabled={busyTaskId === task.id}
           >
-            <CheckCircle2 className="mr-1 h-4 w-4" />
+            <span className="mr-1">{"\u2713"}</span>
             Resume
           </Button>
           <Button
@@ -374,7 +360,6 @@ function TaskCard({
             onClick={() => void mutateTask(task.id, "retry")}
             disabled={busyTaskId === task.id}
           >
-            <RotateCcw className="mr-1 h-4 w-4" />
             Retry
           </Button>
         </div>
@@ -389,7 +374,6 @@ function TaskCard({
             onClick={() => void mutateTask(task.id, "retry")}
             disabled={busyTaskId === task.id}
           >
-            <RotateCcw className="mr-1 h-4 w-4" />
             Retry
           </Button>
         </div>
@@ -532,7 +516,6 @@ export function ActivityPanel({ courseId }: ActivityPanelProps) {
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2 text-sm">
-            <ShieldCheck className="h-4 w-4 text-primary" />
             Active Goal
           </CardTitle>
           <CardDescription>The durable objective the agent should optimize for.</CardDescription>
@@ -593,7 +576,7 @@ export function ActivityPanel({ courseId }: ActivityPanelProps) {
                   onClick={() => void mutateGoalStatus(activeGoal.id, "completed")}
                   disabled={busyTaskId === `goal:${activeGoal.id}:completed`}
                 >
-                  <CheckCircle2 className="mr-1 h-4 w-4" />
+                  <span className="mr-1">{"\u2713"}</span>
                   Complete
                 </Button>
                 <Button
@@ -603,7 +586,6 @@ export function ActivityPanel({ courseId }: ActivityPanelProps) {
                   onClick={() => void mutateGoalStatus(activeGoal.id, "paused")}
                   disabled={busyTaskId === `goal:${activeGoal.id}:paused`}
                 >
-                  <PauseCircle className="mr-1 h-4 w-4" />
                   Pause
                 </Button>
               </div>
@@ -633,7 +615,6 @@ export function ActivityPanel({ courseId }: ActivityPanelProps) {
                         onClick={() => void mutateGoalStatus(goal.id, "active")}
                         disabled={busyTaskId === `goal:${goal.id}:active`}
                       >
-                        <RotateCcw className="mr-1 h-4 w-4" />
                         Activate
                       </Button>
                     )}
@@ -645,7 +626,7 @@ export function ActivityPanel({ courseId }: ActivityPanelProps) {
                         onClick={() => void mutateGoalStatus(goal.id, "completed")}
                         disabled={busyTaskId === `goal:${goal.id}:completed`}
                       >
-                        <CheckCircle2 className="mr-1 h-4 w-4" />
+                        <span className="mr-1">{"\u2713"}</span>
                         Complete
                       </Button>
                     )}
@@ -674,7 +655,6 @@ export function ActivityPanel({ courseId }: ActivityPanelProps) {
                   onClick={() => void queueRecommendedTask()}
                   disabled={!nextAction.queue_ready || busyTaskId === "queue-next-action"}
                 >
-                  <Workflow className="mr-1 h-4 w-4" />
                   {busyTaskId === "queue-next-action" ? "Queueing..." : (nextAction.queue_label || "Queue task")}
                 </Button>
               </div>
@@ -686,7 +666,6 @@ export function ActivityPanel({ courseId }: ActivityPanelProps) {
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2 text-sm">
-            <ShieldCheck className="h-4 w-4 text-primary" />
             Waiting
           </CardTitle>
           <CardDescription>Queued work and approvals waiting for the next explicit step.</CardDescription>
@@ -698,7 +677,6 @@ export function ActivityPanel({ courseId }: ActivityPanelProps) {
               <p className="text-xs text-muted-foreground">Creates an approval-gated background task for this course.</p>
             </div>
             <Button size="sm" variant="outline" onClick={queueExamPlan} disabled={busyTaskId === "queue-exam-prep"}>
-              <ShieldCheck className="mr-1 h-4 w-4" />
               Queue
             </Button>
           </div>
@@ -731,7 +709,6 @@ export function ActivityPanel({ courseId }: ActivityPanelProps) {
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2 text-sm">
-            <Workflow className="h-4 w-4 text-primary" />
             Now
           </CardTitle>
           <CardDescription>Durable work the agent is actively executing, resuming, or winding down.</CardDescription>
@@ -753,7 +730,7 @@ export function ActivityPanel({ courseId }: ActivityPanelProps) {
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2 text-sm">
-            <CheckCircle2 className="h-4 w-4 text-primary" />
+            <span className="text-primary">{"\u2713"}</span>
             Recent Completed
           </CardTitle>
           <CardDescription>Recent task outcomes, including failures and recoverable cancellations.</CardDescription>
@@ -775,7 +752,6 @@ export function ActivityPanel({ courseId }: ActivityPanelProps) {
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2 text-sm">
-            <FileClock className="h-4 w-4 text-primary" />
             Ingestion Jobs
           </CardTitle>
           <CardDescription>Recent uploads and scraped material processing.</CardDescription>
@@ -791,7 +767,7 @@ export function ActivityPanel({ courseId }: ActivityPanelProps) {
                     {job.category || "uncategorized"} via {job.source_type}
                   </p>
                   {job.phase_label && <p className="mt-1 text-xs text-muted-foreground">{job.phase_label}</p>}
-                  {job.error_message && <p className="mt-1 text-xs text-red-600">{job.error_message}</p>}
+                  {job.error_message && <p className="mt-1 text-xs text-destructive">{job.error_message}</p>}
                 </div>
                 <Badge variant="outline">{formatLabel(job.status)}</Badge>
               </div>
@@ -809,7 +785,6 @@ export function ActivityPanel({ courseId }: ActivityPanelProps) {
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2 text-sm">
-            <Clock3 className="h-4 w-4 text-primary" />
             Recent Sessions
           </CardTitle>
           <CardDescription>Conversation context that can be restored from chat.</CardDescription>
@@ -836,7 +811,6 @@ export function ActivityPanel({ courseId }: ActivityPanelProps) {
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2 text-sm">
-            <ShieldCheck className="h-4 w-4 text-primary" />
             Preference Signals
           </CardTitle>
           <CardDescription>Why OpenTutor inferred or updated learning preferences.</CardDescription>

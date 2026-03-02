@@ -251,18 +251,169 @@ def _crawl_result_to_extraction(result, url: str, query: str | None = None) -> E
     )
 
 
+# ── Canvas API extraction (structured data via REST API) ──
+# Borrowed from learning-agent-extension: use Canvas REST API (/api/v1/)
+# to get structured data instead of scraping rendered HTML.
+
+
+async def _try_canvas_api(url: str) -> tuple[str, str] | None:
+    """Canvas REST API extraction — get structured course data.
+
+    When the URL points to a Canvas course page, calls Canvas REST API
+    endpoints to extract syllabus, pages, assignments etc. as clean text.
+    Requires session cookies (handled by httpx with browser cookie jar).
+
+    Ported from learning-agent-extension canvas.js API fetcher pattern.
+    """
+    try:
+        from services.scraper.canvas_detector import detect_canvas_url
+
+        canvas_info = detect_canvas_url(url)
+        if not canvas_info.is_canvas or not canvas_info.course_id:
+            return None
+
+        api_base = canvas_info.api_base
+        course_id = canvas_info.course_id
+
+        import httpx
+
+        # Try fetching course info via Canvas API (works if user has public API access)
+        async with httpx.AsyncClient(follow_redirects=True, timeout=15) as client:
+            parts: list[str] = []
+
+            # Course info + syllabus
+            try:
+                resp = await client.get(
+                    f"{api_base}/courses/{course_id}",
+                    params={"include[]": "syllabus_body"},
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    title = data.get("name", f"Course {course_id}")
+                    parts.append(f"# {title}\n")
+                    if data.get("syllabus_body"):
+                        from bs4 import BeautifulSoup
+                        soup = BeautifulSoup(data["syllabus_body"], "lxml")
+                        syllabus_text = soup.get_text(strip=True, separator="\n")
+                        if syllabus_text:
+                            parts.append(f"## Syllabus\n{syllabus_text}\n")
+                else:
+                    # API not accessible (auth required or disabled)
+                    return None
+            except Exception:
+                return None
+
+            # Modules with items
+            try:
+                resp = await client.get(
+                    f"{api_base}/courses/{course_id}/modules",
+                    params={"include[]": "items", "per_page": "100"},
+                )
+                if resp.status_code == 200:
+                    modules = resp.json()
+                    if modules:
+                        parts.append("## Modules\n")
+                        for mod in modules:
+                            parts.append(f"### {mod.get('name', 'Module')}")
+                            for item in mod.get("items", []):
+                                parts.append(f"- {item.get('title', 'Item')} ({item.get('type', '')})")
+                        parts.append("")
+            except Exception:
+                pass
+
+            # Assignments
+            try:
+                resp = await client.get(
+                    f"{api_base}/courses/{course_id}/assignments",
+                    params={"per_page": "100"},
+                )
+                if resp.status_code == 200:
+                    assignments = resp.json()
+                    if assignments:
+                        parts.append("## Assignments\n")
+                        for a in assignments:
+                            line = f"- **{a.get('name', 'Assignment')}**"
+                            if a.get("due_at"):
+                                line += f" (due: {a['due_at'][:10]})"
+                            if a.get("points_possible"):
+                                line += f" [{a['points_possible']} pts]"
+                            parts.append(line)
+                            # Include description text if available
+                            desc = a.get("description")
+                            if desc:
+                                from bs4 import BeautifulSoup
+                                soup = BeautifulSoup(desc, "lxml")
+                                desc_text = soup.get_text(strip=True, separator=" ")[:500]
+                                if desc_text:
+                                    parts.append(f"  {desc_text}")
+                        parts.append("")
+            except Exception:
+                pass
+
+            # Pages (list + front page)
+            try:
+                resp = await client.get(
+                    f"{api_base}/courses/{course_id}/pages",
+                    params={"per_page": "50"},
+                )
+                if resp.status_code == 200:
+                    pages = resp.json()
+                    if pages:
+                        parts.append("## Pages\n")
+                        for p in pages[:20]:  # Limit to first 20 pages
+                            slug = p.get("url", "")
+                            title_text = p.get("title", "Page")
+                            parts.append(f"### {title_text}")
+                            # Fetch individual page body
+                            try:
+                                page_resp = await client.get(
+                                    f"{api_base}/courses/{course_id}/pages/{slug}",
+                                )
+                                if page_resp.status_code == 200:
+                                    page_data = page_resp.json()
+                                    body = page_data.get("body")
+                                    if body:
+                                        from bs4 import BeautifulSoup
+                                        soup = BeautifulSoup(body, "lxml")
+                                        page_text = soup.get_text(strip=True, separator="\n")
+                                        if page_text:
+                                            parts.append(page_text[:2000])
+                            except Exception:
+                                pass
+                        parts.append("")
+            except Exception:
+                pass
+
+            content = "\n".join(parts)
+            if len(content) >= 100:
+                return title if "title" in dir() else canvas_info.friendly_name, content
+
+    except ImportError:
+        logger.debug("Canvas API extraction skipped: missing dependencies")
+    except Exception as e:
+        logger.debug("Canvas API extraction failed for %s: %s", url, e)
+
+    return None
+
+
 # ── Crawl4AI extraction (web + PDF + HTML) ──
 
 
 async def _extract_from_url(url: str, query: str | None = None) -> tuple[str, str]:
-    """URL extraction — Crawl4AI handles both web pages and PDF URLs.
+    """URL extraction — multi-layer cascade with Canvas API priority.
 
     Fallback cascade:
+    0. Canvas REST API (structured data, no HTML scraping needed)
     1. Crawl4AI (best quality — Markdown + media + metadata + BM25 filtering)
     2. httpx + clean_soup (GPT-Researcher pattern)
     3. trafilatura
     4. Playwright (existing cascade from automation.py)
     """
+    # Layer 0: Canvas REST API (structured data — bypasses HTML scraping)
+    result = await _try_canvas_api(url)
+    if result:
+        return result
+
     # Layer 1: Crawl4AI (with optional BM25 content filtering)
     result = await _try_crawl4ai_url(url, query=query)
     if result:

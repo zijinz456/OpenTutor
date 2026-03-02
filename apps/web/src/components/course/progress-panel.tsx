@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { Loader2, BookOpen, CheckCircle, Clock, Target } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { getCourseProgress, type CourseProgress } from "@/lib/api";
 import { useT } from "@/lib/i18n-context";
@@ -33,7 +32,7 @@ export function ProgressPanel({ courseId }: ProgressPanelProps) {
   if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center">
-        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        <span className="text-sm animate-pulse text-muted-foreground">...</span>
       </div>
     );
   }
@@ -42,7 +41,6 @@ export function ProgressPanel({ courseId }: ProgressPanelProps) {
     return (
       <div className="flex-1 flex items-center justify-center p-4 text-center">
         <div>
-          <BookOpen className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
           <p className="text-muted-foreground text-sm">
             Upload course materials to start tracking progress
           </p>
@@ -55,25 +53,25 @@ export function ProgressPanel({ courseId }: ProgressPanelProps) {
     {
       label: t("progress.mastered"),
       count: progress.mastered,
-      color: "bg-green-500",
+      color: "bg-success",
       percent: (progress.mastered / progress.total_nodes) * 100,
     },
     {
       label: t("progress.reviewed"),
       count: progress.reviewed,
-      color: "bg-blue-500",
+      color: "bg-brand",
       percent: (progress.reviewed / progress.total_nodes) * 100,
     },
     {
       label: t("progress.inProgress"),
       count: progress.in_progress,
-      color: "bg-yellow-500",
+      color: "bg-warning",
       percent: (progress.in_progress / progress.total_nodes) * 100,
     },
     {
       label: t("progress.notStarted"),
       count: progress.not_started,
-      color: "bg-gray-200 dark:bg-gray-700",
+      color: "bg-muted",
       percent: (progress.not_started / progress.total_nodes) * 100,
     },
   ];
@@ -92,7 +90,7 @@ export function ProgressPanel({ courseId }: ProgressPanelProps) {
         </div>
 
         {/* Progress bar */}
-        <div className="w-full h-3 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden flex">
+        <div className="w-full h-3 bg-muted rounded-full overflow-hidden flex">
           {segments.map(
             (seg) =>
               seg.percent > 0 && (
@@ -121,22 +119,18 @@ export function ProgressPanel({ courseId }: ProgressPanelProps) {
       {/* Stats grid */}
       <div className="grid grid-cols-2 gap-3">
         <StatCard
-          icon={<Clock className="h-4 w-4" />}
           label={t("progress.totalTime")}
           value={hours > 0 ? `${hours}h ${mins}m` : `${mins}m`}
         />
         <StatCard
-          icon={<Target className="h-4 w-4" />}
           label={t("progress.accuracy")}
           value={`${(progress.average_mastery * 100).toFixed(0)}%`}
         />
         <StatCard
-          icon={<BookOpen className="h-4 w-4" />}
           label="Topics"
           value={`${progress.total_nodes}`}
         />
         <StatCard
-          icon={<CheckCircle className="h-4 w-4" />}
           label={t("progress.mastered")}
           value={`${progress.mastered}`}
         />
@@ -162,18 +156,15 @@ export function ProgressPanel({ courseId }: ProgressPanelProps) {
 }
 
 function StatCard({
-  icon,
   label,
   value,
 }: {
-  icon: React.ReactNode;
   label: string;
   value: string;
 }) {
   return (
     <div className="p-3 rounded-lg border bg-card">
       <div className="flex items-center gap-2 text-muted-foreground mb-1">
-        {icon}
         <span className="text-xs">{label}</span>
       </div>
       <p className="text-lg font-semibold">{value}</p>

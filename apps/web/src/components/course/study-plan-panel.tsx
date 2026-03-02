@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { MarkdownRenderer } from "@/components/course/markdown-renderer";
-import { CalendarDays, Download, Loader2, ShieldCheck, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -93,18 +92,15 @@ export function StudyPlanPanel({ courseId }: StudyPlanPanelProps) {
   return (
     <div className="flex-1 flex flex-col overflow-hidden" data-testid="study-plan-panel">
       <div className="px-3 py-2 border-b flex items-center gap-2 text-xs text-muted-foreground">
-        <CalendarDays className="h-4 w-4" />
         <span>Exam prep plan</span>
         <div className="ml-auto flex items-center gap-2">
           {planMarkdown && latestBatch?.is_active && (
             <Button size="sm" variant="outline" onClick={() => handleSave(latestBatch.batch_id)} disabled={saving || loading}>
-              <Download className="h-4 w-4 mr-1" />
               Replace Latest
             </Button>
           )}
           {planMarkdown && (
             <Button size="sm" variant="outline" onClick={() => handleSave()} disabled={saving || loading}>
-              <Download className="h-4 w-4 mr-1" />
               Save New
             </Button>
           )}
@@ -117,11 +113,11 @@ export function StudyPlanPanel({ courseId }: StudyPlanPanelProps) {
             placeholder="days"
           />
           <Button size="sm" variant="outline" onClick={handleQueue} disabled={queueing || loading}>
-            {queueing ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <ShieldCheck className="h-4 w-4 mr-1" />}
+            {queueing ? <span className="mr-1 animate-pulse">...</span> : null}
             Queue
           </Button>
           <Button data-testid="study-plan-generate" size="sm" onClick={handleGenerate} disabled={loading}>
-            {loading ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Sparkles className="h-4 w-4 mr-1" />}
+            {loading ? <span className="mr-1 animate-pulse">...</span> : null}
             Generate
           </Button>
         </div>
@@ -137,7 +133,7 @@ export function StudyPlanPanel({ courseId }: StudyPlanPanelProps) {
             <div>
               <p className="text-sm text-muted-foreground mb-3">Generate a focused exam prep plan for this course</p>
               <Button size="sm" variant="outline" onClick={handleGenerate} disabled={loading}>
-                {loading ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Sparkles className="h-4 w-4 mr-1" />}
+                {loading ? <span className="mr-1 animate-pulse">...</span> : null}
                 Create Plan
               </Button>
             </div>

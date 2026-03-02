@@ -13,6 +13,11 @@ import {
 
 const FALLBACK_RE = /No LLM API key configured|local fallback response/i;
 
+function supportsLongFormValidation(llm: ReturnType<typeof getRealLlmProvider>): boolean {
+  if (!llm) return false;
+  return llm.requiresKey || llm.provider === "lmstudio";
+}
+
 test.describe.serial("Real LLM browser flows @llm", () => {
   test.skip(!hasRealLlmEnv(), "Requires a real LLM provider");
 
@@ -60,7 +65,7 @@ test.describe.serial("Real LLM browser flows @llm", () => {
     if (!llm) {
       throw new Error("No real LLM provider found in environment");
     }
-    test.skip(!llm.requiresKey, "Long-form notes generation validation requires a higher-capacity provider");
+    test.skip(!supportsLongFormValidation(llm), "Long-form notes generation validation requires a higher-capacity provider");
 
     await createCourseWithContent(page, "LLM Browser Notes");
     await page.getByTestId("notes-generate").click();
@@ -73,7 +78,7 @@ test.describe.serial("Real LLM browser flows @llm", () => {
     if (!llm) {
       throw new Error("No real LLM provider found in environment");
     }
-    test.skip(!llm.requiresKey, "Long-form study-plan validation requires a higher-capacity provider");
+    test.skip(!supportsLongFormValidation(llm), "Long-form study-plan validation requires a higher-capacity provider");
 
     await createCourseWithContent(page, "LLM Browser Plan");
     await switchScene(page, "exam_prep");
@@ -87,7 +92,7 @@ test.describe.serial("Real LLM browser flows @llm", () => {
     if (!llm) {
       throw new Error("No real LLM provider found in environment");
     }
-    test.skip(!llm.requiresKey, "Structured quiz-save validation requires a higher-capacity provider");
+    test.skip(!supportsLongFormValidation(llm), "Structured quiz-save validation requires a higher-capacity provider");
 
     await createCourseWithContent(page, "LLM Browser Exercise");
     await sendChatMessage(

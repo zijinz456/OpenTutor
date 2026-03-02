@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, BookOpen, BrainCircuit, Clock, Loader2, RefreshCw, Target } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -31,13 +30,19 @@ import {
 import { ShareReportButton } from "@/components/share-report-button";
 
 const GAP_COLORS: Record<string, string> = {
-  fundamental_gap: "#ef4444",
-  transfer_gap: "#f59e0b",
-  trap_vulnerability: "#8b5cf6",
-  mastered: "#22c55e",
+  fundamental_gap: "var(--color-destructive, #ef4444)",
+  transfer_gap: "var(--color-warning, #f59e0b)",
+  trap_vulnerability: "var(--color-brand, #8b5cf6)",
+  mastered: "var(--color-success, #22c55e)",
 };
 
-const ERROR_COLORS = ["#ef4444", "#f59e0b", "#3b82f6", "#8b5cf6", "#6b7280"];
+const ERROR_COLORS = [
+  "var(--color-destructive, #ef4444)",
+  "var(--color-warning, #f59e0b)",
+  "var(--color-info, #3b82f6)",
+  "var(--color-brand, #8b5cf6)",
+  "var(--color-muted-foreground, #6b7280)",
+];
 
 export default function AnalyticsPage() {
   const router = useRouter();
@@ -91,7 +96,7 @@ export default function AnalyticsPage() {
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
-        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        <span className="text-muted-foreground animate-pulse">Loading...</span>
       </div>
     );
   }
@@ -102,14 +107,12 @@ export default function AnalyticsPage() {
   const totalMinutes = overview?.total_study_minutes ?? 0;
   const trendData = trends?.trend ?? [];
 
-  // Pie chart data for gap types
   const gapPieData = gapEntries.map(([name, value]) => ({
     name: name.replaceAll("_", " "),
     value,
-    color: GAP_COLORS[name] || "#6b7280",
+    color: GAP_COLORS[name] || "var(--color-muted-foreground, #6b7280)",
   }));
 
-  // Pie chart data for error categories
   const errorPieData = errorEntries.map(([name, value], i) => ({
     name: name.replaceAll("_", " "),
     value,
@@ -118,11 +121,16 @@ export default function AnalyticsPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      <header className="border-b px-6 py-3 flex items-center gap-3">
-        <Button variant="ghost" size="icon" onClick={() => router.push("/")} title="Back to dashboard">
-          <ArrowLeft className="h-4 w-4" />
-        </Button>
-        <h1 className="text-lg font-semibold">Learning Analytics</h1>
+      <header className="border-b border-border px-6 py-3 flex items-center gap-3">
+        <button
+          type="button"
+          onClick={() => router.push("/")}
+          className="text-sm text-muted-foreground hover:text-foreground"
+          title="Back to dashboard"
+        >
+          &larr; Back
+        </button>
+        <h1 className="text-lg font-semibold text-foreground">Learning Analytics</h1>
         <div className="ml-auto">
           <ShareReportButton targetRef={statsRef} />
         </div>
@@ -132,22 +140,18 @@ export default function AnalyticsPage() {
         {/* Key Metrics */}
         <div className="grid md:grid-cols-4 gap-4">
           <MetricCard
-            icon={<BookOpen className="h-4 w-4" />}
             label="Courses"
             value={String(overview?.total_courses ?? 0)}
           />
           <MetricCard
-            icon={<Target className="h-4 w-4" />}
             label="Average Mastery"
             value={`${((overview?.average_mastery ?? 0) * 100).toFixed(0)}%`}
           />
           <MetricCard
-            icon={<Clock className="h-4 w-4" />}
             label="Study Time"
             value={totalMinutes >= 60 ? `${Math.floor(totalMinutes / 60)}h ${totalMinutes % 60}m` : `${totalMinutes}m`}
           />
           <MetricCard
-            icon={<BrainCircuit className="h-4 w-4" />}
             label="Quiz Questions"
             value={String(trendData.reduce((sum, d) => sum + d.quiz_total, 0))}
           />
@@ -156,8 +160,8 @@ export default function AnalyticsPage() {
         {/* Charts Row */}
         <div className="grid lg:grid-cols-2 gap-6">
           {/* Study Activity Area Chart */}
-          <section className="rounded-xl border bg-card p-4">
-            <h2 className="font-medium mb-4">Daily Study Time (last 30 days)</h2>
+          <section className="rounded-xl border border-border bg-card p-4">
+            <h2 className="font-medium mb-4 text-foreground">Daily Study Time (last 30 days)</h2>
             <div className="h-64">
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={trendData}>
@@ -186,8 +190,8 @@ export default function AnalyticsPage() {
           </section>
 
           {/* Quiz Accuracy Bar Chart */}
-          <section className="rounded-xl border bg-card p-4">
-            <h2 className="font-medium mb-4">Quiz Activity (last 30 days)</h2>
+          <section className="rounded-xl border border-border bg-card p-4">
+            <h2 className="font-medium mb-4 text-foreground">Quiz Activity (last 30 days)</h2>
             <div className="h-64">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={trendData}>
@@ -205,8 +209,8 @@ export default function AnalyticsPage() {
                       name === "quiz_correct" ? "Correct" : "Total",
                     ]}
                   />
-                  <Bar dataKey="quiz_total" fill="#94a3b8" name="quiz_total" radius={[2, 2, 0, 0]} />
-                  <Bar dataKey="quiz_correct" fill="#22c55e" name="quiz_correct" radius={[2, 2, 0, 0]} />
+                  <Bar dataKey="quiz_total" fill="var(--color-muted-foreground, #94a3b8)" name="quiz_total" radius={[2, 2, 0, 0]} />
+                  <Bar dataKey="quiz_correct" fill="var(--color-success, #22c55e)" name="quiz_correct" radius={[2, 2, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -216,8 +220,8 @@ export default function AnalyticsPage() {
         {/* Pie Charts Row */}
         <div className="grid lg:grid-cols-2 gap-6">
           {/* Gap Type Distribution */}
-          <section className="rounded-xl border bg-card p-4">
-            <h2 className="font-medium mb-4">Knowledge Gap Distribution</h2>
+          <section className="rounded-xl border border-border bg-card p-4">
+            <h2 className="font-medium mb-4 text-foreground">Knowledge Gap Distribution</h2>
             {gapPieData.length > 0 ? (
               <div className="h-56">
                 <ResponsiveContainer width="100%" height="100%">
@@ -248,8 +252,8 @@ export default function AnalyticsPage() {
           </section>
 
           {/* Error Category Distribution */}
-          <section className="rounded-xl border bg-card p-4">
-            <h2 className="font-medium mb-4">Error Category Breakdown</h2>
+          <section className="rounded-xl border border-border bg-card p-4">
+            <h2 className="font-medium mb-4 text-foreground">Error Category Breakdown</h2>
             {errorPieData.length > 0 ? (
               <div className="h-56">
                 <ResponsiveContainer width="100%" height="100%">
@@ -280,8 +284,8 @@ export default function AnalyticsPage() {
           </section>
         </div>
 
-        <section className="rounded-xl border bg-card p-4">
-          <h2 className="font-medium mb-4">Diagnosed Patterns</h2>
+        <section className="rounded-xl border border-border bg-card p-4">
+          <h2 className="font-medium mb-4 text-foreground">Diagnosed Patterns</h2>
           <div className="flex flex-wrap gap-2" data-testid="analytics-breakdown-diagnoses">
             {diagnosisEntries.length > 0 ? (
               diagnosisEntries.map(([name, count]) => (
@@ -297,34 +301,33 @@ export default function AnalyticsPage() {
 
         {/* Memory Health */}
         {memStats && memStats.total > 0 && (
-          <section className="rounded-xl border bg-card p-4">
+          <section className="rounded-xl border border-border bg-card p-4">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="font-medium">Memory Health</h2>
+              <h2 className="font-medium text-foreground">Memory Health</h2>
               <Button
                 variant="outline"
                 size="sm"
                 onClick={handleConsolidate}
                 disabled={consolidating}
               >
-                {consolidating ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <RefreshCw className="h-3 w-3 mr-1" />}
-                Consolidate
+                {consolidating ? "Consolidating..." : "Consolidate"}
               </Button>
             </div>
             <div className="grid sm:grid-cols-4 gap-4">
               <div className="text-center">
-                <div className="text-2xl font-semibold">{memStats.total}</div>
+                <div className="text-2xl font-semibold text-foreground">{memStats.total}</div>
                 <div className="text-xs text-muted-foreground">Total Memories</div>
               </div>
               <div className="text-center">
-                <div className="text-2xl font-semibold">{(memStats.avg_importance * 100).toFixed(0)}%</div>
+                <div className="text-2xl font-semibold text-foreground">{(memStats.avg_importance * 100).toFixed(0)}%</div>
                 <div className="text-xs text-muted-foreground">Avg Importance</div>
               </div>
               <div className="text-center">
-                <div className="text-2xl font-semibold">{memStats.merged_count}</div>
+                <div className="text-2xl font-semibold text-foreground">{memStats.merged_count}</div>
                 <div className="text-xs text-muted-foreground">Merged</div>
               </div>
               <div className="text-center">
-                <div className="text-2xl font-semibold">{memStats.uncategorized}</div>
+                <div className="text-2xl font-semibold text-foreground">{memStats.uncategorized}</div>
                 <div className="text-xs text-muted-foreground">Uncategorized</div>
               </div>
             </div>
@@ -341,11 +344,11 @@ export default function AnalyticsPage() {
         )}
 
         {/* Course Summaries */}
-        <section className="rounded-xl border bg-card" data-testid="analytics-course-summaries">
-          <div className="px-4 py-3 border-b">
-            <h2 className="font-medium">Course Summaries</h2>
+        <section className="rounded-xl border border-border bg-card" data-testid="analytics-course-summaries">
+          <div className="px-4 py-3 border-b border-border">
+            <h2 className="font-medium text-foreground">Course Summaries</h2>
           </div>
-          <div className="divide-y">
+          <div className="divide-y divide-border">
             {(overview?.course_summaries ?? []).map((course) => (
               <div
                 key={course.course_id}
@@ -353,7 +356,7 @@ export default function AnalyticsPage() {
                 data-testid={`analytics-course-${course.course_id}`}
               >
                 <div>
-                  <h3 className="font-medium">{course.course_name}</h3>
+                  <h3 className="font-medium text-foreground">{course.course_name}</h3>
                   <p className="text-sm text-muted-foreground">
                     Mastery {(course.average_mastery * 100).toFixed(0)}% · Study {course.study_minutes}m · Wrong answers {course.wrong_answers}
                   </p>
@@ -382,14 +385,11 @@ export default function AnalyticsPage() {
   );
 }
 
-function MetricCard({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
+function MetricCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-xl border bg-card p-4" data-testid={`analytics-metric-${label.toLowerCase().replace(/\s+/g, "-")}`}>
-      <div className="flex items-center gap-2 text-muted-foreground text-sm mb-2">
-        {icon}
-        <span>{label}</span>
-      </div>
-      <div className="text-2xl font-semibold">{value}</div>
+    <div className="rounded-xl border border-border bg-card p-4" data-testid={`analytics-metric-${label.toLowerCase().replace(/\s+/g, "-")}`}>
+      <div className="text-sm text-muted-foreground mb-2">{label}</div>
+      <div className="text-2xl font-semibold text-foreground">{value}</div>
     </div>
   );
 }

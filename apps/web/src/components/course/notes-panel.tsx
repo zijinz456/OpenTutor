@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
-import { ChevronRight, ChevronDown, Download, List, Loader2, Sparkles } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { MarkdownRenderer } from "@/components/course/markdown-renderer";
@@ -86,11 +85,7 @@ function TocItem({
         }}
       >
         {hasChildren ? (
-          expanded ? (
-            <ChevronDown className="h-3 w-3 shrink-0" />
-          ) : (
-            <ChevronRight className="h-3 w-3 shrink-0" />
-          )
+          <span className="w-3 shrink-0 text-[10px] leading-none">{expanded ? "\u25BC" : "\u25B6"}</span>
         ) : (
           <span className="w-3 shrink-0" />
         )}
@@ -286,7 +281,6 @@ export function NotesPanel({ courseId, contentTree }: NotesPanelProps) {
             className="h-6 px-2"
             onClick={() => setShowToc(!showToc)}
           >
-            <List className="h-3 w-3 mr-1" />
             <span className="text-xs">{showToc ? "Hide" : "Show"} TOC</span>
           </Button>
           <div className="ml-auto flex items-center gap-2">
@@ -297,18 +291,16 @@ export function NotesPanel({ courseId, contentTree }: NotesPanelProps) {
             )}
             {draft && latestBatch?.is_active && (
               <Button size="sm" variant="outline" className="h-6 px-2 text-xs" onClick={() => handleSave(latestBatch.batch_id)} disabled={saving || generating}>
-                <Download className="h-3 w-3 mr-1" />
                 Replace Latest
               </Button>
             )}
             {draft && (
               <Button size="sm" variant="outline" className="h-6 px-2 text-xs" onClick={() => handleSave()} disabled={saving || generating}>
-                <Download className="h-3 w-3 mr-1" />
                 Save New
               </Button>
             )}
             <Button data-testid="notes-generate" size="sm" className="h-6 px-2 text-xs" onClick={() => void handleGenerate()} disabled={generating || saving || !selectedNode}>
-              {generating ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Sparkles className="h-3 w-3 mr-1" />}
+              {generating ? <span className="animate-pulse mr-1">...</span> : null}
               {t("notes.regenerate")}
             </Button>
           </div>

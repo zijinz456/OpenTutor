@@ -21,23 +21,20 @@ test.describe("Step 1: Mode Selection", () => {
   });
 
   test("Both mode is selected by default", async ({ page }) => {
-    // "Both" card should have the selected border style (border-indigo-600)
     const bothCard = page.getByTestId("mode-option-both");
-    await expect(bothCard).toHaveClass(/border-indigo-600/);
+    await expect(bothCard).toHaveAttribute("data-selected", "true");
 
-    // Other cards should NOT have the selected style
     const uploadCard = page.getByTestId("mode-option-upload");
-    await expect(uploadCard).not.toHaveClass(/border-indigo-600/);
+    await expect(uploadCard).toHaveAttribute("data-selected", "false");
   });
 
   test("clicking Upload mode selects it", async ({ page }) => {
     await page.getByTestId("mode-option-upload").click();
     const uploadCard = page.getByTestId("mode-option-upload");
-    await expect(uploadCard).toHaveClass(/border-indigo-600/);
+    await expect(uploadCard).toHaveAttribute("data-selected", "true");
 
-    // "Both" should no longer be selected
     const bothCard = page.getByTestId("mode-option-both");
-    await expect(bothCard).not.toHaveClass(/border-indigo-600/);
+    await expect(bothCard).toHaveAttribute("data-selected", "false");
   });
 
   test("Continue button navigates to upload step", async ({ page }) => {
@@ -236,7 +233,32 @@ test.describe("Full wizard flow", () => {
     await expect(page.getByText(projectName, { exact: true }).first()).toBeVisible();
   });
 
-  test("feature toggles persist to localStorage", async ({ page }) => {
+  test("feature toggles persist to course metadata", async ({ page }) => {
+    let patchedMetadata: Record<string, unknown> | null = null;
+    await page.route("**/api/courses/*", async (route) => {
+      const request = route.request();
+      if (request.method() !== "PATCH") {
+        await route.continue();
+        return;
+      }
+
+      const payload = JSON.parse(request.postData() || "{}") as { metadata?: Record<string, unknown> };
+      patchedMetadata = payload.metadata ?? null;
+      const courseId = request.url().split("/").pop() || "test-course";
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          id: courseId,
+          name: "LocalStorage Features Test",
+          description: null,
+          metadata: payload.metadata ?? null,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }),
+      });
+    });
+
     await page.goto("/new");
     await page.getByTestId("mode-option-upload").click();
     await page.getByTestId("mode-continue").click();
@@ -246,7 +268,8 @@ test.describe("Full wizard flow", () => {
     await page.getByTestId("continue-to-features").click();
 
     // Toggle "Practice Mode" off by clicking its card
-    await page.getByText("Practice Mode").click();
+    const practiceCard = page.getByRole("button", { name: /Practice Mode/ });
+    await practiceCard.click();
 
     // Enter workspace
     await page.getByTestId("enter-workspace").click();
@@ -257,19 +280,16 @@ test.describe("Full wizard flow", () => {
     const courseId = url.match(/\/course\/([^/?#]+)/)?.[1];
     expect(courseId).toBeTruthy();
 
-    // Verify localStorage has the feature preferences
-    const storedFeatures = await page.evaluate((cid) => {
-      return localStorage.getItem(`course_features_${cid}`);
-    }, courseId);
-
-    expect(storedFeatures).toBeTruthy();
-    const parsed = JSON.parse(storedFeatures!);
-    expect(parsed.practice).toBe(false);
-    expect(parsed.notes).toBe(true);
-    expect(parsed.free_qa).toBe(true);
+    expect(patchedMetadata).toMatchObject({
+      workspace_features: {
+        practice: false,
+        notes: true,
+        free_qa: true,
+      },
+    });
   });
 
-  test("NL instruction persists to localStorage", async ({ page }) => {
+  test("NL instruction is handed off to the workspace", async ({ page }) => {
     const instruction = "Focus on sorting algorithms please";
     await page.goto("/new");
     await page.getByTestId("mode-option-upload").click();
@@ -292,11 +312,9 @@ test.describe("Full wizard flow", () => {
     const courseId = url.match(/\/course\/([^/?#]+)/)?.[1];
     expect(courseId).toBeTruthy();
 
-    // Verify the NL instruction was stored
-    const storedPrompt = await page.evaluate((cid) => {
-      return localStorage.getItem(`course_init_prompt_${cid}`);
+    const consumedPrompt = await page.evaluate((cid) => {
+      return sessionStorage.getItem(`course_init_prompt_consumed_${cid}`);
     }, courseId);
-
-    expect(storedPrompt).toBe(instruction);
+    expect(consumedPrompt).toBe("true");
   });
 });

@@ -434,6 +434,20 @@ export async function createCourse(
   });
 }
 
+export async function updateCourse(
+  courseId: string,
+  payload: {
+    name?: string;
+    description?: string;
+    metadata?: CourseMetadata;
+  },
+): Promise<Course> {
+  return request(`/courses/${courseId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function deleteCourse(id: string): Promise<void> {
   await request<void>(`/courses/${id}`, { method: "DELETE" });
 }
@@ -577,14 +591,12 @@ export async function listAuthSessions(): Promise<AuthSessionSummary[]> {
   return request("/scrape/auth/sessions");
 }
 
-export async function canvasLogin(
+export async function canvasBrowserLogin(
   canvasUrl: string,
-  username: string,
-  password: string,
 ): Promise<{ status: string; message: string }> {
-  return request("/canvas/login", {
+  return request("/canvas/browser-login", {
     method: "POST",
-    body: JSON.stringify({ canvas_url: canvasUrl, username, password }),
+    body: JSON.stringify({ canvas_url: canvasUrl, timeout_seconds: 300 }),
   });
 }
 
@@ -1375,7 +1387,7 @@ export interface Flashcard {
 
 export async function generateFlashcards(
   courseId: string,
-  count: number = 10,
+  count: number = 5,
 ): Promise<FlashcardGenerationResult> {
   return request("/flashcards/generate", {
     method: "POST",

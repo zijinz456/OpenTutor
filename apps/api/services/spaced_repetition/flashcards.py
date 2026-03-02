@@ -45,7 +45,7 @@ async def generate_flashcards(
     db: AsyncSession,
     course_id: uuid.UUID,
     content_node_id: uuid.UUID | None = None,
-    count: int = 10,
+    count: int = 5,
 ) -> list[dict]:
     """Generate flashcards from course content using LLM.
 
@@ -98,8 +98,19 @@ async def generate_flashcards(
         if not isinstance(flashcards, list):
             flashcards = []
     except json.JSONDecodeError:
-        logger.warning("Failed to parse flashcard JSON, returning empty")
-        flashcards = []
+        start = text.find("[")
+        end = text.rfind("]") + 1
+        if start >= 0 and end > start:
+            try:
+                flashcards = json.loads(text[start:end])
+                if not isinstance(flashcards, list):
+                    flashcards = []
+            except json.JSONDecodeError:
+                logger.warning("Failed to parse flashcard JSON, returning empty")
+                flashcards = []
+        else:
+            logger.warning("Failed to parse flashcard JSON, returning empty")
+            flashcards = []
 
     # Add metadata
     for i, card in enumerate(flashcards):

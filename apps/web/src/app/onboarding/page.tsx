@@ -1,86 +1,149 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, ArrowRight, ArrowLeft, Brain, SkipForward } from "lucide-react";
 import { setPreference } from "@/lib/api";
 import { toast } from "sonner";
-import { useT } from "@/lib/i18n-context";
+import { useLocale, useT } from "@/lib/i18n-context";
 
-const STEPS = [
-  {
-    title: "What language do you prefer?",
-    subtitle: "Choose the primary language for Agent's responses and generated notes.",
-    dimension: "language",
-    options: [
-      { value: "en", label: "English", description: "All content in English" },
-      { value: "zh", label: "\u4e2d\u6587 (Chinese)", description: "\u4f7f\u7528\u4e2d\u6587\u56de\u7b54\u548c\u751f\u6210\u7b14\u8bb0" },
-      { value: "auto", label: "Bilingual / Mixed", description: "Use the same language as the source material" },
-    ],
-  },
-  {
-    title: "How do you prefer to learn?",
-    subtitle: "Choose a learning style that suits you best. This helps Agent adapt its teaching approach.",
-    dimension: "learning_mode",
-    options: [
-      { value: "concept_first", label: "Concept First", description: "Understand theory before practice. Best for building deep understanding." },
-      { value: "practice_first", label: "Practice First", description: "Jump into exercises, learn by doing. Review theory as needed." },
-      { value: "balanced", label: "Balanced Mix", description: "Alternate between concepts and practice for a well-rounded experience." },
-    ],
-  },
-  {
-    title: "How detailed should notes be?",
-    subtitle: "Choose the level of detail for generated notes and explanations.",
-    dimension: "detail_level",
-    options: [
-      { value: "concise", label: "Concise", description: "Key points only. Bullet points and short summaries." },
-      { value: "balanced", label: "Moderate", description: "Balanced depth with explanations where needed." },
-      { value: "detailed", label: "Detailed", description: "In-depth explanations with examples and analogies." },
-    ],
-  },
-  {
-    title: "Choose your workspace layout",
-    subtitle: "Pick a default layout for your learning workspace. You can change this anytime.",
-    dimension: "layout_preset",
-    type: "layout" as const,
-    options: [
-      { value: "balanced", label: "Split + Chat", description: "PDF & Notes side by side with chat panel" },
-      { value: "notesFocused", label: "Focus Mode", description: "Full-width single panel, distraction-free" },
-      { value: "chatFocused", label: "Triple Panel", description: "PDF, Notes, and Chat all visible" },
-    ],
-  },
-  {
-    title: "You're all set!",
-    subtitle: "You can upload example notes or materials later from within any course. Click \"Finish Setup\" to start learning.",
-    dimension: "example_style",
-    type: "upload" as const,
-    options: [],
-  },
-];
+interface OnboardingOption {
+  value: string;
+  label: string;
+  description: string;
+}
+
+interface OnboardingStep {
+  title: string;
+  subtitle: string;
+  dimension: string;
+  type?: "layout" | "upload";
+  options: OnboardingOption[];
+}
+
+function getSummaryLabel(dimension: string, t: (key: string) => string) {
+  if (dimension === "language") return t("onboarding.summary.language");
+  if (dimension === "learning_mode") return t("onboarding.summary.learningMode");
+  if (dimension === "detail_level") return t("onboarding.summary.detailLevel");
+  if (dimension === "layout_preset") return t("onboarding.summary.layoutPreset");
+  return dimension.replace(/_/g, " ");
+}
 
 export default function OnboardingPage() {
   const router = useRouter();
   const t = useT();
+  const { setLocale } = useLocale();
   const [currentStep, setCurrentStep] = useState(0);
   const [selections, setSelections] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
 
-  const step = STEPS[currentStep];
+  const steps = useMemo<OnboardingStep[]>(
+    () => [
+      {
+        title: t("onboarding.language.title"),
+        subtitle: t("onboarding.language.subtitle"),
+        dimension: "language",
+        options: [
+          { value: "en", label: "English", description: t("onboarding.language.enDescription") },
+          { value: "zh", label: "中文 (Chinese)", description: t("onboarding.language.zhDescription") },
+          { value: "auto", label: t("lang.bilingual"), description: t("onboarding.language.autoDescription") },
+        ],
+      },
+      {
+        title: t("onboarding.learningMode.title"),
+        subtitle: t("onboarding.learningMode.subtitle"),
+        dimension: "learning_mode",
+        options: [
+          {
+            value: "concept_first",
+            label: t("onboarding.learningMode.conceptFirst"),
+            description: t("onboarding.learningMode.conceptFirstDescription"),
+          },
+          {
+            value: "practice_first",
+            label: t("onboarding.learningMode.practiceFirst"),
+            description: t("onboarding.learningMode.practiceFirstDescription"),
+          },
+          {
+            value: "balanced",
+            label: t("onboarding.learningMode.balanced"),
+            description: t("onboarding.learningMode.balancedDescription"),
+          },
+        ],
+      },
+      {
+        title: t("onboarding.detailLevel.title"),
+        subtitle: t("onboarding.detailLevel.subtitle"),
+        dimension: "detail_level",
+        options: [
+          {
+            value: "concise",
+            label: t("onboarding.detailLevel.concise"),
+            description: t("onboarding.detailLevel.conciseDescription"),
+          },
+          {
+            value: "balanced",
+            label: t("onboarding.detailLevel.balanced"),
+            description: t("onboarding.detailLevel.balancedDescription"),
+          },
+          {
+            value: "detailed",
+            label: t("onboarding.detailLevel.detailed"),
+            description: t("onboarding.detailLevel.detailedDescription"),
+          },
+        ],
+      },
+      {
+        title: t("onboarding.layout.title"),
+        subtitle: t("onboarding.layout.subtitle"),
+        dimension: "layout_preset",
+        type: "layout",
+        options: [
+          {
+            value: "balanced",
+            label: t("onboarding.layout.balanced"),
+            description: t("onboarding.layout.balancedDescription"),
+          },
+          {
+            value: "notesFocused",
+            label: t("onboarding.layout.notesFocused"),
+            description: t("onboarding.layout.notesFocusedDescription"),
+          },
+          {
+            value: "chatFocused",
+            label: t("onboarding.layout.chatFocused"),
+            description: t("onboarding.layout.chatFocusedDescription"),
+          },
+        ],
+      },
+      {
+        title: t("onboarding.finish.title"),
+        subtitle: t("onboarding.finish.subtitle"),
+        dimension: "example_style",
+        type: "upload",
+        options: [],
+      },
+    ],
+    [t],
+  );
+
+  const optionLabels = useMemo(
+    () =>
+      new Map(
+        steps.flatMap((step) =>
+          step.options.map((option) => [`${step.dimension}:${option.value}`, option.label] as const),
+        ),
+      ),
+    [steps],
+  );
+
+  const step = steps[currentStep];
+  const selected = selections[step.dimension];
 
   const handleSelect = (value: string) => {
-    setSelections((s) => ({ ...s, [step.dimension]: value }));
-  };
-
-  const handleNext = () => {
-    if (currentStep < STEPS.length - 1) {
-      setCurrentStep((s) => s + 1);
-    } else {
-      handleFinish();
+    if (step.dimension === "language" && (value === "en" || value === "zh")) {
+      setLocale(value);
     }
-  };
-
-  const handleBack = () => {
-    if (currentStep > 0) setCurrentStep((s) => s - 1);
+    setSelections((current) => ({ ...current, [step.dimension]: value }));
   };
 
   const handleFinish = async () => {
@@ -89,70 +152,83 @@ export default function OnboardingPage() {
       for (const [dimension, value] of Object.entries(selections)) {
         await setPreference(dimension, value, "global", undefined, "onboarding");
       }
+      const selectedLanguage = selections.language;
+      if (selectedLanguage === "en" || selectedLanguage === "zh") {
+        setLocale(selectedLanguage);
+      }
       localStorage.setItem("opentutor_onboarded", "true");
-      toast.success("Preferences saved! Your experience is now personalized.");
+      toast.success(t("onboarding.saved"));
       router.push("/");
     } catch {
-      toast.error("Failed to save preferences");
+      toast.error(t("onboarding.saveFailed"));
     } finally {
       setSaving(false);
     }
   };
 
-  const selected = selections[step.dimension];
+  const handleNext = () => {
+    if (currentStep < steps.length - 1) {
+      setCurrentStep((index) => index + 1);
+      return;
+    }
+    void handleFinish();
+  };
+
+  const handleBack = () => {
+    if (currentStep > 0) {
+      setCurrentStep((index) => index - 1);
+    }
+  };
 
   return (
-    <div className="h-screen flex bg-[#1E1B4B]">
-      {/* Left Sidebar */}
+    <div className="h-screen flex bg-sidebar">
       <aside className="w-[280px] p-6 flex flex-col gap-5 shrink-0">
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 bg-indigo-600 rounded-md flex items-center justify-center">
-            <Brain className="w-[18px] h-[18px] text-white" />
-          </div>
-          <span className="text-white font-bold text-lg" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+        <div className="flex items-center gap-2.5 px-2">
+          <span className="text-sidebar-foreground font-bold text-lg">
             OpenTutor
           </span>
         </div>
 
         <nav className="flex flex-col gap-1">
-          {STEPS.map((s, idx) => {
-            const isDone = idx < currentStep;
-            const isCurrent = idx === currentStep;
-            const canClick = idx <= currentStep;
+          {steps.map((candidate, index) => {
+            const isDone = index < currentStep;
+            const isCurrent = index === currentStep;
+            const canClick = index <= currentStep;
 
             return (
               <button
-                key={idx}
-                onClick={() => canClick && setCurrentStep(idx)}
+                type="button"
+                key={candidate.dimension}
+                onClick={() => canClick && setCurrentStep(index)}
                 className={`flex items-center gap-2.5 h-10 px-3 rounded-md transition-colors ${
-                  isCurrent ? "bg-white/15" : isDone ? "bg-white/10" : ""
+                  isCurrent ? "bg-sidebar-accent" : isDone ? "bg-sidebar-accent/60" : ""
                 } ${canClick ? "cursor-pointer" : "cursor-default"}`}
               >
                 <div
                   className={`w-[22px] h-[22px] rounded-full flex items-center justify-center text-[11px] font-bold shrink-0 ${
                     isDone
-                      ? "bg-green-500"
+                      ? "bg-success text-success-foreground"
                       : isCurrent
-                      ? "bg-white text-[#1E1B4B]"
-                      : "border border-[#6B6990] text-[#8886A8]"
+                        ? "bg-sidebar-foreground text-sidebar"
+                        : "border border-sidebar-border text-sidebar-foreground/50"
                   }`}
                 >
-                  {isDone ? <Check className="w-3 h-3 text-white" /> : idx + 1}
+                  {isDone ? "\u2713" : index + 1}
                 </div>
                 <span
                   className={`text-[13px] ${
                     isDone
-                      ? "text-[#A5A3C2] font-medium"
+                      ? "text-sidebar-foreground/60 font-medium"
                       : isCurrent
-                      ? "text-white font-semibold"
-                      : "text-[#8886A8]"
+                        ? "text-sidebar-foreground font-semibold"
+                        : "text-sidebar-foreground/40"
                   }`}
                 >
-                  {s.dimension === "language" && t("pref.language")}
-                  {s.dimension === "learning_mode" && "Learning Mode"}
-                  {s.dimension === "detail_level" && "Output Format"}
-                  {s.dimension === "layout_preset" && "Layout Template"}
-                  {s.dimension === "example_style" && "Finish"}
+                  {candidate.dimension === "language" && t("pref.language")}
+                  {candidate.dimension === "learning_mode" && t("onboarding.sidebar.learningMode")}
+                  {candidate.dimension === "detail_level" && t("onboarding.sidebar.outputFormat")}
+                  {candidate.dimension === "layout_preset" && t("onboarding.sidebar.layoutTemplate")}
+                  {candidate.dimension === "example_style" && t("onboarding.sidebar.finish")}
                 </span>
               </button>
             );
@@ -160,147 +236,135 @@ export default function OnboardingPage() {
         </nav>
       </aside>
 
-      {/* Main Content */}
-      <main className="flex-1 bg-white rounded-tl-xl p-16 flex flex-col justify-center gap-8 overflow-y-auto">
+      <main className="flex-1 bg-background rounded-tl-xl p-16 flex flex-col justify-center gap-8 overflow-y-auto">
         <div className="max-w-[560px] flex flex-col gap-8 animate-in fade-in slide-in-from-bottom-3 duration-300" key={currentStep}>
           <div>
-            <h1 className="text-[28px] font-bold text-gray-900" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+            <h1 className="text-[28px] font-bold text-foreground">
               {step.title}
             </h1>
-            <p className="text-[15px] text-gray-500 mt-2 max-w-[500px]">{step.subtitle}</p>
+            <p className="text-[15px] text-muted-foreground mt-2 max-w-[500px]">{step.subtitle}</p>
           </div>
 
-          {/* Option Cards (for steps 1-4) */}
           {step.type !== "upload" && step.type !== "layout" && (
             <div className="flex flex-col gap-3">
-              {step.options.map((opt) => (
+              {step.options.map((option) => (
                 <button
-                  key={opt.value}
-                  onClick={() => handleSelect(opt.value)}
+                  type="button"
+                  key={option.value}
+                  onClick={() => handleSelect(option.value)}
                   className={`flex items-center gap-3 p-4 px-5 rounded-[10px] text-left transition-all ${
-                    selected === opt.value
-                      ? "border-2 border-indigo-600"
-                      : "border border-gray-200 hover:border-gray-300"
+                    selected === option.value
+                      ? "border-2 border-brand"
+                      : "border border-border hover:border-muted-foreground/30"
                   }`}
                 >
                   <div
                     className={`w-5 h-5 rounded-full shrink-0 flex items-center justify-center ${
-                      selected === opt.value ? "bg-indigo-600" : "border-2 border-gray-200"
+                      selected === option.value ? "bg-brand" : "border-2 border-border"
                     }`}
                   >
-                    {selected === opt.value && <div className="w-2 h-2 rounded-full bg-white" />}
+                    {selected === option.value && <div className="w-2 h-2 rounded-full bg-brand-foreground" />}
                   </div>
                   <div className="flex flex-col gap-1 flex-1">
-                    <span className="font-semibold text-[15px] text-gray-900" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
-                      {opt.label}
+                    <span className="font-semibold text-[15px] text-foreground">
+                      {option.label}
                     </span>
-                    <span className="text-[13px] text-gray-500">{opt.description}</span>
+                    <span className="text-[13px] text-muted-foreground">{option.description}</span>
                   </div>
                 </button>
               ))}
             </div>
           )}
 
-          {/* Layout Cards (step 4) */}
           {step.type === "layout" && (
             <div className="flex gap-4">
-              {step.options.map((opt) => (
+              {step.options.map((option) => (
                 <button
-                  key={opt.value}
-                  onClick={() => handleSelect(opt.value)}
+                  type="button"
+                  key={option.value}
+                  onClick={() => handleSelect(option.value)}
                   className={`flex-1 p-5 rounded-[10px] flex flex-col gap-3 text-left transition-all ${
-                    selected === opt.value
-                      ? "border-2 border-indigo-600"
-                      : "border border-gray-200 hover:border-gray-300"
+                    selected === option.value
+                      ? "border-2 border-brand"
+                      : "border border-border hover:border-muted-foreground/30"
                   }`}
                 >
-                  <div className="w-full h-20 bg-white border border-gray-200 rounded-md flex overflow-hidden">
-                    {opt.value === "balanced" && (
+                  <div className="w-full h-20 bg-background border border-border rounded-md flex overflow-hidden">
+                    {option.value === "balanced" && (
                       <>
-                        <div className="w-[10%] bg-[#1E1B4B]" />
-                        <div className="flex-1 border-r border-gray-200" />
+                        <div className="w-[10%] bg-sidebar" />
+                        <div className="flex-1 border-r border-border" />
                         <div className="w-[35%]" />
                       </>
                     )}
-                    {opt.value === "notesFocused" && (
+                    {option.value === "notesFocused" && (
                       <>
-                        <div className="w-[10%] bg-[#1E1B4B]" />
+                        <div className="w-[10%] bg-sidebar" />
                         <div className="flex-1" />
                       </>
                     )}
-                    {opt.value === "chatFocused" && (
+                    {option.value === "chatFocused" && (
                       <>
-                        <div className="w-[10%] bg-[#1E1B4B]" />
-                        <div className="flex-1 border-r border-gray-200" />
-                        <div className="flex-1 border-r border-gray-200" />
+                        <div className="w-[10%] bg-sidebar" />
+                        <div className="flex-1 border-r border-border" />
+                        <div className="flex-1 border-r border-border" />
                         <div className="flex-1" />
                       </>
                     )}
                   </div>
-                  <span className="font-semibold text-sm text-gray-900 text-center w-full" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
-                    {opt.label}
+                  <span className="font-semibold text-sm text-foreground text-center w-full">
+                    {option.label}
                   </span>
-                  <span className="text-xs text-gray-400 text-center w-full">{opt.description}</span>
+                  <span className="text-xs text-muted-foreground text-center w-full">{option.description}</span>
                 </button>
               ))}
             </div>
           )}
 
-          {/* Completion summary (step 5) */}
           {step.type === "upload" && (
             <div className="flex flex-col gap-4">
-              <div className="w-full p-6 border border-gray-200 rounded-[10px] bg-gray-50 flex flex-col gap-3">
-                <span className="text-sm font-medium text-gray-700">Your preferences:</span>
-                {Object.entries(selections).map(([dim, val]) => (
-                  <div key={dim} className="flex items-center gap-2">
-                    <Check className="w-3.5 h-3.5 text-green-500 shrink-0" />
-                    <span className="text-[13px] text-gray-600">
-                      {dim.replace(/_/g, " ")}: <span className="font-medium text-gray-900">{val.replace(/_/g, " ")}</span>
+              <div className="w-full p-6 border border-border rounded-[10px] bg-muted flex flex-col gap-3">
+                <span className="text-sm font-medium text-foreground">{t("onboarding.summary.title")}</span>
+                {Object.entries(selections).map(([dimension, value]) => (
+                  <div key={dimension} className="flex items-center gap-2">
+                    <span className="text-success text-xs shrink-0">{"\u2713"}</span>
+                    <span className="text-[13px] text-muted-foreground">
+                      {getSummaryLabel(dimension, t)}:{" "}
+                      <span className="font-medium text-foreground">
+                        {optionLabels.get(`${dimension}:${value}`) ?? value.replace(/_/g, " ")}
+                      </span>
                     </span>
                   </div>
                 ))}
               </div>
-              <p className="text-[13px] text-gray-400 text-center">
-                You can upload example notes and materials later from the upload dialog within any course.
-              </p>
+              <p className="text-[13px] text-muted-foreground text-center">{t("onboarding.summary.later")}</p>
             </div>
           )}
 
-          {/* Navigation Buttons */}
           <div className="flex justify-between">
             {currentStep > 0 ? (
               <button
+                type="button"
                 onClick={handleBack}
-                className="h-11 px-6 border border-gray-200 rounded-lg flex items-center gap-1.5 text-gray-500 font-medium text-sm hover:border-gray-300 transition-colors"
+                className="h-11 px-6 border border-border rounded-lg flex items-center gap-1.5 text-muted-foreground font-medium text-sm hover:border-foreground/30 transition-colors"
               >
-                <ArrowLeft className="w-3.5 h-3.5" /> Back
+                &larr; {t("onboarding.back")}
               </button>
             ) : (
               <div />
             )}
-            <div className="flex gap-3">
-              <button
-                onClick={handleNext}
-                disabled={step.type !== "upload" && !selected}
-                className={`h-11 flex items-center gap-2 font-semibold text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed rounded-lg ${
-                  currentStep === STEPS.length - 1
-                    ? "px-8 bg-indigo-600 text-white hover:bg-indigo-700"
-                    : "px-7 bg-indigo-600 text-white hover:bg-indigo-700"
-                }`}
-              >
-                {currentStep === STEPS.length - 1 ? (
-                  <>
-                    {saving ? "Saving..." : "Finish Setup"}
-                    <SkipForward className="w-3.5 h-3.5" />
-                  </>
-                ) : (
-                  <>
-                    Continue
-                    <ArrowRight className="w-3.5 h-3.5" />
-                  </>
-                )}
-              </button>
-            </div>
+
+            <button
+              type="button"
+              onClick={handleNext}
+              disabled={step.type !== "upload" && !selected}
+              className="h-11 px-8 bg-brand text-brand-foreground font-semibold text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed rounded-lg hover:opacity-90"
+            >
+              {currentStep === steps.length - 1
+                ? (saving ? t("onboarding.saving") : t("onboarding.finish"))
+                : t("onboarding.continue")}
+              {currentStep < steps.length - 1 && " \u2192"}
+            </button>
           </div>
         </div>
       </main>

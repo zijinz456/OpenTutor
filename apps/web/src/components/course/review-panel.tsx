@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { MarkdownRenderer } from "@/components/course/markdown-renderer";
-import { Check, ChevronDown, ChevronRight, Loader2, RefreshCcw, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -20,10 +19,10 @@ import { toast } from "sonner";
 type ViewMode = "all" | "by_category" | "by_diagnosis";
 
 const DIAGNOSIS_COLORS: Record<string, string> = {
-  fundamental_gap: "bg-red-100 text-red-700 border-red-200",
-  trap_vulnerability: "bg-orange-100 text-orange-700 border-orange-200",
-  carelessness: "bg-yellow-100 text-yellow-700 border-yellow-200",
-  mastered: "bg-green-100 text-green-700 border-green-200",
+  fundamental_gap: "bg-destructive/10 text-destructive border-destructive/20",
+  trap_vulnerability: "bg-warning-muted text-warning border-warning/20",
+  carelessness: "bg-warning-muted text-warning border-warning/20",
+  mastered: "bg-success-muted text-success border-success/20",
 };
 
 interface ReviewPanelProps {
@@ -187,7 +186,7 @@ export function ReviewPanel({ courseId }: ReviewPanelProps) {
   if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center">
-        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        <span className="text-sm animate-pulse text-muted-foreground">...</span>
       </div>
     );
   }
@@ -198,7 +197,6 @@ export function ReviewPanel({ courseId }: ReviewPanelProps) {
         <div>
           <p className="text-muted-foreground text-sm mb-3">No unmastered wrong answers</p>
           <Button size="sm" variant="outline" onClick={loadWrongAnswers}>
-            <RefreshCcw className="h-4 w-4 mr-1" />
             Refresh
           </Button>
         </div>
@@ -211,7 +209,7 @@ export function ReviewPanel({ courseId }: ReviewPanelProps) {
       <div className="px-3 py-2 border-b flex items-center justify-between text-xs text-muted-foreground">
         <span>{wrongAnswers.length} mistakes ready for review</span>
         <Button size="sm" onClick={handleGenerateReview} disabled={generating}>
-          {generating ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Sparkles className="h-4 w-4 mr-1" />}
+          {generating ? <span className="animate-pulse mr-1">...</span> : null}
           Generate Review
         </Button>
       </div>
@@ -270,9 +268,9 @@ export function ReviewPanel({ courseId }: ReviewPanelProps) {
             <button
               type="button"
               onClick={() => toggleGroup(group)}
-              className={`w-full text-left px-4 py-2.5 flex items-center gap-2 text-sm font-medium hover:bg-muted/50 transition-colors ${viewMode === "by_diagnosis" ? DIAGNOSIS_COLORS[group] ?? "bg-gray-100 text-gray-700" : ""}`}
+              className={`w-full text-left px-4 py-2.5 flex items-center gap-2 text-sm font-medium hover:bg-muted/50 transition-colors ${viewMode === "by_diagnosis" ? DIAGNOSIS_COLORS[group] ?? "bg-muted text-muted-foreground" : ""}`}
             >
-              {collapsedGroups.has(group) ? <ChevronRight className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+              <span className="w-4 h-4 shrink-0 text-xs font-bold">{collapsedGroups.has(group) ? "\u25B6" : "\u25BC"}</span>
               <span className="capitalize">{group.replaceAll("_", " ")}</span>
               <Badge variant="outline" className="ml-auto">{items.length}</Badge>
             </button>
@@ -309,12 +307,12 @@ export function ReviewPanel({ courseId }: ReviewPanelProps) {
             <Button
               size="sm"
               variant="ghost"
-              className="text-green-600 hover:text-green-700 hover:bg-green-50"
+              className="text-success hover:text-success hover:bg-success-muted"
               onClick={() => void handleMarkMastered(item)}
               disabled={markingId === item.id || !item.correct_answer}
               title="Mark as mastered"
             >
-              {markingId === item.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+              {markingId === item.id ? <span className="animate-pulse">...</span> : <span className="font-bold">{"\u2713"}</span>}
             </Button>
             <Button
               data-testid={`derive-${item.id}`}
@@ -323,7 +321,7 @@ export function ReviewPanel({ courseId }: ReviewPanelProps) {
               onClick={() => handleDerive(item.id)}
               disabled={derivingId === item.id}
             >
-              {derivingId === item.id ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : null}
+              {derivingId === item.id ? <span className="animate-pulse mr-1">...</span> : null}
               Derive
             </Button>
           </div>

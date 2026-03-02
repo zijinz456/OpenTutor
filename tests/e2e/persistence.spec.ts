@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { skipOnboarding, createCourse } from "./helpers/test-utils";
+import { skipOnboarding, createCourse, getCourseViaApi } from "./helpers/test-utils";
 
 /**
  * localStorage persistence tests (Phase 1 -- no course content required).
@@ -82,6 +82,26 @@ test.describe("Persistence", () => {
   // ---- removing onboarding flag -----------------------------------------
 
   test("removing onboarding flag triggers redirect", async ({ page }) => {
+    await page.route("**/api/preferences/profile", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          preferences: [],
+          dismissed_preferences: [],
+          signals: [],
+          dismissed_signals: [],
+          memories: [],
+          dismissed_memories: [],
+          summary: {
+            strength_areas: [],
+            weak_areas: [],
+            recurring_errors: [],
+            inferred_habits: [],
+          },
+        }),
+      });
+    });
     // Do NOT use skipOnboarding here — we need full control over localStorage.
     // First, manually set the flag and visit dashboard.
     await page.addInitScript(() => {
@@ -94,6 +114,26 @@ test.describe("Persistence", () => {
     await page.evaluate(() => localStorage.removeItem("opentutor_onboarded"));
     // Remove the addInitScript by creating a new page context
     const newPage = await page.context().newPage();
+    await newPage.route("**/api/preferences/profile", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          preferences: [],
+          dismissed_preferences: [],
+          signals: [],
+          dismissed_signals: [],
+          memories: [],
+          dismissed_memories: [],
+          summary: {
+            strength_areas: [],
+            weak_areas: [],
+            recurring_errors: [],
+            inferred_habits: [],
+          },
+        }),
+      });
+    });
     await newPage.goto("/");
     await expect(newPage).toHaveURL(/\/onboarding/, { timeout: 15_000 });
     await newPage.close();
@@ -101,27 +141,23 @@ test.describe("Persistence", () => {
 
   // ---- course features --------------------------------------------------
 
-  test("course features stored in localStorage", async ({ page }) => {
+  test("course features persist in course metadata", async ({ page }) => {
     await skipOnboarding(page);
     const courseId = await createCourse(page, "Features Persist Course");
 
-    // The new-project wizard stores feature toggles in localStorage
-    const raw = await page.evaluate(
-      (id) => localStorage.getItem(`course_features_${id}`),
-      courseId
-    );
-    expect(raw).toBeTruthy();
-
-    const features = JSON.parse(raw!);
-    // Default enabled features from the new-project page
-    expect(features.notes).toBe(true);
-    expect(features.practice).toBe(true);
-    expect(features.free_qa).toBe(true);
+    const course = await getCourseViaApi(courseId);
+    expect(course.metadata).toMatchObject({
+      workspace_features: {
+        notes: true,
+        practice: true,
+        free_qa: true,
+      },
+    });
   });
 
   // ---- auto-scrape preference -------------------------------------------
 
-  test("auto-scrape preference stored in localStorage", async ({ page }) => {
+  test("auto-scrape metadata remains disabled when no URL source is submitted", async ({ page }) => {
     await skipOnboarding(page);
 
     // Create a course using the "both" mode (upload + URL) which enables auto-scrape by default
@@ -141,17 +177,17 @@ test.describe("Persistence", () => {
     const courseId = match ? match[1] : "";
     expect(courseId).toBeTruthy();
 
-    // Auto-scrape should be stored
-    const autoScrape = await page.evaluate(
-      (id) => localStorage.getItem(`course_autoscrape_${id}`),
-      courseId
-    );
-    expect(autoScrape).toBe("true");
+    const course = await getCourseViaApi(courseId);
+    expect(course.metadata).toMatchObject({
+      auto_scrape: {
+        enabled: false,
+      },
+    });
   });
 
   // ---- NL instruction ---------------------------------------------------
 
-  test("NL instruction stored in localStorage", async ({ page }) => {
+  test("NL instruction is handed off to the workspace once", async ({ page }) => {
     await skipOnboarding(page);
 
     await page.goto("/new");
@@ -174,11 +210,10 @@ test.describe("Persistence", () => {
     const courseId = match ? match[1] : "";
     expect(courseId).toBeTruthy();
 
-    // The NL instruction should be persisted
-    const nlInstruction = await page.evaluate(
-      (id) => localStorage.getItem(`course_init_prompt_${id}`),
-      courseId
+    const consumedFlag = await page.evaluate(
+      (id) => sessionStorage.getItem(`course_init_prompt_consumed_${id}`),
+      courseId,
     );
-    expect(nlInstruction).toBe("Focus on algorithms and use bullet points");
+    expect(consumedFlag).toBe("true");
   });
 });

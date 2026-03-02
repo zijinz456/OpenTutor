@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Sparkles, X } from "lucide-react";
 import { listProblems } from "@/lib/api";
 
 /**
@@ -76,11 +75,11 @@ export function AutoGenBanner({
   if (!visible) return null;
 
   return (
-    <div className="mx-4 mt-2 mb-1 rounded-lg border border-indigo-200 bg-indigo-50 dark:bg-indigo-950/30 dark:border-indigo-800 px-4 py-2.5 flex items-center gap-3 animate-in slide-in-from-top-2 duration-300">
-      <Sparkles className="h-4 w-4 text-indigo-500 shrink-0" />
+    <div className="mx-4 mt-2 mb-1 rounded-lg border border-brand/20 bg-brand-muted dark:bg-brand/10 dark:border-brand/30 px-4 py-2.5 flex items-center gap-3 animate-in slide-in-from-top-2 duration-300">
+      <span className="text-sm text-brand shrink-0" aria-hidden="true">{"*"}</span>
       <div className="flex-1 text-sm">
-        <span className="font-medium text-indigo-700 dark:text-indigo-300">AI prepared your materials</span>
-        <span className="text-indigo-600/70 dark:text-indigo-400/70 ml-1.5">
+        <span className="font-medium text-brand">AI prepared your materials</span>
+        <span className="text-brand/70 ml-1.5">
           &mdash; {quizCount} quiz questions ready
         </span>
       </div>
@@ -88,13 +87,13 @@ export function AutoGenBanner({
         {quizCount > 0 && (
           <button
             onClick={() => { onQuizReady?.(); handleDismiss(); }}
-            className="text-xs font-medium text-indigo-600 hover:text-indigo-800 dark:text-indigo-400"
+            className="text-xs font-medium text-brand hover:text-brand/80"
           >
             Try Quiz
           </button>
         )}
-        <button onClick={handleDismiss} className="text-indigo-400 hover:text-indigo-600">
-          <X className="h-3.5 w-3.5" />
+        <button onClick={handleDismiss} className="text-muted-foreground hover:text-foreground">
+          <span className="text-xs">x</span>
         </button>
       </div>
     </div>

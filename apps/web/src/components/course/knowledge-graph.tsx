@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { Loader2, Maximize2, ZoomIn, ZoomOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   getKnowledgeGraph,
@@ -172,7 +171,7 @@ export function KnowledgeGraph({ courseId }: KnowledgeGraphProps) {
   if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center">
-        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        <span className="text-sm animate-pulse text-muted-foreground">Loading...</span>
       </div>
     );
   }
@@ -199,24 +198,27 @@ export function KnowledgeGraph({ courseId }: KnowledgeGraphProps) {
             size="icon"
             className="h-6 w-6"
             onClick={() => setZoom((z) => Math.min(z + 0.2, 3))}
+            title="Zoom in"
           >
-            <ZoomIn className="h-3 w-3" />
+            <span className="text-xs font-bold">+</span>
           </Button>
           <Button
             variant="ghost"
             size="icon"
             className="h-6 w-6"
             onClick={() => setZoom((z) => Math.max(z - 0.2, 0.3))}
+            title="Zoom out"
           >
-            <ZoomOut className="h-3 w-3" />
+            <span className="text-xs font-bold">{"\u2212"}</span>
           </Button>
           <Button
             variant="ghost"
             size="icon"
             className="h-6 w-6"
             onClick={() => setZoom(1)}
+            title="Reset zoom"
           >
-            <Maximize2 className="h-3 w-3" />
+            <span className="text-[10px] font-medium">1:1</span>
           </Button>
         </div>
       </div>
