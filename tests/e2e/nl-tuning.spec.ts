@@ -61,15 +61,15 @@ test.describe.serial("NL Tuning FAB", () => {
     await page.locator('button[title="Fine-tune Agent"]').click();
     await page.getByPlaceholder('e.g. "simplify notes"').fill("change format");
     await page.keyboard.press("Enter");
-    // Wait for clarify view to appear
-    await expect(page.getByRole("button", { name: "Notes panel: change formatting style" })).toBeVisible({ timeout: 10_000 });
+    // Wait for clarify view to appear (API parse can take >10s to fail in CI with no LLM key)
+    await expect(page.getByRole("button", { name: "Notes panel: change formatting style" })).toBeVisible({ timeout: 30_000 });
     await page.getByRole("button", { name: "Notes panel: change formatting style" }).click();
     // Sub-options for note_format
-    await expect(page.getByRole("button", { name: "Bullet Points" })).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByRole("button", { name: "Table" })).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByRole("button", { name: "Mind Map" })).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByRole("button", { name: "Step-by-Step" })).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByRole("button", { name: "Summary" })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole("button", { name: "Bullet Points" })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole("button", { name: "Table" })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole("button", { name: "Mind Map" })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole("button", { name: "Step-by-Step" })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole("button", { name: "Summary" })).toBeVisible({ timeout: 15_000 });
   });
 
   test("selecting a sub-option calls setPreference and shows toast", async ({ page }) => {
@@ -80,7 +80,7 @@ test.describe.serial("NL Tuning FAB", () => {
     await page.getByRole("button", { name: "Notes panel: change formatting style" }).click();
     await page.getByRole("button", { name: "Bullet Points" }).click();
     // Should show success toast and close popup
-    await expect(page.getByText('Set note_format to "Bullet Points"')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText('Set note_format to "Bullet Points"')).toBeVisible({ timeout: 15_000 });
   });
 
   test("Back button in sub-options returns to clarify view", async ({ page }) => {

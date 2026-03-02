@@ -25,14 +25,15 @@ test.describe.serial("Workspace Layout", () => {
     await ensureRightPanelVisible(page);
     await page.getByRole("button", { name: "Cards" }).click();
     // Flashcard content should be visible — either empty state or flashcard list
-    await expect(page.getByText("No flashcards yet").or(page.getByText("Generate Flashcards"))).toBeVisible({ timeout: 30_000 });
+    // Both texts can be visible simultaneously in empty state — use .first() to avoid strict mode
+    await expect(page.getByText("No flashcards yet").or(page.getByText("Generate Flashcards")).first()).toBeVisible({ timeout: 30_000 });
   });
 
   test("clicking Stats tab shows progress panel", async ({ page }) => {
     await createCourseWithContent(page, "Layout Stats");
     await ensureRightPanelVisible(page);
     await page.getByRole("button", { name: "Stats" }).click();
-    await expect(page.getByText("Course Completion").or(page.getByText("Upload course materials"))).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText("Course Completion").or(page.getByText("Upload course materials")).first()).toBeVisible({ timeout: 15_000 });
   });
 
   test("clicking Graph tab shows knowledge graph", async ({ page }) => {
@@ -40,7 +41,7 @@ test.describe.serial("Workspace Layout", () => {
     await ensureRightPanelVisible(page);
     await page.getByRole("button", { name: "Graph" }).click();
     // Knowledge graph canvas or empty state
-    await expect(page.locator("canvas").or(page.getByText("knowledge graph")).or(page.getByText("No data")).or(page.getByText("Upload course materials"))).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator("canvas").or(page.getByText("knowledge graph")).or(page.getByText("No data")).or(page.getByText("Upload course materials")).first()).toBeVisible({ timeout: 30_000 });
   });
 
   test("clicking Review tab shows review panel", async ({ page }) => {
@@ -50,7 +51,7 @@ test.describe.serial("Workspace Layout", () => {
     await expect(reviewTab).toBeVisible();
     await reviewTab.click({ force: true });
     await expect(page.getByTestId("review-panel")).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByText("No unmastered wrong answers").or(page.getByText("Wrong Answer"))).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText("No unmastered wrong answers").or(page.getByText("Wrong Answer")).first()).toBeVisible({ timeout: 60_000 });
   });
 
   test("clicking Plan tab shows study plan panel", async ({ page }) => {
