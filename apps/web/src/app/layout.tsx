@@ -2,9 +2,8 @@ import type { Metadata, Viewport } from "next";
 import { Space_Grotesk } from "next/font/google";
 import { ThemeProvider } from "next-themes";
 import { Toaster } from "@/components/ui/sonner";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { LocaleProvider } from "@/lib/i18n-context";
-import { ServiceWorkerRegistrar } from "@/components/sw-registrar";
-import { OfflineBanner } from "@/components/offline-banner";
 import "./globals.css";
 
 const spaceGrotesk = Space_Grotesk({
@@ -53,10 +52,10 @@ export default function RootLayout({
       <body className="antialiased">
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
           <LocaleProvider>
-            <OfflineBanner />
-            {children}
+            <TooltipProvider>
+              {children}
+            </TooltipProvider>
             <Toaster />
-            <ServiceWorkerRegistrar />
           </LocaleProvider>
         </ThemeProvider>
       </body>

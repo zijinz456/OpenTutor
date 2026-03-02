@@ -81,7 +81,7 @@ interface RetryWrongAnswerResult {
   explanation: string | null;
 }
 
-interface DerivedQuestionResult {
+export interface DerivedQuestionResult {
   problem_id: string;
   question: string;
   question_type: string;
@@ -100,7 +100,7 @@ interface WrongAnswerDiagnosisResult {
   message?: string;
 }
 
-interface WrongAnswerStats {
+export interface WrongAnswerStats {
   total: number;
   mastered: number;
   unmastered: number;
@@ -146,6 +146,7 @@ interface FlashcardFsrsState {
   difficulty: number;
   stability: number;
   reps: number;
+  lapses: number;
   state: string;
   due: string | null;
   last_review?: string | null;
@@ -161,7 +162,7 @@ interface FlashcardReviewResult {
   next_review: string | null;
 }
 
-interface DueFlashcardsResult {
+export interface DueFlashcardsResult {
   cards: Flashcard[];
   due_count: number;
   total_batches: number;
@@ -276,6 +277,34 @@ interface PushSubscriptionRequest {
 
 interface PushUnsubscribeRequest {
   endpoint: string;
+}
+
+export interface NotificationSettings {
+  id: string;
+  user_id: string;
+  channels_enabled: string[];
+  quiet_hours_start: string | null;
+  quiet_hours_end: string | null;
+  timezone: string;
+  max_notifications_per_hour: number;
+  max_notifications_per_day: number;
+  preferred_study_time: string | null;
+  study_time_confidence: number;
+  escalation_enabled: boolean;
+  escalation_delay_hours: number;
+  created_at: string;
+  updated_at: string;
+}
+
+interface NotificationSettingsUpdateRequest {
+  channels_enabled?: string[];
+  quiet_hours_start?: string | null;
+  quiet_hours_end?: string | null;
+  timezone?: string | null;
+  max_notifications_per_hour?: number;
+  max_notifications_per_day?: number;
+  escalation_enabled?: boolean;
+  escalation_delay_hours?: number;
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
@@ -457,18 +486,21 @@ export async function deleteCourse(id: string): Promise<void> {
 export interface ContentNode {
   id: string;
   title: string;
+  type: "week" | "topic" | "section" | "file" | string;
   content: string | null;
   level: number;
   order_index: number;
   source_type: string;
   children: ContentNode[];
+  file_type?: string;
+  file_id?: string;
 }
 
 export async function getContentTree(courseId: string): Promise<ContentNode[]> {
   return request(`/courses/${courseId}/content-tree`);
 }
 
-interface RestructuredNotes {
+export interface RestructuredNotes {
   original_title: string;
   ai_content: string;
   format_used: string;
@@ -1383,6 +1415,8 @@ export interface Flashcard {
   back: string;
   difficulty: string;
   fsrs: FlashcardFsrsState;
+  course_id?: string;
+  batch_id?: string;
 }
 
 export async function generateFlashcards(
@@ -1435,11 +1469,13 @@ export async function getDueFlashcards(
 export interface KnowledgeGraphNode {
   id: string;
   label: string;
+  type?: string;
   level: number;
   size: number;
   color: string;
   status: string;
   mastery: number;
+  gap_type?: string | null;
   x?: number;
   y?: number;
 }
@@ -1741,6 +1777,71 @@ export async function unsubscribePush(body: PushUnsubscribeRequest): Promise<voi
     method: "DELETE",
     body: JSON.stringify(body),
   });
+}
+
+// ── Notifications ──
+
+export interface Notification {
+  id: string;
+  user_id?: string;
+  title: string;
+  body: string;
+  category: string;
+  read: boolean;
+  created_at: string;
+}
+
+export async function listNotifications(
+  unreadOnly = true,
+  limit = 50,
+): Promise<Notification[]> {
+  return request(`/notifications/?unread_only=${unreadOnly}&limit=${limit}`);
+}
+
+export async function markNotificationRead(
+  notificationId: string,
+): Promise<void> {
+  return request(`/notifications/${notificationId}/read`, { method: "POST" });
+}
+
+export async function getNotificationSettings(): Promise<NotificationSettings> {
+  return request("/notifications/settings");
+}
+
+export async function updateNotificationSettings(
+  body: NotificationSettingsUpdateRequest,
+): Promise<NotificationSettings> {
+  return request("/notifications/settings", {
+    method: "PUT",
+    body: JSON.stringify(body),
+  });
+}
+
+// ── Usage ──
+
+export interface UsageSummary {
+  period: string;
+  total_calls: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_cost_usd: number;
+  total_tool_calls: number;
+}
+
+export async function getUsageSummary(
+  period: string = "month",
+  courseId?: string,
+): Promise<UsageSummary> {
+  const params = new URLSearchParams({ period });
+  if (courseId) params.set("course_id", courseId);
+  return request(`/usage/summary?${params}`);
+}
+
+// ── Export ──
+
+export function getExportSessionUrl(courseId?: string): string {
+  const params = courseId ? `?course_id=${courseId}` : "";
+  return `${API_BASE}/export/session${params}`;
 }
 
 // ── Learning Templates ──

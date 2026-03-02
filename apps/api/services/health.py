@@ -40,7 +40,19 @@ async def get_health_status() -> dict[str, Any]:
         logger.warning("Health check: database unreachable")
 
     registry = get_registry()
-    provider_health = registry.provider_health
+
+    # Use cached probe results from background monitor (OpenClaw pattern).
+    # Falls back to a blocking ping_all() if monitor hasn't run yet.
+    probe_details = registry.provider_health_cached
+    if probe_details:
+        provider_health = {name: d["healthy"] for name, d in probe_details.items()}
+    else:
+        provider_health = await registry.ping_all()
+        probe_details = {
+            name: {"healthy": h, "status": "ok" if h else "unhealthy", "error": None}
+            for name, h in provider_health.items()
+        }
+
     if not registry.available_providers:
         llm_status = "configuration_required" if settings.llm_required else "mock_fallback"
     elif registry.primary_name and not provider_health.get(registry.primary_name, True):
@@ -71,6 +83,7 @@ async def get_health_status() -> dict[str, Any]:
         "llm_available": bool(registry.available_providers),
         "llm_status": llm_status,
         "llm_provider_health": provider_health,
+        "llm_provider_details": probe_details,
         "deployment_mode": settings.deployment_mode,
         "code_sandbox_backend": settings.code_sandbox_backend,
         "code_sandbox_runtime": settings.code_sandbox_runtime,

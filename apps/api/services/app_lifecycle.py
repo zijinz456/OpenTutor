@@ -105,17 +105,34 @@ async def _maybe_disconnect_mcp_servers() -> None:
         logger.debug("MCP disconnect: %s", exc)
 
 
+def _start_health_monitor() -> None:
+    """Start background LLM health probe loop (OpenClaw pattern)."""
+    from services.llm.router import get_registry
+
+    registry = get_registry()
+    registry.start_health_monitor(interval=30.0)
+
+
+async def _stop_health_monitor() -> None:
+    from services.llm.router import get_registry
+
+    registry = get_registry()
+    await registry.stop_health_monitor()
+
+
 async def run_startup_hooks() -> None:
     await _maybe_create_tables()
     await _maybe_seed_system_data()
     await _maybe_connect_mcp_servers()
     _maybe_start_scheduler()
     _maybe_start_activity_engine()
+    _start_health_monitor()
 
 
 async def run_shutdown_hooks() -> None:
     from services.agent.orchestrator import wait_for_background_tasks
 
+    await _stop_health_monitor()
     await _maybe_stop_activity_engine()
     _maybe_stop_scheduler()
     await wait_for_background_tasks()

@@ -120,6 +120,34 @@ export async function seedCourseFixture(courseId: string, fixturePath: string): 
   await waitForCourseContent(courseId);
 }
 
+export async function seedFlashcardsViaApi(courseId: string, count = 3): Promise<void> {
+  const generateResponse = await fetch(`${apiBaseUrl}/flashcards/generate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ course_id: courseId, count }),
+  });
+  if (!generateResponse.ok) {
+    throw new Error(`Flashcard generation failed (${generateResponse.status})`);
+  }
+  const generated = (await generateResponse.json()) as { cards?: unknown[] };
+  if (!Array.isArray(generated.cards) || generated.cards.length === 0) {
+    throw new Error("Flashcard generation returned no cards");
+  }
+
+  const saveResponse = await fetch(`${apiBaseUrl}/flashcards/generated/save`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      course_id: courseId,
+      cards: generated.cards,
+      title: "Playwright Flashcards",
+    }),
+  });
+  if (!saveResponse.ok) {
+    throw new Error(`Flashcard save failed (${saveResponse.status})`);
+  }
+}
+
 /**
  * Create a course through the new-project wizard and arrive at the workspace.
  * Returns the courseId extracted from the URL.
@@ -150,11 +178,24 @@ export async function createCourse(page: Page, name: string): Promise<string> {
  * Create a course and upload the sample fixture file.
  */
 export async function createCourseWithContent(page: Page, name = "Test Course"): Promise<string> {
-  const courseId = await createCourse(page, name);
+  const courseId = await createCourseViaApi(name);
   await seedCourseFixture(courseId, SAMPLE_COURSE_MD);
-  await page.reload();
+  await page.goto(`/course/${courseId}`);
   await expect(page).toHaveURL(new RegExp(`/course/${courseId}`), { timeout: 30_000 });
-  await expect(page.getByRole("button", { name: "Upload" })).toBeVisible({ timeout: 30_000 });
+  await expect
+    .poll(
+      async () =>
+        (
+          await Promise.all([
+            page.getByRole("button", { name: "Upload" }).isVisible().catch(() => false),
+            page.getByTestId("workspace-upload-trigger").isVisible().catch(() => false),
+            page.getByTestId("chat-input").isVisible().catch(() => false),
+            page.getByRole("textbox", { name: /Ask anything/i }).isVisible().catch(() => false),
+          ])
+        ).some(Boolean),
+      { timeout: 30_000 },
+    )
+    .toBe(true);
   return courseId;
 }
 
@@ -226,19 +267,60 @@ export async function expectGeneratedStudyPlan(page: Page) {
  * bar button restores it.
  */
 export async function ensureRightPanelVisible(page: Page): Promise<void> {
-  // Use a specific locator for the Quiz tab button (small button in tab bar, not the generate button)
-  const quizTab = page.getByTestId("right-tab-quiz").last();
-  const visible = await quizTab.isVisible({ timeout: 3_000 }).catch(() => false);
-  if (!visible) {
-    await page.locator('button[title="Practice"]').click();
-    await expect(quizTab).toBeVisible({ timeout: 10_000 });
+  const legacyQuizTab = page.getByTestId("right-tab-quiz").last();
+  const legacyVisible = await legacyQuizTab.isVisible({ timeout: 3_000 }).catch(() => false);
+  if (legacyVisible) {
+    return;
   }
+
+  const practiceSection = page.getByTestId("practice-section");
+  const practiceVisible = await practiceSection.isVisible({ timeout: 3_000 }).catch(() => false);
+  if (practiceVisible) {
+    return;
+  }
+
+  const practiceButton = page.locator('button[title="Practice"]').first();
+  const practiceButtonVisible = await practiceButton.isVisible({ timeout: 2_000 }).catch(() => false);
+  if (practiceButtonVisible) {
+    await practiceButton.click();
+    await expect(legacyQuizTab).toBeVisible({ timeout: 10_000 });
+    return;
+  }
+
+  const sectionSelector = page.getByRole("combobox").first();
+  const selectorVisible = await sectionSelector.isVisible({ timeout: 3_000 }).catch(() => false);
+  if (selectorVisible) {
+    await sectionSelector.click();
+    await page.getByRole("option", { name: /Practice|练习/i }).click();
+    await expect(practiceSection).toBeVisible({ timeout: 15_000 });
+    return;
+  }
+
+  throw new Error("Could not locate a practice workspace shell");
 }
 
 export async function openRightTab(page: Page, tab: string): Promise<void> {
-  const tabButton = page.getByTestId(`right-tab-${tab}`).last();
-  await expect(tabButton).toBeVisible({ timeout: 15_000 });
-  await tabButton.click({ force: true });
+  const legacyTabButton = page.getByTestId(`right-tab-${tab}`).last();
+  const legacyVisible = await legacyTabButton.isVisible({ timeout: 2_000 }).catch(() => false);
+  if (legacyVisible) {
+    await legacyTabButton.click({ force: true });
+    return;
+  }
+
+  const practiceSection = page.getByTestId("practice-section");
+  const practiceVisible = await practiceSection.isVisible({ timeout: 2_000 }).catch(() => false);
+  if (!practiceVisible) {
+    await ensureRightPanelVisible(page);
+  }
+
+  const modernLabel =
+    tab === "flashcards" ? /Flashcards|闪卡/i :
+    tab === "quiz" ? /Quiz|测验/i :
+    tab === "review" ? /Review|复盘/i :
+    new RegExp(tab, "i");
+  const modernTabButton = page.getByRole("tab", { name: modernLabel }).first();
+  await expect(modernTabButton).toBeVisible({ timeout: 15_000 });
+  await modernTabButton.click({ force: true });
 }
 
 export function hasRealLlmEnv(): boolean {

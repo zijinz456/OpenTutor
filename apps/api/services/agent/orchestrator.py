@@ -42,8 +42,11 @@ _background_tasks: set[asyncio.Task] = set()
 
 
 
-def _has_pending_markers(buffer: str) -> bool:
-    return any(marker in buffer for marker in ("[ACTION:", "[TOOL_START:", "[TOOL_DONE:"))
+_INCOMPLETE_MARKER_RE = re.compile(r"\[(TOOL_START|TOOL_DONE|ACTION):[^\]]*$")
+
+# ── Marker types for the shared parser ──
+_MARKER_TAGS = ("TOOL_START", "TOOL_DONE", "ACTION")
+_MARKER_PREFIXES = tuple(f"[{tag}:" for tag in _MARKER_TAGS)
 
 
 def _parse_action_marker(marker: str) -> dict:
@@ -56,8 +59,97 @@ def _parse_action_marker(marker: str) -> dict:
     return action_data
 
 
-def _strip_incomplete_markers(buffer: str) -> str:
-    return re.sub(r"\[(TOOL_START|TOOL_DONE|ACTION):[^\]]*$", "", buffer)
+class MarkerParser:
+    """Shared parser for [TOOL_START:], [TOOL_DONE:], [ACTION:] markers in streamed text.
+
+    Call ``feed(chunk)`` for each incoming chunk. It returns a list of events:
+    - ("text", str)         — plain text content
+    - ("tool_start", dict)  — {"tool": name, "explanation": str}
+    - ("tool_done", dict)   — {"tool": name, "explanation": str}
+    - ("action", dict)      — parsed action marker
+    """
+
+    __slots__ = ("_buffer",)
+
+    def __init__(self):
+        self._buffer = ""
+
+    def _has_pending(self) -> bool:
+        return any(p in self._buffer for p in _MARKER_PREFIXES)
+
+    def _parse_tool_marker(self, raw: str) -> tuple[str, str]:
+        if "|" in raw:
+            name, explanation = raw.split("|", 1)
+        else:
+            name, explanation = raw, ""
+        return name, explanation
+
+    def feed(self, chunk: str) -> list[tuple[str, str | dict]]:
+        """Feed a chunk and return parsed events."""
+        self._buffer += chunk
+        events: list[tuple[str, str | dict]] = []
+
+        changed = True
+        while changed:
+            changed = False
+
+            if "[TOOL_START:" in self._buffer:
+                start = self._buffer.index("[TOOL_START:")
+                end = self._buffer.find("]", start)
+                if end != -1:
+                    before = self._buffer[:start]
+                    if before:
+                        events.append(("text", before))
+                    name, explanation = self._parse_tool_marker(self._buffer[start + 12:end])
+                    events.append(("tool_start", {"tool": name, "explanation": explanation}))
+                    self._buffer = self._buffer[end + 1:]
+                    changed = True
+                    continue
+
+            if "[TOOL_DONE:" in self._buffer:
+                start = self._buffer.index("[TOOL_DONE:")
+                end = self._buffer.find("]", start)
+                if end != -1:
+                    before = self._buffer[:start]
+                    if before:
+                        events.append(("text", before))
+                    name, explanation = self._parse_tool_marker(self._buffer[start + 11:end])
+                    events.append(("tool_done", {"tool": name, "explanation": explanation}))
+                    self._buffer = self._buffer[end + 1:]
+                    changed = True
+                    continue
+
+            if "[ACTION:" in self._buffer:
+                start = self._buffer.index("[ACTION:")
+                end = self._buffer.find("]", start)
+                if end != -1:
+                    before = self._buffer[:start]
+                    if before:
+                        events.append(("text", before))
+                    marker = self._buffer[start + 8:end]
+                    events.append(("action", _parse_action_marker(marker)))
+                    self._buffer = self._buffer[end + 1:]
+                    changed = True
+                    continue
+
+        # Flush safe buffer content
+        if self._buffer and not self._has_pending():
+            events.append(("text", self._buffer))
+            self._buffer = ""
+        elif self._has_pending() and len(self._buffer) > 500:
+            logger.warning("Flushing oversized marker buffer (%d chars)", len(self._buffer))
+            events.append(("text", self._buffer))
+            self._buffer = ""
+
+        return events
+
+    def flush(self) -> str | None:
+        """Flush remaining buffer, stripping incomplete markers."""
+        if not self._buffer:
+            return None
+        cleaned = _INCOMPLETE_MARKER_RE.sub("", self._buffer)
+        self._buffer = ""
+        return cleaned or None
 
 
 async def _consume_agent_stream(ctx: AgentContext, agent: BaseAgent, db: AsyncSession) -> AgentContext:
@@ -66,62 +158,20 @@ async def _consume_agent_stream(ctx: AgentContext, agent: BaseAgent, db: AsyncSe
     This keeps workflow/non-SSE paths aligned with chat by exercising the same
     tool-capable runtime and stripping UI markers from the persisted response.
     """
-    buffer = ""
+    parser = MarkerParser()
     content_parts: list[str] = []
 
     async for chunk in agent.stream(ctx, db):
-        buffer += chunk
-        changed = True
-        while changed:
-            changed = False
+        for event_type, payload in parser.feed(chunk):
+            if event_type == "text":
+                content_parts.append(payload)
+            elif event_type == "action":
+                ctx.actions.append(payload)
+            # tool_start / tool_done are silently discarded in non-SSE path
 
-            if "[TOOL_START:" in buffer:
-                start = buffer.index("[TOOL_START:")
-                end = buffer.find("]", start)
-                if end != -1:
-                    before = buffer[:start]
-                    if before:
-                        content_parts.append(before)
-                    buffer = buffer[end + 1:]
-                    changed = True
-                    continue
-
-            if "[TOOL_DONE:" in buffer:
-                start = buffer.index("[TOOL_DONE:")
-                end = buffer.find("]", start)
-                if end != -1:
-                    before = buffer[:start]
-                    if before:
-                        content_parts.append(before)
-                    buffer = buffer[end + 1:]
-                    changed = True
-                    continue
-
-            if "[ACTION:" in buffer:
-                start = buffer.index("[ACTION:")
-                end = buffer.find("]", start)
-                if end != -1:
-                    before = buffer[:start]
-                    if before:
-                        content_parts.append(before)
-                    marker = buffer[start + 8:end]
-                    ctx.actions.append(_parse_action_marker(marker))
-                    buffer = buffer[end + 1:]
-                    changed = True
-                    continue
-
-        if buffer and not _has_pending_markers(buffer):
-            content_parts.append(buffer)
-            buffer = ""
-        elif _has_pending_markers(buffer) and len(buffer) > 500:
-            logger.warning("Flushing oversized marker buffer (%d chars)", len(buffer))
-            content_parts.append(buffer)
-            buffer = ""
-
-    if buffer:
-        cleaned = _strip_incomplete_markers(buffer)
-        if cleaned:
-            content_parts.append(cleaned)
+    remaining = parser.flush()
+    if remaining:
+        content_parts.append(remaining)
 
     cleaned_response = "".join(content_parts).strip()
     if cleaned_response:
@@ -480,59 +530,76 @@ async def post_process(ctx: AgentContext, db_factory) -> None:
 
     OpenAkita Compiler pattern: lightweight async tasks after main response.
     NanoClaw retry pattern: exponential backoff on failure.
-    Uses a new DB session to avoid session lifecycle issues.
+
+    Phase 1: LLM-heavy tasks run in parallel (each gets its own DB session).
+    Phase 2: Lightweight DB tasks run sequentially in a shared session.
     """
     ctx.transition(TaskPhase.POST_PROCESSING)
     pp_results: list[dict] = []
+
+    # ── Phase 1: Parallel LLM-heavy tasks (separate sessions) ──
+    async def _signal_with_session():
+        async with db_factory() as db:
+            from services.preference.extractor import extract_preference_signal
+            from services.preference.confidence import process_signal_to_preference
+            from models.preference import PreferenceSignal
+
+            signal = await extract_preference_signal(
+                ctx.user_message, ctx.response, ctx.user_id, ctx.course_id,
+            )
+            if not signal:
+                return
+            ctx.extracted_signal = signal
+            ps = PreferenceSignal(
+                user_id=signal["user_id"],
+                course_id=signal.get("course_id"),
+                signal_type=signal["signal_type"],
+                dimension=signal["dimension"],
+                value=signal["value"],
+                context=signal.get("context"),
+            )
+            db.add(ps)
+            await db.flush()
+            await process_signal_to_preference(
+                db, signal["user_id"], signal["dimension"], signal.get("course_id"),
+            )
+            await db.commit()
+            logger.info("Signal extracted: dim=%s val=%s", signal["dimension"], signal["value"])
+
+    async def _memory_with_session():
+        async with db_factory() as db:
+            from services.memory.pipeline import encode_memory
+            await encode_memory(db, ctx.user_id, ctx.course_id, ctx.user_message, ctx.response)
+            await db.commit()
+
+    async def _graph_with_session():
+        async with db_factory() as db:
+            from services.knowledge.graph_memory import extract_graph_entities, store_graph_entities
+            extracted = await extract_graph_entities(
+                ctx.user_message, ctx.response,
+            )
+            if extracted.get("entities") or extracted.get("relationships"):
+                await store_graph_entities(db, ctx.user_id, ctx.course_id, extracted)
+                await db.commit()
+
+    try:
+        parallel_results = await asyncio.gather(
+            _retry_async(_signal_with_session, "signal_extraction", max_retries=2),
+            _retry_async(_memory_with_session, "memory_encoding", max_retries=2),
+            _retry_async(_graph_with_session, "graph_extraction", max_retries=1),
+        )
+        pp_results.extend(parallel_results)
+    except Exception as e:
+        logger.warning("Phase 1 post-processing failed: %s", e, exc_info=True)
+        pp_results.append({"success": False, "name": "parallel_phase", "error": str(e)})
+
+    # ── Phase 2: Sequential lightweight DB tasks (shared session) ──
     try:
         async with db_factory() as db:
-            # 1. Preference signal extraction (~95% return NONE)
-            async def extract_signal():
-                from services.preference.extractor import extract_preference_signal
-                from services.preference.confidence import process_signal_to_preference
-                from models.preference import PreferenceSignal
-
-                signal = await extract_preference_signal(
-                    ctx.user_message, ctx.response, ctx.user_id, ctx.course_id,
-                )
-                if not signal:
-                    return
-                ctx.extracted_signal = signal
-                ps = PreferenceSignal(
-                    user_id=signal["user_id"],
-                    course_id=signal.get("course_id"),
-                    signal_type=signal["signal_type"],
-                    dimension=signal["dimension"],
-                    value=signal["value"],
-                    context=signal.get("context"),
-                )
-                db.add(ps)
-                await db.flush()
-                await process_signal_to_preference(
-                    db, signal["user_id"], signal["dimension"], signal.get("course_id"),
-                )
-                logger.info("Signal extracted: dim=%s val=%s", signal["dimension"], signal["value"])
-
-            # 2. Memory encoding (EverMemOS Stage 1 — MemCell atomic extraction)
-            async def encode_mem():
-                from services.memory.pipeline import encode_memory
-                await encode_memory(db, ctx.user_id, ctx.course_id, ctx.user_message, ctx.response)
-
-            # 3. Graph memory extraction (mem0 pattern — entity/relationship extraction)
-            async def extract_graph():
-                from services.knowledge.graph_memory import extract_graph_entities, store_graph_entities
-                extracted = await extract_graph_entities(
-                    ctx.user_message, ctx.response,
-                )
-                if extracted.get("entities") or extracted.get("relationships"):
-                    await store_graph_entities(db, ctx.user_id, ctx.course_id, extracted)
-
-            # 4. Auto-consolidation (every N messages)
             async def auto_consolidate():
                 from services.agent.memory_agent import maybe_auto_consolidate
                 await maybe_auto_consolidate(db, ctx.user_id, ctx.course_id)
 
-            # 5. Behavior-based preference inference (every interaction)
             async def behavior_signals():
                 from services.preference.extractor import collect_behavior_signals
                 from services.preference.confidence import process_signal_to_preference
@@ -556,24 +623,17 @@ async def post_process(ctx: AgentContext, db_factory) -> None:
                 if signals:
                     logger.info("Behavior signals inferred: %d signals", len(signals))
 
-            # Execute sequentially — AsyncSession is NOT safe for concurrent use.
-            # _retry_async returns {success, name, error?} for tracking.
-            pp_results: list[dict] = []
             for coro_fn, name, retries in [
-                (extract_signal, "signal_extraction", 2),
-                (encode_mem, "memory_encoding", 2),
-                (extract_graph, "graph_extraction", 1),
                 (auto_consolidate, "auto_consolidation", 1),
                 (behavior_signals, "behavior_inference", 1),
             ]:
                 pp_results.append(await _retry_async(coro_fn, name, max_retries=retries))
 
-            # Commit whatever succeeded — partial results are better than none
             await db.commit()
 
     except Exception as e:
-        logger.warning("Post-processing failed: %s", e, exc_info=True)
-        pp_results = [{"success": False, "name": "post_process_session", "error": str(e)}]
+        logger.warning("Phase 2 post-processing failed: %s", e, exc_info=True)
+        pp_results.append({"success": False, "name": "sequential_phase", "error": str(e)})
 
     # Persist tool calls (separate session to avoid coupling with post-processing)
     if ctx.tool_calls:
@@ -649,6 +709,23 @@ async def wait_for_background_tasks(timeout: float = 5.0) -> None:
 
 
 # ── Fatigue Detection (OpenAkita Persona pattern) ──
+# Pre-compiled regex patterns for fatigue/positive signals (avoid re-compiling per call).
+# De-duplicated fatigue signals — each concept appears in only ONE group
+# to prevent a single phrase from matching multiple patterns and inflating the score.
+_FATIGUE_SIGNALS: list[tuple[re.Pattern, float]] = [
+    (re.compile(r"(don'?t\s+want\s+to\s+study|give\s+up|so\s+annoying|so\s+tired|can'?t\s+keep\s+going|hate\s+this)", re.IGNORECASE), 0.35),
+    (re.compile(r"(can'?t\s+do\s+it|too\s+hard|frustrated|confused)", re.IGNORECASE), 0.3),
+    (re.compile(r"(can'?t\s+understand|can'?t\s+learn|why\s+still\s+wrong|wrong\s+again|can'?t\s+figure\s+out)", re.IGNORECASE), 0.3),
+    (re.compile(r"(again\s+wrong|still\s+don'?t\s+get|keep\s+getting\s+wrong|makes\s+no\s+sense)", re.IGNORECASE), 0.25),
+    (re.compile(r"(forget\s+it|sigh|ugh|whatever|nvm|never\s+mind)", re.IGNORECASE), 0.25),
+    (re.compile(r"[😫😤😩😭💀🤯😡]"), 0.2),
+]
+_POSITIVE_SIGNALS: list[tuple[re.Pattern, float]] = [
+    (re.compile(r"(i\s+get\s+it|i\s+understand|so\s+that'?s\s+how|learned\s+it|mastered\s+it|got\s+it\s+done)", re.IGNORECASE), -0.3),
+    (re.compile(r"(i see|got it|makes sense|understand now|figured it out)", re.IGNORECASE), -0.3),
+    (re.compile(r"(thanks?|not\s+bad|pretty\s+good|great|nice|cool)", re.IGNORECASE), -0.15),
+]
+
 
 def _detect_fatigue(message: str) -> float:
     """Detect student frustration/fatigue level (0.0-1.0).
@@ -656,27 +733,12 @@ def _detect_fatigue(message: str) -> float:
     OpenAkita persona dimension pattern: check signals across multiple categories.
     Positive signals reduce the score to prevent false positives.
     """
-    # De-duplicated fatigue signals — each concept appears in only ONE group
-    # to prevent a single phrase from matching multiple patterns and inflating the score.
-    FATIGUE_SIGNALS = [
-        (r"(don'?t\s+want\s+to\s+study|give\s+up|so\s+annoying|so\s+tired|can'?t\s+keep\s+going|hate\s+this)", 0.35),
-        (r"(can'?t\s+do\s+it|too\s+hard|frustrated|confused)", 0.3),
-        (r"(can'?t\s+understand|can'?t\s+learn|why\s+still\s+wrong|wrong\s+again|can'?t\s+figure\s+out)", 0.3),
-        (r"(again\s+wrong|still\s+don'?t\s+get|keep\s+getting\s+wrong|makes\s+no\s+sense)", 0.25),
-        (r"(forget\s+it|sigh|ugh|whatever|nvm|never\s+mind)", 0.25),
-        (r"[😫😤😩😭💀🤯😡]{1}", 0.2),
-    ]
-    POSITIVE_SIGNALS = [
-        (r"(i\s+get\s+it|i\s+understand|so\s+that'?s\s+how|learned\s+it|mastered\s+it|got\s+it\s+done)", -0.3),
-        (r"(i see|got it|makes sense|understand now|figured it out)", -0.3),
-        (r"(thanks?|not\s+bad|pretty\s+good|great|nice|cool)", -0.15),
-    ]
     score = 0.0
-    for pattern, weight in FATIGUE_SIGNALS:
-        if re.search(pattern, message, re.IGNORECASE):
+    for pattern, weight in _FATIGUE_SIGNALS:
+        if pattern.search(message):
             score += weight
-    for pattern, weight in POSITIVE_SIGNALS:
-        if re.search(pattern, message, re.IGNORECASE):
+    for pattern, weight in _POSITIVE_SIGNALS:
+        if pattern.search(message):
             score += weight
     return max(0.0, min(score, 1.0))
 
@@ -901,8 +963,7 @@ async def orchestrate_stream(
 
         # Post-processing (same pattern as single-agent path)
         if ctx.response:
-            import copy
-            swarm_bg_ctx = copy.deepcopy(ctx)
+            swarm_bg_ctx = ctx.snapshot_for_postprocess()
             task = asyncio.create_task(post_process(swarm_bg_ctx, db_factory))
             _background_tasks.add(task)
             task.add_done_callback(_background_tasks.discard)
@@ -922,97 +983,28 @@ async def orchestrate_stream(
 
         # 5. Stream response with marker parsing + token tracking
         # Markers: [ACTION:...] (UI actions), [TOOL_START:...] / [TOOL_DONE:...] (ReAct tools)
-        buffer = ""
+        parser = MarkerParser()
         async for chunk in agent.stream(ctx, db):
-            buffer += chunk
+            for event_type, payload in parser.feed(chunk):
+                if event_type == "text":
+                    yield {"event": "message", "data": json.dumps({"content": payload})}
+                elif event_type == "tool_start":
+                    event_data: dict = {"status": "running", "tool": payload["tool"]}
+                    if payload["explanation"]:
+                        event_data["explanation"] = payload["explanation"]
+                    yield {"event": "tool_status", "data": json.dumps(event_data)}
+                elif event_type == "tool_done":
+                    event_data = {"status": "complete", "tool": payload["tool"]}
+                    if payload["explanation"]:
+                        event_data["explanation"] = payload["explanation"]
+                    yield {"event": "tool_status", "data": json.dumps(event_data)}
+                elif event_type == "action":
+                    ctx.actions.append(payload)
+                    yield {"event": "action", "data": json.dumps(payload)}
 
-            # Parse markers one at a time until no more complete markers found
-            changed = True
-            while changed:
-                changed = False
-
-                # Parse [TOOL_START:tool_name] or [TOOL_START:tool_name|explanation] markers
-                if "[TOOL_START:" in buffer:
-                    start = buffer.index("[TOOL_START:")
-                    end = buffer.find("]", start)
-                    if end != -1:
-                        before = buffer[:start]
-                        if before:
-                            yield {"event": "message", "data": json.dumps({"content": before})}
-                        marker_content = buffer[start + 12:end]
-                        if "|" in marker_content:
-                            tool_name, explanation = marker_content.split("|", 1)
-                        else:
-                            tool_name, explanation = marker_content, ""
-                        event_data: dict = {"status": "running", "tool": tool_name}
-                        if explanation:
-                            event_data["explanation"] = explanation
-                        yield {
-                            "event": "tool_status",
-                            "data": json.dumps(event_data),
-                        }
-                        buffer = buffer[end + 1:]
-                        changed = True
-                        continue
-
-                # Parse [TOOL_DONE:tool_name] or [TOOL_DONE:tool_name|explanation] markers
-                if "[TOOL_DONE:" in buffer:
-                    start = buffer.index("[TOOL_DONE:")
-                    end = buffer.find("]", start)
-                    if end != -1:
-                        before = buffer[:start]
-                        if before:
-                            yield {"event": "message", "data": json.dumps({"content": before})}
-                        marker_content = buffer[start + 11:end]
-                        if "|" in marker_content:
-                            tool_name, explanation = marker_content.split("|", 1)
-                        else:
-                            tool_name, explanation = marker_content, ""
-                        event_data = {"status": "complete", "tool": tool_name}
-                        if explanation:
-                            event_data["explanation"] = explanation
-                        yield {
-                            "event": "tool_status",
-                            "data": json.dumps(event_data),
-                        }
-                        buffer = buffer[end + 1:]
-                        changed = True
-                        continue
-
-                # Parse [ACTION:...] markers (existing UI action system)
-                if "[ACTION:" in buffer:
-                    start = buffer.index("[ACTION:")
-                    end = buffer.find("]", start)
-                    if end != -1:
-                        before = buffer[:start]
-                        if before:
-                            yield {"event": "message", "data": json.dumps({"content": before})}
-                        marker = buffer[start + 8:end]
-                        action_data = _parse_action_marker(marker)
-                        ctx.actions.append(action_data)
-                        yield {"event": "action", "data": json.dumps(action_data)}
-                        buffer = buffer[end + 1:]
-                        changed = True
-                        continue
-
-            # Yield remaining buffer content (no pending markers)
-            has_pending = any(m in buffer for m in ("[ACTION:", "[TOOL_START:", "[TOOL_DONE:"))
-            if buffer and not has_pending:
-                yield {"event": "message", "data": json.dumps({"content": buffer})}
-                buffer = ""
-            elif has_pending and len(buffer) > 500:
-                # Safety: if buffer grows too large with an incomplete marker,
-                # the marker is likely malformed — flush everything as text
-                logger.warning("Flushing oversized marker buffer (%d chars)", len(buffer))
-                yield {"event": "message", "data": json.dumps({"content": buffer})}
-                buffer = ""
-
-        # Yield any remaining buffer (strip incomplete markers)
-        if buffer:
-            # Remove stray incomplete markers that never closed
-            buffer = re.sub(r"\[(TOOL_START|TOOL_DONE|ACTION):[^\]]*$", "", buffer)
-            if buffer:
-                yield {"event": "message", "data": json.dumps({"content": buffer})}
+        remaining = parser.flush()
+        if remaining:
+            yield {"event": "message", "data": json.dumps({"content": remaining})}
 
         _finalize_token_usage(ctx, agent)
         await ext_registry.run_hooks(
@@ -1041,9 +1033,8 @@ async def orchestrate_stream(
             "data": json.dumps(_envelope_payload(ctx)),
         }
 
-        # Snapshot ctx for background tasks to avoid data races with the SSE generator
-        import copy
-        bg_ctx = copy.deepcopy(ctx)
+        # Lightweight snapshot for background tasks (avoids deep-copying large context fields)
+        bg_ctx = ctx.snapshot_for_postprocess()
 
         # 7a. Record LLM usage (fire-and-forget)
         if bg_ctx.input_tokens or bg_ctx.output_tokens:

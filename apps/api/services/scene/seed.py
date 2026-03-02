@@ -1,6 +1,6 @@
 """Seed preset scenes into the database.
 
-5 preset scenes: study_session, exam_prep, assignment, review_drill, note_organize.
+2 preset scenes: study_session, exam_prep.
 Run on app startup or via Alembic data migration.
 """
 
@@ -17,7 +17,7 @@ PRESET_SCENES = [
     {
         "scene_id": "study_session",
         "display_name": "Daily Study",
-        "icon": "📚",
+        "icon": "",
         "is_preset": True,
         "tab_preset": [
             {"type": "notes", "position": 0},
@@ -31,7 +31,7 @@ PRESET_SCENES = [
     {
         "scene_id": "exam_prep",
         "display_name": "Exam Prep",
-        "icon": "🎯",
+        "icon": "",
         "is_preset": True,
         "tab_preset": [
             {"type": "plan", "position": 0},
@@ -42,46 +42,6 @@ PRESET_SCENES = [
         "workflow": "exam",
         "ai_behavior": {"style": "concise", "focus": "weak_points", "quiz_priority": "high_freq"},
         "preferences": {"detail_level": "concise", "note_format": "bullet_point"},
-    },
-    {
-        "scene_id": "assignment",
-        "display_name": "Homework",
-        "icon": "✍️",
-        "is_preset": True,
-        "tab_preset": [
-            {"type": "notes", "position": 0},
-            {"type": "chat", "position": 1},
-        ],
-        "workflow": "assignment",
-        "ai_behavior": {"style": "guided", "no_direct_answers": True, "progressive_hints": True},
-        "preferences": {"explanation_style": "socratic"},
-    },
-    {
-        "scene_id": "review_drill",
-        "display_name": "Error Review",
-        "icon": "🔄",
-        "is_preset": True,
-        "tab_preset": [
-            {"type": "review", "position": 0},
-            {"type": "quiz", "position": 1},
-            {"type": "chat", "position": 2},
-        ],
-        "workflow": "review",
-        "ai_behavior": {"style": "analytical", "error_classification": True, "derive_similar": True},
-        "preferences": None,
-    },
-    {
-        "scene_id": "note_organize",
-        "display_name": "Notes",
-        "icon": "📝",
-        "is_preset": True,
-        "tab_preset": [
-            {"type": "notes", "position": 0},
-            {"type": "chat", "position": 1},
-        ],
-        "workflow": "notes",
-        "ai_behavior": {"style": "structural", "cross_chapter": True},
-        "preferences": {"note_format": "mind_map"},
     },
 ]
 

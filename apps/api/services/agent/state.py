@@ -153,6 +153,42 @@ class AgentContext:
             return (self.completed_at - self.created_at) * 1000
         return None
 
+    def snapshot_for_postprocess(self) -> "AgentContext":
+        """Create a lightweight copy for post-processing tasks.
+
+        Avoids deep-copying large fields (conversation_history, content_docs,
+        memories, images) that post_process() never reads.
+        """
+        import copy
+        snap = AgentContext(
+            user_id=self.user_id,
+            course_id=self.course_id,
+            conversation_id=self.conversation_id,
+            session_id=self.session_id,
+            user_message=self.user_message,
+            active_tab=self.active_tab,
+            intent=self.intent,
+            intent_confidence=self.intent_confidence,
+            scene=self.scene,
+            phase=self.phase,
+            delegated_agent=self.delegated_agent,
+            response=self.response,
+            actions=list(self.actions),
+            extracted_signal=self.extracted_signal,
+            tool_calls=list(self.tool_calls),
+            react_iterations=self.react_iterations,
+            input_tokens=self.input_tokens,
+            output_tokens=self.output_tokens,
+            total_tokens=self.total_tokens,
+            created_at=self.created_at,
+            completed_at=self.completed_at,
+            error=self.error,
+            metadata=copy.copy(self.metadata),
+            swarm_mode=self.swarm_mode,
+            merge_strategy=self.merge_strategy,
+        )
+        return snap
+
     def to_status_dict(self) -> dict:
         """Serializable status for frontend progress display."""
         status = {

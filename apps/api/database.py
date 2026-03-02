@@ -12,6 +12,9 @@ _TESTING = bool(os.environ.get("PYTEST_VERSION") or os.environ.get("PYTEST_CURRE
 _engine_kwargs = {"echo": False, "pool_pre_ping": not _TESTING}
 if _TESTING:
     _engine_kwargs["poolclass"] = NullPool
+else:
+    _engine_kwargs["pool_size"] = 20
+    _engine_kwargs["max_overflow"] = 10
 
 engine = create_async_engine(settings.database_url, **_engine_kwargs)
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
