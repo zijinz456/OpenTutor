@@ -184,22 +184,36 @@ async def run_regression_benchmark(
 
     if db is not None and course_id and retrieval_queries:
         retrieval = await eval_retrieval_from_course(db, course_id, retrieval_queries)
-        suites.append(
-            BenchmarkSuite(
-                name="retrieval",
-                passed=retrieval.avg_recall >= RETRIEVAL_MIN_RECALL,
-                score=retrieval.avg_recall,
-                threshold=RETRIEVAL_MIN_RECALL,
-                details={
-                    "total": retrieval.total,
-                    "avg_recall": retrieval.avg_recall,
-                    "avg_precision": retrieval.avg_precision,
-                    "mrr": retrieval.mrr,
-                    "avg_ndcg": retrieval.avg_ndcg,
-                },
-                skipped=False,
+        if retrieval.total == 0:
+            # No matching content nodes found — skip rather than fail,
+            # since there is no test data to evaluate against.
+            suites.append(
+                BenchmarkSuite(
+                    name="retrieval",
+                    passed=True,
+                    score=None,
+                    threshold=RETRIEVAL_MIN_RECALL,
+                    details={"reason": "no matching content nodes for evaluation"},
+                    skipped=True,
+                )
             )
-        )
+        else:
+            suites.append(
+                BenchmarkSuite(
+                    name="retrieval",
+                    passed=retrieval.avg_recall >= RETRIEVAL_MIN_RECALL,
+                    score=retrieval.avg_recall,
+                    threshold=RETRIEVAL_MIN_RECALL,
+                    details={
+                        "total": retrieval.total,
+                        "avg_recall": retrieval.avg_recall,
+                        "avg_precision": retrieval.avg_precision,
+                        "mrr": retrieval.mrr,
+                        "avg_ndcg": retrieval.avg_ndcg,
+                    },
+                    skipped=False,
+                )
+            )
     else:
         suites.append(
             BenchmarkSuite(
