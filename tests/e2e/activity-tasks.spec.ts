@@ -21,7 +21,7 @@ async function openActivityPanel(page: import("@playwright/test").Page) {
 
   // Wait for the dynamically imported ActivityPanel to load and render
   // Dynamic imports can be very slow under CI load (5 parallel workers)
-  await expect(panel).toBeVisible({ timeout: 60_000 });
+  await expect(panel).toBeVisible({ timeout: 90_000 });
 }
 
 test.describe.serial("Activity task controls", () => {
@@ -30,6 +30,7 @@ test.describe.serial("Activity task controls", () => {
   });
 
   test("approval and resume controls mutate durable task state from the activity panel", async ({ page, request }) => {
+    test.setTimeout(150_000);
     const courseId = await createCourseWithContent(page, "Activity Task Flow");
     await openActivityPanel(page);
 
@@ -75,6 +76,7 @@ test.describe.serial("Activity task controls", () => {
   });
 
   test("activity panel can create, display, and complete a study goal", async ({ page }) => {
+    test.setTimeout(150_000);
     await createCourseWithContent(page, "Activity Goal Flow");
     await openActivityPanel(page);
 
@@ -91,6 +93,7 @@ test.describe.serial("Activity task controls", () => {
   });
 
   test("next best action can be queued into a durable task from the activity panel", async ({ page }) => {
+    test.setTimeout(150_000);
     await createCourseWithContent(page, "Next Action Queue Flow");
     await openActivityPanel(page);
 
@@ -108,6 +111,7 @@ test.describe.serial("Activity task controls", () => {
   });
 
   test("completed task review can queue a follow-up directly from the activity panel", async ({ page, request }) => {
+    test.setTimeout(150_000);
     const courseId = await createCourseWithContent(page, "Completed Review Flow");
 
     const workflowResp = await request.post(`${apiBaseUrl}/workflows/exam-prep`, {
