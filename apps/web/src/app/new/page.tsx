@@ -23,6 +23,7 @@ import {
 import {
   IngestionJobSummary,
   createScrapeSource,
+  listIngestionJobs,
   uploadFile,
   scrapeUrl,
   type CourseMetadata,
@@ -111,7 +112,7 @@ function deriveParseProgress(
   );
 }
 
-const FEATURE_CARDS = [
+const FEATURE_CARDS: { id: string; label: string; description: string; icon: typeof FileText; iconBg: string; iconColor: string; enabled: boolean; phase?: string }[] = [
   { id: "notes", label: "Organize Notes", description: "Restructure your materials into clean, organized notes in your preferred format.", icon: FileText, iconBg: "bg-indigo-50", iconColor: "text-indigo-600", enabled: true },
   { id: "practice", label: "Practice Mode", description: "Generate practice questions from your materials. Interactive Q&A with instant feedback.", icon: Pencil, iconBg: "bg-indigo-50", iconColor: "text-indigo-600", enabled: true },
   { id: "wrong_answer", label: "Wrong Answer Review", description: "Track, diagnose, and revisit incorrect answers from generated quizzes.", icon: RotateCcw, iconBg: "bg-amber-50", iconColor: "text-amber-600", enabled: true },
