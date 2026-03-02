@@ -154,7 +154,11 @@ jobs:
           cd apps/api
           python -m uvicorn main:app --host 127.0.0.1 --port 8004 > /tmp/opentutor_api.log 2>&1 &
           echo $! > /tmp/opentutor_api.pid
-          sleep 3
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8004/api/health && break
+            echo "Waiting for API... attempt $i"
+            sleep 2
+          done
           curl -f http://127.0.0.1:8004/api/health
 
       - name: Run API integration tests (pytest)
@@ -370,7 +374,11 @@ jobs:
           cd apps/api
           LLM_REQUIRED=1 python -m uvicorn main:app --host 127.0.0.1 --port 8004 > /tmp/opentutor_api.log 2>&1 &
           echo $! > /tmp/opentutor_api.pid
-          sleep 3
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8004/api/health && break
+            echo "Waiting for API... attempt $i"
+            sleep 2
+          done
           curl -f http://127.0.0.1:8004/api/health
 
       - name: Run real LLM integration test
