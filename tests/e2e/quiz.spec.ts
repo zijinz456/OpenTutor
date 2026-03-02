@@ -21,6 +21,7 @@ test.describe.serial("Quiz Panel", () => {
   });
 
   test("extract quiz button triggers generation", async ({ page }) => {
+    test.skip(!hasRealLlmEnv(), "Requires real LLM API key for quiz generation");
     await createCourseWithContent(page);
     await ensureRightPanelVisible(page);
     await page.getByRole("button", { name: "Quiz", exact: true }).click();
@@ -33,6 +34,7 @@ test.describe.serial("Quiz Panel", () => {
   });
 
   test("generated toast shows question count", async ({ page }) => {
+    test.skip(!hasRealLlmEnv(), "Requires real LLM API key for quiz generation");
     await createCourseWithContent(page);
     await ensureRightPanelVisible(page);
     await page.getByRole("button", { name: "Quiz", exact: true }).click();

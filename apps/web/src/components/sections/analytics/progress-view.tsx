@@ -10,17 +10,17 @@ interface ProgressViewProps {
 }
 
 const BAR_COLORS = {
-  mastered: "bg-emerald-500",
-  reviewed: "bg-sky-500",
-  in_progress: "bg-amber-400",
+  mastered: "bg-zinc-900 dark:bg-zinc-100",
+  reviewed: "bg-zinc-600 dark:bg-zinc-400",
+  in_progress: "bg-zinc-400 dark:bg-zinc-600",
   not_started: "bg-zinc-300 dark:bg-zinc-600",
 } as const;
 
 const GAP_BADGE_COLORS: Record<string, string> = {
-  conceptual: "bg-rose-100 text-rose-700 dark:bg-rose-900 dark:text-rose-300",
-  procedural: "bg-violet-100 text-violet-700 dark:bg-violet-900 dark:text-violet-300",
-  factual: "bg-sky-100 text-sky-700 dark:bg-sky-900 dark:text-sky-300",
-  application: "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300",
+  conceptual: "bg-zinc-200 text-zinc-800 dark:bg-zinc-700 dark:text-zinc-200",
+  procedural: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300",
+  factual: "bg-zinc-200 text-zinc-600 dark:bg-zinc-700 dark:text-zinc-400",
+  application: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300",
 };
 
 function fmtTime(minutes: number): string {
@@ -38,14 +38,23 @@ export function ProgressView({ courseId }: ProgressViewProps) {
   useEffect(() => {
     let cancelled = false;
     getCourseProgress(courseId)
-      .then((d) => { if (!cancelled) setData(d); })
-      .catch(() => { if (!cancelled) setError(true); });
-    return () => { cancelled = true; };
+      .then((d) => {
+        if (!cancelled) setData(d);
+      })
+      .catch(() => {
+        if (!cancelled) setError(true);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [courseId]);
 
   if (error) {
     return (
-      <div className="flex-1 flex items-center justify-center p-8 text-xs text-muted-foreground">
+      <div
+        className="flex-1 flex items-center justify-center p-8 text-xs text-muted-foreground"
+        data-testid="progress-panel"
+      >
         Failed to load progress.
       </div>
     );
@@ -53,7 +62,7 @@ export function ProgressView({ courseId }: ProgressViewProps) {
 
   if (!data) {
     return (
-      <div className="flex-1 flex flex-col gap-3 p-4">
+      <div className="flex-1 flex flex-col gap-3 p-4" data-testid="progress-panel">
         <div className="h-4 w-48 bg-muted animate-pulse rounded" />
         <div className="h-3 w-full bg-muted animate-pulse rounded" />
         <div className="h-3 w-3/4 bg-muted animate-pulse rounded" />
@@ -74,13 +83,15 @@ export function ProgressView({ courseId }: ProgressViewProps) {
   );
 
   return (
-    <div className="flex-1 flex flex-col gap-4 p-4 overflow-y-auto">
-      <h3 className="text-sm font-medium">{t("progress.title")}</h3>
+    <div
+      className="flex-1 flex flex-col gap-4 p-4 overflow-y-auto"
+      data-testid="progress-panel"
+    >
+      <h3 className="text-sm font-medium">Course Completion</h3>
 
-      {/* Metric cards */}
       <div className="grid grid-cols-2 gap-2">
         {[
-          { label: t("progress.mastered"), value: `${Math.round(data.average_mastery * 100)}%` },
+          { label: t("progress.mastered"), value: `${Math.round(data.average_mastery)}%` },
           { label: t("progress.accuracy"), value: `${Math.round(data.completion_percent)}%` },
           { label: t("progress.totalTime"), value: fmtTime(data.total_study_minutes) },
           { label: t("progress.notStarted"), value: `${data.not_started}` },
@@ -95,7 +106,6 @@ export function ProgressView({ courseId }: ProgressViewProps) {
         ))}
       </div>
 
-      {/* Stacked progress bar */}
       <div className="space-y-1.5">
         <div className="flex items-center justify-between text-xs text-muted-foreground">
           <span>{data.total_nodes} topics</span>
@@ -110,7 +120,7 @@ export function ProgressView({ courseId }: ProgressViewProps) {
                 key={key}
                 className={`${color} transition-all`}
                 style={{ width: `${pct}%` }}
-                title={`${t(`progress.${key === "in_progress" ? "inProgress" : key}`)} ${count}`}
+                title={`${key} ${count}`}
               />
             );
           })}
@@ -119,15 +129,14 @@ export function ProgressView({ courseId }: ProgressViewProps) {
           {segments.map(({ key, count, color }) => (
             <span key={key} className="flex items-center gap-1">
               <span className={`inline-block w-2 h-2 rounded-full ${color}`} />
-              {t(`progress.${key === "in_progress" ? "inProgress" : key === "not_started" ? "notStarted" : key}`)} {count}
+              {key.replace("_", " ")} {count}
             </span>
           ))}
         </div>
       </div>
 
-      {/* Gap type breakdown */}
-      {gapEntries.length > 0 && (
-        <div className="space-y-2">
+      {gapEntries.length > 0 ? (
+        <div className="space-y-2" data-testid="progress-gap-breakdown">
           <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
             Gap Breakdown
           </h4>
@@ -145,7 +154,7 @@ export function ProgressView({ courseId }: ProgressViewProps) {
             ))}
           </ul>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

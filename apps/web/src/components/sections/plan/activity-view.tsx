@@ -18,13 +18,13 @@ interface ActivityViewProps {
 }
 
 const STATUS_COLORS: Record<string, string> = {
-  pending_approval: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
-  running: "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300",
-  completed: "bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300",
-  failed: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300",
-  queued: "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
-  cancelled: "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
-  rejected: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300",
+  pending_approval: "bg-zinc-200 text-zinc-800 dark:bg-zinc-700/50 dark:text-zinc-300",
+  running: "bg-zinc-100 text-zinc-800 dark:bg-zinc-800/50 dark:text-zinc-300",
+  completed: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800/50 dark:text-zinc-400",
+  failed: "bg-zinc-200 text-zinc-800 dark:bg-zinc-700/50 dark:text-zinc-300",
+  queued: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300",
+  cancelled: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300",
+  rejected: "bg-zinc-200 text-zinc-700 dark:bg-zinc-700/50 dark:text-zinc-300",
 };
 
 function statusColor(status: string) {
@@ -113,12 +113,12 @@ export function ActivityView({ courseId }: ActivityViewProps) {
       {/* Pending approval */}
       {pending.length > 0 && (
         <section>
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400 mb-2">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-400 mb-2">
             Needs Approval ({pending.length})
           </h3>
           <div className="flex flex-col gap-2">
             {pending.map((tk) => (
-              <div key={tk.id} className="rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 p-3">
+              <div key={tk.id} className="rounded-lg border border-zinc-300 dark:border-zinc-600 bg-zinc-50 dark:bg-zinc-800/30 p-3">
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     <p className="text-sm font-medium truncate">{tk.title}</p>

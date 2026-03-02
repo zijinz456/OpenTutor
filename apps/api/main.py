@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 
 from config import settings
-from libs.exceptions import AppError
+from libs.exceptions import AppError, LLMUnavailableError, is_llm_unavailable_error
 from services.app_lifecycle import lifespan
 from services.llm.router import LLMConfigurationError
 from services.router_registry import register_routers
@@ -54,6 +54,9 @@ async def database_error_handler(_: Request, exc: SQLAlchemyError):
 
 
 async def generic_error_handler(_: Request, exc: Exception):
+    if is_llm_unavailable_error(exc):
+        llm_error = LLMUnavailableError(str(exc))
+        return JSONResponse(status_code=llm_error.status, content=llm_error.to_dict())
     logger.error("Unhandled error: %s", exc, exc_info=True)
     return JSONResponse(status_code=500, content={"code": "internal_error", "message": "An unexpected error occurred", "status": 500})
 
@@ -63,6 +66,35 @@ def _register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(LLMConfigurationError, llm_configuration_error_handler)
     app.add_exception_handler(SQLAlchemyError, database_error_handler)
     app.add_exception_handler(Exception, generic_error_handler)
+
+
+def _mount_mcp(app: FastAPI) -> None:
+    """Mount MCP servers for external AI agent access.
+
+    1. FastApiMCP at ``/mcp`` — auto-exposes all FastAPI routes.
+    2. Education MCP at ``/mcp/education`` — curated high-level learning tools.
+    """
+    # 1. Auto-expose all routes
+    try:
+        from fastapi_mcp import FastApiMCP
+
+        mcp_server = FastApiMCP(
+            app,
+            name="OpenTutor Agent",
+            description="Personal Learning Agent — education tools accessible via MCP",
+        )
+        mcp_server.mount()
+        logger.info("FastApiMCP mounted at /mcp (all routes exposed)")
+    except Exception as exc:
+        logger.warning("FastApiMCP mount failed: %s", exc)
+
+    # 2. Curated education tools
+    try:
+        from services.mcp.server import mount_education_mcp
+
+        mount_education_mcp(app)
+    except Exception as exc:
+        logger.warning("Education MCP mount failed: %s", exc)
 
 
 def create_app() -> FastAPI:
@@ -75,6 +107,7 @@ def create_app() -> FastAPI:
     _configure_middleware(app)
     _register_exception_handlers(app)
     register_routers(app)
+    _mount_mcp(app)
     return app
 
 

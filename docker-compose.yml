@@ -41,6 +41,7 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://opentutor:REDACTED_DEV_PASSWORD@db:5432/opentutor
       REDIS_URL: redis://redis:6379/0
+      AUTH_ENABLED: ${AUTH_ENABLED:-false}
       DEPLOYMENT_MODE: ${DEPLOYMENT_MODE:-single_user}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}

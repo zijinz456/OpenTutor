@@ -48,36 +48,33 @@ test.describe.serial("Review Panel", () => {
     await expect(page.getByText("No unmastered wrong answers")).toBeVisible({ timeout: 30_000 });
   });
 
-  test("Refresh button is clickable", async ({ page }) => {
+  test("empty state does not show review actions", async ({ page }) => {
     test.setTimeout(150_000);
     await createCourseWithContent(page);
     await ensureRightPanelVisible(page);
     await openReviewPanelAndWaitForData(page);
     await expect(page.getByText("No unmastered wrong answers")).toBeVisible({ timeout: 30_000 });
-    const refreshBtn = page.getByRole("button", { name: "Refresh" });
-    await expect(refreshBtn).toBeVisible({ timeout: 15_000 });
-    await expect(refreshBtn).toBeEnabled();
-    await refreshBtn.click();
-    await expect(page.getByText("No unmastered wrong answers")).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByRole("button", { name: "Refresh" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Generate Review" })).toHaveCount(0);
   });
 
-  test("stats section shows Total, Mastered, Unmastered", async ({ page }) => {
+  test("stats section stays hidden when no wrong answers exist", async ({ page }) => {
     test.setTimeout(150_000);
     await createCourseWithContent(page);
     await ensureRightPanelVisible(page);
     await openReviewPanelAndWaitForData(page);
     await expect(page.getByText("No unmastered wrong answers")).toBeVisible({ timeout: 30_000 });
-    const refreshBtn = page.getByRole("button", { name: "Refresh" });
-    await expect(refreshBtn).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("review-stats")).toHaveCount(0);
   });
 
-  test("Generate Review button is present", async ({ page }) => {
+  test("empty review state keeps the panel lightweight", async ({ page }) => {
     test.setTimeout(150_000);
     await createCourseWithContent(page);
     await ensureRightPanelVisible(page);
     await openReviewPanelAndWaitForData(page);
     await expect(page.getByText("No unmastered wrong answers")).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByRole("button", { name: "Refresh" })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole("heading", { name: "Review" })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole("button", { name: "Generate Review" })).toHaveCount(0);
   });
 });
 

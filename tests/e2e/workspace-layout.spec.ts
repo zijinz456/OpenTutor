@@ -1,5 +1,11 @@
 import { expect, test } from "@playwright/test";
-import { skipOnboarding, createCourseViaApi, createCourseWithContent, ensureRightPanelVisible } from "./helpers/test-utils";
+import {
+  skipOnboarding,
+  createCourseViaApi,
+  createCourseWithContent,
+  ensureAnalyticsSectionVisible,
+  ensureRightPanelVisible,
+} from "./helpers/test-utils";
 
 test.describe.serial("Workspace Layout", () => {
   test.beforeEach(async ({ page }) => {
@@ -31,17 +37,24 @@ test.describe.serial("Workspace Layout", () => {
 
   test("clicking Stats tab shows progress panel", async ({ page }) => {
     await createCourseWithContent(page, "Layout Stats");
-    await ensureRightPanelVisible(page);
+    await ensureAnalyticsSectionVisible(page);
     await page.getByRole("button", { name: "Stats" }).click();
     await expect(page.getByText("Course Completion").or(page.getByText("Upload course materials")).first()).toBeVisible({ timeout: 15_000 });
   });
 
   test("clicking Graph tab shows knowledge graph", async ({ page }) => {
     await createCourseWithContent(page, "Layout Graph");
-    await ensureRightPanelVisible(page);
+    await ensureAnalyticsSectionVisible(page);
     await page.getByRole("button", { name: "Graph" }).click();
     // Knowledge graph canvas or empty state
-    await expect(page.locator("canvas").or(page.getByText("knowledge graph")).or(page.getByText("No data")).or(page.getByText("Upload course materials")).first()).toBeVisible({ timeout: 30_000 });
+    await expect(
+      page
+        .locator("svg.bg-background")
+        .or(page.getByText(/knowledge graph/i))
+        .or(page.getByText("Loading graph..."))
+        .or(page.getByText("Upload course materials to generate the knowledge graph"))
+        .first(),
+    ).toBeVisible({ timeout: 30_000 });
   });
 
   test("clicking Review tab shows review panel", async ({ page }) => {
@@ -56,8 +69,7 @@ test.describe.serial("Workspace Layout", () => {
 
   test("clicking Plan tab shows study plan panel", async ({ page }) => {
     await createCourseWithContent(page, "Layout Plan");
-    await ensureRightPanelVisible(page);
-    await page.getByTestId("right-tab-plan").click();
+    await page.locator('button[title="Plan"]').first().click();
     await expect(page.getByTestId("study-plan-panel")).toBeVisible({ timeout: 10_000 });
   });
 
@@ -81,7 +93,7 @@ test.describe.serial("Workspace Layout", () => {
 
   test("activity bar Progress icon is visible", async ({ page }) => {
     await createCourseWithContent(page, "Layout ActivityProgress");
-    const progressBtn = page.locator('button[title="Progress"]');
+    const progressBtn = page.locator('button[title="Analytics"]');
     await expect(progressBtn).toBeVisible();
   });
 
@@ -103,17 +115,15 @@ test.describe.serial("Workspace Layout", () => {
     }
   });
 
-  test("panel resize handles exist between panels", async ({ page }) => {
+  test("workspace shows left tree and main content regions", async ({ page }) => {
     await createCourseWithContent(page, "Layout Resize");
-    // Resizable panel handles use data-slot="resizable-handle" or react-resizable-panels attributes
-    const handles = page.locator('[data-slot="resizable-handle"], [data-panel-resize-handle-id]');
-    const count = await handles.count();
-    expect(count).toBeGreaterThan(0);
+    await expect(page.getByLabel("Course tree")).toBeVisible();
+    await expect(page.getByTestId("section-container")).toBeVisible();
   });
 
-  test("scene selector is in breadcrumb area", async ({ page }) => {
+  test("scene selector is not exposed in the workspace header", async ({ page }) => {
     await createCourseWithContent(page, "Layout Scene");
-    await expect(page.getByTestId("scene-selector-trigger")).toBeVisible();
+    await expect(page.getByTestId("scene-selector-trigger")).toHaveCount(0);
   });
 
   test("workspace upload trigger is accessible", async ({ page }) => {

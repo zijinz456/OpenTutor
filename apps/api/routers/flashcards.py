@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends
-from libs.exceptions import NotFoundError
+from libs.exceptions import AppError, NotFoundError, reraise_as_app_error
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -40,18 +40,44 @@ async def generate_flashcards(body: GenerateRequest, db: AsyncSession = Depends(
     """Generate flashcards from course content using LLM + FSRS."""
     from services.spaced_repetition.flashcards import generate_flashcards
 
-    cards = await generate_flashcards(
-        db, body.course_id, body.content_node_id, body.count
-    )
+    try:
+        cards = await generate_flashcards(
+            db, body.course_id, body.content_node_id, body.count
+        )
+    except Exception as exc:
+        reraise_as_app_error(exc, "Flashcard generation failed")
     return {"cards": cards, "count": len(cards)}
 
 
 @router.post("/review")
-async def review_flashcard(body: ReviewRequest):
+async def review_flashcard_endpoint(
+    body: ReviewRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     """Review a flashcard and get FSRS scheduling result."""
     from services.spaced_repetition.flashcards import review_flashcard
 
     updated_card = review_flashcard(body.card, body.rating)
+
+    # Emit standardized learning event for analytics + plugin hooks
+    try:
+        from services.analytics.events import emit_flashcard_reviewed
+        card_id = body.card.get("id") or body.card.get("front", "unknown")[:40]
+        course_id = body.card.get("course_id")
+        if course_id:
+            await emit_flashcard_reviewed(
+                db,
+                user_id=user.id,
+                course_id=uuid.UUID(course_id) if isinstance(course_id, str) else course_id,
+                card_id=str(card_id),
+                rating=body.rating,
+            )
+            await db.commit()
+    except Exception:
+        import logging
+        logging.getLogger(__name__).debug("Flashcard learning event emission failed (best-effort)")
+
     return {
         "card": updated_card,
         "next_review": updated_card.get("fsrs", {}).get("due"),

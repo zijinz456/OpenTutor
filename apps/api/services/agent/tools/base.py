@@ -7,10 +7,13 @@ Borrows from:
 - NanoBot progressive loading: summary descriptions for context efficiency
 """
 
+import hashlib
+import json as _json
 import logging
 import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,6 +23,16 @@ logger = logging.getLogger(__name__)
 # Truncation limit for tool results (OpenAkita uses 16000; we use 6000
 # to balance information completeness with context budget)
 MAX_TOOL_RESULT_CHARS = 6000
+
+# Idempotency window: skip duplicate write-tool calls within this many seconds
+IDEMPOTENCY_WINDOW_SECONDS = 120
+
+
+class ToolCategory(str, Enum):
+    """Classification of tool side-effect behaviour."""
+    READ = "read"       # No side effects (search, lookup)
+    WRITE = "write"     # Creates / mutates data (generate, save)
+    COMPUTE = "compute" # Pure computation (run_code)
 
 
 # ── Data Classes ──
@@ -68,11 +81,29 @@ class Tool(ABC):
     - name: unique identifier used in function calling / text parsing
     - description: NL description for LLM to understand when to use it
     - domain: category tag (e.g. "education", "web", "file", "general")
+    - category: READ (no side effects), WRITE (creates data), COMPUTE (pure computation)
     """
 
     name: str = "base_tool"
     description: str = "A base tool."
     domain: str = "general"
+    category: ToolCategory = ToolCategory.READ
+
+    def idempotency_key(self, parameters: dict[str, Any], ctx: Any) -> str | None:
+        """Compute a deduplication key for this tool call.
+
+        Returns None for READ/COMPUTE tools (no dedup needed).
+        WRITE tools return a SHA-256 hash of (course_id, tool_name, sorted_params).
+        Override in subclasses for custom dedup logic.
+        """
+        if self.category != ToolCategory.WRITE:
+            return None
+        normalized = _json.dumps(
+            {"course_id": str(getattr(ctx, "course_id", "")), "tool": self.name, **parameters},
+            sort_keys=True,
+            default=str,
+        ).lower().strip()
+        return hashlib.sha256(normalized.encode()).hexdigest()[:16]
 
     @abstractmethod
     def get_parameters(self) -> list[ToolParameter]:
@@ -243,9 +274,26 @@ class ToolRegistry:
             return ToolResult(
                 success=False, output="", error=f"Unknown tool: {name}"
             )
+
+        # Idempotency: skip duplicate WRITE calls within the same turn
+        idem_key = tool.idempotency_key(parameters, ctx)
+        if idem_key is not None:
+            if idem_key in ctx._idem_cache:
+                logger.info(
+                    "Idempotent skip: tool '%s' with key %s (returning cached result)",
+                    name, idem_key,
+                )
+                return ctx._idem_cache[idem_key]
+
         try:
             result = await tool.run(parameters, ctx, db)
-            return result.truncated()
+            truncated = result.truncated()
+
+            # Cache result for same-turn idempotency
+            if idem_key is not None:
+                ctx._idem_cache[idem_key] = truncated
+
+            return truncated
         except Exception as e:
             logger.error("Tool '%s' failed: %s", name, e, exc_info=True)
             return ToolResult(success=False, output="", error=f"Tool error: {e}")
@@ -281,7 +329,7 @@ def get_tool_registry() -> ToolRegistry:
 
 
 def _register_builtin_tools(registry: ToolRegistry) -> None:
-    """Register all built-in education-domain tools."""
+    """Register all built-in tools (education + web + export + file)."""
     try:
         from services.agent.tools.education import get_builtin_tools
 
@@ -293,6 +341,55 @@ def _register_builtin_tools(registry: ToolRegistry) -> None:
         )
     except Exception as e:
         logger.warning("Failed to load built-in tools: %s", e)
+
+    _register_web_tools(registry)
+    _register_export_tools(registry)
+    _register_file_tools(registry)
+
+
+def _register_web_tools(registry: ToolRegistry) -> None:
+    """Register web-domain tools (search, etc.)."""
+    try:
+        from services.agent.tools.web_search import WebSearchTool
+
+        registry.register(WebSearchTool())
+        logger.info("Registered web search tool")
+    except Exception as e:
+        logger.warning("Failed to load web tools: %s", e)
+
+
+def _register_export_tools(registry: ToolRegistry) -> None:
+    """Register export tools (Anki, calendar)."""
+    try:
+        from services.agent.tools.anki import ExportAnkiTool
+
+        registry.register(ExportAnkiTool())
+    except Exception as e:
+        logger.warning("Failed to load Anki export tool: %s", e)
+    try:
+        from services.agent.tools.calendar import ExportCalendarTool
+
+        registry.register(ExportCalendarTool())
+    except Exception as e:
+        logger.warning("Failed to load calendar export tool: %s", e)
+    logger.info("Registered export tools")
+
+
+def _register_file_tools(registry: ToolRegistry) -> None:
+    """Register filesystem tools (write, list, read)."""
+    try:
+        from services.agent.tools.filesystem import (
+            WriteFileTool,
+            ListFilesTool,
+            ReadFileTool,
+        )
+
+        registry.register(WriteFileTool())
+        registry.register(ListFilesTool())
+        registry.register(ReadFileTool())
+        logger.info("Registered %d file tools", len(registry.get_by_domain("file")))
+    except Exception as e:
+        logger.warning("Failed to load file tools: %s", e)
 
 
 def _register_plugins(registry: ToolRegistry) -> None:

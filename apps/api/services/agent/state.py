@@ -112,10 +112,16 @@ class AgentContext:
     # Each entry: {"tool": str, "input": dict, "output": str, "iteration": int}
     react_iterations: int = 0
 
+    # Tool progress events (consumed by orchestrator for SSE streaming)
+    tool_progress: list[dict] = field(default_factory=list)
+
     # Token tracking (OpenClaw SessionEntry pattern)
     input_tokens: int = 0
     output_tokens: int = 0
     total_tokens: int = 0
+
+    # Tool idempotency cache (used by ToolRegistry to deduplicate calls)
+    _idem_cache: dict[str, Any] = field(default_factory=dict)
 
     # Metadata
     created_at: float = field(default_factory=time.time)
@@ -146,6 +152,10 @@ class AgentContext:
         self.error = error
         self.completed_at = time.time()
         self.transition(TaskPhase.FAILED)
+
+    def emit_progress(self, tool: str, message: str, step: int = 0, total: int = 0):
+        """Emit a progress event from a running tool (picked up by orchestrator SSE loop)."""
+        self.tool_progress.append({"tool": tool, "message": message, "step": step, "total": total})
 
     @property
     def duration_ms(self) -> float | None:

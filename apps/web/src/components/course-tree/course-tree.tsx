@@ -1,10 +1,12 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { useCourseStore } from "@/store/course";
 import { useWorkspaceStore } from "@/store/workspace";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Button } from "@/components/ui/button";
+import { UploadDialog } from "@/components/shared/upload-dialog";
 import { TreeNode } from "./tree-node";
 import { FileGroup } from "./file-group";
 import type { IngestionJobSummary } from "@/lib/api";
@@ -71,6 +73,7 @@ export function CourseTree({ courseId }: CourseTreeProps) {
   const activeCourse = useCourseStore((s) => s.activeCourse);
   const contentTree = useCourseStore((s) => s.contentTree);
   const ingestionJobs = useCourseStore((s) => s.ingestionJobs);
+  const [uploadOpen, setUploadOpen] = useState(false);
 
   const treeCollapsed = useWorkspaceStore((s) => s.treeCollapsed);
   const toggleTree = useWorkspaceStore((s) => s.toggleTree);
@@ -111,6 +114,16 @@ export function CourseTree({ courseId }: CourseTreeProps) {
         <h2 className="flex-1 truncate text-sm font-semibold">
           {activeCourse?.name ?? "Course Files"}
         </h2>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-7 px-2 text-xs"
+          data-testid="workspace-upload-trigger"
+          onClick={() => setUploadOpen(true)}
+        >
+          Upload
+        </Button>
       </div>
 
       {/* Scrollable tree content */}
@@ -128,11 +141,9 @@ export function CourseTree({ courseId }: CourseTreeProps) {
               {fileGroups.map((group) => (
                 <FileGroup
                   key={group.category}
-                  category={group.category}
                   label={group.label}
                   icon={group.icon}
                   jobs={group.jobs}
-                  courseId={courseId}
                 />
               ))}
             </div>
@@ -176,6 +187,12 @@ export function CourseTree({ courseId }: CourseTreeProps) {
           <span>Collapse</span>
         </button>
       </div>
+
+      <UploadDialog
+        open={uploadOpen}
+        onOpenChange={setUploadOpen}
+        courseId={courseId}
+      />
     </div>
   );
 }

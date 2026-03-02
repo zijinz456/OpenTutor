@@ -21,6 +21,7 @@ from config import settings
 import database as database_module
 from database import get_db, Base
 from models.agent_task import AgentTask
+from models.content import CourseContentTree
 from models.ingestion import StudySession
 from models.progress import LearningProgress
 from models.practice import PracticeProblem, PracticeResult
@@ -411,8 +412,10 @@ async def test_queue_next_action_from_active_goal_creates_multi_step_task(client
     assert payload["task_type"] == "multi_step"
     assert payload["goal_id"] == goal_id
     assert payload["title"] == "Execute next step: Pass the final"
+    assert payload["summary"] == "Review weak points from chapter 3 tonight."
     assert payload["input_json"]["steps"][0]["title"] == "Review weak points"
-    assert payload["metadata_json"]["next_action"]["queue_label"] == "Queue next step"
+    assert payload["metadata_json"]["agenda_decision"]["goal_id"] == goal_id
+    assert payload["metadata_json"]["agenda_decision"]["reason"] == "Active goal has a concrete next action."
 
 
 @pytest.mark.asyncio
@@ -656,6 +659,125 @@ async def test_replace_generated_quiz_archives_previous_batch_version(client):
     assert len(batches) == 1
     assert batches[0]["batch_id"] == batch_id
     assert batches[0]["current_version"] == 2
+
+
+@pytest.mark.asyncio
+async def test_extract_quiz_returns_structured_503_when_llm_unavailable(client, monkeypatch):
+    create_resp = await client.post("/api/courses/", json={"name": "Quiz LLM Course", "description": "x"})
+    assert create_resp.status_code == 201
+    course_id = uuid.UUID(create_resp.json()["id"])
+
+    async with app.state.test_session_factory() as session:
+        session.add(
+            CourseContentTree(
+                course_id=course_id,
+                parent_id=None,
+                title="Week 1 Notes",
+                content=(
+                    "Binary search repeatedly halves a sorted search space to locate a target efficiently. "
+                    "It relies on maintaining left and right bounds, checking the midpoint, and discarding "
+                    "the half that cannot contain the target while preserving the search invariant."
+                ),
+                level=0,
+                order_index=0,
+                source_type="manual",
+            )
+        )
+        await session.commit()
+
+    async def fake_extract_questions(*args, **kwargs):
+        raise RuntimeError("All LLM providers are unhealthy. Please check API keys and network.")
+
+    monkeypatch.setattr("routers.quiz.extract_questions", fake_extract_questions)
+
+    resp = await client.post("/api/quiz/extract", json={"course_id": str(course_id)})
+    assert resp.status_code == 503
+    data = resp.json()
+    assert data["code"] == "llm_unavailable"
+    assert data["status"] == 503
+
+
+@pytest.mark.asyncio
+async def test_exam_prep_returns_structured_503_when_llm_unavailable(client, monkeypatch):
+    create_resp = await client.post("/api/courses/", json={"name": "Exam Prep LLM Course", "description": "x"})
+    assert create_resp.status_code == 201
+    course_id = create_resp.json()["id"]
+
+    async def fake_run_exam_prep(*args, **kwargs):
+        raise RuntimeError("All LLM providers are unhealthy. Please check API keys and network.")
+
+    monkeypatch.setattr("services.workflow.exam_prep.run_exam_prep", fake_run_exam_prep)
+
+    resp = await client.post(
+        "/api/workflows/exam-prep",
+        json={"course_id": course_id, "days_until_exam": 7},
+    )
+    assert resp.status_code == 503
+    data = resp.json()
+    assert data["code"] == "llm_unavailable"
+    assert data["status"] == 503
+
+
+@pytest.mark.asyncio
+async def test_generate_flashcards_returns_structured_503_when_llm_unavailable(client, monkeypatch):
+    create_resp = await client.post("/api/courses/", json={"name": "Flashcard LLM Course", "description": "x"})
+    assert create_resp.status_code == 201
+    course_id = create_resp.json()["id"]
+
+    async def fake_generate_flashcards(*args, **kwargs):
+        raise RuntimeError("All LLM providers are unhealthy. Please check API keys and network.")
+
+    monkeypatch.setattr(
+        "services.spaced_repetition.flashcards.generate_flashcards",
+        fake_generate_flashcards,
+    )
+
+    resp = await client.post(
+        "/api/flashcards/generate",
+        json={"course_id": course_id, "count": 5},
+    )
+    assert resp.status_code == 503
+    data = resp.json()
+    assert data["code"] == "llm_unavailable"
+    assert data["status"] == 503
+
+
+@pytest.mark.asyncio
+async def test_restructure_notes_returns_structured_503_when_llm_unavailable(client, monkeypatch):
+    create_resp = await client.post("/api/courses/", json={"name": "Notes LLM Course", "description": "x"})
+    assert create_resp.status_code == 201
+    course_id = uuid.UUID(create_resp.json()["id"])
+
+    node_id = uuid.uuid4()
+    async with app.state.test_session_factory() as session:
+        session.add(
+            CourseContentTree(
+                id=node_id,
+                course_id=course_id,
+                parent_id=None,
+                title="Lecture Summary",
+                content=(
+                    "Binary search is a divide-and-conquer algorithm for sorted arrays. "
+                    "It compares the target with the midpoint, then narrows the interval "
+                    "while preserving the invariant that the target, if present, stays inside the bounds."
+                ),
+                level=0,
+                order_index=0,
+                source_type="manual",
+            )
+        )
+        await session.commit()
+
+    async def fake_restructure_notes(*args, **kwargs):
+        raise RuntimeError("All LLM providers are unhealthy. Please check API keys and network.")
+
+    monkeypatch.setattr("routers.notes.restructure_notes", fake_restructure_notes)
+
+    resp = await client.post("/api/notes/restructure", json={"content_node_id": str(node_id)})
+    assert resp.status_code == 503
+    data = resp.json()
+    assert data["code"] == "llm_unavailable"
+    assert data["status"] == 503
 
 
 @pytest.mark.asyncio
@@ -1334,7 +1456,7 @@ async def test_list_preference_signals(client):
 
 
 @pytest.mark.asyncio
-async def test_scene_recommendation_endpoint_uses_policy_engine(client):
+async def test_scene_recommendation_endpoint_is_not_exposed(client):
     create_resp = await client.post("/api/courses/", json={"name": "Scene Policy Course", "description": "scene"})
     assert create_resp.status_code == 201
     course_id = create_resp.json()["id"]
@@ -1343,13 +1465,7 @@ async def test_scene_recommendation_endpoint_uses_policy_engine(client):
         f"/api/scenes/{course_id}/recommend",
         params={"message": "I need to review my wrong answers before the final", "active_tab": "review"},
     )
-    assert resp.status_code == 200
-    payload = resp.json()
-    assert payload["scene_id"] in {"review_drill", "exam_prep"}
-    assert "reason" in payload
-    assert "scores" in payload
-    assert "expected_benefit" in payload
-    assert "reasoning_policy" in payload
+    assert resp.status_code == 404
 
 
 @pytest.mark.asyncio

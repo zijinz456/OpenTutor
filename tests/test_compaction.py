@@ -152,19 +152,21 @@ def test_emergency_trim_extreme_budget():
 async def test_compact_session_few_messages_noop():
     """Fewer than KEEP_RECENT_MESSAGES → returned as-is."""
     msgs = _make_messages(3)
-    result = await compact_session(msgs, "gpt-4o-mini")
-    assert result == msgs
+    compacted, flushed = await compact_session(msgs, "gpt-4o-mini")
+    assert compacted == msgs
+    assert flushed == []
 
 
 @pytest.mark.asyncio
 async def test_compact_session_no_llm_fallback():
     """No LLM client → falls back to emergency_trim."""
     msgs = _make_messages(20, content_size=100)
-    result = await compact_session(msgs, "gpt-4o-mini", llm_client=None)
+    result, flushed = await compact_session(msgs, "gpt-4o-mini", llm_client=None)
     # Should have trimmed — result should be <= original
     assert len(result) <= len(msgs)
     # Recent messages preserved
     assert result[-KEEP_RECENT_MESSAGES:] == msgs[-KEEP_RECENT_MESSAGES:]
+    assert flushed == []
 
 
 @pytest.mark.asyncio
@@ -172,15 +174,21 @@ async def test_compact_session_with_llm():
     """LLM client available → produces summary + recent."""
     msgs = _make_messages(15, content_size=100)
     mock_client = AsyncMock()
-    mock_client.extract = AsyncMock(return_value=("Student discussed binary search.", {}))
+    mock_client.extract = AsyncMock(
+        side_effect=[
+            ("[]", {}),
+            ("Student discussed binary search.", {}),
+        ]
+    )
 
-    result = await compact_session(msgs, "gpt-4o-mini", llm_client=mock_client)
+    result, flushed = await compact_session(msgs, "gpt-4o-mini", llm_client=mock_client)
 
     # Should be: 1 summary message + KEEP_RECENT_MESSAGES
     assert len(result) == KEEP_RECENT_MESSAGES + 1
     assert result[0]["role"] == "system"
     assert "summary" in result[0]["content"].lower()
-    mock_client.extract.assert_called_once()
+    assert flushed == []
+    assert mock_client.extract.await_count == 2
 
 
 @pytest.mark.asyncio
@@ -190,11 +198,12 @@ async def test_compact_session_llm_failure_fallback():
     mock_client = AsyncMock()
     mock_client.extract = AsyncMock(side_effect=RuntimeError("LLM down"))
 
-    result = await compact_session(msgs, "gpt-4o-mini", llm_client=mock_client)
+    result, flushed = await compact_session(msgs, "gpt-4o-mini", llm_client=mock_client)
 
     # Should still return something valid (emergency trim fallback)
     assert len(result) <= len(msgs)
     assert len(result) >= 2
+    assert flushed == []
 
 
 # ── Tool schema pruning ──

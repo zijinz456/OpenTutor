@@ -29,7 +29,7 @@ export function ToolStatus({ status }: ToolStatusProps) {
         "animate-in fade-in slide-in-from-bottom-1 duration-200",
         isRunning
           ? "bg-muted/50 text-muted-foreground"
-          : "bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400",
+          : "bg-zinc-100 text-zinc-700 dark:bg-zinc-800/30 dark:text-zinc-400",
       )}
     >
       {isRunning ? (

@@ -3,28 +3,25 @@
 import { useState, useMemo, useCallback } from "react";
 import { ChevronRight, Loader2, ExternalLink } from "lucide-react";
 import type { IngestionJobSummary } from "@/lib/api";
-import { getFileUrl } from "@/lib/api";
 import { useWorkspaceStore } from "@/store/workspace";
 import { cn } from "@/lib/utils";
 
 interface FileGroupProps {
-  category: string;
   label: string;
   icon: string;
   jobs: IngestionJobSummary[];
-  courseId: string;
 }
 
 /**
  * Expandable category group in the course tree sidebar.
  * Shows a folder-like header with child file items.
  */
-export function FileGroup({ category, label, icon, jobs, courseId }: FileGroupProps) {
+export function FileGroup({ label, icon, jobs }: FileGroupProps) {
   const [expanded, setExpanded] = useState(true);
   const openPdf = useWorkspaceStore((s) => s.openPdf);
 
   return (
-    <div role="treeitem" aria-expanded={expanded}>
+    <div role="treeitem" aria-expanded={expanded} aria-selected={false}>
       {/* Category header */}
       <button
         type="button"
@@ -59,7 +56,6 @@ export function FileGroup({ category, label, icon, jobs, courseId }: FileGroupPr
             <FileItem
               key={job.id}
               job={job}
-              courseId={courseId}
               onOpenPdf={openPdf}
             />
           ))}
@@ -73,11 +69,10 @@ export function FileGroup({ category, label, icon, jobs, courseId }: FileGroupPr
 
 interface FileItemProps {
   job: IngestionJobSummary;
-  courseId: string;
   onOpenPdf: (fileId: string, fileName: string) => void;
 }
 
-function FileItem({ job, courseId, onOpenPdf }: FileItemProps) {
+function FileItem({ job, onOpenPdf }: FileItemProps) {
   const isPdf =
     job.source_type === "file" &&
     (job.filename?.toLowerCase().endsWith(".pdf") ?? false);
@@ -108,6 +103,7 @@ function FileItem({ job, courseId, onOpenPdf }: FileItemProps) {
     <button
       type="button"
       role="treeitem"
+      aria-selected={false}
       onClick={handleClick}
       disabled={isProcessing}
       className={cn(

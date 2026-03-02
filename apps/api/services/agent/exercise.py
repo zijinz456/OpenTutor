@@ -66,7 +66,7 @@ class ExerciseAgent(ReActMixin, BaseAgent):
         "Adapt difficulty based on the student's mastery data if available."
     )
     model_preference = "large"
-    react_tools = ["search_content", "lookup_progress", "get_mastery_report", "list_wrong_answers"]
+    react_tools = ["search_content", "lookup_progress", "get_mastery_report", "list_wrong_answers", "generate_flashcards", "generate_quiz", "web_search", "export_anki"]
 
     def build_system_prompt(self, ctx: AgentContext) -> str:
         # Base class handles: profile, scene behavior, preferences, memories, RAG
@@ -91,7 +91,7 @@ class ExerciseAgent(ReActMixin, BaseAgent):
     async def execute(self, ctx: AgentContext, db: AsyncSession) -> AgentContext:
         system_prompt = self.build_system_prompt(ctx)
         client = self.get_llm_client(ctx)
-        ctx.response, _ = await client.chat(system_prompt, ctx.user_message)
+        ctx.response, _ = await client.chat(system_prompt, ctx.user_message, images=ctx.images or None)
         return ctx
 
     async def stream(self, ctx: AgentContext, db: AsyncSession) -> AsyncIterator[str]:

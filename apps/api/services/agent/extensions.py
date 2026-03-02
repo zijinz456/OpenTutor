@@ -3,6 +3,9 @@
 Provides hook points at each stage of the agent orchestration pipeline,
 allowing plugins to observe or modify behavior without touching core code.
 
+This module maintains backward compatibility with the old Extension ABC
+while delegating to the pluggy-based plugin system (Phase 5) for new hooks.
+
 Hook points:
 - PRE_ROUTING: Before intent classification
 - POST_ROUTING: After intent classification, before agent selection
@@ -33,11 +36,32 @@ class ExtensionHook(str, Enum):
     POST_PROCESS = "post_process"
 
 
-class Extension(ABC):
-    """Base class for agent lifecycle extensions.
+# Mapping from ExtensionHook enum to pluggy hook method names
+_HOOK_TO_PLUGGY = {
+    ExtensionHook.PRE_ROUTING: "on_pre_routing",
+    ExtensionHook.POST_ROUTING: "on_post_routing",
+    ExtensionHook.PRE_AGENT: "on_pre_agent",
+    ExtensionHook.POST_AGENT: "on_post_agent",
+    ExtensionHook.PRE_TOOL: "on_pre_tool",
+    ExtensionHook.POST_TOOL: "on_post_tool",
+    ExtensionHook.POST_PROCESS: "on_post_process",
+}
 
-    Subclass and override on_hook() to add custom behavior
-    at specific points in the agent pipeline.
+
+class Extension(ABC):
+    """Base class for agent lifecycle extensions (legacy API).
+
+    For new plugins, prefer using the pluggy hookimpl pattern::
+
+        from services.plugin.hookspec import hookimpl
+
+        class MyPlugin:
+            @hookimpl
+            def on_pre_agent(self, ctx, agent_name):
+                ...
+
+    Legacy Extension subclasses continue to work — they are automatically
+    bridged to the pluggy system.
     """
 
     name: str = "base_extension"
@@ -68,7 +92,12 @@ class Extension(ABC):
 
 
 class ExtensionRegistry:
-    """Central registry for agent lifecycle extensions."""
+    """Central registry for agent lifecycle extensions.
+
+    Combines legacy Extension instances with pluggy-based plugins.
+    When ``run_hooks()`` is called, it fires both legacy extensions
+    and pluggy hooks.
+    """
 
     def __init__(self):
         self._extensions: list[Extension] = []
@@ -106,14 +135,12 @@ class ExtensionRegistry:
         ctx: Any,
         **kwargs: Any,
     ) -> None:
-        """Fire a hook, calling all subscribed extensions in order.
+        """Fire a hook, calling all subscribed extensions + pluggy plugins.
 
         Errors in individual extensions are logged but don't block others.
         """
+        # 1. Run legacy Extension instances
         extensions = self._by_hook.get(hook, [])
-        if not extensions:
-            return
-
         for ext in extensions:
             try:
                 await ext.on_hook(hook, ctx, **kwargs)
@@ -124,6 +151,19 @@ class ExtensionRegistry:
                     hook.value,
                     e,
                 )
+
+        # 2. Run pluggy hooks (synchronous — plugins should be fast)
+        pluggy_method = _HOOK_TO_PLUGGY.get(hook)
+        if pluggy_method:
+            try:
+                from services.plugin.manager import get_plugin_manager
+
+                pm = get_plugin_manager()
+                hook_caller = getattr(pm.hook, pluggy_method, None)
+                if hook_caller:
+                    hook_caller(ctx=ctx, **kwargs)
+            except Exception as e:
+                logger.debug("Pluggy hook '%s' dispatch failed: %s", pluggy_method, e)
 
     @property
     def registered_extensions(self) -> list[str]:

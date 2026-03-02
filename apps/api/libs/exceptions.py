@@ -66,6 +66,27 @@ class LLMUnavailableError(AppError):
         super().__init__(message)
 
 
+_LLM_UNAVAILABLE_PATTERNS = (
+    "All LLM providers are unhealthy",
+    "No LLM provider is configured",
+    "No LLM API key configured",
+)
+
+
+def is_llm_unavailable_error(exc: BaseException) -> bool:
+    message = str(exc)
+    return any(pattern in message for pattern in _LLM_UNAVAILABLE_PATTERNS)
+
+
+def reraise_as_app_error(exc: Exception, message: str) -> None:
+    """Re-raise an exception as an AppError, detecting LLM unavailability."""
+    if isinstance(exc, AppError):
+        raise
+    if is_llm_unavailable_error(exc):
+        raise LLMUnavailableError(str(exc)) from exc
+    raise AppError(message) from exc
+
+
 class PermissionDeniedError(AppError):
     code = "permission_denied"
     status = 403

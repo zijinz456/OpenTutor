@@ -1,7 +1,9 @@
 "use client";
 
 import { Suspense, lazy } from "react";
+import { Button } from "@/components/ui/button";
 import { useWorkspaceStore, type SectionId } from "@/store/workspace";
+import { SECTIONS } from "@/lib/constants";
 import { SectionSelector } from "./section-selector";
 import { PdfViewerOverlay } from "./pdf-viewer";
 
@@ -20,9 +22,11 @@ const PlanSection = lazy(() =>
 
 interface SectionContainerProps {
   courseId: string;
+  visibleSections: SectionId[];
+  chatEnabled: boolean;
+  reviewEnabled: boolean;
 }
 
-/** Loading skeleton shown while a section chunk is being fetched. */
 function SectionSkeleton() {
   return (
     <div className="flex-1 flex flex-col gap-3 p-4">
@@ -35,13 +39,20 @@ function SectionSkeleton() {
   );
 }
 
-/** Map section id to its lazily-loaded component. */
-function ActiveSection({ sectionId, courseId }: { sectionId: SectionId; courseId: string }) {
+function ActiveSection({
+  sectionId,
+  courseId,
+  reviewEnabled,
+}: {
+  sectionId: SectionId;
+  courseId: string;
+  reviewEnabled: boolean;
+}) {
   switch (sectionId) {
     case "notes":
       return <NotesSection courseId={courseId} />;
     case "practice":
-      return <PracticeSection courseId={courseId} />;
+      return <PracticeSection courseId={courseId} showReview={reviewEnabled} />;
     case "analytics":
       return <AnalyticsSection courseId={courseId} />;
     case "plan":
@@ -51,36 +62,67 @@ function ActiveSection({ sectionId, courseId }: { sectionId: SectionId; courseId
   }
 }
 
-/**
- * Main section container.
- *
- * Renders the right-side workspace section panel with:
- * - A header bar containing the section dropdown selector (left) and action area (right)
- * - The currently active section component, dynamically imported
- * - A PDF viewer overlay that replaces the section content when a PDF is open
- */
-export function SectionContainer({ courseId }: SectionContainerProps) {
+export function SectionContainer({
+  courseId,
+  visibleSections,
+  chatEnabled,
+  reviewEnabled,
+}: SectionContainerProps) {
   const activeSection = useWorkspaceStore((s) => s.activeSection);
   const pdfOverlay = useWorkspaceStore((s) => s.pdfOverlay);
+  const setActiveSection = useWorkspaceStore((s) => s.setActiveSection);
 
   return (
     <div
       className="flex-1 flex flex-col overflow-hidden bg-[var(--section-bg)]"
       data-testid="section-container"
     >
-      {/* Header bar */}
       <div className="px-2 py-1 border-b flex items-center gap-2 shrink-0 bg-[var(--section-header)]">
-        <SectionSelector />
-        {/* Action buttons slot -- section-specific actions can be added here */}
-        <div className="ml-auto flex items-center gap-1" />
+        <SectionSelector visibleSections={visibleSections} />
+        <div className="ml-auto flex items-center gap-1">
+          {SECTIONS.filter((s) =>
+            visibleSections.includes(s.id),
+          ).map((s) => (
+            <Button
+              key={s.id}
+              type="button"
+              variant={activeSection === s.id ? "secondary" : "ghost"}
+              size="sm"
+              className="h-7 px-2 text-xs"
+              title={s.label}
+              onClick={() => setActiveSection(s.id)}
+            >
+              {s.label}
+            </Button>
+          ))}
+          {chatEnabled ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-xs"
+              title="Chat"
+              onClick={() => {
+                document
+                  .querySelector<HTMLTextAreaElement>("[data-chat-input]")
+                  ?.focus();
+              }}
+            >
+              Chat
+            </Button>
+          ) : null}
+        </div>
       </div>
 
-      {/* Content area */}
       {pdfOverlay ? (
         <PdfViewerOverlay courseId={courseId} />
       ) : (
         <Suspense fallback={<SectionSkeleton />}>
-          <ActiveSection sectionId={activeSection} courseId={courseId} />
+          <ActiveSection
+            sectionId={activeSection}
+            courseId={courseId}
+            reviewEnabled={reviewEnabled}
+          />
         </Suspense>
       )}
     </div>

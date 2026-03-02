@@ -18,10 +18,11 @@ logger = logging.getLogger(__name__)
 # source of truth for permission checks (including non-ReAct paths).
 
 AGENT_CAPABILITIES: dict[str, set[str]] = {
-    "teaching": {"search_content", "lookup_progress", "get_course_outline"},
-    "exercise": {"search_content", "lookup_progress", "get_mastery_report", "list_wrong_answers"},
-    "planning": {"lookup_progress", "get_mastery_report", "get_course_outline", "list_study_goals", "list_assignments"},
-    "review": {"list_wrong_answers", "search_content", "lookup_progress"},
+    # Keep in sync with each agent's react_tools list
+    "teaching": {"search_content", "lookup_progress", "get_course_outline", "generate_notes", "web_search", "write_file"},
+    "exercise": {"search_content", "lookup_progress", "get_mastery_report", "list_wrong_answers", "generate_flashcards", "generate_quiz", "web_search", "export_anki"},
+    "planning": {"lookup_progress", "get_mastery_report", "get_course_outline", "list_study_goals", "list_assignments", "create_study_plan", "export_calendar", "write_file", "list_files"},
+    "review": {"list_wrong_answers", "search_content", "lookup_progress", "derive_diagnostic"},
     "preference": set(),
     "scene": set(),
     "code_execution": {"run_code", "search_content"},

@@ -473,4 +473,31 @@ class BaseAgent(ABC):
         except Exception as e:
             logger.debug("Skills matching skipped: %s", e)
 
+        # Phase 4: Experiment strategy override — inject variant-specific skill
+        exp_config = ctx.metadata.get("experiment_config")
+        if exp_config:
+            fatigue_score = ctx.metadata.get("fatigue_score", 0.0)
+            strategy_name = exp_config.get("config", {}).get("skill_name")
+            # Socratic guardrail: suppress if student is frustrated
+            if strategy_name == "socratic_questioning" and fatigue_score > 0.5:
+                logger.info("Socratic guardrail: suppressing for frustrated student (fatigue=%.2f)", fatigue_score)
+            elif strategy_name:
+                try:
+                    from services.agent.skills import load_skills
+                    for s in load_skills():
+                        if s.name == strategy_name:
+                            parts.append(f"\n## Active Teaching Strategy\n{s.content}")
+                            break
+                except Exception as e:
+                    logger.debug("Experiment strategy skill injection skipped: %s", e)
+
+        # Phase 4: Cross-course concept connections
+        cross_patterns = ctx.metadata.get("cross_course_patterns")
+        if cross_patterns:
+            lines = ["## Cross-Course Connections (from your other courses)"]
+            for p in cross_patterns[:3]:
+                courses_str = ", ".join(c.get("course_name", "?") for c in p.get("courses", []))
+                lines.append(f"- Topic '{p.get('topic', '?')}' appears in: {courses_str}")
+            parts.append("\n".join(lines))
+
         return "\n".join(parts)

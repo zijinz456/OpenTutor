@@ -85,6 +85,7 @@ async def get_health_status() -> dict[str, Any]:
         "llm_provider_health": provider_health,
         "llm_provider_details": probe_details,
         "deployment_mode": settings.deployment_mode,
+        "auth_enabled": settings.auth_enabled,
         "code_sandbox_backend": settings.code_sandbox_backend,
         "code_sandbox_runtime": settings.code_sandbox_runtime,
         "code_sandbox_runtime_available": container_runtime_available(),

@@ -220,20 +220,94 @@ async def incremental_compact(
         return None
 
 
+MEMORY_FLUSH_PROMPT = (
+    "You are extracting important information from a tutoring conversation before it gets compacted.\n\n"
+    "Extract ONLY facts that would be valuable to remember long-term:\n"
+    "- Student knowledge gaps or misconceptions discovered\n"
+    "- Learning preferences observed (visual, step-by-step, examples, etc.)\n"
+    "- Topics the student found difficult or easy\n"
+    "- Promises or commitments made (exam dates, goals set)\n"
+    "- Key insights about the student's understanding level\n\n"
+    "Output as a JSON array of objects: [{\"category\": \"knowledge_gap|preference|difficulty|commitment|insight\", "
+    "\"content\": \"...\", \"importance\": 0.0-1.0}]\n"
+    "If nothing important, output: []"
+)
+
+
+async def memory_flush(
+    messages: list[dict],
+    llm_client: Any | None = None,
+) -> list[dict]:
+    """Pre-compaction memory flush — extract important info before summarization.
+
+    Inspired by OpenClaw's memory-flush.ts and Letta's Summarizer pattern.
+    Runs BEFORE compact_session() to persist key facts that might be lost
+    during summarization.
+
+    Returns a list of extracted memory items (dicts with category, content, importance).
+    """
+    if not llm_client or not messages:
+        return []
+
+    # Only flush messages that are about to be compacted (older ones)
+    if len(messages) <= KEEP_RECENT_MESSAGES:
+        return []
+
+    older = messages[:-KEEP_RECENT_MESSAGES]
+    conversation_text = "\n".join(
+        f"{m.get('role', 'unknown')}: {m.get('content', '')}"
+        for m in older
+        if m.get("content")
+    )
+
+    if not conversation_text.strip():
+        return []
+
+    try:
+        import json
+        response, _ = await llm_client.extract(
+            system_prompt=MEMORY_FLUSH_PROMPT,
+            user_message=conversation_text,
+        )
+
+        from libs.text_utils import strip_code_fences
+        text = strip_code_fences(response)
+
+        items = json.loads(text)
+        if not isinstance(items, list):
+            return []
+
+        logger.info("Memory flush: extracted %d items before compaction", len(items))
+        return items
+
+    except Exception as e:
+        logger.debug("Memory flush failed (non-critical): %s", e)
+        return []
+
+
 async def compact_session(
     messages: list[dict],
     model_name: str,
     llm_client: Any | None = None,
-) -> list[dict]:
+) -> tuple[list[dict], list[dict]]:
     """Summarise old messages to reduce token count.
 
     Strategy:
+    0. Run memory_flush() to extract important facts before compaction
     1. Keep last KEEP_RECENT_MESSAGES untouched
     2. LLM-summarise older messages into a single system message
     3. If no LLM available, use emergency_trim as fallback
+
+    Returns:
+        (compacted_messages, flushed_memory_items) — the caller is
+        responsible for persisting flushed_memory_items (e.g. via
+        MemoryPipeline.encode_cells or direct DB insert).
     """
     if len(messages) <= KEEP_RECENT_MESSAGES:
-        return messages
+        return messages, []
+
+    # Phase 1: Pre-compaction memory flush (OpenClaw pattern)
+    flushed_items = await memory_flush(messages, llm_client)
 
     recent = messages[-KEEP_RECENT_MESSAGES:]
     older = messages[:-KEEP_RECENT_MESSAGES]
@@ -241,7 +315,7 @@ async def compact_session(
     if not llm_client:
         logger.info("No LLM client for compaction; using emergency trim")
         context_window = get_context_window(model_name)
-        return emergency_trim(messages, int(context_window * 0.5))
+        return emergency_trim(messages, int(context_window * 0.5)), flushed_items
 
     # Build text from older messages for summarisation
     conversation_text = "\n".join(
@@ -251,7 +325,7 @@ async def compact_session(
     )
 
     if not conversation_text.strip():
-        return recent
+        return recent, flushed_items
 
     try:
         summary, _ = await llm_client.extract(
@@ -269,12 +343,12 @@ async def compact_session(
             "content": f"[Previous conversation summary]\n{summary}",
             "_structured_summary": True,  # Marker for incremental compaction
         }
-        return [summary_msg] + recent
+        return [summary_msg] + recent, flushed_items
 
     except Exception as e:
         logger.warning("LLM compaction failed, using emergency trim: %s", e)
         context_window = get_context_window(model_name)
-        return emergency_trim(messages, int(context_window * 0.5))
+        return emergency_trim(messages, int(context_window * 0.5)), flushed_items
 
 
 def prune_tool_schemas(

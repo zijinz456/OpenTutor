@@ -31,8 +31,7 @@ _CORRECT_WEIGHT = 1.0      # Correct answer weight
 _RECENT_RESULTS_LIMIT = 20 # How many recent results to consider
 
 
-def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+from libs.datetime_utils import utcnow as _utcnow
 
 
 async def get_or_create_progress(
@@ -127,6 +126,26 @@ async def update_quiz_result(
     gap_type = await _infer_gap_type(db, user_id, course_id, content_node_id)
     if gap_type:
         progress.gap_type = gap_type
+
+    # Phase 4: Sync mastery to KnowledgePoint table
+    try:
+        await _sync_knowledge_point_mastery(db, course_id, content_node_id, progress.mastery_score)
+    except Exception as e:
+        logger.debug("KnowledgePoint mastery sync failed: %s", e)
+
+    # Phase 4: Write mastery snapshot for time-series analytics
+    try:
+        from models.mastery_snapshot import MasterySnapshot
+        snap = MasterySnapshot(
+            user_id=user_id,
+            course_id=course_id,
+            content_node_id=content_node_id,
+            mastery_score=progress.mastery_score,
+            gap_type=progress.gap_type,
+        )
+        db.add(snap)
+    except Exception as e:
+        logger.debug("Mastery snapshot failed: %s", e)
 
     # FSRS spaced repetition scheduling
     _apply_fsrs_review(progress, is_correct)
@@ -368,3 +387,70 @@ async def get_course_progress(
         "completion_percent": (mastered + reviewed) / max(total_nodes, 1) * 100,
         "gap_type_breakdown": gap_type_breakdown,
     }
+
+
+# ── Phase 4: KnowledgePoint mastery sync ──
+
+async def _sync_knowledge_point_mastery(
+    db: AsyncSession,
+    course_id: uuid.UUID,
+    content_node_id: uuid.UUID | None,
+    mastery_score: float,
+) -> None:
+    """Propagate LearningProgress mastery_score to linked KnowledgePoints.
+
+    KnowledgePoint.mastery_level uses 0-100 scale.
+    """
+    if not content_node_id:
+        return
+
+    from models.knowledge_graph import KnowledgePoint
+
+    mastery_100 = mastery_score * 100.0
+    result = await db.execute(
+        select(KnowledgePoint).where(
+            KnowledgePoint.course_id == course_id,
+            KnowledgePoint.source_content_node_id == content_node_id,
+        )
+    )
+    for kp in result.scalars().all():
+        kp.mastery_level = mastery_100
+
+
+# ── Phase 4: Error pattern analytics ──
+
+async def get_error_pattern_summary(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    course_id: uuid.UUID,
+    limit: int = 5,
+) -> list[dict]:
+    """Return top error categories by frequency for a user+course.
+
+    Aggregates unmastered WrongAnswer entries grouped by error_category.
+    Returns: [{"category": str, "count": int, "percentage": float}]
+    """
+    from models.ingestion import WrongAnswer
+
+    result = await db.execute(
+        select(WrongAnswer.error_category, func.count(WrongAnswer.id).label("cnt"))
+        .where(
+            WrongAnswer.user_id == user_id,
+            WrongAnswer.course_id == course_id,
+            WrongAnswer.mastered.is_(False),
+            WrongAnswer.error_category.isnot(None),
+        )
+        .group_by(WrongAnswer.error_category)
+        .order_by(func.count(WrongAnswer.id).desc())
+        .limit(limit)
+    )
+    rows = result.all()
+    total = sum(r.cnt for r in rows)
+    return [
+        {
+            "category": r.error_category,
+            "count": r.cnt,
+            "percentage": round(r.cnt / max(total, 1) * 100, 1),
+        }
+        for r in rows
+    ]

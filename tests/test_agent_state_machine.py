@@ -169,7 +169,7 @@ def test_intent_budget_overrides_exist_for_key_intents():
     assert "learn" in INTENT_BUDGET_OVERRIDES
     assert "review" in INTENT_BUDGET_OVERRIDES
     assert "quiz" in INTENT_BUDGET_OVERRIDES
-    assert "chat" in INTENT_BUDGET_OVERRIDES
+    assert "general" in INTENT_BUDGET_OVERRIDES
 
 
 def test_learn_intent_gets_more_rag_budget():
@@ -182,10 +182,9 @@ def test_review_intent_gets_more_memory_budget():
     assert review_budgets["MEMORY_BUDGET"] > 1500  # More than default
 
 
-def test_chat_intent_gets_more_history_budget():
-    # "chat" key in INTENT_BUDGET_OVERRIDES maps to general chat intent
-    chat_budgets = INTENT_BUDGET_OVERRIDES["chat"]
-    assert chat_budgets["HISTORY_BUDGET"] >= 2000
+def test_general_intent_gets_more_history_budget():
+    general_budgets = INTENT_BUDGET_OVERRIDES["general"]
+    assert general_budgets["HISTORY_BUDGET"] >= 2000
 
 
 def test_estimate_tokens_english():

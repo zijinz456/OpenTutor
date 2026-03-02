@@ -1,446 +1,279 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useT } from "@/lib/i18n-context";
+import { MarkdownRenderer } from "@/components/shared/markdown-renderer";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import {
-  deriveQuestion,
   diagnoseWrongAnswer,
+  deriveQuestion,
   getWrongAnswerReview,
   getWrongAnswerStats,
   listWrongAnswers,
   retryWrongAnswer,
-  type DerivedQuestionResult,
+  submitAnswer,
   type WrongAnswer,
-  type WrongAnswerStats,
 } from "@/lib/api";
-import { useT } from "@/lib/i18n-context";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
+import { toast } from "sonner";
 
 interface ReviewViewProps {
   courseId: string;
 }
 
-type FilterMode = "open" | "mastered" | "all";
-
 export function ReviewView({ courseId }: ReviewViewProps) {
   const t = useT();
-  const [items, setItems] = useState<WrongAnswer[]>([]);
-  const [stats, setStats] = useState<WrongAnswerStats | null>(null);
-  const [reviewSummary, setReviewSummary] = useState("");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [filter, setFilter] = useState<FilterMode>("open");
-  const [retryAnswer, setRetryAnswer] = useState("");
-  const [derivedQuestion, setDerivedQuestion] = useState<DerivedQuestionResult | null>(null);
+  const [wrongAnswers, setWrongAnswers] = useState<WrongAnswer[]>([]);
+  const [reviewMarkdown, setReviewMarkdown] = useState("");
+  const [stats, setStats] = useState<{
+    total: number;
+    mastered: number;
+    unmastered: number;
+    by_category: Record<string, number>;
+    by_diagnosis: Record<string, number>;
+  } | null>(null);
   const [loading, setLoading] = useState(true);
-  const [working, setWorking] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [feedback, setFeedback] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const load = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const [wrongAnswersResult, statsResult, summaryResult] = await Promise.allSettled([
-          listWrongAnswers(courseId),
-          getWrongAnswerStats(courseId),
-          getWrongAnswerReview(courseId),
-        ]);
-
-        if (cancelled) return;
-
-        if (wrongAnswersResult.status === "fulfilled") {
-          setItems(wrongAnswersResult.value);
-          setSelectedId((current) => current ?? wrongAnswersResult.value[0]?.id ?? null);
-        }
-        if (statsResult.status === "fulfilled") {
-          setStats(statsResult.value);
-        }
-        if (summaryResult.status === "fulfilled") {
-          setReviewSummary(summaryResult.value.review);
-        }
-        if (
-          wrongAnswersResult.status === "rejected" &&
-          statsResult.status === "rejected" &&
-          summaryResult.status === "rejected"
-        ) {
-          throw wrongAnswersResult.reason;
-        }
-      } catch (e) {
-        if (!cancelled) {
-          setError(e instanceof Error ? e.message : "Failed to load wrong-answer review");
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
+  const [generating, setGenerating] = useState(false);
+  const [markingId, setMarkingId] = useState<string | null>(null);
+  const [derivingId, setDerivingId] = useState<string | null>(null);
+  const [diagnosticDrafts, setDiagnosticDrafts] = useState<
+    Record<
+      string,
+      {
+        problemId: string;
+        question: string;
+        options: Record<string, string> | null;
+        selectedAnswer?: string;
+        diagnosis?: string;
+        pending?: boolean;
       }
-    };
+    >
+  >({});
 
-    void load();
-    return () => {
-      cancelled = true;
-    };
+  const loadWrongAnswers = useCallback(async () => {
+    try {
+      const [items, summary] = await Promise.all([
+        listWrongAnswers(courseId, { mastered: false }),
+        getWrongAnswerStats(courseId),
+      ]);
+      setWrongAnswers(items);
+      setStats(summary);
+    } catch {
+      setWrongAnswers([]);
+      setStats(null);
+    } finally {
+      setLoading(false);
+    }
   }, [courseId]);
 
-  const filteredItems = useMemo(() => {
-    if (filter === "all") return items;
-    if (filter === "mastered") return items.filter((item) => item.mastered);
-    return items.filter((item) => !item.mastered);
-  }, [filter, items]);
-
-  const selected = filteredItems.find((item) => item.id === selectedId)
-    ?? items.find((item) => item.id === selectedId)
-    ?? filteredItems[0]
-    ?? null;
-
   useEffect(() => {
-    if (!selected) {
-      setRetryAnswer("");
-      setDerivedQuestion(null);
-      return;
-    }
-    setSelectedId(selected.id);
-    setRetryAnswer(selected.user_answer ?? "");
-    setDerivedQuestion(null);
-  }, [selected?.id]);
+    void loadWrongAnswers();
+  }, [loadWrongAnswers]);
 
-  const updateItem = (id: string, updater: (item: WrongAnswer) => WrongAnswer) => {
-    setItems((current) => current.map((item) => (item.id === id ? updater(item) : item)));
+  const diagnosisSummary = useMemo(
+    () => Object.entries(stats?.by_diagnosis ?? {}),
+    [stats?.by_diagnosis],
+  );
+
+  const handleMarkMastered = async (item: WrongAnswer) => {
+    if (!item.correct_answer) return;
+    setMarkingId(item.id);
+    try {
+      await retryWrongAnswer(item.id, item.correct_answer);
+      await loadWrongAnswers();
+      toast.success("Marked as mastered");
+    } catch (error) {
+      toast.error((error as Error).message || "Failed to mark as mastered");
+    } finally {
+      setMarkingId(null);
+    }
   };
 
-  const handleDiagnose = async () => {
-    if (!selected) return;
-    setWorking("diagnose");
-    setError(null);
-    setFeedback(null);
+  const handleGenerateReview = async () => {
+    setGenerating(true);
     try {
-      const result = await diagnoseWrongAnswer(selected.id);
-      updateItem(selected.id, (item) => ({
-        ...item,
-        diagnosis: result.diagnosis ?? item.diagnosis,
-        error_detail: {
-          ...(item.error_detail ?? {}),
-          diagnosis: result.diagnosis ?? item.error_detail?.diagnosis,
-          original_correct: result.original_correct ?? item.error_detail?.original_correct,
-          clean_correct: result.clean_correct ?? item.error_detail?.clean_correct,
-          diagnostic_problem_id: result.diagnostic_problem_id ?? item.error_detail?.diagnostic_problem_id,
+      const result = await getWrongAnswerReview(courseId);
+      setReviewMarkdown(result.review);
+    } catch (error) {
+      toast.error((error as Error).message || "Failed to generate review");
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const handleDerive = async (wrongAnswerId: string) => {
+    setDerivingId(wrongAnswerId);
+    try {
+      const result = await deriveQuestion(wrongAnswerId);
+      setDiagnosticDrafts((prev) => ({
+        ...prev,
+        [wrongAnswerId]: {
+          problemId: result.problem_id,
+          question: result.question,
+          options: result.options,
         },
       }));
-      setFeedback("Diagnosis updated.");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to diagnose wrong answer");
+    } catch (error) {
+      toast.error((error as Error).message || "Failed to derive question");
     } finally {
-      setWorking(null);
+      setDerivingId(null);
     }
   };
 
-  const handleDerive = async () => {
-    if (!selected) return;
-    setWorking("derive");
-    setError(null);
-    setFeedback(null);
-    try {
-      setDerivedQuestion(await deriveQuestion(selected.id));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to derive diagnostic question");
-    } finally {
-      setWorking(null);
-    }
-  };
+  const handleDiagnosticAnswer = async (wrongAnswerId: string, answer: string) => {
+    const draft = diagnosticDrafts[wrongAnswerId];
+    if (!draft || draft.pending) return;
 
-  const handleRetry = async () => {
-    if (!selected || !retryAnswer.trim()) return;
-    setWorking("retry");
-    setError(null);
-    setFeedback(null);
+    setDiagnosticDrafts((prev) => ({
+      ...prev,
+      [wrongAnswerId]: { ...draft, selectedAnswer: answer, pending: true },
+    }));
+
     try {
-      const result = await retryWrongAnswer(selected.id, retryAnswer.trim());
-      updateItem(selected.id, (item) => ({
-        ...item,
-        user_answer: retryAnswer.trim(),
-        mastered: result.is_correct ? true : item.mastered,
-        review_count: item.review_count + 1,
+      await submitAnswer(draft.problemId, answer);
+      const diagnosis = await diagnoseWrongAnswer(wrongAnswerId);
+      setDiagnosticDrafts((prev) => ({
+        ...prev,
+        [wrongAnswerId]: {
+          ...prev[wrongAnswerId],
+          selectedAnswer: answer,
+          diagnosis: diagnosis.diagnosis,
+          pending: false,
+        },
       }));
-      if (result.is_correct) {
-        setStats((current) => current ? {
-          ...current,
-          mastered: current.mastered + (selected.mastered ? 0 : 1),
-          unmastered: Math.max(0, current.unmastered - (selected.mastered ? 0 : 1)),
-        } : current);
-      }
-      setFeedback(
-        result.is_correct
-          ? "Marked as mastered."
-          : result.explanation || "Still incorrect. Review the explanation and try again.",
-      );
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to retry answer");
-    } finally {
-      setWorking(null);
+      await loadWrongAnswers();
+    } catch (error) {
+      toast.error((error as Error).message || "Failed to submit diagnostic answer");
+      setDiagnosticDrafts((prev) => ({
+        ...prev,
+        [wrongAnswerId]: { ...draft, pending: false },
+      }));
     }
   };
 
   if (loading) {
     return (
-      <div className="flex-1 flex items-center justify-center p-8">
-        <div className="h-4 w-36 rounded bg-muted animate-pulse" />
+      <div className="flex-1 flex items-center justify-center" data-testid="review-panel">
+        <span className="text-sm animate-pulse text-muted-foreground">...</span>
       </div>
     );
   }
 
-  if (items.length === 0) {
+  if (wrongAnswers.length === 0) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
-        <h3 className="text-sm font-medium mb-1">{t("course.review")}</h3>
-        <p className="text-xs text-muted-foreground max-w-xs">
-          Wrong answers will show up here after you submit quiz attempts.
-        </p>
+      <div className="flex-1 flex items-center justify-center p-8 text-center" data-testid="review-panel">
+        <div>
+          <h3 className="text-sm font-medium mb-1">{t("course.review")}</h3>
+          <p className="text-xs text-muted-foreground max-w-xs">
+            No unmastered wrong answers
+          </p>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="flex-1 overflow-y-auto p-4">
-      <div className="space-y-4">
-        {reviewSummary && (
-          <section className="rounded-xl border border-border bg-card p-4">
-            <div className="flex items-center justify-between gap-3 mb-2">
-              <h3 className="text-sm font-medium">Review Summary</h3>
-              <Badge variant="outline">{stats?.total ?? items.length} items</Badge>
-            </div>
-            <div className="whitespace-pre-wrap text-sm leading-6 text-foreground">
-              {reviewSummary}
-            </div>
-          </section>
-        )}
+    <div className="flex-1 flex flex-col overflow-hidden" data-testid="review-panel">
+      <div className="px-3 py-2 border-b flex items-center justify-between text-xs text-muted-foreground">
+        <span>{wrongAnswers.length} mistakes ready for review</span>
+        <Button size="sm" onClick={() => void handleGenerateReview()} disabled={generating}>
+          {generating ? <span className="mr-1 animate-pulse">...</span> : null}
+          Generate Review
+        </Button>
+      </div>
 
-        {stats && (
-          <section className="grid gap-3 sm:grid-cols-3">
-            <div className="rounded-xl border border-border bg-card p-4">
-              <div className="text-xs text-muted-foreground">Total</div>
-              <div className="mt-1 text-xl font-semibold">{stats.total}</div>
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        {stats ? (
+          <div className="rounded-lg border bg-card p-4 space-y-3" data-testid="review-stats">
+            <div className="flex flex-wrap gap-2">
+              <Badge variant="outline">Total: {stats.total}</Badge>
+              <Badge variant="outline">Unmastered: {stats.unmastered}</Badge>
+              <Badge variant="outline">Mastered: {stats.mastered}</Badge>
             </div>
-            <div className="rounded-xl border border-border bg-card p-4">
-              <div className="text-xs text-muted-foreground">Mastered</div>
-              <div className="mt-1 text-xl font-semibold">{stats.mastered}</div>
-            </div>
-            <div className="rounded-xl border border-border bg-card p-4">
-              <div className="text-xs text-muted-foreground">Needs review</div>
-              <div className="mt-1 text-xl font-semibold">{stats.unmastered}</div>
-            </div>
-          </section>
-        )}
-
-        <div className="grid gap-4 xl:grid-cols-[320px,1fr]">
-          <aside className="rounded-xl border border-border bg-card">
-            <div className="border-b border-border px-4 py-3 flex items-center justify-between gap-2">
-              <h3 className="text-sm font-medium">{t("course.review")}</h3>
-              <div className="flex gap-1">
-                {(["open", "mastered", "all"] as FilterMode[]).map((mode) => (
-                  <Button
-                    key={mode}
-                    type="button"
-                    size="sm"
-                    variant={filter === mode ? "default" : "outline"}
-                    className="h-7 px-2 text-[11px]"
-                    onClick={() => setFilter(mode)}
-                  >
-                    {mode}
-                  </Button>
+            {diagnosisSummary.length > 0 ? (
+              <div className="flex flex-wrap gap-2">
+                {diagnosisSummary.map(([label, count]) => (
+                  <Badge key={label} variant="secondary">
+                    {label.replaceAll("_", " ")}: {count}
+                  </Badge>
                 ))}
               </div>
-            </div>
+            ) : null}
+          </div>
+        ) : null}
 
-            <div className="max-h-[560px] overflow-y-auto p-2 space-y-2">
-              {filteredItems.map((item) => {
-                const active = item.id === selected?.id;
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => setSelectedId(item.id)}
-                    className={`w-full rounded-lg border px-3 py-2 text-left transition-colors ${
-                      active
-                        ? "border-primary bg-primary/5"
-                        : "border-border hover:border-primary/40"
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <span className="line-clamp-2 text-sm font-medium">
-                        {item.question || "Untitled question"}
-                      </span>
-                      <Badge variant={item.mastered ? "secondary" : "outline"}>
-                        {item.mastered ? "Mastered" : "Open"}
-                      </Badge>
-                    </div>
-                    <div className="mt-1 flex flex-wrap gap-1">
-                      {item.error_category && (
-                        <Badge variant="outline" className="text-[10px]">
-                          {item.error_category}
-                        </Badge>
-                      )}
-                      {item.diagnosis && (
-                        <Badge variant="outline" className="text-[10px]">
-                          {item.diagnosis}
-                        </Badge>
-                      )}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </aside>
+        {reviewMarkdown ? (
+          <div className="rounded-lg border bg-muted/30 p-4 prose prose-sm max-w-none" data-testid="review-markdown">
+            <MarkdownRenderer content={reviewMarkdown} />
+          </div>
+        ) : null}
 
-          <section className="rounded-xl border border-border bg-card min-h-[560px]">
-            {selected ? (
-              <div className="p-4 space-y-4">
+        {wrongAnswers.map((item, index) => {
+          const draft = diagnosticDrafts[item.id];
+          const optionKeys = Object.keys(draft?.options ?? {}).sort();
+
+          return (
+            <div key={item.id} className="rounded-lg border bg-card p-4 space-y-2" data-testid={`wrong-answer-${item.id}`}>
+              <div className="flex items-start justify-between gap-2">
                 <div>
-                  <div className="flex items-center gap-2 mb-2">
-                    <Badge variant={selected.mastered ? "secondary" : "outline"}>
-                      {selected.mastered ? "Mastered" : "Needs review"}
-                    </Badge>
-                    {selected.question_type && (
-                      <Badge variant="outline">{selected.question_type}</Badge>
-                    )}
-                  </div>
-                  <h3 className="text-base font-semibold leading-6">{selected.question}</h3>
-                </div>
-
-                <div className="grid gap-3 md:grid-cols-2">
-                  <div className="rounded-lg border border-border p-3">
-                    <div className="text-xs text-muted-foreground mb-1">Your answer</div>
-                    <div className="text-sm whitespace-pre-wrap">{selected.user_answer || "-"}</div>
-                  </div>
-                  <div className="rounded-lg border border-border p-3">
-                    <div className="text-xs text-muted-foreground mb-1">Correct answer</div>
-                    <div className="text-sm whitespace-pre-wrap">{selected.correct_answer || "-"}</div>
+                  <p className="text-sm font-medium">
+                    {index + 1}. {item.question ?? "Untitled question"}
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <Badge variant="outline">{item.question_type ?? "unknown"}</Badge>
+                    {item.error_category ? <Badge variant="secondary">{item.error_category}</Badge> : null}
+                    {item.diagnosis ? (
+                      <Badge variant="secondary">{item.diagnosis.replaceAll("_", " ")}</Badge>
+                    ) : null}
                   </div>
                 </div>
-
-                {selected.explanation && (
-                  <div className="rounded-lg border border-border p-3">
-                    <div className="text-xs text-muted-foreground mb-1">{t("quiz.explanation")}</div>
-                    <div className="text-sm whitespace-pre-wrap leading-6">{selected.explanation}</div>
-                  </div>
-                )}
-
-                <div className="grid gap-4 lg:grid-cols-2">
-                  <div className="space-y-3">
-                    <div className="rounded-lg border border-border p-3 space-y-3">
-                      <div className="flex items-center justify-between gap-2">
-                        <div>
-                          <div className="text-sm font-medium">Retry answer</div>
-                          <div className="text-xs text-muted-foreground">
-                            Review count: {selected.review_count}
-                          </div>
-                        </div>
-                        <Button
-                          type="button"
-                          size="sm"
-                          onClick={() => void handleRetry()}
-                          disabled={working !== null || !retryAnswer.trim()}
-                        >
-                          {working === "retry" ? "Checking..." : "Submit retry"}
-                        </Button>
-                      </div>
-                      <Textarea
-                        value={retryAnswer}
-                        onChange={(e) => setRetryAnswer(e.target.value)}
-                        className="min-h-[120px] text-sm"
-                      />
-                    </div>
-
-                    <div className="rounded-lg border border-border p-3 space-y-3">
-                      <div className="flex flex-wrap gap-2">
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          onClick={() => void handleDiagnose()}
-                          disabled={working !== null}
-                        >
-                          {working === "diagnose" ? "Diagnosing..." : "Diagnose"}
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          onClick={() => void handleDerive()}
-                          disabled={working !== null}
-                        >
-                          {working === "derive" ? "Deriving..." : "Derive clean question"}
-                        </Button>
-                      </div>
-
-                      <div className="text-sm space-y-1">
-                        <div>
-                          <span className="text-muted-foreground">Diagnosis:</span>{" "}
-                          {selected.diagnosis || selected.error_detail?.diagnosis || "Not diagnosed yet"}
-                        </div>
-                        {selected.knowledge_points?.length ? (
-                          <div className="flex flex-wrap gap-1 pt-1">
-                            {selected.knowledge_points.map((point) => (
-                              <Badge key={point} variant="outline" className="text-[10px]">
-                                {point}
-                              </Badge>
-                            ))}
-                          </div>
-                        ) : null}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="rounded-lg border border-border p-3">
-                    <div className="text-sm font-medium mb-2">Derived question</div>
-                    {derivedQuestion ? (
-                      <div className="space-y-3 text-sm">
-                        <div className="whitespace-pre-wrap leading-6">{derivedQuestion.question}</div>
-                        {derivedQuestion.options && (
-                          <div className="space-y-1">
-                            {Object.entries(derivedQuestion.options).map(([key, value]) => (
-                              <div key={key} className="rounded-md border border-border px-3 py-2">
-                                <span className="font-medium mr-2">{key.toUpperCase()}.</span>
-                                {value}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                        {derivedQuestion.correct_answer && (
-                          <div className="text-xs text-muted-foreground">
-                            Correct answer: {derivedQuestion.correct_answer}
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      <p className="text-xs text-muted-foreground">
-                        Generate a simplified diagnostic question to compare concept understanding without traps.
-                      </p>
-                    )}
-                  </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => void handleMarkMastered(item)}
+                    disabled={markingId === item.id || !item.correct_answer}
+                  >
+                    {markingId === item.id ? "..." : "✓"}
+                  </Button>
+                  <Button
+                    data-testid={`derive-${item.id}`}
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void handleDerive(item.id)}
+                    disabled={derivingId === item.id}
+                  >
+                    {derivingId === item.id ? "..." : "Derive"}
+                  </Button>
                 </div>
-
-                {(feedback || error) && (
-                  <div className={`rounded-lg border px-3 py-2 text-sm ${
-                    error
-                      ? "border-destructive/30 bg-destructive/5 text-destructive"
-                      : "border-border bg-muted/30 text-foreground"
-                  }`}>
-                    {error || feedback}
-                  </div>
-                )}
               </div>
-            ) : (
-              <div className="flex h-full items-center justify-center p-8 text-center">
-                <p className="text-xs text-muted-foreground">
-                  Select a wrong answer to inspect it.
-                </p>
-              </div>
-            )}
-          </section>
-        </div>
+
+              {draft ? (
+                <div className="rounded-md border bg-muted/20 p-3 space-y-2" data-testid={`diagnostic-${item.id}`}>
+                  <p className="text-sm font-medium">{draft.question}</p>
+                  {optionKeys.map((key) => (
+                    <button
+                      key={key}
+                      type="button"
+                      data-testid={`diagnostic-${item.id}-${key}`}
+                      className="w-full rounded-md border px-3 py-2 text-left text-sm hover:border-primary/50"
+                      onClick={() => void handleDiagnosticAnswer(item.id, key)}
+                      disabled={draft.pending}
+                    >
+                      <span className="mr-2 font-medium">{key}.</span>
+                      {draft.options?.[key]}
+                    </button>
+                  ))}
+                  {draft.diagnosis ? (
+                    <p className="text-xs text-muted-foreground" data-testid={`diagnosis-${item.id}`}>
+                      {draft.diagnosis.replaceAll("_", " ")}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
       </div>
     </div>
   );

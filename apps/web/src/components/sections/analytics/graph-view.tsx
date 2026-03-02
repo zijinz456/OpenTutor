@@ -36,7 +36,6 @@ export function GraphView({ courseId }: GraphViewProps) {
   const [loading, setLoading] = useState(true);
   const [empty, setEmpty] = useState(false);
 
-  /* Fetch data */
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -48,14 +47,13 @@ export function GraphView({ courseId }: GraphViewProps) {
           setLoading(false);
           return;
         }
-        /* Initialize positions in a circle */
         const cx = WIDTH / 2;
         const cy = HEIGHT / 2;
         const r = Math.min(WIDTH, HEIGHT) * 0.35;
-        const simNodes: SimNode[] = data.nodes.map((n, i) => {
-          const angle = (2 * Math.PI * i) / data.nodes.length;
+        const simNodes: SimNode[] = data.nodes.map((node, index) => {
+          const angle = (2 * Math.PI * index) / data.nodes.length;
           return {
-            ...n,
+            ...node,
             x: cx + r * Math.cos(angle),
             y: cy + r * Math.sin(angle),
             vx: 0,
@@ -78,70 +76,65 @@ export function GraphView({ courseId }: GraphViewProps) {
     };
   }, [courseId]);
 
-  /* Force simulation */
   useEffect(() => {
     if (nodes.length === 0) return;
     let iter = 0;
     let frame: number;
     const nodeMap = new Map<string, number>();
-    nodes.forEach((n, i) => nodeMap.set(n.id, i));
+    nodes.forEach((node, index) => nodeMap.set(node.id, index));
 
     const step = () => {
       if (iter >= MAX_ITER) return;
       iter++;
-      const ns = nodes;
+      const nextNodes = nodes;
 
-      /* Repulsion between all pairs */
-      for (let i = 0; i < ns.length; i++) {
-        for (let j = i + 1; j < ns.length; j++) {
-          let dx = ns[i].x - ns[j].x;
-          let dy = ns[i].y - ns[j].y;
+      for (let i = 0; i < nextNodes.length; i++) {
+        for (let j = i + 1; j < nextNodes.length; j++) {
+          let dx = nextNodes[i].x - nextNodes[j].x;
+          let dy = nextNodes[i].y - nextNodes[j].y;
           const dist = Math.sqrt(dx * dx + dy * dy) || 1;
           const force = REPULSION / (dist * dist);
           dx = (dx / dist) * force;
           dy = (dy / dist) * force;
-          ns[i].vx += dx;
-          ns[i].vy += dy;
-          ns[j].vx -= dx;
-          ns[j].vy -= dy;
+          nextNodes[i].vx += dx;
+          nextNodes[i].vy += dy;
+          nextNodes[j].vx -= dx;
+          nextNodes[j].vy -= dy;
         }
       }
 
-      /* Spring attraction along edges */
-      for (const e of edges) {
-        const si = nodeMap.get(e.source);
-        const ti = nodeMap.get(e.target);
+      for (const edge of edges) {
+        const si = nodeMap.get(edge.source);
+        const ti = nodeMap.get(edge.target);
         if (si === undefined || ti === undefined) continue;
-        const dx = ns[ti].x - ns[si].x;
-        const dy = ns[ti].y - ns[si].y;
+        const dx = nextNodes[ti].x - nextNodes[si].x;
+        const dy = nextNodes[ti].y - nextNodes[si].y;
         const dist = Math.sqrt(dx * dx + dy * dy) || 1;
         const displacement = dist - SPRING_LEN;
         const fx = SPRING_K * displacement * (dx / dist);
         const fy = SPRING_K * displacement * (dy / dist);
-        ns[si].vx += fx;
-        ns[si].vy += fy;
-        ns[ti].vx -= fx;
-        ns[ti].vy -= fy;
+        nextNodes[si].vx += fx;
+        nextNodes[si].vy += fy;
+        nextNodes[ti].vx -= fx;
+        nextNodes[ti].vy -= fy;
       }
 
-      /* Apply velocity + damping, clamp to bounds */
-      for (const n of ns) {
-        n.vx *= DAMPING;
-        n.vy *= DAMPING;
-        n.x += n.vx;
-        n.y += n.vy;
-        n.x = Math.max(30, Math.min(WIDTH - 30, n.x));
-        n.y = Math.max(30, Math.min(HEIGHT - 30, n.y));
+      for (const node of nextNodes) {
+        node.vx *= DAMPING;
+        node.vy *= DAMPING;
+        node.x += node.vx;
+        node.y += node.vy;
+        node.x = Math.max(30, Math.min(WIDTH - 30, node.x));
+        node.y = Math.max(30, Math.min(HEIGHT - 30, node.y));
       }
 
-      setNodes([...ns]);
+      setNodes([...nextNodes]);
       frame = requestAnimationFrame(step);
     };
 
     frame = requestAnimationFrame(step);
     return () => cancelAnimationFrame(frame);
-    // Run simulation once when nodes first populate
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- nodes identity changes every frame; depend only on length
   }, [nodes.length, edges]);
 
   const handleNodeClick = useCallback(
@@ -151,10 +144,12 @@ export function GraphView({ courseId }: GraphViewProps) {
     [selected],
   );
 
-  /* Empty / loading states */
   if (loading) {
     return (
-      <div className="flex-1 flex items-center justify-center p-8">
+      <div
+        className="flex-1 flex items-center justify-center p-8"
+        data-testid="graph-panel"
+      >
         <p className="text-xs text-muted-foreground">Loading graph...</p>
       </div>
     );
@@ -162,81 +157,81 @@ export function GraphView({ courseId }: GraphViewProps) {
 
   if (empty) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
+      <div
+        className="flex-1 flex flex-col items-center justify-center p-8 text-center"
+        data-testid="graph-panel"
+      >
         <h3 className="text-sm font-medium mb-1">{t("course.graph")}</h3>
         <p className="text-xs text-muted-foreground max-w-xs">
-          Knowledge graph visualization will appear here.
+          Upload course materials to generate the knowledge graph
         </p>
       </div>
     );
   }
 
-  const nodeById = new Map(nodes.map((n) => [n.id, n]));
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden">
+    <div className="flex-1 flex flex-col overflow-hidden" data-testid="graph-panel">
       <svg
         ref={svgRef}
         viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
         className="w-full h-full min-h-0 bg-background"
       >
-        {/* Edges */}
-        {edges.map((e) => {
-          const s = nodeById.get(e.source);
-          const tgt = nodeById.get(e.target);
-          if (!s || !tgt) return null;
+        {edges.map((edge) => {
+          const source = nodeById.get(edge.source);
+          const target = nodeById.get(edge.target);
+          if (!source || !target) return null;
           return (
             <line
-              key={`${e.source}-${e.target}`}
-              x1={s.x}
-              y1={s.y}
-              x2={tgt.x}
-              y2={tgt.y}
+              key={`${edge.source}-${edge.target}`}
+              x1={source.x}
+              y1={source.y}
+              x2={target.x}
+              y2={target.y}
               stroke="var(--border, #ccc)"
               strokeWidth={1.5}
               strokeOpacity={0.5}
             />
           );
         })}
-        {/* Nodes */}
-        {nodes.map((n) => (
+        {nodes.map((node) => (
           <g
-            key={n.id}
-            onClick={() => handleNodeClick(n)}
+            key={node.id}
+            onClick={() => handleNodeClick(node)}
             className="cursor-pointer"
           >
             <circle
-              cx={n.x}
-              cy={n.y}
-              r={Math.max(8, n.size ?? 12)}
-              fill={n.color}
-              stroke={selected?.id === n.id ? "#fff" : "none"}
-              strokeWidth={selected?.id === n.id ? 3 : 0}
+              cx={node.x}
+              cy={node.y}
+              r={Math.max(8, node.size ?? 12)}
+              fill={`hsl(0 0% ${Math.round(20 + node.mastery * 60)}%)`}
+              stroke={selected?.id === node.id ? "#fff" : "none"}
+              strokeWidth={selected?.id === node.id ? 3 : 0}
               opacity={0.9}
             />
             <text
-              x={n.x}
-              y={n.y + (n.size ?? 12) + 14}
+              x={node.x}
+              y={node.y + (node.size ?? 12) + 14}
               textAnchor="middle"
               fontSize={10}
               fill="var(--foreground, #333)"
             >
-              {n.label}
+              {node.label}
             </text>
           </g>
         ))}
       </svg>
 
-      {/* Selected node details */}
-      {selected && (
+      {selected ? (
         <div className="absolute bottom-4 left-4 bg-card border rounded-lg shadow-lg p-3 max-w-xs">
           <h4 className="text-sm font-semibold mb-1">{selected.label}</h4>
           <p className="text-xs text-muted-foreground">
-            Mastery: {Math.round(selected.mastery * 100)}% &middot; Level:{" "}
-            {selected.level} &middot; Status: {selected.status}
+            Mastery: {Math.round(selected.mastery * 100)}% · Level: {selected.level} ·
+            Status: {selected.status}
           </p>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

@@ -33,21 +33,31 @@ const ICON_MAP: Record<string, LucideIcon> = {
  * Select dropdown in the section header bar. Each item shows its icon, label,
  * and keyboard shortcut hint.
  */
-export function SectionSelector() {
+interface SectionSelectorProps {
+  visibleSections?: SectionId[];
+}
+
+export function SectionSelector({ visibleSections }: SectionSelectorProps) {
   const activeSection = useWorkspaceStore((s) => s.activeSection);
   const setActiveSection = useWorkspaceStore((s) => s.setActiveSection);
   const { locale } = useLocale();
+  const sections = visibleSections
+    ? SECTIONS.filter((section) => visibleSections.includes(section.id))
+    : SECTIONS;
+  const selectedSection =
+    sections.find((section) => section.id === activeSection)?.id
+    ?? sections[0]?.id;
 
   return (
     <Select
-      value={activeSection}
+      value={selectedSection}
       onValueChange={(v) => setActiveSection(v as SectionId)}
     >
       <SelectTrigger size="sm" className="h-7 gap-1.5 text-xs font-medium border-none shadow-none bg-transparent px-2">
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
-        {SECTIONS.map((section) => {
+        {sections.map((section) => {
           const Icon = ICON_MAP[section.icon];
           return (
             <SelectItem key={section.id} value={section.id}>

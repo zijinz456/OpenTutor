@@ -75,6 +75,7 @@ fi
 
 # Source .env for this script
 load_env_file "${ENV_FILE}"
+bash "${ROOT_DIR}/scripts/check_local_mode.sh" --env-file "${ENV_FILE}" --skip-api
 
 # ---------------------------------------------------------------------------
 # 3. Auto-detect Ollama

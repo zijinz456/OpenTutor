@@ -21,6 +21,7 @@ usage() {
   cat <<'EOF'
 Usage:
   scripts/dev_local.sh up [--build]
+  scripts/dev_local.sh check-local-mode
   scripts/dev_local.sh migrate-host
   scripts/dev_local.sh preflight
   scripts/dev_local.sh verify-host
@@ -32,6 +33,7 @@ Usage:
 
 Commands:
   up              Start db, redis, api, and web with Docker Compose and wait for readiness.
+  check-local-mode Validate that .env and the running API are both using local single-user mode.
   migrate-host    Run Alembic migrations with the resolved host Python interpreter.
   preflight       Check local prerequisites and stack readiness before running full verification.
   verify-host     Run all checks that can execute on the current host, and mark stack-gated checks as skipped.
@@ -414,6 +416,15 @@ run_preflight() {
   local web_ready=0
   init_report
 
+  CURRENT_CHECK="Local deployment mode"
+  step "Local deployment mode"
+  if bash "${ROOT_DIR}/scripts/check_local_mode.sh" --env-file "${ROOT_DIR}/.env"; then
+    record_ok "single-user local mode confirmed"
+  else
+    record_result "FAIL" "Local deployment mode check failed."
+    fail "Local deployment mode check failed."
+  fi
+
   CURRENT_CHECK="Host prerequisites"
   step "Host prerequisites"
   if command -v docker >/dev/null 2>&1; then
@@ -598,6 +609,7 @@ shift || true
 case "${command}" in
   up)
     require_cmd docker curl
+    bash "${ROOT_DIR}/scripts/check_local_mode.sh" --env-file "${ROOT_DIR}/.env" --skip-api
     step "Starting local stack"
     if [[ "${1:-}" == "--build" ]]; then
       compose up -d --build db redis api web
@@ -610,6 +622,9 @@ case "${command}" in
     ;;
   migrate-host)
     run_host_migrate
+    ;;
+  check-local-mode)
+    bash "${ROOT_DIR}/scripts/check_local_mode.sh" --env-file "${ROOT_DIR}/.env"
     ;;
   preflight)
     run_preflight

@@ -90,10 +90,8 @@ def parse_question_array(text: str) -> list[dict[str, Any]]:
             return [payload]
         return []
 
-    json_str = text.strip()
-    if json_str.startswith("```"):
-        lines = json_str.split("\n")
-        json_str = "\n".join(lines[1:-1])
+    from libs.text_utils import strip_code_fences
+    json_str = strip_code_fences(text)
 
     try:
         parsed = json.loads(json_str)

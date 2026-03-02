@@ -313,6 +313,7 @@ async def prepare_agent_turn(
     ctx = await load_context(ctx, db, db_factory=db_factory)
 
     fatigue = _detect_fatigue(ctx.user_message)
+    ctx.metadata["fatigue_score"] = fatigue  # Phase 4: expose for Socratic guardrails
     if fatigue > 0.6 and "motivation" in AGENT_REGISTRY:
         agent = AGENT_REGISTRY["motivation"]
         ctx.metadata["fatigue_level"] = fatigue
@@ -582,11 +583,39 @@ async def post_process(ctx: AgentContext, db_factory) -> None:
                 await store_graph_entities(db, ctx.user_id, ctx.course_id, extracted)
                 await db.commit()
 
+    async def _experiment_metric_with_session():
+        """Phase 4: Record experiment engagement metric for A/B analysis."""
+        exp_config = ctx.metadata.get("experiment_config")
+        if not exp_config:
+            return
+        async with db_factory() as db:
+            from services.experiment.engine import record_metric
+            # Engagement proxy: response substance (70%) + tool depth (30%)
+            response_score = min(1.0, len(ctx.response or "") / 1000.0)
+            tool_score = min(1.0, len(ctx.tool_calls) / 5.0)
+            metric_value = response_score * 0.7 + tool_score * 0.3
+            await record_metric(
+                db,
+                experiment_id=uuid.UUID(exp_config["experiment_id"]),
+                user_id=ctx.user_id,
+                variant_id=exp_config["variant_id"],
+                metric_name="engagement",
+                metric_value=metric_value,
+                metadata={
+                    "intent": ctx.intent.value if ctx.intent else None,
+                    "agent": ctx.delegated_agent,
+                    "response_len": len(ctx.response or ""),
+                    "tool_calls": len(ctx.tool_calls),
+                },
+            )
+            await db.commit()
+
     try:
         parallel_results = await asyncio.gather(
             _retry_async(_signal_with_session, "signal_extraction", max_retries=2),
             _retry_async(_memory_with_session, "memory_encoding", max_retries=2),
             _retry_async(_graph_with_session, "graph_extraction", max_retries=1),
+            _retry_async(_experiment_metric_with_session, "experiment_metric", max_retries=1),
         )
         pp_results.extend(parallel_results)
     except Exception as e:
@@ -652,25 +681,32 @@ async def post_process(ctx: AgentContext, db_factory) -> None:
             logger.warning("Failed to persist tool calls: %s", e)
 
     # Update tutor notes (fire-and-forget, non-critical)
+    # Phase 4: Throttled — only run LLM update after N turns or elapsed time
     try:
         if ctx.response and ctx.user_message:
-            from services.agent.tutor_notes import update_tutor_notes
-
-            # Build a brief conversation summary from the current turn
-            summary = (
-                f"Student: {ctx.user_message[:300]}\n"
-                f"Tutor: {ctx.response[:500]}"
+            from services.agent.tutor_notes import (
+                update_tutor_notes,
+                check_and_increment_turn,
+                reset_turn_counter,
             )
-            current_notes = ctx.metadata.get("tutor_notes")
 
             async with db_factory() as notes_db:
-                await update_tutor_notes(
-                    notes_db,
-                    ctx.user_id,
-                    ctx.course_id,
-                    current_notes,
-                    summary,
-                )
+                do_update = await check_and_increment_turn(notes_db, ctx.user_id, ctx.course_id)
+
+                if do_update:
+                    summary = (
+                        f"Student: {ctx.user_message[:300]}\n"
+                        f"Tutor: {ctx.response[:500]}"
+                    )
+                    current_notes = ctx.metadata.get("tutor_notes")
+                    await update_tutor_notes(
+                        notes_db,
+                        ctx.user_id,
+                        ctx.course_id,
+                        current_notes,
+                        summary,
+                    )
+                    await reset_turn_counter(notes_db, ctx.user_id, ctx.course_id)
     except Exception as e:
         logger.warning("Tutor notes update failed (non-critical): %s", e)
 
@@ -878,6 +914,7 @@ async def orchestrate_stream(
             logger.warning("Multi-step planning failed, falling back to single turn: %s", e)
 
     fatigue = _detect_fatigue(ctx.user_message)
+    ctx.metadata["fatigue_score"] = fatigue  # Phase 4: expose for Socratic guardrails in base.py
     if fatigue > 0.6 and "motivation" in AGENT_REGISTRY:
         agent = AGENT_REGISTRY["motivation"]
         ctx.metadata["fatigue_level"] = fatigue
@@ -984,6 +1021,8 @@ async def orchestrate_stream(
         # 5. Stream response with marker parsing + token tracking
         # Markers: [ACTION:...] (UI actions), [TOOL_START:...] / [TOOL_DONE:...] (ReAct tools)
         parser = MarkerParser()
+        _actions_emitted = 0   # Track actions already sent as SSE events
+        _progress_emitted = 0  # Track progress events already sent
         async for chunk in agent.stream(ctx, db):
             for event_type, payload in parser.feed(chunk):
                 if event_type == "text":
@@ -1000,11 +1039,30 @@ async def orchestrate_stream(
                     yield {"event": "tool_status", "data": json.dumps(event_data)}
                 elif event_type == "action":
                     ctx.actions.append(payload)
+                    _actions_emitted += 1
                     yield {"event": "action", "data": json.dumps(payload)}
+
+            # Emit actions appended directly by tools (not via text markers)
+            while _actions_emitted < len(ctx.actions):
+                yield {"event": "action", "data": json.dumps(ctx.actions[_actions_emitted])}
+                _actions_emitted += 1
+
+            # Emit tool progress events added by write tools
+            while _progress_emitted < len(ctx.tool_progress):
+                yield {"event": "tool_progress", "data": json.dumps(ctx.tool_progress[_progress_emitted])}
+                _progress_emitted += 1
 
         remaining = parser.flush()
         if remaining:
             yield {"event": "message", "data": json.dumps({"content": remaining})}
+
+        # Commit write-tool changes atomically (tools use flush, orchestrator commits)
+        if ctx.tool_calls:
+            try:
+                await db.commit()
+            except Exception as commit_err:
+                logger.error("Post-stream commit failed: %s", commit_err)
+                await db.rollback()
 
         _finalize_token_usage(ctx, agent)
         await ext_registry.run_hooks(

@@ -11,7 +11,6 @@ import {
   IngestionJobSummary,
   listCourseOverview,
   createCourse,
-  deleteCourse,
   getContentTree,
   listIngestionJobs,
 } from "@/lib/api";
@@ -27,12 +26,10 @@ interface CourseState {
   contentTree: ContentNode[];
   ingestionJobs: IngestionJobSummary[];
   loading: boolean;
-  error: string | null;
 
   fetchCourses: () => Promise<void>;
   setActiveCourse: (course: Course | null) => void;
   addCourse: (name: string, description?: string, metadata?: CourseMetadata) => Promise<Course>;
-  removeCourse: (id: string) => Promise<void>;
   fetchContentTree: (courseId: string) => Promise<void>;
   fetchIngestionJobs: (courseId: string) => Promise<void>;
 }
@@ -43,23 +40,22 @@ export const useCourseStore = create<CourseState>((set, get) => ({
   contentTree: [],
   ingestionJobs: [],
   loading: false,
-  error: null,
 
   fetchCourses: async () => {
     // Return cached data immediately if still fresh.
     const cached = ttlCache.get<Course[]>(COURSES_CACHE_KEY);
     if (cached) {
-      set({ courses: cached, loading: false, error: null });
+      set({ courses: cached, loading: false });
       return;
     }
 
-    set({ loading: true, error: null });
+    set({ loading: true });
     try {
       const courses = await listCourseOverview();
       ttlCache.set(COURSES_CACHE_KEY, courses, COURSES_TTL_MS);
       set({ courses, loading: false });
-    } catch (e) {
-      set({ error: (e as Error).message, loading: false });
+    } catch {
+      set({ loading: false });
     }
   },
 
@@ -77,21 +73,12 @@ export const useCourseStore = create<CourseState>((set, get) => ({
     return course;
   },
 
-  removeCourse: async (id) => {
-    await deleteCourse(id);
-    ttlCache.invalidate(COURSES_CACHE_KEY);
-    set((s) => ({
-      courses: s.courses.filter((c) => c.id !== id),
-      activeCourse: s.activeCourse?.id === id ? null : s.activeCourse,
-    }));
-  },
-
   fetchContentTree: async (courseId) => {
     try {
       const tree = await getContentTree(courseId);
       set({ contentTree: tree });
-    } catch (e) {
-      set({ error: (e as Error).message });
+    } catch {
+      // silently fail
     }
   },
 
@@ -99,8 +86,8 @@ export const useCourseStore = create<CourseState>((set, get) => ({
     try {
       const jobs = await listIngestionJobs(courseId);
       set({ ingestionJobs: jobs });
-    } catch (e) {
-      set({ error: (e as Error).message });
+    } catch {
+      // silently fail
     }
   },
 }));

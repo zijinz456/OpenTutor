@@ -225,13 +225,30 @@ export async function sendChatMessage(page: Page, message: string): Promise<void
 }
 
 /**
- * Switch scene via the scene selector dropdown.
+ * Route to the UI area that previously matched a scene-oriented workflow.
+ * Scene selection is now internal, so tests move through visible workspace sections.
  */
 export async function switchScene(page: Page, sceneId: string): Promise<void> {
-  await page.getByTestId("scene-selector-trigger").click();
-  await page.getByTestId(`scene-option-${sceneId}`).click();
-  // Wait for scene switch to complete (dropdown closes)
-  await expect(page.getByTestId("scene-selector-trigger")).toBeEnabled({ timeout: 15_000 });
+  if (sceneId === "exam_prep") {
+    const planButton = page.locator('button[title="Plan"]').first();
+    await expect(planButton).toBeVisible({ timeout: 15_000 });
+    await planButton.click();
+    await expect(page.getByTestId("study-plan-panel")).toBeVisible({ timeout: 15_000 });
+    return;
+  }
+
+  if (sceneId === "assignment" || sceneId === "review_drill") {
+    const practiceButton = page.locator('button[title="Practice"]').first();
+    await expect(practiceButton).toBeVisible({ timeout: 15_000 });
+    await practiceButton.click();
+    await expect(page.getByTestId("practice-section")).toBeVisible({ timeout: 15_000 });
+    return;
+  }
+
+  const notesButton = page.locator('button[title="Notes"]').first();
+  await expect(notesButton).toBeVisible({ timeout: 15_000 });
+  await notesButton.click();
+  await expect(page.getByTestId("notes-panel")).toBeVisible({ timeout: 15_000 });
 }
 
 export async function expectAssistantMessage(page: Page) {
@@ -299,8 +316,26 @@ export async function ensureRightPanelVisible(page: Page): Promise<void> {
   throw new Error("Could not locate a practice workspace shell");
 }
 
+export async function ensureAnalyticsSectionVisible(page: Page): Promise<void> {
+  const analyticsSection = page.getByTestId("analytics-section");
+  const visible = await analyticsSection.isVisible({ timeout: 2_000 }).catch(() => false);
+  if (visible) {
+    return;
+  }
+
+  const analyticsButton = page.getByRole("button", { name: /Analytics|分析/i }).first();
+  await expect(analyticsButton).toBeVisible({ timeout: 15_000 });
+  await analyticsButton.click();
+  await expect(analyticsSection).toBeVisible({ timeout: 15_000 });
+}
+
 export async function openRightTab(page: Page, tab: string): Promise<void> {
-  const legacyTabButton = page.getByTestId(`right-tab-${tab}`).last();
+  const legacyTabId =
+    tab === "flashcards" ? "right-tab-cards" :
+    tab === "progress" ? "right-tab-progress" :
+    tab === "graph" ? "right-tab-graph" :
+    `right-tab-${tab}`;
+  const legacyTabButton = page.getByTestId(legacyTabId).last();
   const legacyVisible = await legacyTabButton.isVisible({ timeout: 2_000 }).catch(() => false);
   if (legacyVisible) {
     await legacyTabButton.click({ force: true });
@@ -314,11 +349,14 @@ export async function openRightTab(page: Page, tab: string): Promise<void> {
   }
 
   const modernLabel =
-    tab === "flashcards" ? /Flashcards|闪卡/i :
+    tab === "flashcards" ? /Cards|Flashcards|闪卡/i :
     tab === "quiz" ? /Quiz|测验/i :
     tab === "review" ? /Review|复盘/i :
+    tab === "progress" ? /Stats|Progress/i :
+    tab === "graph" ? /Graph/i :
     new RegExp(tab, "i");
-  const modernTabButton = page.getByRole("tab", { name: modernLabel }).first();
+
+  const modernTabButton = page.getByRole("button", { name: modernLabel }).first();
   await expect(modernTabButton).toBeVisible({ timeout: 15_000 });
   await modernTabButton.click({ force: true });
 }

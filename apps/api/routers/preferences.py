@@ -621,9 +621,8 @@ async def parse_nl_preference(
         client = registry.get("small")
         raw, _usage = await client.extract(_NL_PREFERENCE_PROMPT, body.text)
         # Strip markdown fences if present
-        raw = raw.strip()
-        if raw.startswith("```"):
-            raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0]
+        from libs.text_utils import strip_code_fences
+        raw = strip_code_fences(raw)
         parsed = json.loads(raw)
         dim = parsed.get("dimension")
         val = parsed.get("value")

@@ -29,7 +29,7 @@ INTENT_BUDGET_OVERRIDES: dict[str, dict[str, int]] = {
     "learn": {"RAG_BUDGET": 4000, "MEMORY_BUDGET": 1000, "HISTORY_BUDGET": 1500},
     "review": {"RAG_BUDGET": 2000, "MEMORY_BUDGET": 2500, "HISTORY_BUDGET": 2000},
     "quiz": {"RAG_BUDGET": 3500, "MEMORY_BUDGET": 1000, "HISTORY_BUDGET": 1000},
-    "chat": {"RAG_BUDGET": 2000, "MEMORY_BUDGET": 1500, "HISTORY_BUDGET": 3000},
+    "general": {"RAG_BUDGET": 2000, "MEMORY_BUDGET": 1500, "HISTORY_BUDGET": 3000},
     "plan": {"RAG_BUDGET": 2000, "MEMORY_BUDGET": 2000, "HISTORY_BUDGET": 2500},
 }
 
@@ -156,6 +156,16 @@ async def _extract_topic_summary(messages: list[dict]) -> str | None:
     return None
 
 
+# Phase 4: Intent-specific memory type priorities for retrieval
+INTENT_MEMORY_TYPES: dict[str, list[str] | None] = {
+    "review": ["error", "skill", "episode", "knowledge"],
+    "quiz": ["knowledge", "error", "skill"],
+    "learn": ["profile", "preference", "knowledge", "episode"],
+    "plan": ["profile", "episode", "skill"],
+    "general": None,  # No filter, retrieve all types
+}
+
+
 async def _auto_recall_memories(
     db: AsyncSession,
     user_id,
@@ -163,6 +173,7 @@ async def _auto_recall_memories(
     user_message: str,
     conversation_history: list[dict],
     limit: int = 5,
+    intent=None,
 ) -> list[dict]:
     """Enhanced memory recall with multi-strategy retrieval.
 
@@ -171,8 +182,15 @@ async def _auto_recall_memories(
     2. Always fetch latest profile/preference memories for user+course
     3. If conversation is long (> 4 messages), also search by topic summary
     4. Deduplicate results by memory ID
+
+    Phase 4: Intent-aware memory type filtering — REVIEW prioritizes error/skill,
+    QUIZ prioritizes knowledge/error, etc.
     """
     from services.memory.pipeline import retrieve_memories
+
+    # Resolve intent-specific memory types
+    intent_key = intent.value if intent else "general"
+    memory_types = INTENT_MEMORY_TYPES.get(intent_key)
 
     seen_ids: set[str] = set()
     all_memories: list[dict] = []
@@ -184,10 +202,11 @@ async def _auto_recall_memories(
                 seen_ids.add(mid)
                 all_memories.append(m)
 
-    # 1. Primary search: user message query (existing behavior)
+    # 1. Primary search: user message query with intent-aware type filtering
     try:
         query_results = await retrieve_memories(
             db, user_id, user_message, course_id, limit=limit,
+            memory_types=memory_types,
         )
         _add_unique(query_results)
     except Exception as e:
@@ -349,10 +368,12 @@ async def _apply_context_guard(ctx: AgentContext) -> AgentContext:
             llm_client = get_llm_client("fast")
         except Exception:
             llm_client = None
-        ctx.conversation_history = await compact_session(
+        ctx.conversation_history, flushed_items = await compact_session(
             ctx.conversation_history, model_name, llm_client,
         )
         ctx.metadata["compaction"] = {"action": "llm_compact", "fill_pct": round(fill_pct, 3)}
+        if flushed_items:
+            ctx.metadata["memory_flush"] = flushed_items
 
     return ctx
 
@@ -522,7 +543,7 @@ async def load_context(
                     return await _auto_recall_memories(
                         _db, ctx.user_id, ctx.course_id,
                         ctx.user_message, ctx.conversation_history,
-                        limit=5,
+                        limit=5, intent=ctx.intent,
                     )
             except Exception as exc:
                 logger.warning("Memory retrieval failed (parallel): %s", exc)
@@ -579,7 +600,7 @@ async def load_context(
             memories = await _auto_recall_memories(
                 db, ctx.user_id, ctx.course_id,
                 ctx.user_message, ctx.conversation_history,
-                limit=5,
+                limit=5, intent=ctx.intent,
             )
             ctx.memories = memories
         except Exception as exc:
@@ -619,5 +640,80 @@ async def load_context(
             ctx.difficulty_guidance = format_for_prompt(rec)
         except Exception as exc:
             logger.warning("Difficulty recommendation failed: %s", exc)
+
+    # Phase 4-6: Run independent enrichment tasks concurrently
+    async def _load_experiment_config() -> None:
+        if ctx.intent not in (IntentType.LEARN, IntentType.GENERAL, IntentType.QUIZ, IntentType.REVIEW):
+            return
+        try:
+            from services.experiment.engine import get_experiment_config
+            exp_config = await get_experiment_config(db, ctx.user_id, "strategy")
+            if exp_config:
+                ctx.metadata["experiment_config"] = exp_config
+        except Exception as exc:
+            logger.warning("Experiment config loading failed: %s", exc)
+
+    async def _load_error_patterns() -> None:
+        if ctx.intent != IntentType.REVIEW:
+            return
+        try:
+            from services.progress.tracker import get_error_pattern_summary
+            error_patterns = await get_error_pattern_summary(db, ctx.user_id, ctx.course_id)
+            if error_patterns:
+                ctx.metadata["error_patterns"] = error_patterns
+        except Exception as exc:
+            logger.debug("Error pattern load failed: %s", exc)
+
+    async def _load_cross_course_patterns() -> None:
+        if ctx.intent not in (IntentType.LEARN, IntentType.REVIEW, IntentType.GENERAL, IntentType.PLAN):
+            return
+        try:
+            from services.agent.kv_store import kv_get
+            cross_patterns = await kv_get(db, ctx.user_id, "cross_course", "patterns", course_id=None)
+            if cross_patterns and isinstance(cross_patterns, dict) and cross_patterns.get("patterns"):
+                ctx.metadata["cross_course_patterns"] = cross_patterns["patterns"]
+        except Exception as exc:
+            logger.debug("Cross-course patterns load failed: %s", exc)
+
+    async def _run_latex_ocr() -> None:
+        if not ctx.images:
+            return
+        try:
+            from services.vision.latex_ocr import try_extract_latex
+            latex_results = await asyncio.to_thread(try_extract_latex, ctx.images)
+            if latex_results:
+                latex_text = "\n".join(f"$${l}$$" for l in latex_results)
+                ctx.user_message = (
+                    f"{ctx.user_message}\n\n"
+                    f"[Extracted LaTeX from attached image(s):\n{latex_text}]"
+                )
+                ctx.metadata["latex_ocr"] = latex_results
+                logger.info("LaTeX-OCR extracted %d formula(s)", len(latex_results))
+        except Exception as exc:
+            logger.debug("LaTeX-OCR skipped: %s", exc)
+
+    async def _load_screen_context() -> None:
+        try:
+            from services.context.screen import get_screen_context_service
+            screen_svc = get_screen_context_service()
+            if screen_svc.is_enabled:
+                screen_ctx = await screen_svc.get_study_context(minutes=10)
+                if screen_ctx:
+                    ctx.metadata["screen_context"] = screen_ctx
+                    topic_hint = screen_ctx.get("study_topic_hint")
+                    if topic_hint:
+                        ctx.metadata["screen_topic_hint"] = topic_hint
+                    logger.info("Screenpipe context loaded: apps=%s, topic=%s",
+                                screen_ctx.get("app_names", []), topic_hint)
+        except Exception as exc:
+            logger.debug("Screenpipe context skipped: %s", exc)
+
+    await asyncio.gather(
+        _load_experiment_config(),
+        _load_error_patterns(),
+        _load_cross_course_patterns(),
+        _run_latex_ocr(),
+        _load_screen_context(),
+    )
 
     return ctx

@@ -16,6 +16,8 @@ from routers.preferences import _normalize_preference_value
 from routers.upload import _validate_url
 from routers.wrong_answers import derive_question, diagnose_from_pair
 from routers.workflows import _raise_if_service_error
+from services.agent.agenda_ranking import AgendaDecision
+from services.agent.agenda_signals import AgendaSignal
 from services.auth.dependency import get_current_user
 from services.llm.local_config import get_llm_runtime_config, update_llm_runtime_config
 from services.llm import router as llm_router
@@ -172,20 +174,31 @@ class _ScalarResult:
 async def test_get_next_action_prefers_active_goal_next_action(monkeypatch):
     user = SimpleNamespace(id=uuid.uuid4())
     course_id = uuid.uuid4()
-    goal = SimpleNamespace(
-        id=uuid.uuid4(),
-        title="Pass the final",
-        next_action="Review chapter 3 weak points tonight.",
-        target_date=datetime.now(timezone.utc),
+    goal_id = uuid.uuid4()
+    decision = AgendaDecision(
+        action="submit",
+        signal=AgendaSignal(
+            signal_type="active_goal",
+            user_id=user.id,
+            course_id=course_id,
+            entity_id=str(goal_id),
+            title="Pass the final",
+            urgency=90.0,
+            detail={"next_action": "Review chapter 3 weak points tonight."},
+        ),
+        task_type="multi_step",
+        task_title="Execute next step: Pass the final",
+        task_summary="Review chapter 3 weak points tonight.",
+        goal_id=goal_id,
+        reason="Active goal has a concrete next action.",
     )
-    db = MagicMock()
-    db.execute = AsyncMock(return_value=_ScalarResult(goal))
     monkeypatch.setattr("routers.goals.get_course_or_404", AsyncMock())
+    monkeypatch.setattr("routers.goals.resolve_next_action", AsyncMock(return_value=decision))
 
-    result = await get_next_action(course_id=course_id, user=user, db=db)
+    result = await get_next_action(course_id=course_id, user=user, db=MagicMock())
 
-    assert result.source == "manual"
-    assert result.goal_id == str(goal.id)
+    assert result.source == "recent_goal"
+    assert result.goal_id == str(goal_id)
     assert "Review chapter 3 weak points tonight." in result.recommended_action
 
 
@@ -193,25 +206,27 @@ async def test_get_next_action_prefers_active_goal_next_action(monkeypatch):
 async def test_get_next_action_falls_back_to_failed_task(monkeypatch):
     user = SimpleNamespace(id=uuid.uuid4())
     course_id = uuid.uuid4()
-    failed_task = SimpleNamespace(
-        id=uuid.uuid4(),
-        goal_id=None,
-        title="Queued exam prep",
+    failed_task_id = uuid.uuid4()
+    decision = AgendaDecision(
+        action="retry",
+        signal=AgendaSignal(
+            signal_type="failed_task",
+            user_id=user.id,
+            course_id=course_id,
+            entity_id=str(failed_task_id),
+            title="Queued exam prep",
+            urgency=80.0,
+            detail={"status": "failed", "task_type": "exam_prep"},
+        ),
         task_type="exam_prep",
-        status="failed",
-    )
-    db = MagicMock()
-    db.execute = AsyncMock(
-        side_effect=[
-            _ScalarResult(None),  # active goal
-            _ScalarResult(None),  # next assignment
-            _ScalarResult(failed_task),  # failed task
-        ]
+        task_title="Recover: Queued exam prep",
+        existing_task_id=failed_task_id,
+        reason="Most recent durable task did not finish; recovery is more valuable than starting new work.",
     )
     monkeypatch.setattr("routers.goals.get_course_or_404", AsyncMock())
-    monkeypatch.setattr("routers.goals.predict_forgetting", AsyncMock(return_value={"predictions": []}))
+    monkeypatch.setattr("routers.goals.resolve_next_action", AsyncMock(return_value=decision))
 
-    result = await get_next_action(course_id=course_id, user=user, db=db)
+    result = await get_next_action(course_id=course_id, user=user, db=MagicMock())
 
     assert result.source == "task_failure"
     assert result.goal_id is None

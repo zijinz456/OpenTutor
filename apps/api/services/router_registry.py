@@ -6,6 +6,7 @@ from fastapi import FastAPI
 
 from config import settings
 from routers import (
+    agenda,
     auth,
     canvas,
     chat,
@@ -16,6 +17,7 @@ from routers import (
     flashcards,
     goals,
     health,
+    learning_events,
     notes,
     notification_settings,
     notifications,
@@ -23,12 +25,13 @@ from routers import (
     progress,
     push,
     quiz,
-    scenes,
     scrape,
     tasks,
     upload,
     usage,
+    voice,
     workflows,
+    workspace,
     wrong_answers,
 )
 from routers.mcp import router as mcp_router
@@ -48,16 +51,19 @@ CORE_ROUTERS = (
     (canvas.router, "/api/canvas", ["canvas"]),
     (notifications.router, "/api/notifications", ["notifications"]),
     (scrape.router, "/api/scrape", ["scrape"]),
-    (scenes.router, "/api/scenes", ["scenes"]),
     (wrong_answers.router, "/api/wrong-answers", ["wrong-answers"]),
     (tasks.router, "/api/tasks", ["tasks"]),
     (goals.router, "/api/goals", ["goals"]),
+    (agenda.router, "/api/agent", ["agenda"]),
     (evaluation.router, "/api/eval", ["evaluation"]),
     (experiments.router, "/api/experiments", ["experiments"]),
     (push.router, "/api/notifications/push", ["notifications"]),
     (notification_settings.router, "/api/notifications", ["notifications"]),
     (usage.router, None, None),
     (export.router, "/api", ["export"]),
+    (learning_events.router, "/api/learning-events", ["learning-events"]),
+    (voice.router, "/api/voice", ["voice"]),
+    (workspace.router, "/api", ["workspace"]),
     (mcp_router, "/api", None),
 )
 

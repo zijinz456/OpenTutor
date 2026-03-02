@@ -28,12 +28,15 @@ export interface ChatMessage {
   content: string;
   timestamp: Date;
   metadata?: ChatMessageMetadata | null;
+  /** Images attached to user messages (base64-encoded). */
+  images?: ImageAttachment[];
+  /** URL for audio playback (voice mode TTS responses). */
+  audioUrl?: string;
 }
 
 export interface SendMessageOptions {
   activeTab?: string;
   tabContext?: Record<string, unknown>;
-  scene?: string;
   images?: ImageAttachment[];
   /** Internal flag: set automatically when the user interrupts an active stream. */
   interrupt?: boolean;
@@ -58,7 +61,7 @@ interface ChatState {
   /** Active tool status from ReAct agent loop (null when no tool running). */
   toolStatus: { tool: string; status: "running" | "complete"; explanation?: string } | null;
 
-  /** Callback for NL actions (layout changes, preference updates, scene switch). Set by CoursePage. */
+  /** Callback for NL actions (layout changes and preference updates). Set by CoursePage. */
   onAction: ((action: ChatAction) => void) | null;
   setOnAction: (cb: (action: ChatAction) => void) => void;
   setCourseContext: (courseId: string) => void;
@@ -213,6 +216,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       role: "user",
       content,
       timestamp: new Date(),
+      images: options?.images,
     };
 
     const assistantMsg: ChatMessage = {
@@ -250,7 +254,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
         message: content,
         activeTab: options?.activeTab,
         tabContext: options?.tabContext,
-        scene: options?.scene,
         sessionId: get().sessionIds[courseId],
         history,
         signal: controller.signal,
@@ -285,6 +288,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
           if (event.status === "complete") {
             setTimeout(() => set({ toolStatus: null }), 1500);
           }
+        } else if (event.type === "tool_progress") {
+          // Show write-tool progress as a tool_status with the progress message
+          const pct = event.total > 0 ? ` (${event.step}/${event.total})` : "";
+          set({ toolStatus: { tool: event.tool, status: "running", explanation: `${event.message}${pct}` } });
         } else if (event.type === "replace") {
           set((s) => {
             const nextMBC = {
@@ -296,6 +303,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
             return { messagesByCourse: nextMBC, ...deriveActive({ ...s, messagesByCourse: nextMBC }) };
           });
         } else if (event.type === "done" && event.sessionId) {
+          // Process any actions embedded in the envelope (e.g. from agent write tools).
+          // These are not emitted as separate SSE "action" events, so handle them here.
+          const doneActions = (event.metadata?.actions ?? []) as ChatAction[];
+          const { onAction: doneOnAction } = get();
+          if (doneOnAction) {
+            for (const a of doneActions) {
+              doneOnAction(a);
+            }
+          }
+
           set((s) => {
             const nextMBC = {
               ...s.messagesByCourse,

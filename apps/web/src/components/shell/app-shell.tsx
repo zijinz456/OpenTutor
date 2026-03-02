@@ -11,7 +11,7 @@ interface AppShellProps {
   /** Right area: active section content. */
   children: ReactNode;
   /** Bottom panel: chat input + messages. */
-  chat: ReactNode;
+  chat?: ReactNode;
 }
 
 /**
@@ -24,7 +24,7 @@ interface AppShellProps {
  * │  chat panel (full width)        │
  * └─────────────────────────────────┘
  */
-export function AppShell({ courseId: _courseId, tree, children, chat }: AppShellProps) {
+export function AppShell({ tree, children, chat }: AppShellProps) {
   const treeCollapsed = useWorkspaceStore((s) => s.treeCollapsed);
   const chatHeight = useWorkspaceStore((s) => s.chatHeight);
   const setChatHeight = useWorkspaceStore((s) => s.setChatHeight);
@@ -101,28 +101,29 @@ export function AppShell({ courseId: _courseId, tree, children, chat }: AppShell
         </main>
       </div>
 
-      {/* ── Resize handle ── */}
-      <div
-        role="separator"
-        aria-orientation="horizontal"
-        aria-label="Resize chat panel"
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        className="group relative z-10 flex h-1.5 shrink-0 cursor-row-resize items-center justify-center border-y border-border bg-muted/60 hover:bg-primary/10 active:bg-primary/20 select-none touch-none"
-      >
-        {/* Visual grip indicator */}
-        <span className="h-0.5 w-8 rounded-full bg-muted-foreground/30 group-hover:bg-primary/50 transition-colors" />
-      </div>
+      {chat ? (
+        <>
+          <div
+            role="separator"
+            aria-orientation="horizontal"
+            aria-label="Resize chat panel"
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            className="group relative z-10 flex h-1.5 shrink-0 cursor-row-resize items-center justify-center border-y border-border bg-muted/60 hover:bg-primary/10 active:bg-primary/20 select-none touch-none"
+          >
+            <span className="h-0.5 w-8 rounded-full bg-muted-foreground/30 transition-colors group-hover:bg-primary/50" />
+          </div>
 
-      {/* ── Bottom: chat panel ── */}
-      <section
-        className="shrink-0 overflow-hidden"
-        style={{ height: `${chatHeight * 100}%` }}
-        aria-label="Chat panel"
-      >
-        {chat}
-      </section>
+          <section
+            className="shrink-0 overflow-hidden"
+            style={{ height: `${chatHeight * 100}%` }}
+            aria-label="Chat panel"
+          >
+            {chat}
+          </section>
+        </>
+      ) : null}
     </div>
   );
 }

@@ -1,9 +1,12 @@
 """AI Notes restructuring endpoint."""
 
+import logging
 import uuid
 
+logger = logging.getLogger(__name__)
+
 from fastapi import APIRouter, Depends
-from libs.exceptions import NotFoundError
+from libs.exceptions import AppError, NotFoundError, reraise_as_app_error
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -57,9 +60,12 @@ async def restructure_content(body: RestructureRequest, user: User = Depends(get
     note_format = body.format_override or resolved.preferences.get("note_format", "bullet_point")
     visual_pref = resolved.preferences.get("visual_preference", "auto")
 
-    ai_content = await restructure_notes(
-        node.content, node.title, note_format, visual_pref
-    )
+    try:
+        ai_content = await restructure_notes(
+            node.content, node.title, note_format, visual_pref
+        )
+    except Exception as exc:
+        reraise_as_app_error(exc, "Notes restructuring failed")
 
     return RestructureResponse(
         original_title=node.title,
@@ -93,6 +99,22 @@ async def save_generated_notes(
         raise NotFoundError(resource="generated_asset", resource_id=str(body.replace_batch_id)) from exc
 
     await db.commit()
+
+    # Emit standardized learning event for analytics + plugin hooks
+    try:
+        from services.analytics.events import emit_learning_event, LearningEventData
+        await emit_learning_event(db, LearningEventData(
+            user_id=user.id,
+            verb="created",
+            object_type="note",
+            object_id=result.get("batch_id") or str(body.course_id),
+            course_id=body.course_id,
+            context_json={"title": body.title, "source_node_id": str(body.source_node_id) if body.source_node_id else None},
+        ))
+        await db.commit()
+    except Exception:
+        logger.debug("Notes learning event emission failed (best-effort)")
+
     return result
 
 

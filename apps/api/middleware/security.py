@@ -87,7 +87,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
       reads cost 2-3, LLM calls cost 30-50, workflow runs cost 80-100.
     """
 
-    _LLM_PATHS = {"/api/chat/stream", "/api/quiz/generate", "/api/flashcards/generate"}
+    _LLM_PATHS = {"/api/chat", "/api/quiz/extract", "/api/flashcards/generate", "/api/workflows/exam-prep"}
     _EXEMPT_PREFIXES = ("/api/webhooks/", "/api/health", "/docs", "/openapi.json")
 
     def __init__(

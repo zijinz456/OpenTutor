@@ -1,12 +1,18 @@
 import { expect, test } from "@playwright/test";
-import { skipOnboarding, createCourseWithContent, switchScene, expectGeneratedStudyPlan } from "./helpers/test-utils";
+import {
+  skipOnboarding,
+  createCourseWithContent,
+  switchScene,
+  expectGeneratedStudyPlan,
+  hasRealLlmEnv,
+} from "./helpers/test-utils";
 
 test.describe.serial("Study Plan Panel", () => {
   test.beforeEach(async ({ page }) => {
     await skipOnboarding(page);
   });
 
-  test("panel visible after switching to exam_prep scene", async ({ page }) => {
+  test("panel visible after opening exam prep workflow", async ({ page }) => {
     await createCourseWithContent(page);
     await switchScene(page, "exam_prep");
     await expect(page.getByTestId("study-plan-panel")).toBeVisible({ timeout: 15_000 });
@@ -40,6 +46,7 @@ test.describe.serial("Study Plan Panel", () => {
   });
 
   test("generate button triggers plan creation", async ({ page }) => {
+    test.skip(!hasRealLlmEnv(), "Requires a real LLM provider");
     await createCourseWithContent(page);
     await switchScene(page, "exam_prep");
     await expect(page.getByTestId("study-plan-panel")).toBeVisible({ timeout: 15_000 });
@@ -49,6 +56,7 @@ test.describe.serial("Study Plan Panel", () => {
   });
 
   test("generated plan content appears", async ({ page }) => {
+    test.skip(!hasRealLlmEnv(), "Requires a real LLM provider");
     await createCourseWithContent(page);
     await switchScene(page, "exam_prep");
     await expect(page.getByTestId("study-plan-panel")).toBeVisible({ timeout: 15_000 });
@@ -60,6 +68,7 @@ test.describe.serial("Study Plan Panel", () => {
   });
 
   test("plan shows generated content", async ({ page }) => {
+    test.skip(!hasRealLlmEnv(), "Requires a real LLM provider");
     await createCourseWithContent(page);
     await switchScene(page, "exam_prep");
     await expect(page.getByTestId("study-plan-panel")).toBeVisible({ timeout: 15_000 });
@@ -68,6 +77,7 @@ test.describe.serial("Study Plan Panel", () => {
   });
 
   test("Save New button saves plan and shows toast", async ({ page }) => {
+    test.skip(!hasRealLlmEnv(), "Requires a real LLM provider");
     await createCourseWithContent(page);
     await switchScene(page, "exam_prep");
     await expect(page.getByTestId("study-plan-panel")).toBeVisible({ timeout: 15_000 });
@@ -78,6 +88,7 @@ test.describe.serial("Study Plan Panel", () => {
   });
 
   test("generate button disabled during loading", async ({ page }) => {
+    test.skip(!hasRealLlmEnv(), "Requires a real LLM provider");
     await createCourseWithContent(page);
     await switchScene(page, "exam_prep");
     await expect(page.getByTestId("study-plan-panel")).toBeVisible({ timeout: 15_000 });
@@ -89,6 +100,7 @@ test.describe.serial("Study Plan Panel", () => {
   });
 
   test("Replace Latest appears after saving and regenerating", async ({ page }) => {
+    test.skip(!hasRealLlmEnv(), "Requires a real LLM provider");
     await createCourseWithContent(page);
     await switchScene(page, "exam_prep");
     await expect(page.getByTestId("study-plan-panel")).toBeVisible({ timeout: 15_000 });

@@ -9,7 +9,7 @@ from models.memory import ConversationMemory
 from models.ingestion import IngestionJob, StudySession, Assignment, WrongAnswer
 from models.progress import LearningProgress, LearningTemplate
 from models.scrape import ScrapeSource, AuthSession
-from models.scene import Scene, SceneSnapshot, SceneSwitchLog
+from models.scene import Scene
 from models.knowledge_graph import KnowledgePoint
 from models.chat_session import ChatSession
 from models.chat_message import ChatMessageLog
@@ -25,8 +25,11 @@ from models.study_habit import StudyHabitLog
 from models.experiment import Experiment, ExperimentAssignment, ExperimentEvent
 from models.channel_binding import ChannelBinding
 from models.audit_log import AuditLog
+from models.agenda_run import AgendaRun
 from models.agent_kv import AgentKV
 from models.tool_call_event import ToolCallEvent
+from models.learning_event import LearningEvent
+from models.mastery_snapshot import MasterySnapshot
 
 __all__ = [
     "User",
@@ -46,8 +49,6 @@ __all__ = [
     "ScrapeSource",
     "AuthSession",
     "Scene",
-    "SceneSnapshot",
-    "SceneSwitchLog",
     "KnowledgePoint",
     "ChatSession",
     "ChatMessageLog",
@@ -65,6 +66,9 @@ __all__ = [
     "ExperimentEvent",
     "ChannelBinding",
     "AuditLog",
+    "AgendaRun",
     "AgentKV",
     "ToolCallEvent",
+    "LearningEvent",
+    "MasterySnapshot",
 ]
