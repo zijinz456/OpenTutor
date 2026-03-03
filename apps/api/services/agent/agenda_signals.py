@@ -343,15 +343,18 @@ async def collect_signals(
     course_id: uuid.UUID | None = None,
     db: AsyncSession | None = None,
 ) -> list[AgendaSignal]:
-    """Run all signal collectors and return a flat list of signals."""
+    """Run all signal collectors concurrently and return a flat list of signals."""
     if db is None:
         raise ValueError("db session is required")
 
-    signals: list[AgendaSignal] = []
-    for collector in _COLLECTORS:
+    import asyncio
+
+    async def _safe_collect(collector) -> list[AgendaSignal]:
         try:
-            result = await collector(user_id, course_id, db)
-            signals.extend(result)
+            return await collector(user_id, course_id, db)
         except Exception:
             logger.exception("Signal collector %s failed", collector.__name__)
-    return signals
+            return []
+
+    results = await asyncio.gather(*[_safe_collect(c) for c in _COLLECTORS])
+    return [signal for batch in results for signal in batch]

@@ -23,15 +23,15 @@ _model_cache: dict[str, Any] = {}
 
 
 def _build_features_from_state(state: dict) -> list[float]:
-    """Extract a feature vector from a learning state dict."""
+    """Extract a feature vector from a learning state dict.
+
+    Must stay in sync with the training feature matrix in ``train_model``.
+    """
     return [
         state.get("avg_mastery", 0.5),
         state.get("study_hours_last_7d", 0.0) / 20.0,  # Normalize
         state.get("quiz_accuracy", 0.5),
         state.get("days_until_exam", 30) / 60.0,  # Normalize
-        state.get("review_consistency", 0.5),  # 0-1 ratio of days with review
-        state.get("num_topics_mastered", 0) / max(state.get("total_topics", 1), 1),
-        state.get("flashcard_retention", 0.5),
     ]
 
 

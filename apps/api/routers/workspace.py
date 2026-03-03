@@ -23,7 +23,7 @@ async def list_files(
     from services.filesystem.sandbox import get_user_workspace, list_workspace_files
 
     workspace = get_user_workspace(settings.upload_dir, user.id)
-    return {"files": list_workspace_files(workspace)}
+    return {"files": await list_workspace_files(workspace)}
 
 
 @router.get("/files/{filename:path}")

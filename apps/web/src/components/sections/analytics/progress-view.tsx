@@ -92,7 +92,7 @@ export function ProgressView({ courseId }: ProgressViewProps) {
       <div className="grid grid-cols-2 gap-2">
         {[
           { label: t("progress.mastered"), value: `${Math.round(data.average_mastery)}%` },
-          { label: t("progress.accuracy"), value: `${Math.round(data.completion_percent)}%` },
+          { label: t("progress.completion"), value: `${Math.round(data.completion_percent)}%` },
           { label: t("progress.totalTime"), value: fmtTime(data.total_study_minutes) },
           { label: t("progress.notStarted"), value: `${data.not_started}` },
         ].map(({ label, value }) => (

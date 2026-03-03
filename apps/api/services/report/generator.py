@@ -11,6 +11,7 @@ import json
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 from sqlalchemy import Float, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -125,9 +126,12 @@ async def _gather_report_data(
     )
     unmastered_count = wrong_result.scalar() or 0
 
-    # Mastery improvements in period
+    # Mastery improvements in period — join with content tree for titles
+    from models.content import CourseContentTree
+
     mastery_result = await db.execute(
-        select(LearningProgress)
+        select(LearningProgress, CourseContentTree.title)
+        .outerjoin(CourseContentTree, LearningProgress.content_node_id == CourseContentTree.id)
         .where(
             LearningProgress.user_id == user_id,
             LearningProgress.updated_at >= cutoff,
@@ -136,10 +140,10 @@ async def _gather_report_data(
         .order_by(LearningProgress.mastery_score.desc())
         .limit(5)
     )
-    improved = mastery_result.scalars().all()
+    improved_rows = mastery_result.all()
     improved_topics = [
-        {"title": str(p.content_node_id or "unknown"), "mastery": float(p.mastery_score)}
-        for p in improved
+        {"title": title or "unknown", "mastery": float(p.mastery_score)}
+        for p, title in improved_rows
     ]
 
     return {
@@ -155,29 +159,73 @@ async def _gather_report_data(
     }
 
 
+async def _save_report(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    report_type: str,
+    content: str,
+    period_start: datetime,
+    period_end: datetime,
+    course_id: Optional[uuid.UUID] = None,
+    data_snapshot: Optional[dict] = None,
+):
+    """Persist a generated report to the database and return the ORM instance."""
+    from models.report import Report
+
+    report = Report(
+        user_id=user_id,
+        course_id=course_id,
+        report_type=report_type,
+        period_start=period_start,
+        period_end=period_end,
+        content=content,
+        data_snapshot=data_snapshot,
+    )
+    db.add(report)
+    await db.commit()
+    await db.refresh(report)
+    return report
+
+
 async def generate_daily_brief(
     user_id: uuid.UUID,
     db: AsyncSession,
 ) -> str:
     """Generate a personalised daily learning brief.
 
-    Returns markdown-formatted text.
+    Returns markdown-formatted text.  Also persists the report to the
+    ``reports`` table for archival.
     """
     from services.llm.router import get_llm_client
 
-    data = await _gather_report_data(user_id, db, days=1)
+    days = 1
+    data = await _gather_report_data(user_id, db, days=days)
 
     try:
         client = get_llm_client(tier="fast")
-        report, _ = await client.chat(
+        report_text, _ = await client.chat(
             DAILY_BRIEF_PROMPT,
             json.dumps(data, default=str),
         )
-        return report
     except Exception as e:
         logger.warning("Daily brief LLM failed: %s", e)
-        # Fallback: simple text report
-        return _format_fallback_report(data, "daily")
+        report_text = _format_fallback_report(data, "daily")
+
+    now = datetime.now(timezone.utc)
+    try:
+        await _save_report(
+            db=db,
+            user_id=user_id,
+            report_type="daily_brief",
+            content=report_text,
+            period_start=now - timedelta(days=days),
+            period_end=now,
+            data_snapshot=data,
+        )
+    except Exception as e:
+        logger.warning("Failed to persist daily brief: %s", e)
+
+    return report_text
 
 
 async def generate_weekly_report(
@@ -186,22 +234,39 @@ async def generate_weekly_report(
 ) -> str:
     """Generate a personalised weekly learning summary.
 
-    Returns markdown-formatted text.
+    Returns markdown-formatted text.  Also persists the report to the
+    ``reports`` table for archival.
     """
     from services.llm.router import get_llm_client
 
-    data = await _gather_report_data(user_id, db, days=7)
+    days = 7
+    data = await _gather_report_data(user_id, db, days=days)
 
     try:
         client = get_llm_client(tier="standard")
-        report, _ = await client.chat(
+        report_text, _ = await client.chat(
             WEEKLY_REPORT_PROMPT,
             json.dumps(data, default=str),
         )
-        return report
     except Exception as e:
         logger.warning("Weekly report LLM failed: %s", e)
-        return _format_fallback_report(data, "weekly")
+        report_text = _format_fallback_report(data, "weekly")
+
+    now = datetime.now(timezone.utc)
+    try:
+        await _save_report(
+            db=db,
+            user_id=user_id,
+            report_type="weekly_report",
+            content=report_text,
+            period_start=now - timedelta(days=days),
+            period_end=now,
+            data_snapshot=data,
+        )
+    except Exception as e:
+        logger.warning("Failed to persist weekly report: %s", e)
+
+    return report_text
 
 
 def _format_fallback_report(data: dict, period: str) -> str:

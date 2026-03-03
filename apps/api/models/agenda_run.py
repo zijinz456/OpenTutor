@@ -35,7 +35,7 @@ class AgendaRun(Base):
     top_signal_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
 
     # Full signal list snapshot
-    signals_json: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    signals_json: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
 
     # The decision that was made (or "noop" reason)
     decision_json: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)

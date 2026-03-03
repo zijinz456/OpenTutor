@@ -12,7 +12,10 @@ import json
 import uuid
 from typing import Any
 
-import numpy as np
+try:
+    import numpy as np
+except ImportError:
+    np = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 
@@ -70,8 +73,10 @@ def build_context_vector(
     session_length_minutes: float = 0.0,
     recent_accuracy: float = 0.5,
     help_request_count: int = 0,
-) -> np.ndarray:
+) -> "np.ndarray":
     """Build a normalized context feature vector."""
+    if np is None:
+        raise RuntimeError("numpy is required for bandit context vectors")
     return np.array([
         min(1.0, max(0.0, mastery_score)),
         min(1.0, max(0.0, difficulty_level)),
@@ -82,15 +87,16 @@ def build_context_vector(
     ], dtype=np.float64).reshape(1, -1)
 
 
-def select_strategy(user_id: uuid.UUID, context: np.ndarray) -> tuple[str, int]:
+def select_strategy(user_id: uuid.UUID, context: "np.ndarray") -> tuple[str, int]:
     """Select the best teaching strategy for the given context.
 
     Returns (strategy_name, strategy_index).
     """
     bandit = _get_user_bandit(user_id)
-    if bandit is None:
+    if bandit is None or np is None:
         # Fallback: uniform random
-        idx = int(np.random.randint(0, len(TEACHING_STRATEGIES)))
+        import random
+        idx = random.randrange(len(TEACHING_STRATEGIES))
         return TEACHING_STRATEGIES[idx], idx
 
     try:
@@ -98,13 +104,14 @@ def select_strategy(user_id: uuid.UUID, context: np.ndarray) -> tuple[str, int]:
         return TEACHING_STRATEGIES[idx], idx
     except Exception:
         # Bandit not yet trained — random selection
-        idx = int(np.random.randint(0, len(TEACHING_STRATEGIES)))
+        import random
+        idx = random.randrange(len(TEACHING_STRATEGIES))
         return TEACHING_STRATEGIES[idx], idx
 
 
 def observe_reward(
     user_id: uuid.UUID,
-    context: np.ndarray,
+    context: "np.ndarray",
     strategy_idx: int,
     reward: float,
 ) -> None:
@@ -176,5 +183,7 @@ async def record_strategy_outcome(
 ) -> None:
     """Record the outcome of a teaching strategy for bandit learning."""
     reward = 1.0 if correct else 0.0
+    if np is None:
+        return
     context = np.array(context_vector, dtype=np.float64)
     observe_reward(user_id, context, strategy_idx, reward)

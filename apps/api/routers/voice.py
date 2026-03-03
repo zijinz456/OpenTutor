@@ -283,6 +283,7 @@ async def synthesize_text(
     text: str,
     voice: str = "alloy",
     speed: float = 1.0,
+    user=Depends(get_current_user),
 ):
     """REST endpoint to synthesize text to speech. Returns MP3 audio."""
     from fastapi import HTTPException
@@ -308,6 +309,7 @@ async def transcribe_audio(
     audio_data: str,  # base64-encoded
     language: str | None = None,
     audio_format: str = "webm",
+    user=Depends(get_current_user),
 ):
     """REST endpoint to transcribe audio to text."""
     from fastapi import HTTPException

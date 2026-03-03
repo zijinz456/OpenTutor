@@ -154,7 +154,16 @@ export function useVoiceSession(courseId: string, options?: UseVoiceSessionOptio
       const ws = new WebSocket(url);
       wsRef.current = ws;
 
+      // Timeout after 5 seconds — cleared on successful open
+      const connectTimeout = window.setTimeout(() => {
+        if (ws.readyState !== WebSocket.OPEN) {
+          ws.close();
+          reject(new Error("WebSocket connection timeout"));
+        }
+      }, 5000);
+
       ws.onopen = () => {
+        clearTimeout(connectTimeout);
         reconnectAttemptsRef.current = 0; // Reset on successful connect
         setVoiceState("idle");
         setError(null);
@@ -180,6 +189,7 @@ export function useVoiceSession(courseId: string, options?: UseVoiceSessionOptio
       };
 
       ws.onerror = () => {
+        clearTimeout(connectTimeout);
         setError("Voice connection failed");
         setVoiceState("idle");
         setIsConnected(false);
@@ -203,14 +213,6 @@ export function useVoiceSession(courseId: string, options?: UseVoiceSessionOptio
           }, delay);
         }
       };
-
-      // Timeout after 5 seconds
-      setTimeout(() => {
-        if (ws.readyState !== WebSocket.OPEN) {
-          ws.close();
-          reject(new Error("WebSocket connection timeout"));
-        }
-      }, 5000);
     });
   }, [accessToken, courseId, handleServerMessage, language, speed, ttsEnabled, ttsVoice]);
 
