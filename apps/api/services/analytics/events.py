@@ -190,7 +190,7 @@ async def emit_flashcard_reviewed(
         verb="reviewed",
         object_type="flashcard",
         object_id=card_id,
-        score=rating / 5.0 if rating else None,  # Normalize FSRS rating (1-5) to 0-1
+        score=rating / 4.0 if rating else None,  # Normalize FSRS rating (1-4) to 0-1
         success=rating >= 3 if rating else None,
         course_id=course_id,
         duration_seconds=duration_seconds,

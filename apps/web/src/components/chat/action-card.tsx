@@ -80,10 +80,11 @@ export function ActionCard({ action }: ActionCardProps) {
 
   const handleClick = () => {
     if (mapping) {
-      // For switch_tab / open_section, use the label as the target section when possible.
+      const VALID_SECTIONS: Set<string> = new Set(["notes", "practice", "analytics", "plan"]);
+      // For switch_tab / open_section, use the label as target only if it's a valid SectionId.
       const target =
         action.type === "switch_tab" || action.type === "open_section"
-          ? (action.label as SectionId) ?? mapping.section
+          ? (VALID_SECTIONS.has(action.label ?? "") ? (action.label as SectionId) : mapping.section)
           : mapping.section;
       setActiveSection(target);
     }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useT } from "@/lib/i18n-context";
 import {
   getKnowledgeGraph,
@@ -29,7 +29,6 @@ const MAX_ITER = 100;
 
 export function GraphView({ courseId }: GraphViewProps) {
   const t = useT();
-  const svgRef = useRef<SVGSVGElement>(null);
   const [nodes, setNodes] = useState<SimNode[]>([]);
   const [edges, setEdges] = useState<KnowledgeGraphEdge[]>([]);
   const [selected, setSelected] = useState<SimNode | null>(null);
@@ -86,7 +85,7 @@ export function GraphView({ courseId }: GraphViewProps) {
     const step = () => {
       if (iter >= MAX_ITER) return;
       iter++;
-      const nextNodes = nodes;
+      const nextNodes = nodes.map((n) => ({ ...n }));
 
       for (let i = 0; i < nextNodes.length; i++) {
         for (let j = i + 1; j < nextNodes.length; j++) {
@@ -174,7 +173,6 @@ export function GraphView({ courseId }: GraphViewProps) {
   return (
     <div className="flex-1 flex flex-col overflow-hidden" data-testid="graph-panel">
       <svg
-        ref={svgRef}
         viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
         className="w-full h-full min-h-0 bg-background"
       >

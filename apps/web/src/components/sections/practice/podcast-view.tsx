@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { buildAuthHeaders } from "@/lib/auth";
 import { PodcastPlayer } from "@/components/audio/podcast-player";
 
 interface PodcastViewProps {
@@ -9,6 +10,8 @@ interface PodcastViewProps {
 }
 
 type PodcastStyle = "review" | "deep_dive" | "exam_prep";
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
 const STYLE_OPTIONS: { value: PodcastStyle; label: string }[] = [
   { value: "review", label: "Review" },
@@ -19,16 +22,53 @@ const STYLE_OPTIONS: { value: PodcastStyle; label: string }[] = [
 export function PodcastView({ courseId }: PodcastViewProps) {
   const [topic, setTopic] = useState("");
   const [style, setStyle] = useState<PodcastStyle>("review");
-  const [activePodcast, setActivePodcast] = useState<{
-    topic: string;
-    style: PodcastStyle;
+  const [generating, setGenerating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [podcast, setPodcast] = useState<{
+    audioUrl: string;
+    title: string;
+    script?: { speaker: string; text: string }[];
   } | null>(null);
 
-  const handleGenerate = () => {
+  // Track blob URL for cleanup
+  const blobUrlRef = useRef<string | null>(null);
+
+  const handleGenerate = useCallback(async () => {
     const t = topic.trim();
     if (!t) return;
-    setActivePodcast({ topic: t, style });
-  };
+
+    setGenerating(true);
+    setError(null);
+
+    // Revoke previous blob URL
+    if (blobUrlRef.current) {
+      URL.revokeObjectURL(blobUrlRef.current);
+      blobUrlRef.current = null;
+    }
+
+    try {
+      const res = await fetch(`${API_BASE}/voice/podcast/${courseId}`, {
+        method: "POST",
+        headers: buildAuthHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ topic: t, style }),
+      });
+
+      if (!res.ok) {
+        throw new Error(`Generation failed (${res.status})`);
+      }
+
+      const blob = await res.blob();
+      const audioUrl = URL.createObjectURL(blob);
+      blobUrlRef.current = audioUrl;
+
+      setPodcast({ audioUrl, title: t });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Podcast generation failed");
+      setPodcast(null);
+    } finally {
+      setGenerating(false);
+    }
+  }, [courseId, topic, style]);
 
   return (
     <div className="flex-1 flex flex-col p-4 gap-4 overflow-y-auto">
@@ -45,8 +85,9 @@ export function PodcastView({ courseId }: PodcastViewProps) {
             placeholder="e.g. Photosynthesis, Linear Algebra..."
             className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
             onKeyDown={(e) => {
-              if (e.key === "Enter") handleGenerate();
+              if (e.key === "Enter") void handleGenerate();
             }}
+            disabled={generating}
           />
         </div>
 
@@ -60,6 +101,7 @@ export function PodcastView({ courseId }: PodcastViewProps) {
               variant={style === opt.value ? "secondary" : "ghost"}
               className="h-6 px-2 text-xs"
               onClick={() => setStyle(opt.value)}
+              disabled={generating}
             >
               {opt.label}
             </Button>
@@ -68,19 +110,23 @@ export function PodcastView({ courseId }: PodcastViewProps) {
 
         <Button
           size="sm"
-          disabled={!topic.trim()}
-          onClick={handleGenerate}
+          disabled={!topic.trim() || generating}
+          onClick={() => void handleGenerate()}
         >
-          Generate Podcast
+          {generating ? "Generating..." : "Generate Podcast"}
         </Button>
+
+        {error && (
+          <p className="text-sm text-destructive">{error}</p>
+        )}
       </div>
 
-      {activePodcast && (
+      {podcast && (
         <PodcastPlayer
-          key={`${activePodcast.topic}-${activePodcast.style}`}
-          courseId={courseId}
-          topic={activePodcast.topic}
-          style={activePodcast.style}
+          key={podcast.audioUrl}
+          audioUrl={podcast.audioUrl}
+          title={podcast.title}
+          script={podcast.script}
         />
       )}
     </div>

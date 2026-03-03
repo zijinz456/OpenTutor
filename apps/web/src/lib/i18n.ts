@@ -116,6 +116,7 @@ const translations: Record<Locale, Record<string, string>> = {
     "progress.notStarted": "Not Started",
     "progress.totalTime": "Total Study Time",
     "progress.accuracy": "Quiz Accuracy",
+    "progress.completion": "Completion",
 
     // Preferences
     "pref.title": "Preferences",
@@ -532,6 +533,7 @@ const translations: Record<Locale, Record<string, string>> = {
     "progress.notStarted": "未开始",
     "progress.totalTime": "总学习时间",
     "progress.accuracy": "测验正确率",
+    "progress.completion": "完成度",
 
     // Preferences
     "pref.title": "偏好设置",

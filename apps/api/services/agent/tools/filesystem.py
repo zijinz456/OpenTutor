@@ -59,7 +59,7 @@ class WriteFileTool(Tool):
 
             workspace = get_user_workspace(settings.upload_dir, ctx.user_id)
             filepath = validate_path(workspace, filename)
-            check_workspace_limits(workspace, len(content.encode("utf-8")))
+            await check_workspace_limits(workspace, len(content.encode("utf-8")))
 
             # Ensure parent directories exist (for paths like "chapter1/notes.md")
             filepath.parent.mkdir(parents=True, exist_ok=True)
@@ -98,7 +98,7 @@ class ListFilesTool(Tool):
 
         try:
             workspace = get_user_workspace(settings.upload_dir, ctx.user_id)
-            files = list_workspace_files(workspace)
+            files = await list_workspace_files(workspace)
 
             if not files:
                 return ToolResult(success=True, output="Workspace is empty. No files yet.")

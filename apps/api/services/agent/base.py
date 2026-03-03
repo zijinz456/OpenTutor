@@ -311,7 +311,7 @@ class BaseAgent(ABC):
         try:
             from services.activity.engine import submit_task
 
-            task_id = await submit_task(
+            task = await submit_task(
                 db=db,
                 user_id=ctx.user_id,
                 course_id=ctx.course_id,
@@ -321,9 +321,9 @@ class BaseAgent(ABC):
                 source="agent",
             )
             spawned = ctx.metadata.setdefault("spawned_tasks", [])
-            spawned.append({"task_id": str(task_id), "type": task_type, "title": title})
-            logger.info("Agent '%s' spawned background task: %s (%s)", self.name, title, task_id)
-            return task_id
+            spawned.append({"task_id": str(task.id), "type": task_type, "title": title})
+            logger.info("Agent '%s' spawned background task: %s (%s)", self.name, title, task.id)
+            return task.id
         except Exception as e:
             logger.warning("Failed to spawn background task '%s': %s", title, e)
             return None

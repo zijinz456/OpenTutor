@@ -66,6 +66,12 @@ async def run_agenda_tick(
         status="noop",
     )
 
+    def _noop(reason: str | None = None) -> None:
+        """Mark run as noop with an optional skip reason."""
+        run.status = "noop"
+        if reason:
+            run.decision_json = {**(run.decision_json or {}), "skipped_reason": reason}
+
     try:
         signals = await collect_signals(user_id, course_id, db=db)
         run.signals_json = _serialise_signals(signals)
@@ -76,65 +82,46 @@ async def run_agenda_tick(
         run.dedup_key = decision.dedup_key
 
         if decision.action == "noop":
-            run.status = "noop"
-            run.completed_at = datetime.now(timezone.utc)
-            db.add(run)
-            await db.commit()
-            await db.refresh(run)
-            return run
-
-        # --- Dedup check ---
-        if decision.dedup_key and await _is_deduped(db, user_id, decision.dedup_key):
-            run.status = "noop"
-            run.decision_json = {**decision.to_dict(), "skipped_reason": "dedup"}
-            run.completed_at = datetime.now(timezone.utc)
-            db.add(run)
-            await db.commit()
-            await db.refresh(run)
-            return run
-
-        # --- Same-type task already running/queued? ---
-        if decision.action == "submit" and decision.task_type:
-            if await _has_active_task(db, user_id, course_id, decision.task_type):
-                run.status = "noop"
-                run.decision_json = {**decision.to_dict(), "skipped_reason": "active_task_exists"}
-                run.completed_at = datetime.now(timezone.utc)
-                db.add(run)
-                await db.commit()
-                await db.refresh(run)
-                return run
-
-        # --- Materialise ---
-        task = await queue_decision(decision, user_id=user_id, course_id=course_id, db=db)
-        if task:
-            run.task_id = task.id
-            run.goal_id = decision.goal_id
-            run.status = {
-                "submit": "queued_task",
-                "resume": "resumed_task",
-                "retry": "retried_task",
-            }.get(decision.action, "queued_task")
+            _noop()
+        elif decision.dedup_key and await _is_deduped(db, user_id, decision.dedup_key):
+            _noop("dedup")
+        elif (
+            decision.action == "submit"
+            and decision.task_type
+            and await _has_active_task(db, user_id, course_id, decision.task_type)
+        ):
+            _noop("active_task_exists")
         else:
-            run.status = "failed"
-            run.error_message = "queue_decision returned None"
+            # --- Materialise ---
+            task = await queue_decision(decision, user_id=user_id, course_id=course_id, db=db)
+            if task:
+                run.task_id = task.id
+                run.goal_id = decision.goal_id
+                run.status = {
+                    "submit": "queued_task",
+                    "resume": "resumed_task",
+                    "retry": "retried_task",
+                }.get(decision.action, "queued_task")
+            else:
+                run.status = "failed"
+                run.error_message = "queue_decision returned None"
 
-        # --- Notify ---
-        if notify and task and decision.action == "submit":
-            if not await _notification_on_cooldown(db, user_id, course_id):
-                try:
-                    await dispatch_notification(
-                        user_id=user_id,
-                        title=decision.task_title or "Agent task queued",
-                        body=decision.task_summary or decision.reason,
-                        category="agenda",
-                        course_id=course_id,
-                        priority="normal",
-                        dedup_key=f"agenda_notify:{decision.dedup_key}",
-                        db=db,
-                    )
-                    run.status = "queued_task"
-                except Exception:
-                    logger.exception("Notification dispatch failed for agenda tick")
+            # --- Notify ---
+            if notify and task and decision.action == "submit":
+                if not await _notification_on_cooldown(db, user_id, course_id):
+                    try:
+                        await dispatch_notification(
+                            user_id=user_id,
+                            title=decision.task_title or "Agent task queued",
+                            body=decision.task_summary or decision.reason,
+                            category="agenda",
+                            course_id=course_id,
+                            priority="normal",
+                            dedup_key=f"agenda_notify:{decision.dedup_key}",
+                            db=db,
+                        )
+                    except Exception:
+                        logger.exception("Notification dispatch failed for agenda tick")
 
     except Exception as exc:
         logger.exception("Agenda tick failed for user=%s course=%s", user_id, course_id)

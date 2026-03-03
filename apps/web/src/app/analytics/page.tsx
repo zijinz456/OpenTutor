@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -45,7 +45,6 @@ const ERROR_COLORS = [
 
 export default function AnalyticsPage() {
   const router = useRouter();
-  const statsRef = useRef<HTMLDivElement>(null);
   const [overview, setOverview] = useState<LearningOverview | null>(null);
   const [trends, setTrends] = useState<LearningTrends | null>(null);
   const [memStats, setMemStats] = useState<MemoryStats | null>(null);
@@ -133,7 +132,7 @@ export default function AnalyticsPage() {
         <div className="ml-auto" />
       </header>
 
-      <div ref={statsRef} className="max-w-6xl mx-auto p-6 space-y-6" data-testid="analytics-page">
+      <div className="max-w-6xl mx-auto p-6 space-y-6" data-testid="analytics-page">
         {/* Key Metrics */}
         <div className="grid md:grid-cols-4 gap-4">
           <MetricCard

@@ -74,6 +74,7 @@ export function ChatView({ courseId }: ChatViewProps) {
     };
 
     setOnAction(handleAction);
+    return () => setOnAction(() => {});
   }, [setOnAction, setActiveSection, triggerRefresh]);
 
   return (
@@ -84,7 +85,7 @@ export function ChatView({ courseId }: ChatViewProps) {
 
       <ToolStatus status={toolStatus} />
 
-      <ChatInput courseId={courseId} disabled={false} />
+      <ChatInput courseId={courseId} />
     </div>
   );
 }

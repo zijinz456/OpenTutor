@@ -13,7 +13,6 @@ interface UseBatchManagerOptions {
   /** Key into workspace sectionRefreshKey, e.g. "notes", "practice", "plan" */
   refreshSection: string;
   listFn: (courseId: string) => Promise<GeneratedAssetBatchSummary[]>;
-  saveFn: (...args: never[]) => Promise<SaveResult>;
 }
 
 /**
@@ -26,7 +25,7 @@ export function useBatchManager({
   courseId,
   refreshSection,
   listFn,
-}: Omit<UseBatchManagerOptions, "saveFn">) {
+}: UseBatchManagerOptions) {
   const refreshKey = useWorkspaceStore(
     (s) => s.sectionRefreshKey[refreshSection],
   );

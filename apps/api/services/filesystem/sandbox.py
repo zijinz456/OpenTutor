@@ -58,11 +58,8 @@ def validate_path(base_dir: Path, requested: str) -> Path:
     return resolved
 
 
-def check_workspace_limits(workspace: Path, new_content_size: int = 0) -> None:
-    """Check that the workspace doesn't exceed file count or size limits.
-
-    Raises ValueError if limits would be exceeded.
-    """
+def _check_workspace_limits_sync(workspace: Path, new_content_size: int = 0) -> None:
+    """Synchronous implementation — call via asyncio.to_thread from async code."""
     from config import settings
 
     max_size_bytes = settings.workspace_max_size_mb * 1024 * 1024
@@ -94,8 +91,17 @@ def check_workspace_limits(workspace: Path, new_content_size: int = 0) -> None:
         )
 
 
-def list_workspace_files(workspace: Path) -> list[dict]:
-    """List all files in the workspace with metadata."""
+async def check_workspace_limits(workspace: Path, new_content_size: int = 0) -> None:
+    """Check that the workspace doesn't exceed file count or size limits.
+
+    Runs the blocking rglob traversal in a thread to avoid blocking the event loop.
+    """
+    import asyncio
+    await asyncio.to_thread(_check_workspace_limits_sync, workspace, new_content_size)
+
+
+def _list_workspace_files_sync(workspace: Path) -> list[dict]:
+    """Synchronous implementation — call via asyncio.to_thread from async code."""
     files = []
     for f in sorted(workspace.rglob("*")):
         if f.is_file() and not f.name.startswith("."):
@@ -106,3 +112,12 @@ def list_workspace_files(workspace: Path) -> list[dict]:
                 "modified": stat.st_mtime,
             })
     return files
+
+
+async def list_workspace_files(workspace: Path) -> list[dict]:
+    """List all files in the workspace with metadata.
+
+    Runs the blocking rglob traversal in a thread to avoid blocking the event loop.
+    """
+    import asyncio
+    return await asyncio.to_thread(_list_workspace_files_sync, workspace)

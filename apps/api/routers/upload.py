@@ -70,16 +70,28 @@ def _validate_url(url: str) -> str:
         }
         if hostname.lower() in blocked_hosts:
             raise ValidationError("Internal URLs are not allowed")
-        try:
-            resolved = socket.getaddrinfo(hostname, None, proto=socket.IPPROTO_TCP)
-        except socket.gaierror:
-            raise ValidationError("Hostname could not be resolved") from None
-        for entry in resolved:
-            resolved_ip = entry[4][0]
-            if _is_blocked_ip(resolved_ip):
-                raise ValidationError("Internal URLs are not allowed")
+        # DNS resolution is done in _validate_url_dns (async) after this function
+        pass
 
     return url
+
+
+async def _validate_url_dns(url: str) -> None:
+    """Async DNS validation to avoid blocking the event loop."""
+    import asyncio
+    parsed = urlparse(url)
+    hostname = parsed.hostname
+    if not hostname:
+        return
+    try:
+        loop = asyncio.get_running_loop()
+        resolved = await loop.getaddrinfo(hostname, None, proto=socket.IPPROTO_TCP)
+    except socket.gaierror:
+        raise ValidationError("Hostname could not be resolved") from None
+    for entry in resolved:
+        resolved_ip = entry[4][0]
+        if _is_blocked_ip(resolved_ip):
+            raise ValidationError("Internal URLs are not allowed")
 
 
 def _load_scrape_fixture_html(url: str) -> str | None:
@@ -376,6 +388,7 @@ async def scrape_url(
     fixture_html = _load_scrape_fixture_html(url)
     if fixture_html is None:
         _validate_url(url)
+        await _validate_url_dns(url)
     try:
         cid = uuid.UUID(course_id)
     except ValueError as e:
