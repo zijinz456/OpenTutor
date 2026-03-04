@@ -15,8 +15,8 @@ class IntegrationCredential(Base):
     """Stores OAuth2 credentials for external service integrations.
 
     Each row represents a user's connection to an external service (e.g.
-    Google Calendar, Notion). Tokens are stored encrypted at rest when
-    the application is configured with an encryption key.
+    Google Calendar, Notion). Tokens are encrypted at rest via Fernet when
+    ENCRYPTION_KEY is configured.
     """
 
     __tablename__ = "integration_credentials"
@@ -35,3 +35,28 @@ class IntegrationCredential(Base):
     __table_args__ = (
         UniqueConstraint("user_id", "integration_name", name="uq_user_integration"),
     )
+
+    def set_access_token(self, plaintext: str) -> None:
+        """Encrypt and store the access token."""
+        from libs.encryption import encrypt_value
+        self.access_token = encrypt_value(plaintext)
+
+    def get_access_token(self) -> str:
+        """Decrypt and return the access token."""
+        from libs.encryption import decrypt_value
+        return decrypt_value(self.access_token)
+
+    def set_refresh_token(self, plaintext: str | None) -> None:
+        """Encrypt and store the refresh token."""
+        if plaintext is None:
+            self.refresh_token = None
+            return
+        from libs.encryption import encrypt_value
+        self.refresh_token = encrypt_value(plaintext)
+
+    def get_refresh_token(self) -> str | None:
+        """Decrypt and return the refresh token."""
+        if self.refresh_token is None:
+            return None
+        from libs.encryption import decrypt_value
+        return decrypt_value(self.refresh_token)

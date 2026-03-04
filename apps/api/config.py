@@ -1,5 +1,8 @@
 """Application configuration via environment variables."""
 
+import os
+from pathlib import Path
+
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -7,8 +10,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     environment: str = "development"
 
-    # Database
-    database_url: str = "postgresql+asyncpg://opentutor:opentutor_dev@localhost:5432/opentutor"
+    # Database — defaults to SQLite at ~/.opentutor/data.db if DATABASE_URL not set
+    database_url: str = ""
     redis_url: str = "redis://localhost:6379/0"
 
     # LLM — primary provider selection
@@ -71,6 +74,8 @@ class Settings(BaseSettings):
     app_auto_seed_system: bool = True
     app_run_scheduler: bool = False
     app_run_activity_engine: bool = False
+    mcp_enabled: bool = False
+    plugin_system_enabled: bool = False
 
     # Multi-channel messaging
     channels_enabled: str = ""  # Comma-separated: "whatsapp,imessage"
@@ -127,11 +132,20 @@ class Settings(BaseSettings):
     workspace_max_size_mb: int = 500
 
     # Code sandbox
-    code_sandbox_backend: str = "container"  # container | auto | process
+    code_sandbox_backend: str = "auto"  # container | auto | process
     code_sandbox_runtime: str = "docker"  # docker | podman
     code_sandbox_image: str = "python:3.11-alpine"
     code_sandbox_timeout_seconds: int = 5
     allow_insecure_process_sandbox: bool = False
+
+    # Encryption (Fernet key for at-rest encryption of OAuth tokens etc.)
+    # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    encryption_key: str = ""
+
+    # Logging
+    log_file: str = ""  # Path to log file; empty = stdout only
+    log_max_bytes: int = 10_485_760  # 10 MB
+    log_backup_count: int = 5
 
     # Google Calendar Integration (OAuth2)
     google_client_id: str = ""
@@ -155,7 +169,29 @@ class Settings(BaseSettings):
         return self._split_csv(self.cors_origins)
 
     @model_validator(mode="after")
-    def _validate_jwt_secret(self):
+    def _resolve_database_url(self):
+        """Resolve database URL: fallback to SQLite, normalize PG schemes.
+
+        - Empty/unset DATABASE_URL → SQLite at ~/.opentutor/data.db (lazy dir creation)
+        - postgres:// → postgresql+asyncpg:// (Render/Railway compat)
+        - postgresql:// → postgresql+asyncpg:// (missing driver suffix)
+        """
+        if not self.database_url:
+            data_dir = Path.home() / ".opentutor"
+            data_dir.mkdir(parents=True, exist_ok=True)
+            self.database_url = f"sqlite+aiosqlite:///{data_dir / 'data.db'}"
+        elif self.database_url.startswith("postgres://"):
+            self.database_url = self.database_url.replace(
+                "postgres://", "postgresql+asyncpg://", 1
+            )
+        elif self.database_url.startswith("postgresql://") and "+asyncpg" not in self.database_url:
+            self.database_url = self.database_url.replace(
+                "postgresql://", "postgresql+asyncpg://", 1
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_security(self):
         if self.auth_enabled:
             if self.jwt_secret_key == "change-me-in-production":
                 raise ValueError(
@@ -164,6 +200,15 @@ class Settings(BaseSettings):
             if len(self.jwt_secret_key) < 32:
                 raise ValueError(
                     "jwt_secret_key must be at least 32 characters when auth is enabled"
+                )
+        if self.environment == "production":
+            if self.jwt_secret_key == "change-me-in-production":
+                raise ValueError(
+                    "jwt_secret_key must be changed from the default in production"
+                )
+            if "opentutor_dev" in self.database_url:
+                raise ValueError(
+                    "Default database password must be changed in production"
                 )
         return self
 

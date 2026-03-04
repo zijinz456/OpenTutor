@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.agent.base import BaseAgent
 from services.agent.react_mixin import ReActMixin
-from services.agent.state import AgentContext
+from services.agent.state import AgentContext, InputRequirement
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +67,23 @@ class ExerciseAgent(ReActMixin, BaseAgent):
     )
     model_preference = "large"
     react_tools = ["search_content", "lookup_progress", "get_mastery_report", "list_wrong_answers", "generate_flashcards", "generate_quiz", "web_search", "export_anki"]
+
+    def get_required_inputs(self) -> list[InputRequirement]:
+        return [
+            InputRequirement(
+                key="difficulty",
+                question="What difficulty level would you like?",
+                options=["Basic (Layer 1)", "Standard (Layer 2)", "Advanced (Layer 3)", "Mixed"],
+                check=lambda ctx: (
+                    any(kw in ctx.user_message.lower() for kw in [
+                        "easy", "hard", "difficult", "basic", "advanced", "layer",
+                        "简单", "困难", "基础", "进阶",
+                    ])
+                    or "difficulty" in ctx.clarify_inputs
+                    or ctx.difficulty_guidance is not None
+                ),
+            ),
+        ]
 
     def build_system_prompt(self, ctx: AgentContext) -> str:
         # Base class handles: profile, scene behavior, preferences, memories, RAG

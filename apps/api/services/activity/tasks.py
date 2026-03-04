@@ -89,6 +89,7 @@ class TaskStepResult(TypedDict, total=False):
     summary: str
     error: str | None
     verifier: Any
+    verifier_diagnostics: JsonObject | None
     provenance: JsonObject | None
     retry_count: int
     agent: str | None

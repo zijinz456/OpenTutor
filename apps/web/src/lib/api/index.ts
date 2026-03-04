@@ -49,6 +49,7 @@ export type {
   ChatSessionSummary,
   ChatProvenance,
   ChatMessageMetadata,
+  ClarifyOption,
   PlanProgressEvent,
   ImageAttachment,
 } from "./chat";
@@ -111,7 +112,9 @@ export type {
   KnowledgeGraphNode,
   KnowledgeGraphEdge,
   AgentTask,
+  AgentTaskStepResult,
   AgentTaskReview,
+  AgentTaskVerifierDiagnostics,
   NextActionResponse,
   StudyGoal,
 } from "./progress";
@@ -124,6 +127,12 @@ export {
   testLlmRuntimeConnection,
   getOllamaModels,
   listPreferenceSignals,
+  dismissPreference,
+  restorePreference,
+  dismissSignal,
+  restoreSignal,
+  dismissMemory,
+  restoreMemory,
 } from "./preferences";
 
 export type {

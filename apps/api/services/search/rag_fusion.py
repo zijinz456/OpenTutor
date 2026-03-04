@@ -15,7 +15,7 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.llm.router import get_llm_client
-from services.search.hybrid import hybrid_search
+from services.search.hybrid import decompose_search_query, hybrid_search
 
 logger = logging.getLogger(__name__)
 
@@ -78,9 +78,17 @@ async def rag_fusion_search(
     """
     # Generate query variants
     variants = await generate_query_variants(query, n_variants, course_context)
+    decomposed = decompose_search_query(query, max_facets=max(2, n_variants))
 
     # Always include the original query
-    all_queries = [query] + variants
+    all_queries: list[str] = []
+    seen: set[str] = set()
+    for candidate in [query] + decomposed + variants:
+        normalized = " ".join(candidate.strip().split()).lower()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        all_queries.append(candidate.strip())
 
     # Run hybrid search for each query
     all_results: list[list[dict]] = []
@@ -92,23 +100,40 @@ async def rag_fusion_search(
     RRF_K = 60
     score_map: dict[str, float] = {}
     doc_map: dict[str, dict] = {}
+    query_match_counts: dict[str, int] = {}
 
-    for query_results in all_results:
+    for query_index, query_results in enumerate(all_results):
+        query_text = all_queries[query_index]
+        query_weight = 1.0 if query_index == 0 else (0.9 if query_text in decomposed else 0.75)
         for rank, doc in enumerate(query_results, start=1):
             doc_id = doc.get("id", "")
             if not doc_id:
                 continue
-            score_map[doc_id] = score_map.get(doc_id, 0) + 1.0 / (RRF_K + rank)
-            doc_map[doc_id] = doc
+            score_map[doc_id] = score_map.get(doc_id, 0) + query_weight * (1.0 / (RRF_K + rank))
+            query_match_counts[doc_id] = query_match_counts.get(doc_id, 0) + 1
+            existing = doc_map.get(doc_id)
+            if existing is None or float(doc.get("hybrid_score", 0.0)) > float(existing.get("hybrid_score", 0.0)):
+                doc_map[doc_id] = doc
 
     # Sort by fused score
-    ranked = sorted(score_map.items(), key=lambda x: x[1], reverse=True)
+    ranked = sorted(
+        score_map.items(),
+        key=lambda item: (
+            item[1]
+            + max(0, query_match_counts.get(item[0], 0) - 1) * 0.012
+            + float(doc_map[item[0]].get("coverage_score", 0.0)),
+            float(doc_map[item[0]].get("hybrid_score", 0.0)),
+            item[1],
+        ),
+        reverse=True,
+    )
 
     results = []
     for doc_id, score in ranked[:limit]:
-        doc = doc_map[doc_id]
+        doc = dict(doc_map[doc_id])
         doc["fusion_score"] = score
-        doc["query_count"] = len(all_queries)
+        doc["query_count"] = query_match_counts.get(doc_id, 0)
+        doc["query_variant_total"] = len(all_queries)
         results.append(doc)
 
     logger.debug(

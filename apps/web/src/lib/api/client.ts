@@ -11,6 +11,20 @@ export const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:800
 export type JsonObject = Record<string, unknown>;
 export type NullableDateTime = string | null;
 
+export class ApiError extends Error {
+  status: number;
+  code?: string;
+  detail?: string;
+
+  constructor(message: string, options: { status: number; code?: string; detail?: string }) {
+    super(message);
+    this.name = "ApiError";
+    this.status = options.status;
+    this.code = options.code;
+    this.detail = options.detail;
+  }
+}
+
 export interface VersionedBatch {
   batch_id: string;
   version: number;
@@ -33,6 +47,20 @@ export interface GeneratedBatchSummaryBase {
   updated_at: NullableDateTime;
 }
 
+export async function parseApiError(res: Response): Promise<ApiError> {
+  const fallbackDetail = res.statusText || `API error: ${res.status}`;
+  const payload = await res.json().catch(() => null) as
+    | { detail?: string; message?: string; code?: string }
+    | null;
+  const detail = payload?.detail || payload?.message || fallbackDetail;
+
+  return new ApiError(detail, {
+    status: res.status,
+    code: payload?.code,
+    detail,
+  });
+}
+
 export async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const { headers, ...restOptions } = options ?? {};
   const res = await fetch(`${API_BASE}${path}`, {
@@ -40,8 +68,7 @@ export async function request<T>(path: string, options?: RequestInit): Promise<T
     headers: buildAuthHeaders({ "Content-Type": "application/json", ...headers }),
   });
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(error.detail || `API error: ${res.status}`);
+    throw await parseApiError(res);
   }
   if (res.status === 204) {
     return undefined as T;

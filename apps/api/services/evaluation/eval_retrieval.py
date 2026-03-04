@@ -55,6 +55,14 @@ class RetrievalEvalResult:
     per_query: list[RetrievalScores]
 
 
+@dataclass
+class _CourseNodeSnapshot:
+    id: str
+    title: str
+    content: str | None
+    parent_id: str | None
+
+
 def _dcg(relevance_flags: list[bool], k: int) -> float:
     """Discounted Cumulative Gain for binary relevance."""
     dcg = 0.0
@@ -104,6 +112,93 @@ def _score_retrieval(
         relevant_found=relevant_found,
         k=k,
     )
+
+
+def _keyword_overlap_score(node: _CourseNodeSnapshot, keywords: list[str]) -> tuple[int, int, int]:
+    """Score a node by keyword overlap, favouring title hits over body hits."""
+    title = (node.title or "").lower()
+    content = (node.content or "").lower()
+    title_hits = sum(1 for kw in keywords if kw in title)
+    content_hits = sum(1 for kw in keywords if kw in content)
+    weighted = (title_hits * 3) + content_hits
+    return weighted, title_hits, content_hits
+
+
+def _build_relevant_ids_from_keywords(
+    nodes: list[_CourseNodeSnapshot],
+    keywords: list[str],
+) -> list[str]:
+    """Pick benchmark ground-truth ids that are actually retrievable content nodes.
+
+    The previous approach only matched keywords against titles, which often picked
+    section containers with no content. Those nodes are not returned by the search
+    pipeline, so the benchmark could fail even when retrieval was behaving well.
+    """
+    normalized = [kw.strip().lower() for kw in keywords if kw and kw.strip()]
+    if not normalized or not nodes:
+        return []
+
+    by_parent: dict[str | None, list[_CourseNodeSnapshot]] = {}
+    for node in nodes:
+        by_parent.setdefault(node.parent_id, []).append(node)
+
+    scored: list[tuple[_CourseNodeSnapshot, int, int, int]] = []
+    for node in nodes:
+        weighted, title_hits, content_hits = _keyword_overlap_score(node, normalized)
+        if weighted > 0:
+            scored.append((node, weighted, title_hits, content_hits))
+
+    if not scored:
+        return []
+
+    best_score = max(weighted for _, weighted, _, _ in scored)
+    direct_ids: list[str] = []
+    container_candidates: list[_CourseNodeSnapshot] = []
+
+    for node, weighted, _title_hits, _content_hits in scored:
+        if weighted != best_score:
+            continue
+        if node.content:
+            direct_ids.append(node.id)
+        else:
+            container_candidates.append(node)
+
+    if direct_ids:
+        return direct_ids
+
+    descendant_ids: list[str] = []
+    queue = [node.id for node in container_candidates]
+    seen: set[str] = set(queue)
+    best_descendant_score = 0
+
+    while queue:
+        parent_id = queue.pop(0)
+        for child in by_parent.get(parent_id, []):
+            if child.id in seen:
+                continue
+            seen.add(child.id)
+            weighted, _title_hits, _content_hits = _keyword_overlap_score(child, normalized)
+            if child.content and weighted > 0:
+                if weighted > best_descendant_score:
+                    best_descendant_score = weighted
+                    descendant_ids = [child.id]
+                elif weighted == best_descendant_score:
+                    descendant_ids.append(child.id)
+            queue.append(child.id)
+
+    if descendant_ids:
+        return descendant_ids
+
+    fallback_score = max(
+        weighted for node, weighted, _title_hits, _content_hits in scored if node.content
+    ) if any(node.content for node, *_rest in scored) else 0
+    if fallback_score <= 0:
+        return []
+    return [
+        node.id
+        for node, weighted, _title_hits, _content_hits in scored
+        if node.content and weighted == fallback_score
+    ]
 
 
 async def eval_retrieval(
@@ -179,8 +274,26 @@ async def eval_retrieval_from_course(
 
     queries_with_keywords: [{"query": "...", "keywords": ["term1", "term2"]}]
     """
-    from sqlalchemy import select, or_
+    from sqlalchemy import select
     from models.content import CourseContentTree
+
+    result = await db.execute(
+        select(
+            CourseContentTree.id,
+            CourseContentTree.title,
+            CourseContentTree.content,
+            CourseContentTree.parent_id,
+        ).where(CourseContentTree.course_id == course_id)
+    )
+    nodes = [
+        _CourseNodeSnapshot(
+            id=str(row.id),
+            title=row.title or "",
+            content=row.content,
+            parent_id=str(row.parent_id) if row.parent_id else None,
+        )
+        for row in result.all()
+    ]
 
     cases: list[RetrievalCase] = []
     for item in queries_with_keywords:
@@ -190,16 +303,7 @@ async def eval_retrieval_from_course(
         if not keywords:
             continue
 
-        # Find nodes matching any keyword in title
-        conditions = [CourseContentTree.title.ilike(f"%{kw}%") for kw in keywords]
-        result = await db.execute(
-            select(CourseContentTree.id)
-            .where(
-                CourseContentTree.course_id == course_id,
-                or_(*conditions),
-            )
-        )
-        relevant_ids = [str(row[0]) for row in result.all()]
+        relevant_ids = _build_relevant_ids_from_keywords(nodes, keywords)
         if relevant_ids:
             cases.append(RetrievalCase(
                 query=query,

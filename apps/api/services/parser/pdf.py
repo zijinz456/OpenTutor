@@ -28,6 +28,13 @@ MIN_NODE_TOKENS = 50
 HEADING_PATTERN = re.compile(r"^(#{1,6})\s+(.+)$")
 CODE_BLOCK_PATTERN = re.compile(r"^```")
 
+
+def _sanitize_title(title: str) -> str:
+    """Strip newlines, collapse whitespace, and truncate titles."""
+    title = title.replace("\n", " ").replace("\r", " ")
+    title = re.sub(r"\s{2,}", " ", title).strip()
+    return title[:120] if title else "Untitled"
+
 # Marker model singleton — avoids reloading ~1GB models on every call
 _marker_models: dict | None = None
 
@@ -113,7 +120,7 @@ def _split_into_paragraphs(text: str, max_tokens: int = 500) -> list[dict]:
 
         if current_tokens + para_tokens > max_tokens and current_chunk:
             nodes.append({
-                "title": current_chunk[0][:80].strip(),
+                "title": _sanitize_title(current_chunk[0][:80]),
                 "text": "\n\n".join(current_chunk),
                 "level": 1,
             })
@@ -125,7 +132,7 @@ def _split_into_paragraphs(text: str, max_tokens: int = 500) -> list[dict]:
 
     if current_chunk:
         nodes.append({
-            "title": current_chunk[0][:80].strip(),
+            "title": _sanitize_title(current_chunk[0][:80]),
             "text": "\n\n".join(current_chunk),
             "level": 1,
         })
@@ -200,7 +207,7 @@ def _markdown_to_tree(
                 flush_content()
 
                 level = len(match.group(1))
-                title = match.group(2).strip()
+                title = _sanitize_title(match.group(2))
 
                 while len(stack) > 1 and stack[-1][0] >= level:
                     stack.pop()
@@ -227,7 +234,22 @@ def _markdown_to_tree(
 
     flush_content()
 
-    # Step 3: Tree thinning — merge small nodes into parents
+    # Step 3: Remove useless root node
+    # If root has no content and has children, it's just a structural wrapper.
+    # If root has no content AND no children, drop it entirely.
+    if len(nodes) > 1 and not nodes[0].content:
+        # Root is empty — check if it has exactly one child (unwrap it)
+        root_children = [n for n in nodes[1:] if n.parent_id == nodes[0].id]
+        if len(root_children) == 1:
+            # Promote the single child to root
+            root_children[0].parent_id = None
+            root_children[0].level = 0
+            nodes = nodes[1:]
+    elif len(nodes) == 1 and not nodes[0].content:
+        # Single empty root — drop it
+        return []
+
+    # Step 4: Tree thinning — merge small nodes into parents
     nodes = _thin_tree(nodes)
 
     return nodes

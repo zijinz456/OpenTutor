@@ -31,8 +31,8 @@ from services.agent.registry import AGENT_REGISTRY, get_agent, build_agent_conte
 from services.agent.context_builder import load_context
 from services.agent.parallel import should_use_swarm, merge_results
 from services.agent.background_runtime import (
-    post_process,
-    record_llm_usage,
+    enqueue_post_process_task,
+    run_post_process_bundle,
     track_background_task,
     wait_for_background_tasks,
 )
@@ -52,6 +52,30 @@ logger = logging.getLogger(__name__)
 # the legacy helper names from orchestrator.py.
 _build_provenance = build_provenance
 _envelope_payload = envelope_payload
+
+# ── Pre-task clarification helpers (OpenClaw Inputs pattern) ──
+_CLARIFY_RE = re.compile(r"^\[CLARIFY:(\w+):(.+)\]$")
+
+
+def _extract_clarify_response(message: str) -> tuple[str, str] | None:
+    """Check if message is a clarification response. Returns (key, value) or None."""
+    match = _CLARIFY_RE.match(message.strip())
+    if match:
+        return match.group(1), match.group(2)
+    return None
+
+
+def _infer_previous_intent(history: list[dict]) -> IntentType | None:
+    """Look at conversation history to find the most recent intent for clarify re-routing."""
+    for msg in reversed(history):
+        meta = msg.get("metadata") or {}
+        intent_str = meta.get("intent")
+        if intent_str:
+            try:
+                return IntentType(intent_str)
+            except ValueError:
+                continue
+    return None
 
 
 # load_context imported from services.agent.context_builder
@@ -256,13 +280,28 @@ async def orchestrate_stream(
     from services.agent.extensions import get_extension_registry, ExtensionHook
     ext_registry = get_extension_registry()
 
+    # ── Pre-task clarification: detect [CLARIFY:key:value] responses ──
+    clarify_result = _extract_clarify_response(ctx.user_message)
+    if clarify_result:
+        clarify_key, clarify_value = clarify_result
+        ctx.clarify_inputs[clarify_key] = clarify_value
+        # Reuse previous intent so we don't classify "[CLARIFY:...]" text as GENERAL
+        prev_intent = _infer_previous_intent(ctx.conversation_history)
+        if prev_intent:
+            ctx.intent = prev_intent
+            ctx.intent_confidence = 0.95
+            ctx.metadata["is_clarify_response"] = True
+            ctx.metadata["clarify_reused_intent"] = prev_intent.value
+        # If no prev_intent found, let normal classification run (is_clarify_response stays unset)
+
     # Emit agent status
     yield {"event": "status", "data": json.dumps({"phase": "routing"})}
 
     await ext_registry.run_hooks(ExtensionHook.PRE_ROUTING, ctx, message=message)
 
     ctx.transition(TaskPhase.ROUTING)
-    ctx = await classify_intent(ctx)
+    if not ctx.metadata.get("is_clarify_response"):
+        ctx = await classify_intent(ctx)
 
     await ext_registry.run_hooks(
         ExtensionHook.POST_ROUTING, ctx,
@@ -353,6 +392,31 @@ async def orchestrate_stream(
         agent = get_agent(ctx.intent)
     ctx.delegated_agent = agent.name
 
+    # ── Pre-task questioning: check if agent needs clarification inputs ──
+    if not ctx.metadata.get("is_clarify_response"):
+        required_inputs = agent.get_required_inputs()
+        if required_inputs:
+            missing = [inp for inp in required_inputs if not inp.check(ctx)]
+            if missing:
+                first_missing = missing[0]  # Ask one question at a time
+                clarify_msg = f"{first_missing.question}\n\n_(You can also just tell me in your own words!)_"
+                yield {
+                    "event": "clarify",
+                    "data": json.dumps({
+                        "key": first_missing.key,
+                        "question": first_missing.question,
+                        "options": first_missing.options,
+                        "agent": agent.name,
+                        "total_missing": len(missing),
+                    }),
+                }
+                yield {"event": "message", "data": json.dumps({"content": clarify_msg})}
+                ctx.response = clarify_msg
+                ctx.metadata["clarify_pending"] = [inp.key for inp in missing]
+                ctx.metadata["provenance"] = build_provenance(ctx)
+                yield {"event": "done", "data": json.dumps(envelope_payload(ctx))}
+                return
+
     # ── Swarm check: should we fan-out to multiple agents in parallel? ──
     from config import settings
 
@@ -432,7 +496,11 @@ async def orchestrate_stream(
         # Post-processing (same pattern as single-agent path)
         if ctx.response:
             swarm_bg_ctx = ctx.snapshot_for_postprocess()
-            track_background_task(asyncio.create_task(post_process(swarm_bg_ctx, db_factory)))
+            try:
+                await enqueue_post_process_task(swarm_bg_ctx)
+            except Exception as exc:
+                logger.warning("Failed to enqueue durable swarm post-process task: %s", exc)
+                track_background_task(asyncio.create_task(run_post_process_bundle(swarm_bg_ctx, db_factory)))
 
     else:
         # ── Single-agent execution path (existing flow) ──
@@ -523,10 +591,9 @@ async def orchestrate_stream(
         # Lightweight snapshot for background tasks (avoids deep-copying large context fields)
         bg_ctx = ctx.snapshot_for_postprocess()
 
-        # 7a. Record LLM usage (fire-and-forget)
-        if bg_ctx.input_tokens or bg_ctx.output_tokens:
-            track_background_task(asyncio.create_task(record_llm_usage(bg_ctx, db_factory)))
-
-        # 7b. Post-processing with retry (tracked to prevent GC and enable graceful shutdown)
-        if bg_ctx.response:
-            track_background_task(asyncio.create_task(post_process(bg_ctx, db_factory)))
+        if bg_ctx.response or bg_ctx.input_tokens or bg_ctx.output_tokens:
+            try:
+                await enqueue_post_process_task(bg_ctx)
+            except Exception as exc:
+                logger.warning("Failed to enqueue durable chat post-process task: %s", exc)
+                track_background_task(asyncio.create_task(run_post_process_bundle(bg_ctx, db_factory)))

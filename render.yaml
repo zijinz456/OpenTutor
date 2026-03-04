@@ -1,0 +1,45 @@
+# Render Blueprint — one-click deploy for OpenTutor
+# https://render.com/docs/blueprint-spec
+
+services:
+  - type: web
+    name: opentutor-api
+    runtime: docker
+    dockerfilePath: apps/api/Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: opentutor-db
+          property: connectionURI
+      - key: APP_AUTO_CREATE_TABLES
+        value: "true"
+      - key: APP_AUTO_SEED_SYSTEM
+        value: "true"
+      - key: APP_RUN_SCHEDULER
+        value: "true"
+      - key: APP_RUN_ACTIVITY_ENGINE
+        value: "true"
+      - key: ENVIRONMENT
+        value: production
+      - key: JWT_SECRET_KEY
+        generateValue: true
+
+  - type: web
+    name: opentutor-web
+    runtime: docker
+    dockerfilePath: apps/web/Dockerfile
+    dockerContext: .
+    envVars:
+      - key: NEXT_PUBLIC_API_URL
+        fromService:
+          type: web
+          name: opentutor-api
+          envVarKey: RENDER_EXTERNAL_URL
+
+databases:
+  - name: opentutor-db
+    plan: starter
+    postgresMajorVersion: "17"
+    ipAllowList: []

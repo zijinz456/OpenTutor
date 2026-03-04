@@ -20,7 +20,7 @@
 
 ### 现状
 
-当前启动 OpenTutor 需要 4 个服务：PostgreSQL 17 + pgvector、Redis 7、FastAPI、Next.js。对非技术用户来说门槛过高。
+当前默认 quickstart 仍然偏向 PostgreSQL 17 + pgvector + FastAPI + Next.js。代码里已经有一部分 SQLite 兼容层，但还没有把“SQLite 本地优先”真正收敛成默认安装路径。
 
 ### 调研结论
 

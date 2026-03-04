@@ -27,6 +27,7 @@ from models.progress import LearningProgress
 from models.practice import PracticeProblem, PracticeResult
 from models.preference import PreferenceSignal
 from models.user import User
+from libs.exceptions import LLMUnavailableError
 from services.agent.state import AgentContext
 from services.migrations import get_expected_migration_heads
 
@@ -315,6 +316,7 @@ async def test_chat_session_history_persists_and_restores(client, monkeypatch):
         }
 
     monkeypatch.setattr("routers.chat.orchestrate_stream", fake_orchestrate_stream)
+    monkeypatch.setattr("routers.chat.ensure_llm_ready", lambda *_args, **_kwargs: asyncio.sleep(0))
 
     async with client.stream(
         "POST",
@@ -357,6 +359,7 @@ async def test_weekly_prep_creates_agent_task(client, monkeypatch):
         }
 
     monkeypatch.setattr("services.workflow.weekly_prep.run_weekly_prep", fake_run_weekly_prep)
+    monkeypatch.setattr("routers.workflows.ensure_llm_ready", lambda *_args, **_kwargs: asyncio.sleep(0))
 
     resp = await client.get("/api/workflows/weekly-prep")
     assert resp.status_code == 200
@@ -781,6 +784,67 @@ async def test_restructure_notes_returns_structured_503_when_llm_unavailable(cli
 
 
 @pytest.mark.asyncio
+async def test_chat_returns_structured_503_when_llm_not_ready(client, monkeypatch):
+    create_resp = await client.post("/api/courses/", json={"name": "Chat Ready Course", "description": "x"})
+    assert create_resp.status_code == 201
+    course_id = create_resp.json()["id"]
+
+    async def fake_ensure_llm_ready(*_args, **_kwargs):
+        raise LLMUnavailableError("Chat tutoring requires a real LLM provider.")
+
+    monkeypatch.setattr("routers.chat.ensure_llm_ready", fake_ensure_llm_ready)
+
+    resp = await client.post(
+        "/api/chat/",
+        json={"course_id": course_id, "message": "Help me with binary search"},
+    )
+    assert resp.status_code == 503
+    data = resp.json()
+    assert data["code"] == "llm_unavailable"
+    assert "real LLM provider" in data["message"]
+
+
+@pytest.mark.asyncio
+async def test_flashcards_generation_blocks_before_service_call_when_llm_not_ready(client, monkeypatch):
+    create_resp = await client.post("/api/courses/", json={"name": "Flashcard Ready Course", "description": "x"})
+    assert create_resp.status_code == 201
+    course_id = create_resp.json()["id"]
+    called = False
+
+    async def fake_ensure_llm_ready(*_args, **_kwargs):
+        raise LLMUnavailableError("Flashcard generation requires a real LLM provider.")
+
+    async def fake_generate_flashcards(*_args, **_kwargs):
+        nonlocal called
+        called = True
+        return []
+
+    monkeypatch.setattr("routers.flashcards.ensure_llm_ready", fake_ensure_llm_ready)
+    monkeypatch.setattr("services.spaced_repetition.flashcards.generate_flashcards", fake_generate_flashcards)
+
+    resp = await client.post(
+        "/api/flashcards/generate",
+        json={"course_id": course_id, "count": 5},
+    )
+    assert resp.status_code == 503
+    assert called is False
+
+
+@pytest.mark.asyncio
+async def test_weekly_prep_returns_structured_503_when_llm_not_ready(client, monkeypatch):
+    async def fake_ensure_llm_ready(*_args, **_kwargs):
+        raise LLMUnavailableError("Weekly prep requires a real LLM provider.")
+
+    monkeypatch.setattr("routers.workflows.ensure_llm_ready", fake_ensure_llm_ready)
+
+    resp = await client.get("/api/workflows/weekly-prep")
+    assert resp.status_code == 503
+    data = resp.json()
+    assert data["code"] == "llm_unavailable"
+    assert "Weekly prep" in data["message"]
+
+
+@pytest.mark.asyncio
 async def test_learning_overview_returns_cross_course_summary(client):
     first = await client.post("/api/courses/", json={"name": "Course A", "description": "a"})
     second = await client.post("/api/courses/", json={"name": "Course B", "description": "b"})
@@ -975,6 +1039,7 @@ async def test_agent_task_submit_approve_and_drain(client, monkeypatch):
 
     monkeypatch.setattr("services.workflow.exam_prep.run_exam_prep", fake_exam_prep)
     monkeypatch.setattr(activity_engine, "async_session", app.state.test_session_factory)
+    monkeypatch.setattr("services.llm.readiness.ensure_llm_ready", lambda *_args, **_kwargs: asyncio.sleep(0))
 
     submit_resp = await client.post(
         "/api/tasks/submit",
@@ -1053,6 +1118,7 @@ async def test_completed_task_review_includes_goal_update_and_follow_up_queue(cl
     monkeypatch.setattr("services.workflow.weekly_prep.run_weekly_prep", fake_weekly_prep)
     monkeypatch.setattr("services.agent.task_planner.create_plan", fake_create_plan)
     monkeypatch.setattr(activity_engine, "async_session", app.state.test_session_factory)
+    monkeypatch.setattr("services.llm.readiness.ensure_llm_ready", lambda *_args, **_kwargs: asyncio.sleep(0))
 
     create_resp = await client.post("/api/courses/", json={"name": "Follow Up Course", "description": "queue"})
     assert create_resp.status_code == 201
@@ -1118,6 +1184,7 @@ async def test_agent_task_reject_then_retry_requires_reapproval(client, monkeypa
 
     monkeypatch.setattr("services.workflow.exam_prep.run_exam_prep", fake_exam_prep)
     monkeypatch.setattr(activity_engine, "async_session", app.state.test_session_factory)
+    monkeypatch.setattr("services.llm.readiness.ensure_llm_ready", lambda *_args, **_kwargs: asyncio.sleep(0))
 
     create_resp = await client.post("/api/courses/", json={"name": "Approval Course", "description": "queue"})
     assert create_resp.status_code == 201
@@ -1176,6 +1243,7 @@ async def test_agent_task_cancel_and_retry(client, monkeypatch):
 
     monkeypatch.setattr("services.workflow.weekly_prep.run_weekly_prep", fake_weekly_prep)
     monkeypatch.setattr(activity_engine, "async_session", app.state.test_session_factory)
+    monkeypatch.setattr("services.llm.readiness.ensure_llm_ready", lambda *_args, **_kwargs: asyncio.sleep(0))
 
     create_resp = await client.post("/api/courses/", json={"name": "Retry Course", "description": "queue"})
     assert create_resp.status_code == 201
@@ -1227,7 +1295,14 @@ async def test_agent_task_cancel_running_and_resume_from_checkpoint(client, monk
         if "identify weak areas" in message.lower():
             second_step_started.set()
             await allow_second_step_finish.wait()
-        ctx.response = f"Completed: {message}"
+        if "create study plan" in message.lower():
+            ctx.response = (
+                "This week:\n"
+                "1. Monday: review the weak binary-search cases for 30 minutes.\n"
+                "2. Tuesday: solve 5 targeted practice problems.\n"
+            )
+        else:
+            ctx.response = f"Completed: {message}"
         ctx.delegated_agent = "planning"
         return ctx
 
@@ -1424,6 +1499,95 @@ async def test_agent_task_multi_step_tracks_step_progress_and_failures(client, m
     assert task["result_json"]["steps"][1]["success"] is False
     assert task["metadata_json"]["plan_progress"][0]["status"] == "completed"
     assert task["metadata_json"]["plan_progress"][1]["status"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_failed_multi_step_auto_queues_repair_plan(client, monkeypatch):
+    import services.activity.engine as activity_engine
+
+    monkeypatch.setattr(activity_engine, "async_session", app.state.test_session_factory)
+
+    async def fake_run_agent_turn(*, message, **_kwargs):
+        ctx = AgentContext(
+            user_id=uuid.uuid4(),
+            course_id=uuid.uuid4(),
+            user_message=message,
+        )
+        if "weak areas" in message.lower():
+            ctx.mark_failed("assessment unavailable")
+            return ctx
+        ctx.response = f"Completed: {message}"
+        ctx.delegated_agent = "planning"
+        return ctx
+
+    async def fake_create_plan(_prompt, _user_id, _course_id, mastery_summary=None):
+        return [
+            {
+                "step_index": 0,
+                "step_type": "identify_weak_points",
+                "title": "Repair blocked assessment",
+                "description": "Re-run the blocked weak-points assessment with tighter scope",
+                "agent": "assessment",
+                "depends_on": [],
+                "status": "pending",
+                "input_params": {},
+            }
+        ]
+
+    monkeypatch.setattr("services.agent.orchestrator.run_agent_turn", fake_run_agent_turn)
+    monkeypatch.setattr("services.agent.task_planner.create_plan", fake_create_plan)
+
+    create_resp = await client.post("/api/courses/", json={"name": "Repair Queue Course", "description": "queue"})
+    assert create_resp.status_code == 201
+    course_id = create_resp.json()["id"]
+
+    submit_resp = await client.post(
+        "/api/tasks/submit",
+        json={
+            "task_type": "multi_step",
+            "title": "Queued repairable multi-step plan",
+            "course_id": course_id,
+            "input_json": {
+                "course_id": course_id,
+                "steps": [
+                    {
+                        "step_index": 0,
+                        "step_type": "check_progress",
+                        "title": "Check progress",
+                        "description": "Review current progress",
+                        "depends_on": [],
+                        "agent": "assessment",
+                    },
+                    {
+                        "step_index": 1,
+                        "step_type": "identify_weak_points",
+                        "title": "Find weak areas",
+                        "description": "Identify weak areas",
+                        "depends_on": [0],
+                        "agent": "assessment",
+                    },
+                ],
+            },
+        },
+    )
+    assert submit_resp.status_code == 201
+    original_task_id = submit_resp.json()["id"]
+
+    processed = await activity_engine.drain_once()
+    assert processed is True
+
+    tasks_resp = await client.get("/api/tasks/")
+    assert tasks_resp.status_code == 200
+    tasks = tasks_resp.json()
+    original = next(item for item in tasks if item["id"] == original_task_id)
+    repair = next(item for item in tasks if item["source"] == "task_auto_repair")
+
+    assert original["metadata_json"]["auto_repair_task_id"] == repair["id"]
+    assert original["result_json"]["task_review"]["follow_up"]["auto_queued"] is True
+    assert original["result_json"]["task_review"]["follow_up"]["queued_task_id"] == repair["id"]
+    assert repair["task_type"] == "multi_step"
+    assert repair["status"] == "queued"
+    assert repair["input_json"]["steps"][0]["title"] == "Repair blocked assessment"
 
 
 @pytest.mark.asyncio

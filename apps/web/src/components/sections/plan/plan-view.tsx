@@ -1,17 +1,81 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { MarkdownRenderer } from "@/components/shared/markdown-renderer";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   getExamPrepPlan,
+  listStudyGoals,
   listStudyPlanBatches,
   saveStudyPlan,
   submitAgentTask,
+  type StudyGoal,
 } from "@/lib/api";
 import { useBatchManager } from "@/hooks/use-batch-manager";
 import { toast } from "sonner";
+
+// ── Exam Countdown Banner ──
+
+interface UpcomingDeadline extends StudyGoal {
+  daysLeft: number;
+}
+
+function ExamCountdown({ courseId }: { courseId: string }) {
+  const [upcoming, setUpcoming] = useState<UpcomingDeadline[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const goals = await listStudyGoals(courseId, "active");
+        if (cancelled) return;
+        const now = Date.now();
+        const computed = goals
+          .filter((g) => g.target_date)
+          .map((g) => {
+            const target = new Date(g.target_date!).getTime();
+            const daysLeft = Math.ceil((target - now) / 86_400_000);
+            return { ...g, daysLeft };
+          })
+          .filter((g) => g.daysLeft >= 0 && g.daysLeft <= 30)
+          .sort((a, b) => a.daysLeft - b.daysLeft);
+        setUpcoming(computed);
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [courseId]);
+
+  if (upcoming.length === 0) return null;
+
+  return (
+    <div className="border-b bg-amber-50 dark:bg-amber-950/30 px-3 py-2 space-y-1">
+      {upcoming.map((g) => {
+        const urgent = g.daysLeft <= 3;
+        return (
+          <div
+            key={g.id}
+            className={`flex items-center gap-2 text-xs ${urgent ? "font-semibold text-destructive" : "text-amber-800 dark:text-amber-200"}`}
+          >
+            <span className="tabular-nums">
+              {g.daysLeft === 0 ? "TODAY" : g.daysLeft === 1 ? "1 day" : `${g.daysLeft} days`}
+            </span>
+            <span className="truncate flex-1">{g.title}</span>
+            {urgent && (
+              <span className="shrink-0 rounded bg-destructive/10 px-1.5 py-0.5 text-[10px] uppercase tracking-wider">
+                urgent
+              </span>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── PlanView ──
 
 interface PlanViewProps {
   courseId: string;
@@ -76,6 +140,7 @@ export function PlanView({ courseId }: PlanViewProps) {
       className="flex-1 flex flex-col overflow-hidden"
       data-testid="study-plan-panel"
     >
+      <ExamCountdown courseId={courseId} />
       <div className="px-3 py-2 border-b flex items-center gap-2 text-xs text-muted-foreground">
         <span>Exam prep plan</span>
         <div className="ml-auto flex items-center gap-2">

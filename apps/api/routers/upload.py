@@ -5,6 +5,7 @@ Phase 1: Full 7-step ingestion pipeline with classification + multi-format.
 """
 
 import asyncio
+import hashlib
 import logging
 import mimetypes
 import os
@@ -29,10 +30,20 @@ from models import scrape as models_scrape
 from models.user import User
 from services.ingestion.pipeline import _set_job_phase
 from services.ingestion.pipeline import run_ingestion_pipeline
+from services.agent.background_runtime import track_background_task
 from services.auth.dependency import get_current_user
 from services.course_access import get_course_or_404
+from services.llm.readiness import ensure_llm_ready
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_filename(filename: str) -> str:
+    """Sanitize user-provided filename to prevent path traversal."""
+    base = os.path.basename(filename)
+    cleaned = re.sub(r'[^\w.\-]', '_', base)
+    return (cleaned or "unnamed")[:255]
+
 
 # Backward-compatible aliases used by unit tests and older imports.
 _validate_url = validate_url
@@ -61,6 +72,12 @@ router = APIRouter()
 
 async def _background_auto_generate(course_id: uuid.UUID, user_id: uuid.UUID):
     """Fire-and-forget: auto-generate starter quiz + flashcards after ingestion."""
+    try:
+        await ensure_llm_ready("Auto-generated starter study assets")
+    except Exception as exc:
+        logger.debug("Skipping starter asset generation for course %s: %s", course_id, exc)
+        return
+
     # Quiz: extract up to 5 questions from course content
     try:
         async with async_session() as db:
@@ -155,7 +172,7 @@ async def _background_embed(course_id: uuid.UUID, job_id: uuid.UUID, user_id: uu
 
     # After successful embedding, auto-generate starter quiz + flashcards
     if user_id:
-        asyncio.create_task(_background_auto_generate(course_id, user_id))
+        track_background_task(asyncio.create_task(_background_auto_generate(course_id, user_id)))
 
 
 @router.post("/upload")
@@ -186,10 +203,11 @@ async def upload_file(
     if len(file_bytes) > settings.max_upload_size_mb * 1024 * 1024:
         raise ValidationError("File too large")
 
-    import hashlib
     file_hash = hashlib.sha256(file_bytes).hexdigest()[:16]
     os.makedirs(settings.upload_dir, exist_ok=True)
-    save_path = os.path.join(settings.upload_dir, f"{file_hash}_{file.filename}")
+    safe_name = re.sub(r"[^\w.\-]", "_", os.path.basename(file.filename)) or "unnamed"
+    safe_name = safe_name[:255]
+    save_path = os.path.join(settings.upload_dir, f"{file_hash}_{safe_name}")
     with open(save_path, "wb") as f:
         f.write(file_bytes)
 
@@ -208,7 +226,7 @@ async def upload_file(
 
     is_test_request = request is not None and hasattr(request.app.state, "test_session_factory")
     if (job.nodes_created or 0) > 0 and not is_test_request:
-        asyncio.create_task(_background_embed(cid, job.id, user_id=user.id))
+        track_background_task(asyncio.create_task(_background_embed(cid, job.id, user_id=user.id)))
 
     return {
         "status": "ok",
@@ -362,14 +380,14 @@ async def scrape_url(
 
     is_test_request = request is not None and hasattr(request.app.state, "test_session_factory")
     if (job.nodes_created or 0) > 0 and not is_test_request:
-        asyncio.create_task(_background_embed(cid, job.id, user_id=user.id))
+        track_background_task(asyncio.create_task(_background_embed(cid, job.id, user_id=user.id)))
 
     # Auto-ingest discovered Canvas files (PDFs, docs) in background
     canvas_file_urls = getattr(job, "_canvas_file_urls", [])
     files_discovered = len(canvas_file_urls)
     if canvas_file_urls and canvas_info.is_canvas and scrape_session_name and not is_test_request:
         from services.ingestion.pipeline import ingest_canvas_files
-        asyncio.create_task(
+        track_background_task(asyncio.create_task(
             ingest_canvas_files(
                 db_factory=async_session,
                 user_id=user.id,
@@ -378,7 +396,7 @@ async def scrape_url(
                 session_name=scrape_session_name,
                 canvas_domain=canvas_info.domain,
             )
-        )
+        ))
         logger.info("Queued %d Canvas files for background ingestion", files_discovered)
 
     return {
@@ -467,7 +485,6 @@ async def upload_image(
 ):
     """Upload an image for chat context (e.g., math problem photo)."""
     import base64
-    import hashlib
 
     try:
         cid = uuid.UUID(course_id)
@@ -495,7 +512,9 @@ async def upload_image(
 
     file_hash = hashlib.sha256(file_bytes).hexdigest()[:16]
     os.makedirs(settings.upload_dir, exist_ok=True)
-    save_path = os.path.join(settings.upload_dir, f"img_{file_hash}_{file.filename}")
+    safe_name = re.sub(r"[^\w.\-]", "_", os.path.basename(file.filename)) or "unnamed"
+    safe_name = safe_name[:255]
+    save_path = os.path.join(settings.upload_dir, f"img_{file_hash}_{safe_name}")
     with open(save_path, "wb") as f:
         f.write(file_bytes)
 

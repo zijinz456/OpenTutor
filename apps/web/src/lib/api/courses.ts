@@ -1,6 +1,6 @@
 import { buildAuthHeaders } from "@/lib/auth";
 
-import { API_BASE, request } from "./client";
+import { API_BASE, parseApiError, request } from "./client";
 
 import type { ContentMutationResult, SavedGeneratedAsset } from "./client";
 import type { GeneratedAssetBatchSummary } from "./practice";
@@ -173,10 +173,44 @@ export async function listGeneratedNoteBatches(courseId: string): Promise<Genera
   return request(`/notes/generated/${courseId}`);
 }
 
-export async function uploadFile(courseId: string, file: File): Promise<ContentMutationResult> {
+export async function uploadFile(
+  courseId: string,
+  file: File,
+  onProgress?: (pct: number) => void,
+): Promise<ContentMutationResult> {
   const form = new FormData();
   form.append("file", file);
   form.append("course_id", courseId);
+
+  // Use XHR when caller wants progress updates; fall back to fetch otherwise.
+  if (onProgress) {
+    return new Promise<ContentMutationResult>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", `${API_BASE}/content/upload`);
+      const headers = buildAuthHeaders();
+      Object.entries(headers).forEach(([k, v]) => {
+        if (v) xhr.setRequestHeader(k, v);
+      });
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
+      };
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            resolve(JSON.parse(xhr.responseText));
+          } catch {
+            reject(new Error("Invalid JSON in upload response"));
+          }
+        } else {
+          let detail = `Upload failed (${xhr.status})`;
+          try { detail = JSON.parse(xhr.responseText)?.detail ?? detail; } catch { /* non-JSON error body */ }
+          reject(new Error(detail));
+        }
+      };
+      xhr.onerror = () => reject(new Error("Network error during upload"));
+      xhr.send(form);
+    });
+  }
 
   const res = await fetch(`${API_BASE}/content/upload`, {
     method: "POST",
@@ -184,8 +218,7 @@ export async function uploadFile(courseId: string, file: File): Promise<ContentM
     body: form,
   });
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(error.detail || error.message || "Upload failed");
+    throw await parseApiError(res);
   }
   return res.json();
 }
@@ -201,8 +234,7 @@ export async function scrapeUrl(courseId: string, url: string): Promise<ContentM
     body: form,
   });
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(error.detail || error.message || "Scrape failed");
+    throw await parseApiError(res);
   }
   return res.json();
 }

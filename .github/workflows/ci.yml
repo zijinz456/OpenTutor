@@ -30,6 +30,9 @@ jobs:
           pip install -r apps/api/requirements.txt
           pip install pytest
 
+      - name: Audit Python dependencies
+        run: pip install pip-audit && pip-audit --desc --skip-editable 2>&1 || true
+
       - name: Run API unit tests
         run: python -m pytest tests/test_api_unit_basics.py tests/test_services.py tests/test_agent_runtime_regressions.py tests/test_code_execution_agent.py tests/test_eval_regressions.py tests/test_ingestion_regressions.py tests/test_canvas_parser.py tests/test_canvas_router_unit.py tests/test_scrape_services.py tests/test_scrape_router_unit.py -q
 

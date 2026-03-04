@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections import Counter
 from dataclasses import asdict, dataclass
 
 from services.agent.base import BaseAgent
@@ -16,6 +17,20 @@ _MATERIAL_DISCLAIMER_PATTERNS = (
     "not found in the materials",
     "course materials do not contain",
 )
+
+_GENERIC_NONANSWER_PATTERNS = (
+    "i can help with that",
+    "let's work through it",
+    "we can work through it",
+    "here's a breakdown",
+    "let me know if you'd like",
+    "i'd be happy to help",
+)
+_STOPWORDS = {
+    "a", "an", "and", "are", "be", "can", "do", "for", "from", "help", "how", "i",
+    "explain", "in", "is", "it", "me", "my", "of", "on", "or", "please", "review",
+    "show", "study", "tell", "that", "the", "this", "to", "what", "why", "with", "you",
+}
 
 
 @dataclass
@@ -35,12 +50,98 @@ def _looks_like_question_array(response: str) -> bool:
     return stripped.startswith("[") and stripped.endswith("]")
 
 
-def _find_issue(ctx: AgentContext) -> VerificationIssue | None:
+def _salient_terms(text: str) -> set[str]:
+    return {
+        token.lower()
+        for token in re.findall(r"[A-Za-z0-9][A-Za-z0-9_\-]{2,}", text or "")
+        if token.lower() not in _STOPWORDS
+    }
+
+
+def _looks_like_generic_nonanswer(response: str) -> bool:
+    lowered = response.lower()
+    return any(pattern in lowered for pattern in _GENERIC_NONANSWER_PATTERNS)
+
+
+def _collect_evidence_terms(ctx: AgentContext, limit: int = 18) -> list[str]:
+    counter: Counter[str] = Counter()
+    texts: list[str] = []
+    provenance = ctx.metadata.get("provenance") or {}
+
+    for ref in provenance.get("content_refs") or []:
+        if isinstance(ref, dict):
+            texts.append(str(ref.get("title") or ""))
+            texts.append(str(ref.get("preview") or ""))
+
+    for doc in ctx.content_docs[:4]:
+        if isinstance(doc, dict):
+            texts.append(str(doc.get("title") or ""))
+            texts.append(str(doc.get("content") or "")[:300])
+
+    for text in texts:
+        for token in _salient_terms(text):
+            counter[token] += 1
+
+    return [token for token, _count in counter.most_common(limit)]
+
+
+def _acceptance_signals(ctx: AgentContext) -> dict[str, object]:
     response = (ctx.response or "").strip()
     provenance = ctx.metadata.get("provenance") or {}
     content_count = int(provenance.get("content_count") or len(ctx.content_docs))
+    request_terms = _salient_terms(ctx.user_message)
+    response_terms = _salient_terms(response)
+    evidence_terms = set(_collect_evidence_terms(ctx))
+    request_overlap = request_terms & response_terms
+    evidence_overlap = evidence_terms & response_terms
+
+    request_coverage = round(len(request_overlap) / max(len(request_terms), 1), 3)
+    evidence_coverage = round(len(evidence_overlap) / max(len(evidence_terms), 1), 3) if evidence_terms else 0.0
+
+    return {
+        "content_count": content_count,
+        "request_terms": sorted(request_terms)[:16],
+        "response_terms": sorted(response_terms)[:20],
+        "evidence_terms": sorted(evidence_terms)[:20],
+        "request_overlap_terms": sorted(request_overlap)[:12],
+        "evidence_overlap_terms": sorted(evidence_overlap)[:12],
+        "request_coverage": request_coverage,
+        "evidence_coverage": evidence_coverage,
+    }
+
+
+def _find_issue(ctx: AgentContext, signals: dict[str, object]) -> VerificationIssue | None:
+    response = (ctx.response or "").strip()
+    content_count = int(signals.get("content_count") or 0)
+    request_terms = set(signals.get("request_terms") or [])
+    request_overlap = set(signals.get("request_overlap_terms") or [])
+    request_coverage = float(signals.get("request_coverage") or 0.0)
+    evidence_terms = set(signals.get("evidence_terms") or [])
+    evidence_overlap = set(signals.get("evidence_overlap_terms") or [])
+    evidence_coverage = float(signals.get("evidence_coverage") or 0.0)
 
     if ctx.intent in (IntentType.LEARN, IntentType.REVIEW):
+        if (
+            response
+            and len(response) < 220
+            and len(request_terms) >= 2
+            and len(request_overlap) == 0
+            and _looks_like_generic_nonanswer(response)
+        ):
+            return VerificationIssue(
+                code="response_does_not_address_request",
+                message="The answer sounds helpful but does not clearly address the student's actual topic.",
+            )
+        if (
+            response
+            and len(request_terms) >= 3
+            and len(response) < 360
+            and request_coverage < 0.3
+        ):
+            return VerificationIssue(
+                code="response_misses_requested_points",
+                message="The answer does not cover enough of the student's requested points to count as completed help.",
+            )
         if content_count == 0 and response and not _contains_material_disclaimer(response):
             return VerificationIssue(
                 code="unsupported_claim_without_materials",
@@ -51,6 +152,19 @@ def _find_issue(ctx: AgentContext) -> VerificationIssue | None:
                 code="claims_course_grounding_without_sources",
                 message="The answer cites course materials even though no course material was retrieved.",
                 repairable=False,
+            )
+        if (
+            content_count > 0
+            and evidence_terms
+            and response
+            and len(response) < 420
+            and request_coverage < 0.45
+            and evidence_coverage < 0.12
+            and not evidence_overlap
+        ):
+            return VerificationIssue(
+                code="answer_lacks_evidence_coverage",
+                message="The answer does not clearly use the retrieved course evidence needed for the student's request.",
             )
 
     if ctx.intent == IntentType.QUIZ and _looks_like_question_array(response):
@@ -137,7 +251,9 @@ async def _repair_response(agent: BaseAgent, ctx: AgentContext, issue: Verificat
 
 async def verify_and_repair(ctx: AgentContext, agent: BaseAgent) -> AgentContext:
     """Apply verification rules and one repair attempt when appropriate."""
-    issue = _find_issue(ctx)
+    signals = _acceptance_signals(ctx)
+    ctx.metadata["verifier_diagnostics"] = signals
+    issue = _find_issue(ctx, signals)
     if issue is None:
         ctx.metadata["verifier"] = asdict(
             AgentVerificationResult(status="pass", code="ok", message="Response satisfied verifier checks.")
@@ -150,7 +266,10 @@ async def verify_and_repair(ctx: AgentContext, agent: BaseAgent) -> AgentContext
             repair_succeeded = await _repair_response(agent, ctx, issue)
         except Exception:
             repair_succeeded = False
-        if repair_succeeded and _find_issue(ctx) is None:
+        if repair_succeeded:
+            repaired_signals = _acceptance_signals(ctx)
+            ctx.metadata["verifier_diagnostics"] = repaired_signals
+        if repair_succeeded and _find_issue(ctx, ctx.metadata.get("verifier_diagnostics") or {}) is None:
             ctx.metadata["verifier"] = asdict(
                 AgentVerificationResult(
                     status="repaired",

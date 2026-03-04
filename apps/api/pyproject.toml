@@ -19,7 +19,7 @@ dependencies = [
     "pydantic>=2.11.0,<3.0.0",
     "pydantic-settings>=2.7.0,<3.0.0",
 
-    # Database (SQLite by default)
+    # Database core (PostgreSQL and SQLite supported)
     "sqlalchemy[asyncio]>=2.0.30",
     "aiosqlite>=0.20.0",
 
@@ -78,34 +78,22 @@ opentutor = "cli:main"
 [tool.setuptools]
 py-modules = [
     "cli",
-    "config",
     "database",
     "main",
-]
-packages = [
-    "models",
-    "routers",
-    "services",
-    "services.llm",
-    "services.search",
-    "services.memory",
-    "services.workflow",
-    "services.agent",
-    "services.knowledge",
-    "services.scheduler",
-    "services.activity",
-    "services.templates",
-    "services.scene",
-    "services.plugin",
-    "services.mcp",
-    "libs",
-    "middleware",
-    "schemas",
-    "skills",
-    "prompts",
-    "utils",
-    "config",
 ]
 
 [tool.setuptools.packages.find]
 where = ["."]
+include = [
+    "config*",
+    "models*",
+    "routers*",
+    "services*",
+    "libs*",
+    "middleware*",
+    "schemas*",
+    "skills*",
+    "prompts*",
+    "utils*",
+]
+exclude = ["tests*", "alembic*", "uploads*", "sessions*", "plugins*"]

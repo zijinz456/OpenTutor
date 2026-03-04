@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.agent.base import BaseAgent
 from services.agent.react_mixin import ReActMixin
-from services.agent.state import AgentContext
+from services.agent.state import AgentContext, InputRequirement
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +68,23 @@ class ReviewAgent(ReActMixin, BaseAgent):
         "Be encouraging but precise. Focus on understanding, not just correction."
     )
     model_preference = "large"
+
+    def get_required_inputs(self) -> list[InputRequirement]:
+        return [
+            InputRequirement(
+                key="review_scope",
+                question="What would you like to review?",
+                options=["Recent mistakes", "A specific topic", "All weak areas", "Today's session"],
+                check=lambda ctx: (
+                    any(kw in ctx.user_message.lower() for kw in [
+                        "mistake", "wrong", "topic", "weak", "error", "recent",
+                        "today", "session", "last", "quiz",
+                        "错题", "错误", "弱项", "薄弱",
+                    ])
+                    or "review_scope" in ctx.clarify_inputs
+                ),
+            ),
+        ]
 
     def build_system_prompt(self, ctx: AgentContext) -> str:
         base = super().build_system_prompt(ctx)

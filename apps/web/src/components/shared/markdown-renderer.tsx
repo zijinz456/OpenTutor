@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import DOMPurify from "dompurify";
 import ReactMarkdown from "react-markdown";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
@@ -19,7 +20,7 @@ function MermaidBlock({ code }: { code: string }) {
         if (!ref.current || cancelled) return;
         const { svg } = await mermaid.render(`mermaid-${Date.now()}`, code);
         if (ref.current && !cancelled) {
-          ref.current.innerHTML = svg;
+          ref.current.innerHTML = DOMPurify.sanitize(svg);
         }
       } catch {
         if (ref.current && !cancelled) {

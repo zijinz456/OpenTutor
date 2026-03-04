@@ -94,3 +94,12 @@ def register_routers(app: FastAPI) -> None:
         from routers import webhooks
 
         _include_router(app, webhooks.router, prefix="/api/webhooks", tags=["webhooks"])
+
+    # Built-in lightweight UI for CLI mode (no Node.js required).
+    # Disabled when the full Next.js frontend handles the UI.
+    import os
+
+    if os.environ.get("SERVE_BUILTIN_UI", "true") != "false":
+        from routers.ui import router as ui_router
+
+        _include_router(app, ui_router, tags=["ui"])

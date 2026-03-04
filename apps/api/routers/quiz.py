@@ -23,6 +23,7 @@ from schemas.quiz import (
 )
 from services.auth.dependency import get_current_user
 from services.course_access import get_course_or_404
+from services.llm.readiness import ensure_llm_ready
 from services.parser.quiz import extract_questions
 from services.practice.annotation import build_practice_problem, parse_question_array
 from libs.exceptions import (
@@ -146,6 +147,7 @@ async def save_generated_quiz(
 async def extract_quiz(body: ExtractRequest, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """Extract questions from a content node or all nodes in a course."""
     await get_course_or_404(db, body.course_id, user_id=user.id)
+    await ensure_llm_ready("Quiz generation")
 
     try:
         if body.content_node_id:
@@ -160,20 +162,33 @@ async def extract_quiz(body: ExtractRequest, user: User = Depends(get_current_us
                 node.content, node.title, body.course_id, body.content_node_id
             )
         else:
+            import asyncio
+
+            target_count = body.count or 10
+            # Process a reasonable number of nodes — ~2 questions per node
+            max_nodes = min(max(target_count // 2, 3), 15)
+
             result = await db.execute(
                 select(CourseContentTree)
                 .where(CourseContentTree.course_id == body.course_id)
                 .where(CourseContentTree.content.isnot(None))
             )
             nodes = result.scalars().all()
-            import asyncio
-            sem = asyncio.Semaphore(5)
+            eligible = [n for n in nodes if n.content and len(n.content) > 100][:max_nodes]
+
+            sem = asyncio.Semaphore(3)
 
             async def _extract(n):
                 async with sem:
-                    return await extract_questions(n.content, n.title, body.course_id, n.id)
+                    try:
+                        return await asyncio.wait_for(
+                            extract_questions(n.content, n.title, body.course_id, n.id),
+                            timeout=60,
+                        )
+                    except asyncio.TimeoutError:
+                        logger.warning("Quiz extraction timed out for node %s", n.title)
+                        return []
 
-            eligible = [n for n in nodes[:50] if n.content and len(n.content) > 100]
             results = await asyncio.gather(*[_extract(n) for n in eligible], return_exceptions=True)
             problems = []
             failures = []

@@ -30,6 +30,7 @@ from schemas.chat import ChatRequest
 from services.agent.orchestrator import orchestrate_stream
 from services.auth.dependency import get_current_user
 from services.course_access import get_course_or_404
+from services.llm.readiness import ensure_llm_ready
 from utils.serializers import serialize_model
 
 logger = logging.getLogger(__name__)
@@ -197,7 +198,8 @@ async def chat_stream(
     from middleware.security import detect_prompt_injection, sanitize_user_input
 
     body.message = sanitize_user_input(body.message)
-    if detect_prompt_injection(body.message):
+    client_ip = request.client.host if request.client else "unknown"
+    if detect_prompt_injection(body.message, client_ip=client_ip):
         logger.warning("Prompt injection detected from user %s: %.100s", user.id, body.message)
 
         async def injection_error():
@@ -214,6 +216,7 @@ async def chat_stream(
         body.message = f"[User interrupted the previous response to say:] {body.message}"
 
     course = await get_course_or_404(db, body.course_id, user_id=user.id)
+    await ensure_llm_ready("Chat tutoring")
     session_factory = getattr(request.app.state, "test_session_factory", None) or async_session
 
     resolved_scene = body.scene or course.active_scene
@@ -266,6 +269,7 @@ async def chat_stream(
                         "provenance": payload.get("provenance"),
                         "actions": payload.get("actions", []),
                         "verifier": payload.get("verifier"),
+                        "verifier_diagnostics": payload.get("verifier_diagnostics"),
                         "task_link": payload.get("task_link"),
                         "reflection": payload.get("reflection"),
                     }

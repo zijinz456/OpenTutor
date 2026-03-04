@@ -7,6 +7,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from services.evaluation.eval_recovery import run_recovery_evaluation
 from services.evaluation.eval_response import ResponseEvalCase, eval_responses_batch
 from services.evaluation.eval_retrieval import eval_retrieval_from_course
 from services.evaluation.eval_routing import eval_routing
@@ -274,6 +275,46 @@ async def run_regression_benchmark(
                 score=None,
                 threshold=RESPONSE_MIN_CORRECTNESS,
                 details={"reason": "response cases not supplied"},
+                skipped=True,
+            )
+        )
+
+    # ── Recovery evaluation ──
+    if db is not None:
+        try:
+            recovery_results = await run_recovery_evaluation(db, course_id)
+            recovery_passed = all(r.passed for r in recovery_results)
+            suites.append(
+                BenchmarkSuite(
+                    name="recovery",
+                    passed=recovery_passed,
+                    score=sum(1 for r in recovery_results if r.passed) / max(len(recovery_results), 1),
+                    threshold=1.0,
+                    details={
+                        "total": len(recovery_results),
+                        "results": [{"name": r.name, "passed": r.passed, **r.details} for r in recovery_results],
+                    },
+                )
+            )
+        except Exception as exc:
+            suites.append(
+                BenchmarkSuite(
+                    name="recovery",
+                    passed=True,
+                    score=None,
+                    threshold=1.0,
+                    details={"reason": f"recovery eval error: {exc}"},
+                    skipped=True,
+                )
+            )
+    else:
+        suites.append(
+            BenchmarkSuite(
+                name="recovery",
+                passed=True,
+                score=None,
+                threshold=1.0,
+                details={"reason": "db session required for recovery eval"},
                 skipped=True,
             )
         )

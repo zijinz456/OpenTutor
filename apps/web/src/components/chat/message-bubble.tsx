@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import type { ChatMessage } from "@/store/chat";
 import { ActionCard } from "@/components/chat/action-card";
 import { Play, Pause, Volume2 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 
 interface MessageBubbleProps {
   message: ChatMessage;
@@ -24,8 +25,19 @@ interface MessageBubbleProps {
 export function MessageBubble({ message }: MessageBubbleProps) {
   const isUser = message.role === "user";
   const actions = message.metadata?.actions;
+  const verifier = message.metadata?.verifier;
+  const diagnostics = message.metadata?.verifier_diagnostics;
+  const contentRefs = message.metadata?.provenance?.content_refs ?? [];
+  const evidenceGroups = message.metadata?.provenance?.content_evidence_groups ?? [];
   const images = message.images;
   const [expandedImage, setExpandedImage] = useState<string | null>(null);
+
+  const requestCoverage = typeof diagnostics?.request_coverage === "number"
+    ? `${Math.round(diagnostics.request_coverage * 100)}%`
+    : null;
+  const evidenceCoverage = typeof diagnostics?.evidence_coverage === "number"
+    ? `${Math.round(diagnostics.evidence_coverage * 100)}%`
+    : null;
 
   return (
     <>
@@ -93,6 +105,94 @@ export function MessageBubble({ message }: MessageBubbleProps) {
                 />
               ))}
             </div>
+          )}
+
+          {!isUser && (verifier || evidenceGroups.length > 0 || contentRefs.length > 0) && (
+            <details
+              className="mt-2 rounded-md bg-black/5 px-2 py-2 dark:bg-white/5"
+              open={verifier?.status === "failed"}
+            >
+              <summary className="flex cursor-pointer list-none flex-wrap items-center gap-1.5 text-[11px] font-medium opacity-80">
+                <span>Why this answer</span>
+                {verifier ? (
+                  <Badge variant="outline" className="text-[10px]">
+                    {verifier.status}
+                  </Badge>
+                ) : null}
+                {requestCoverage ? <Badge variant="outline" className="text-[10px]">Request {requestCoverage}</Badge> : null}
+                {evidenceCoverage ? <Badge variant="outline" className="text-[10px]">Evidence {evidenceCoverage}</Badge> : null}
+                {evidenceGroups.length > 0 ? (
+                  <Badge variant="outline" className="text-[10px]">
+                    {evidenceGroups.length} evidence group{evidenceGroups.length > 1 ? "s" : ""}
+                  </Badge>
+                ) : null}
+              </summary>
+
+              <div className="mt-2 space-y-2">
+                {verifier && (
+                  <div className="space-y-1">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-[10px] opacity-75">{verifier.code}</span>
+                    </div>
+                    <p className="text-[11px] opacity-75">{verifier.message}</p>
+                    {diagnostics?.request_overlap_terms?.length ? (
+                      <p className="text-[10px] opacity-70">
+                        Covered request terms: {diagnostics.request_overlap_terms.slice(0, 5).join(", ")}
+                      </p>
+                    ) : null}
+                    {diagnostics?.evidence_overlap_terms?.length ? (
+                      <p className="text-[10px] opacity-70">
+                        Used evidence: {diagnostics.evidence_overlap_terms.slice(0, 5).join(", ")}
+                      </p>
+                    ) : null}
+                  </div>
+                )}
+
+                {evidenceGroups.length > 0 ? (
+                  <div className="space-y-1">
+                    <p className="text-[10px] font-medium uppercase tracking-wide opacity-60">Merged evidence</p>
+                    {evidenceGroups.map((group, index) => (
+                      <div key={`${group.label ?? "group"}-${index}`} className="rounded border border-black/10 px-2 py-1.5 text-[11px] dark:border-white/10">
+                        {group.label ? <p className="font-medium">{group.label}</p> : null}
+                        {group.summary ? <p className="mt-0.5 opacity-80">{group.summary}</p> : null}
+                        {group.titles?.length ? (
+                          <p className="mt-1 text-[10px] opacity-70">
+                            Sections: {group.titles.slice(0, 3).join(" · ")}
+                          </p>
+                        ) : null}
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {typeof group.section_count === "number" && group.section_count > 0 ? (
+                            <Badge variant="outline" className="text-[10px]">
+                              {group.section_count} linked hits
+                            </Badge>
+                          ) : null}
+                          {group.matched_facets?.slice(0, 2).map((facet) => (
+                            <Badge key={facet} variant="outline" className="text-[10px]">{facet}</Badge>
+                          ))}
+                          {(!group.matched_facets || group.matched_facets.length === 0) && group.matched_terms?.slice(0, 3).map((term) => (
+                            <Badge key={term} variant="outline" className="text-[10px]">{term}</Badge>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : contentRefs.length > 0 ? (
+                  <div className="space-y-1">
+                    <p className="text-[10px] font-medium uppercase tracking-wide opacity-60">Evidence</p>
+                    {contentRefs.slice(0, 2).map((ref, index) => (
+                      <div key={`${ref.title ?? "evidence"}-${index}`} className="rounded border border-black/10 px-2 py-1.5 text-[11px] dark:border-white/10">
+                        {ref.title ? <p className="font-medium">{ref.title}</p> : null}
+                        {ref.evidence_summary ? (
+                          <p className="mt-0.5 opacity-80">{ref.evidence_summary}</p>
+                        ) : ref.preview ? (
+                          <p className="mt-0.5 opacity-80">{ref.preview}</p>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            </details>
           )}
         </div>
       </div>

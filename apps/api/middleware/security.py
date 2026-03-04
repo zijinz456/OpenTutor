@@ -51,7 +51,7 @@ SECURITY_HEADERS = {
     "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
     "Content-Security-Policy": (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+        "script-src 'self'; "
         "style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data: blob:; "
         "font-src 'self' data:; "
@@ -228,7 +228,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             key = f"{client_ip}:{'llm' if is_llm else 'general'}"
 
             if not self._check_simple_rate(key, rpm):
-                logger.warning("Rate limited: %s on %s", client_ip, path)
+                logger.warning("SECURITY | RATE_LIMIT | ip=%s | path=%s | mode=simple | rpm=%d", client_ip, path, rpm)
                 return Response(
                     content='{"detail":"Rate limit exceeded. Please slow down."}',
                     status_code=429,
@@ -323,14 +323,18 @@ _INJECTION_PATTERNS = [
 _COMPILED_PATTERNS = [re.compile(p, re.IGNORECASE) for p in _INJECTION_PATTERNS]
 
 
-def detect_prompt_injection(text: str) -> bool:
+def detect_prompt_injection(text: str, client_ip: str = "unknown") -> bool:
     """Check if text contains common prompt injection patterns.
 
     Returns True if injection detected.
-    This is a pre-filter — not a replacement for proper sandboxing.
+    This is a best-effort pre-filter — not a replacement for proper sandboxing.
     """
     for pattern in _COMPILED_PATTERNS:
         if pattern.search(text):
+            logger.warning(
+                "SECURITY | PROMPT_INJECTION | ip=%s | pattern=%s | input_preview=%.100s",
+                client_ip, pattern.pattern, text,
+            )
             return True
     return False
 

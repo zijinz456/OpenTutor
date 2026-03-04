@@ -8,6 +8,8 @@ import {
   rejectAgentTask,
   listStudyGoals,
   type AgentTask,
+  type AgentTaskReview,
+  type AgentTaskStepResult,
   type StudyGoal,
 } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -29,6 +31,45 @@ const STATUS_COLORS: Record<string, string> = {
 
 function statusColor(status: string) {
   return STATUS_COLORS[status] ?? "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300";
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function getTaskReview(task: AgentTask): AgentTaskReview | null {
+  const result = asRecord(task.result_json);
+  const review = asRecord(result?.task_review);
+  if (!review) return null;
+  return review as unknown as AgentTaskReview;
+}
+
+function getTaskSteps(task: AgentTask): AgentTaskStepResult[] {
+  if (Array.isArray(task.step_results) && task.step_results.length > 0) {
+    return task.step_results as AgentTaskStepResult[];
+  }
+  const result = asRecord(task.result_json);
+  const steps = result?.steps;
+  return Array.isArray(steps) ? (steps as AgentTaskStepResult[]) : [];
+}
+
+function formatPercent(value: unknown): string | null {
+  if (typeof value !== "number" || Number.isNaN(value)) return null;
+  return `${Math.round(value * 100)}%`;
+}
+
+function getFailureSteps(task: AgentTask): AgentTaskStepResult[] {
+  return getTaskSteps(task).filter((step) => step.success === false);
+}
+
+function getVerifierSummary(step: AgentTaskStepResult): string | null {
+  const verifier = asRecord(step.verifier);
+  const code = typeof verifier?.code === "string" ? verifier.code : null;
+  const message = typeof verifier?.message === "string" ? verifier.message : null;
+  if (code && message) return `${code}: ${message}`;
+  return code ?? message;
 }
 
 export function ActivityView({ courseId }: ActivityViewProps) {
@@ -59,6 +100,9 @@ export function ActivityView({ courseId }: ActivityViewProps) {
 
   useEffect(() => {
     fetchData();
+    // Poll every 15 seconds for task status updates
+    const interval = setInterval(fetchData, 15_000);
+    return () => clearInterval(interval);
   }, [fetchData]);
 
   const act = async (taskId: string, fn: (id: string) => Promise<AgentTask>) => {
@@ -152,6 +196,68 @@ export function ActivityView({ courseId }: ActivityViewProps) {
                 </div>
                 {tk.summary && <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{tk.summary}</p>}
                 <p className="text-[10px] text-muted-foreground mt-1">{tk.task_type} &middot; {tk.source}</p>
+                {(() => {
+                  const review = getTaskReview(tk);
+                  const failedSteps = getFailureSteps(tk);
+                  const showDiagnostics = review || failedSteps.length > 0;
+                  if (!showDiagnostics) return null;
+
+                  return (
+                    <div className="mt-2 space-y-2 rounded-md bg-muted/40 p-2">
+                      {review?.outcome && (
+                        <p className="text-[11px] text-foreground/90">{review.outcome}</p>
+                      )}
+                      {review?.blockers?.length ? (
+                        <div className="space-y-1">
+                          {review.blockers.slice(0, 3).map((blocker) => (
+                            <p key={blocker} className="text-[11px] text-muted-foreground">
+                              Blocker: {blocker}
+                            </p>
+                          ))}
+                        </div>
+                      ) : null}
+                      {review?.follow_up?.auto_queued ? (
+                        <p className="text-[11px] text-muted-foreground">
+                          Repair queued automatically{review.follow_up.queued_task_id ? ` (${review.follow_up.queued_task_id.slice(0, 8)})` : ""}.
+                        </p>
+                      ) : null}
+                      {failedSteps.slice(0, 2).map((step, idx) => {
+                        const diagnostics = asRecord(step.verifier_diagnostics);
+                        const requestCoverage = formatPercent(diagnostics?.request_coverage);
+                        const evidenceCoverage = formatPercent(diagnostics?.evidence_coverage);
+                        const requestTerms = Array.isArray(diagnostics?.request_overlap_terms)
+                          ? diagnostics.request_overlap_terms.filter((item): item is string => typeof item === "string").slice(0, 4)
+                          : [];
+                        const evidenceTerms = Array.isArray(diagnostics?.evidence_overlap_terms)
+                          ? diagnostics.evidence_overlap_terms.filter((item): item is string => typeof item === "string").slice(0, 4)
+                          : [];
+                        const verifierSummary = getVerifierSummary(step);
+
+                        return (
+                          <div key={`${tk.id}-${step.step_index ?? idx}`} className="rounded border border-border/70 bg-background/70 p-2">
+                            <p className="text-[11px] font-medium">
+                              {step.title ?? step.step_type ?? `Step ${idx + 1}`}
+                            </p>
+                            {step.error ? <p className="text-[11px] text-muted-foreground mt-0.5">{step.error}</p> : null}
+                            {verifierSummary ? <p className="text-[11px] text-muted-foreground mt-0.5">Verifier: {verifierSummary}</p> : null}
+                            {(requestCoverage || evidenceCoverage) ? (
+                              <div className="mt-1 flex flex-wrap gap-1.5">
+                                {requestCoverage ? <Badge variant="outline" className="text-[10px]">Request {requestCoverage}</Badge> : null}
+                                {evidenceCoverage ? <Badge variant="outline" className="text-[10px]">Evidence {evidenceCoverage}</Badge> : null}
+                              </div>
+                            ) : null}
+                            {requestTerms.length > 0 ? (
+                              <p className="text-[10px] text-muted-foreground mt-1">Covered request terms: {requestTerms.join(", ")}</p>
+                            ) : null}
+                            {evidenceTerms.length > 0 ? (
+                              <p className="text-[10px] text-muted-foreground">Used evidence: {evidenceTerms.join(", ")}</p>
+                            ) : null}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
               </div>
             ))}
           </div>

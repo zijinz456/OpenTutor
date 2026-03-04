@@ -20,6 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.scrape import ScrapeSource, AuthSession
+from services.agent.background_runtime import track_background_task
 
 logger = logging.getLogger(__name__)
 
@@ -264,7 +265,7 @@ def _fire_background_embed(course_id: uuid.UUID):
         except Exception as e:
             logger.debug("Background embedding failed for course %s: %s", course_id, e)
 
-    asyncio.create_task(_embed())
+    track_background_task(asyncio.create_task(_embed()))
 
 
 def _notify_scrape_disabled(source: ScrapeSource):

@@ -31,7 +31,7 @@ export const PROVIDER_META: Record<
   openrouter: { requiresKey: true, defaultModel: "openai/gpt-4o-mini" },
   gemini: { requiresKey: true, defaultModel: "gemini-2.0-flash" },
   groq: { requiresKey: true, defaultModel: "llama-3.3-70b-versatile" },
-  ollama: { requiresKey: false, defaultModel: "llama3.2:1b" },
+  ollama: { requiresKey: false, defaultModel: "llama3.2:3b" },
   lmstudio: { requiresKey: false, defaultModel: "default" },
   textgenwebui: { requiresKey: false, defaultModel: "default" },
 };

@@ -413,6 +413,10 @@ async def _try_canvas_api_deep(
     Uses saved Playwright session cookies for authenticated API access.
     Ported from learning-agent-extension canvas.js API fetcher pattern.
     """
+    def _clean(text: str) -> str:
+        """Strip newlines and collapse whitespace in Canvas API text."""
+        return re.sub(r"\s{2,}", " ", text.replace("\n", " ").replace("\r", " ")).strip()
+
     try:
         from services.scraper.canvas_detector import detect_canvas_url
 
@@ -447,7 +451,7 @@ async def _try_canvas_api_deep(
                 )
                 if resp.status_code == 200:
                     data = resp.json()
-                    course_title = data.get("name", course_title)
+                    course_title = _clean(data.get("name", course_title))
                     parts.append(f"# {course_title}\n")
                     if data.get("syllabus_body"):
                         from bs4 import BeautifulSoup
@@ -475,13 +479,13 @@ async def _try_canvas_api_deep(
                     modules_found = len(modules)
                     parts.append("## Modules\n")
                     for mod in modules:
-                        mod_name = mod.get("name", "Module")
+                        mod_name = _clean(mod.get("name", "Module"))
                         parts.append(f"### {mod_name}")
                         items = mod.get("items", [])
 
                         for item in items:
                             item_type = item.get("type", "")
-                            item_title = item.get("title", "Item")
+                            item_title = _clean(item.get("title", "Item"))
 
                             if item_type == "Page":
                                 # Deep fetch: get full page body via API
@@ -508,7 +512,7 @@ async def _try_canvas_api_deep(
                                             pages_fetched += 1
                                     except Exception as e:
                                         logger.debug("Failed to fetch page %s: %s", page_url, e)
-                                        parts.append(f"- {item_title} (Page)")
+                                        parts.append(f"#### {item_title}")
 
                             elif item_type == "File":
                                 # Direct file attachment in module
@@ -521,23 +525,24 @@ async def _try_canvas_api_deep(
                                         "filename": f"{item_title}.pdf",
                                         "content_type": "application/pdf",
                                     })
-                                parts.append(f"- {item_title} (File)")
+                                parts.append(f"#### {item_title} (File)")
 
                             elif item_type == "Assignment":
-                                parts.append(f"- {item_title} (Assignment)")
+                                parts.append(f"#### {item_title} (Assignment)")
 
                             elif item_type == "Quiz":
-                                parts.append(f"- {item_title} (Quiz)")
+                                parts.append(f"#### {item_title} (Quiz)")
 
                             elif item_type == "ExternalUrl":
                                 ext_url = item.get("external_url", "")
-                                parts.append(f"- {item_title} (Link: {ext_url})")
+                                parts.append(f"#### {item_title}")
+                                parts.append(f"Link: {ext_url}")
 
                             elif item_type == "SubHeader":
-                                parts.append(f"**{item_title}**")
+                                parts.append(f"#### {item_title}")
 
                             else:
-                                parts.append(f"- {item_title} ({item_type})")
+                                parts.append(f"#### {item_title}")
 
                     parts.append("")
             except Exception as e:
@@ -585,7 +590,7 @@ async def _try_canvas_api_deep(
                     parts.append("## Additional Pages\n")
                     for p in unfetched[:30]:
                         slug = p.get("url", "")
-                        title_text = p.get("title", "Page")
+                        title_text = _clean(p.get("title", "Page"))
                         seen_page_slugs.add(slug)
                         try:
                             page_resp = await client.get(
@@ -620,7 +625,7 @@ async def _try_canvas_api_deep(
                 if quizzes:
                     parts.append("## Quizzes\n")
                     for q in quizzes:
-                        q_title = q.get("title", "Quiz")
+                        q_title = _clean(q.get("title", "Quiz"))
                         q_desc = q.get("description", "")
                         q_count = q.get("question_count", 0)
                         q_points = q.get("points_possible", "")
@@ -1189,5 +1194,8 @@ def get_text_from_soup(soup) -> str:
     Ported from GPT-Researcher scraper/utils.py get_text_from_soup().
     """
     text = soup.get_text(strip=True, separator="\n")
-    text = re.sub(r"\s{2,}", " ", text)
-    return text
+    # Collapse runs of 3+ newlines to double newline (paragraph break)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    # Collapse runs of spaces (but preserve newlines for structure)
+    text = re.sub(r"[^\S\n]{2,}", " ", text)
+    return text.strip()

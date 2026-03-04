@@ -10,7 +10,7 @@ from sqlalchemy import text
 from config import settings
 import database as database_module
 from services.agent.container_sandbox import container_runtime_available
-from services.llm.router import get_registry
+from services.llm.readiness import get_llm_runtime_status
 from services.migrations import MigrationState, inspect_database_migrations
 
 logger = logging.getLogger(__name__)
@@ -39,28 +39,10 @@ async def get_health_status() -> dict[str, Any]:
     except Exception:
         logger.warning("Health check: database unreachable")
 
-    registry = get_registry()
-
-    # Use cached probe results from background monitor (OpenClaw pattern).
-    # Falls back to a blocking ping_all() if monitor hasn't run yet.
-    probe_details = registry.provider_health_cached
-    if probe_details:
-        provider_health = {name: d["healthy"] for name, d in probe_details.items()}
-    else:
-        provider_health = await registry.ping_all()
-        probe_details = {
-            name: {"healthy": h, "status": "ok" if h else "unhealthy", "error": None}
-            for name, h in provider_health.items()
-        }
-
-    if not registry.available_providers:
-        llm_status = "configuration_required" if settings.llm_required else "mock_fallback"
-    elif registry.primary_name == "mock":
-        llm_status = "mock_fallback"
-    elif registry.primary_name and not provider_health.get(registry.primary_name, True):
-        llm_status = "degraded"
-    else:
-        llm_status = "ready"
+    llm_runtime = await get_llm_runtime_status()
+    provider_health = llm_runtime["provider_health"]
+    probe_details = llm_runtime["provider_details"]
+    llm_status = llm_runtime["status"]
 
     overall = "ok" if db_ok and migration_state.schema_ready else "degraded"
     return {
@@ -79,10 +61,10 @@ async def get_health_status() -> dict[str, Any]:
         "alembic_version_present": migration_state.alembic_version_present if db_ok else False,
         "migration_current_revisions": migration_state.current_revisions if db_ok else [],
         "migration_expected_revisions": migration_state.expected_revisions if db_ok else [],
-        "llm_providers": registry.available_providers,
-        "llm_primary": registry.primary_name,
+        "llm_providers": llm_runtime["available_providers"],
+        "llm_primary": llm_runtime["primary_name"],
         "llm_required": settings.llm_required,
-        "llm_available": bool(registry.available_providers),
+        "llm_available": bool(llm_runtime["available_providers"]),
         "llm_status": llm_status,
         "llm_provider_health": provider_health,
         "llm_provider_details": probe_details,

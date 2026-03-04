@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import asdict
 import logging
 
@@ -12,6 +13,73 @@ from services.agent.marker_parser import MarkerParser
 from services.agent.state import AgentContext, AgentTurnEnvelope, AgentVerificationResult, IntentType, TaskPhase
 
 logger = logging.getLogger(__name__)
+
+
+def _build_content_evidence_groups(content_docs: list[dict]) -> list[dict]:
+    groups: dict[str, dict] = {}
+
+    for doc in content_docs[:5]:
+        if not isinstance(doc, dict):
+            continue
+        facets = [str(item) for item in (doc.get("matched_facets") or []) if item]
+        terms = [str(item) for item in (doc.get("matched_terms") or []) if item]
+        source_file = str(doc.get("source_file") or "").strip()
+        label = facets[0] if facets else (terms[0] if terms else str(doc.get("title") or "Course evidence").strip())
+        normalized_label = label.lower()[:120]
+        key = f"{source_file}|{normalized_label}"
+
+        group = groups.get(key)
+        if group is None:
+            group = {
+                "label": label,
+                "titles": [],
+                "matched_terms": [],
+                "matched_facets": [],
+                "section_count": 0,
+                "summary_candidates": [],
+            }
+            groups[key] = group
+
+        title = str(doc.get("title") or "").strip()
+        if title and title not in group["titles"]:
+            group["titles"].append(title)
+
+        for item in facets:
+            if item not in group["matched_facets"]:
+                group["matched_facets"].append(item)
+
+        for item in terms:
+            if item not in group["matched_terms"]:
+                group["matched_terms"].append(item)
+
+        summary = str(doc.get("evidence_summary") or doc.get("content") or "").strip()
+        if summary:
+            group["summary_candidates"].append(summary)
+
+        group["section_count"] += int(doc.get("section_hit_count") or 1)
+
+    ranked_groups: list[dict] = []
+    for group in groups.values():
+        summary_counts = Counter(group.pop("summary_candidates", []))
+        summary = summary_counts.most_common(1)[0][0] if summary_counts else ""
+        ranked_groups.append({
+            "label": group["label"],
+            "titles": group["titles"][:3],
+            "matched_terms": group["matched_terms"][:6],
+            "matched_facets": group["matched_facets"][:4],
+            "section_count": group["section_count"],
+            "summary": summary[:320] if summary else None,
+        })
+
+    ranked_groups.sort(
+        key=lambda item: (
+            int(item.get("section_count") or 0),
+            len(item.get("matched_facets") or []),
+            len(item.get("matched_terms") or []),
+        ),
+        reverse=True,
+    )
+    return ranked_groups[:3]
 
 
 async def consume_agent_stream(ctx: AgentContext, agent: BaseAgent, db: AsyncSession) -> AgentContext:
@@ -64,6 +132,10 @@ def build_provenance(ctx: AgentContext) -> dict:
                 "title": doc.get("title"),
                 "source_type": doc.get("source_type"),
                 "preview": (doc.get("content") or "")[:140],
+                "evidence_summary": doc.get("evidence_summary"),
+                "matched_terms": list(doc.get("matched_terms") or [])[:6],
+                "matched_facets": list(doc.get("matched_facets") or [])[:4],
+                "section_hit_count": doc.get("section_hit_count"),
             }
             for doc in ctx.content_docs[:3]
             if doc.get("title") or doc.get("content")
@@ -75,6 +147,9 @@ def build_provenance(ctx: AgentContext) -> dict:
         generated=True,
         user_input=bool((ctx.user_message or "").strip()),
         source_labels=["generated"],
+        extra={
+            "content_evidence_groups": _build_content_evidence_groups(ctx.content_docs),
+        },
     )
     payload.update({
         "course_count": len(ctx.content_docs),
@@ -140,6 +215,7 @@ def envelope_payload(ctx: AgentContext) -> dict:
         "tool_calls": envelope.tool_calls,
         "provenance": envelope.provenance,
         "verifier": asdict(envelope.verifier) if envelope.verifier else None,
+        "verifier_diagnostics": ctx.metadata.get("verifier_diagnostics"),
         "task_link": envelope.task_link,
         "reflection": ctx.metadata.get("reflection"),
     }

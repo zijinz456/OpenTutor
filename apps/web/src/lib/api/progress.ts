@@ -229,6 +229,8 @@ interface AgentTaskReviewFollowUp {
   summary?: string | null;
   input_json?: JsonObject | null;
   plan_prompt?: string | null;
+  auto_queued?: boolean;
+  queued_task_id?: string | null;
 }
 
 export interface AgentTaskReview {
@@ -238,6 +240,28 @@ export interface AgentTaskReview {
   next_recommended_action: string | null;
   follow_up: AgentTaskReviewFollowUp;
   goal_update: AgentTaskReviewGoalUpdate | null;
+}
+
+export interface AgentTaskVerifierDiagnostics {
+  request_coverage?: number;
+  evidence_coverage?: number;
+  request_overlap_terms?: string[];
+  evidence_overlap_terms?: string[];
+}
+
+export interface AgentTaskStepResult {
+  step_index?: number;
+  step_type?: string;
+  title?: string;
+  success?: boolean;
+  summary?: string;
+  error?: string | null;
+  verifier?: {
+    status?: string;
+    code?: string;
+    message?: string;
+  } | null;
+  verifier_diagnostics?: AgentTaskVerifierDiagnostics | null;
 }
 
 export interface NextActionResponse {

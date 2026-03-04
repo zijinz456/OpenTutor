@@ -8,10 +8,12 @@ Borrows from:
 Provides safe execution of student code snippets with:
 - Module allowlist (math, collections, itertools, etc.)
 - Dangerous pattern blocklist (os, sys, subprocess, open, eval, exec)
+- AST-level safety validation (defence-in-depth against regex bypass)
 - Execution timeout (5s default)
 - Captured stdout/stderr for explanation
 """
 
+import ast
 import asyncio
 from contextvars import ContextVar
 import json
@@ -60,6 +62,52 @@ def push_sandbox_backend_override(backend: str):
 
 def pop_sandbox_backend_override(token) -> None:
     _sandbox_backend_override.reset(token)
+
+
+class _ASTSafetyVisitor(ast.NodeVisitor):
+    """AST-level safety check — defence-in-depth against regex bypass."""
+
+    BLOCKED_MODULES = {
+        "os", "sys", "subprocess", "shutil", "socket", "http", "urllib",
+        "requests", "pathlib", "importlib", "ctypes", "pickle", "signal",
+        "multiprocessing", "threading", "asyncio", "io", "builtins",
+        "code", "codeop", "compileall", "dis", "inspect", "pdb",
+        "runpy", "traceback", "webbrowser", "xmlrpc", "ftplib", "smtplib",
+    }
+    BLOCKED_CALLS = {"eval", "exec", "compile", "open", "__import__", "breakpoint", "globals", "locals"}
+    BLOCKED_ATTRS = {"__subclasses__", "__bases__", "__mro__", "__builtins__", "__globals__", "__code__"}
+
+    def __init__(self):
+        self.errors: list[str] = []
+
+    def visit_Import(self, node: ast.Import):
+        for alias in node.names:
+            top = alias.name.split(".")[0]
+            if top in self.BLOCKED_MODULES:
+                self.errors.append(f"Blocked import: {alias.name}")
+        self.generic_visit(node)
+
+    def visit_ImportFrom(self, node: ast.ImportFrom):
+        if node.module:
+            top = node.module.split(".")[0]
+            if top in self.BLOCKED_MODULES:
+                self.errors.append(f"Blocked import: {node.module}")
+        self.generic_visit(node)
+
+    def visit_Call(self, node: ast.Call):
+        name = None
+        if isinstance(node.func, ast.Name):
+            name = node.func.id
+        elif isinstance(node.func, ast.Attribute):
+            name = node.func.attr
+        if name in self.BLOCKED_CALLS:
+            self.errors.append(f"Blocked call: {name}()")
+        self.generic_visit(node)
+
+    def visit_Attribute(self, node: ast.Attribute):
+        if node.attr in self.BLOCKED_ATTRS:
+            self.errors.append(f"Blocked attribute access: {node.attr}")
+        self.generic_visit(node)
 
 
 class CodeExecutionAgent(BaseAgent):
@@ -122,7 +170,13 @@ class CodeExecutionAgent(BaseAgent):
         return None
 
     def _validate_code(self, code: str) -> tuple[bool, str]:
-        """Check code safety before execution (HelloAgents CodeRunner pattern)."""
+        """Check code safety before execution.
+
+        Two-layer defence:
+        1. Regex pattern blocklist (fast pre-filter)
+        2. AST visitor (catches obfuscated imports and attribute access)
+        """
+        # Layer 1: Regex pre-filter
         for pattern in self.BLOCKED_PATTERNS:
             if re.search(pattern, code):
                 return False, f"Blocked: pattern '{pattern}' is not allowed for safety"
@@ -141,6 +195,18 @@ class CodeExecutionAgent(BaseAgent):
             has_break = any(re.search(r"\bbreak\b", l) for l in code_lines)
             if not has_break:
                 return False, "Potential infinite loop detected (while True without break)"
+
+        # Layer 2: AST-level safety check (catches regex bypass attempts)
+        try:
+            tree = ast.parse(code)
+        except SyntaxError:
+            # Let the actual execution report syntax errors
+            return True, "OK"
+        visitor = _ASTSafetyVisitor()
+        visitor.visit(tree)
+        if visitor.errors:
+            return False, f"AST safety check failed: {visitor.errors[0]}"
+
         return True, "OK"
 
     def _execute_in_process_sandbox(self, code: str) -> dict:
