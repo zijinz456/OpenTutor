@@ -9,7 +9,7 @@ from datetime import datetime
 
 import sqlalchemy as sa
 from sqlalchemy import ForeignKey, Index
-from sqlalchemy.dialects.postgresql import UUID
+from models.compat import CompatUUID
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -23,16 +23,16 @@ class MasterySnapshot(Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
+        CompatUUID, primary_key=True, default=uuid.uuid4,
     )
     user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False,
+        CompatUUID, ForeignKey("users.id", ondelete="CASCADE"), nullable=False,
     )
     course_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("courses.id", ondelete="CASCADE"), nullable=False,
+        CompatUUID, ForeignKey("courses.id", ondelete="CASCADE"), nullable=False,
     )
     content_node_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), nullable=True,
+        CompatUUID, nullable=True,
     )
     mastery_score: Mapped[float] = mapped_column(sa.Float, nullable=False)
     gap_type: Mapped[str | None] = mapped_column(sa.String(30), nullable=True)

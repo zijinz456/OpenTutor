@@ -20,7 +20,10 @@ from models.progress import LearningProgress
 from models.practice import PracticeResult, PracticeProblem
 from models.content import CourseContentTree
 from services.spaced_repetition.fsrs import FSRSCard, review_card
-from services.learning_science.knowledge_tracer import compute_mastery_from_sequence
+from services.learning_science.knowledge_tracer import (
+    compute_mastery_adaptive,
+    compute_mastery_from_sequence,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -266,7 +269,11 @@ async def _compute_bkt_mastery(
     q_types = [qt for _, qt in rows if qt]
     question_type = max(set(q_types), key=q_types.count) if q_types else None
 
-    return compute_mastery_from_sequence(results_seq, question_type)
+    # Use pyBKT EM-trained params when available, else fall back to heuristic
+    concept = str(content_node_id) if content_node_id else f"course:{course_id}"
+    return compute_mastery_adaptive(
+        results_seq, concept, user_id, course_id, question_type,
+    )
 
 
 async def _infer_gap_type(

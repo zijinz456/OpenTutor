@@ -63,14 +63,6 @@ class BaseAgent(ABC):
         ctx.delegated_agent = self.name
         ctx.transition(TaskPhase.REASONING)
 
-        # Attach unified facade for convenient subsystem access.
-        # Agents can optionally use ctx.metadata["facade"] instead of
-        # importing individual service modules.
-        if "facade" not in ctx.metadata:
-            from services.agent.context_facade import AgentContextFacade
-
-            ctx.metadata["facade"] = AgentContextFacade(ctx, db)
-
         try:
             ctx = await self.execute(ctx, db)
             return ctx

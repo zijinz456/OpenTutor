@@ -1,10 +1,7 @@
 "use client";
 
 import { Suspense, lazy } from "react";
-import { Button } from "@/components/ui/button";
 import { useWorkspaceStore, type SectionId } from "@/store/workspace";
-import { SECTIONS } from "@/lib/constants";
-import { SectionSelector } from "./section-selector";
 import { PdfViewerOverlay } from "./pdf-viewer";
 
 const NotesSection = lazy(() =>
@@ -22,8 +19,6 @@ const PlanSection = lazy(() =>
 
 interface SectionContainerProps {
   courseId: string;
-  visibleSections: SectionId[];
-  chatEnabled: boolean;
   reviewEnabled: boolean;
 }
 
@@ -64,56 +59,16 @@ function ActiveSection({
 
 export function SectionContainer({
   courseId,
-  visibleSections,
-  chatEnabled,
   reviewEnabled,
 }: SectionContainerProps) {
   const activeSection = useWorkspaceStore((s) => s.activeSection);
   const pdfOverlay = useWorkspaceStore((s) => s.pdfOverlay);
-  const setActiveSection = useWorkspaceStore((s) => s.setActiveSection);
 
   return (
     <div
       className="flex-1 flex flex-col overflow-hidden bg-[var(--section-bg)]"
       data-testid="section-container"
     >
-      <div className="px-2 py-1 border-b flex items-center gap-2 shrink-0 bg-[var(--section-header)]">
-        <SectionSelector visibleSections={visibleSections} />
-        <div className="ml-auto flex items-center gap-1">
-          {SECTIONS.filter((s) =>
-            visibleSections.includes(s.id),
-          ).map((s) => (
-            <Button
-              key={s.id}
-              type="button"
-              variant={activeSection === s.id ? "secondary" : "ghost"}
-              size="sm"
-              className="h-7 px-2 text-xs"
-              title={s.label}
-              onClick={() => setActiveSection(s.id)}
-            >
-              {s.label}
-            </Button>
-          ))}
-          {chatEnabled ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-7 px-2 text-xs"
-              title="Chat"
-              onClick={() => {
-                document
-                  .querySelector<HTMLTextAreaElement>("[data-chat-input]")
-                  ?.focus();
-              }}
-            >
-              Chat
-            </Button>
-          ) : null}
-        </div>
-      </div>
-
       {pdfOverlay ? (
         <PdfViewerOverlay courseId={courseId} />
       ) : (

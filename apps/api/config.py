@@ -12,8 +12,8 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
 
     # LLM — primary provider selection
-    llm_provider: str = "openai"  # openai | anthropic | deepseek | ollama | openrouter | gemini | groq | vllm | lmstudio | textgenwebui | custom
-    llm_model: str = "gpt-4o-mini"
+    llm_provider: str = "ollama"  # ollama | openai | anthropic | deepseek | openrouter | gemini | groq | vllm | lmstudio | textgenwebui | custom
+    llm_model: str = "llama3.2:3b"
 
     # Cloud providers
     openai_api_key: str = ""
@@ -67,8 +67,8 @@ class Settings(BaseSettings):
     scrape_fixture_dir: str = ""
 
     # Runtime bootstrap
-    app_auto_create_tables: bool = False
-    app_auto_seed_system: bool = False
+    app_auto_create_tables: bool = True
+    app_auto_seed_system: bool = True
     app_run_scheduler: bool = False
     app_run_activity_engine: bool = False
 
@@ -132,6 +132,11 @@ class Settings(BaseSettings):
     code_sandbox_image: str = "python:3.11-alpine"
     code_sandbox_timeout_seconds: int = 5
     allow_insecure_process_sandbox: bool = False
+
+    # Google Calendar Integration (OAuth2)
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    google_redirect_uri: str = "http://localhost:8000/api/integrations/google-calendar/callback"
 
     @staticmethod
     def _split_csv(value: str) -> list[str]:

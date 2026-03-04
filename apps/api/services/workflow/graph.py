@@ -558,46 +558,7 @@ async def node_execute(state: GoalPursuitState, config: dict) -> dict:
     result = f"Executed: {step.get('title', 'unnamed step')}"
 
     try:
-        if tool == "generate_quiz":
-            task = await submit_task(
-                user_id=state["user_id"],
-                course_id=state.get("course_id"),
-                goal_id=state["goal_id"],
-                task_type="generate_quiz",
-                title=step.get("title", "Quiz"),
-                summary=step.get("description", ""),
-                source="goal_pursuit",
-                input_json={
-                    "course_id": str(state.get("course_id")) if state.get("course_id") else None,
-                    "description": step.get("description", ""),
-                    "topic": step.get("description", ""),
-                    "count": 3,
-                    "title": step.get("title", "Quiz"),
-                },
-                max_attempts=2,
-            )
-            result = f"Queued quiz task: {task.id}"
-
-        elif tool == "create_flashcard":
-            task = await submit_task(
-                user_id=state["user_id"],
-                course_id=state.get("course_id"),
-                goal_id=state["goal_id"],
-                task_type="create_flashcard",
-                title=step.get("title", "Flashcards"),
-                summary=step.get("description", ""),
-                source="goal_pursuit",
-                input_json={
-                    "course_id": str(state.get("course_id")) if state.get("course_id") else None,
-                    "description": step.get("description", ""),
-                    "count": 5,
-                    "title": step.get("title", "Flashcards"),
-                },
-                max_attempts=2,
-            )
-            result = f"Queued flashcard task: {task.id}"
-
-        elif tool == "notify":
+        if tool == "notify":
             from services.notification.dispatcher import dispatch as dispatch_notification
             await dispatch_notification(
                 user_id=state["user_id"],
@@ -609,21 +570,29 @@ async def node_execute(state: GoalPursuitState, config: dict) -> dict:
                 db=db,
             )
             result = f"Sent notification: {step.get('title')}"
-
         else:
-            # review_material / search_content — submit as multi_step
+            # Map tool → task_type; build input_json
+            course_id_str = str(state.get("course_id")) if state.get("course_id") else None
+            desc = step.get("description", "")
+            title = step.get("title", tool.replace("_", " ").title())
+            input_json: dict = {"description": desc}
+            task_type = tool if tool in ("generate_quiz", "create_flashcard") else "multi_step"
+            if tool == "generate_quiz":
+                input_json.update(course_id=course_id_str, topic=desc, count=3, title=title)
+            elif tool == "create_flashcard":
+                input_json.update(course_id=course_id_str, count=5, title=title)
             task = await submit_task(
                 user_id=state["user_id"],
                 course_id=state.get("course_id"),
                 goal_id=state["goal_id"],
-                task_type="multi_step",
-                title=step.get("title", "Study task"),
-                summary=step.get("description", ""),
+                task_type=task_type,
+                title=title,
+                summary=desc,
                 source="goal_pursuit",
-                input_json={"description": step.get("description", "")},
+                input_json=input_json,
                 max_attempts=2,
             )
-            result = f"Queued task: {task.id}"
+            result = f"Queued {task_type} task: {task.id}"
 
     except Exception as e:
         result = f"Failed: {e}"
@@ -695,84 +664,30 @@ def build_goal_pursuit_graph() -> StateGraph:
     return graph.compile(checkpointer=get_checkpointer())
 
 
-# ═══════ Convenience runners ═══════
+# ═══════ Graph registry ═══════
 
-_study_graph = None
-_weekly_graph = None
-_semester_init_graph = None
-_assignment_analysis_graph = None
-_wrong_answer_review_graph = None
-_exam_prep_graph = None
-_goal_pursuit_graph = None
+_GRAPH_BUILDERS = {
+    "study_session": build_study_session_graph,
+    "weekly_prep": build_weekly_prep_graph,
+    "semester_init": build_semester_init_graph,
+    "assignment_analysis": build_assignment_analysis_graph,
+    "wrong_answer_review": build_wrong_answer_review_graph,
+    "exam_prep": build_exam_prep_graph,
+    "goal_pursuit": build_goal_pursuit_graph,
+}
+_graph_cache: dict[str, Any] = {}
+
+
+def _get_graph(name: str):
+    if name not in _graph_cache:
+        _graph_cache[name] = _GRAPH_BUILDERS[name]()
+    return _graph_cache[name]
 
 
 def invalidate_graph_singletons():
-    """Reset all cached graph singletons so they are re-compiled on next use.
-
-    Call this after ``setup_checkpointer()`` so the graphs pick up the
-    now-available checkpointer instead of being stuck with ``None``.
-    """
-    global _study_graph, _weekly_graph, _semester_init_graph
-    global _assignment_analysis_graph, _wrong_answer_review_graph
-    global _exam_prep_graph, _goal_pursuit_graph
-
-    _study_graph = None
-    _weekly_graph = None
-    _semester_init_graph = None
-    _assignment_analysis_graph = None
-    _wrong_answer_review_graph = None
-    _exam_prep_graph = None
-    _goal_pursuit_graph = None
+    """Reset all cached graph singletons so they are re-compiled on next use."""
+    _graph_cache.clear()
     logger.info("Graph singletons invalidated — will re-compile with checkpointer on next use")
-
-
-def get_study_session_graph():
-    global _study_graph
-    if _study_graph is None:
-        _study_graph = build_study_session_graph()
-    return _study_graph
-
-
-def get_weekly_prep_graph():
-    global _weekly_graph
-    if _weekly_graph is None:
-        _weekly_graph = build_weekly_prep_graph()
-    return _weekly_graph
-
-
-def get_semester_init_graph():
-    global _semester_init_graph
-    if _semester_init_graph is None:
-        _semester_init_graph = build_semester_init_graph()
-    return _semester_init_graph
-
-
-def get_assignment_analysis_graph():
-    global _assignment_analysis_graph
-    if _assignment_analysis_graph is None:
-        _assignment_analysis_graph = build_assignment_analysis_graph()
-    return _assignment_analysis_graph
-
-
-def get_wrong_answer_review_graph():
-    global _wrong_answer_review_graph
-    if _wrong_answer_review_graph is None:
-        _wrong_answer_review_graph = build_wrong_answer_review_graph()
-    return _wrong_answer_review_graph
-
-
-def get_exam_prep_graph():
-    global _exam_prep_graph
-    if _exam_prep_graph is None:
-        _exam_prep_graph = build_exam_prep_graph()
-    return _exam_prep_graph
-
-
-def get_goal_pursuit_graph():
-    global _goal_pursuit_graph
-    if _goal_pursuit_graph is None:
-        _goal_pursuit_graph = build_goal_pursuit_graph()
-    return _goal_pursuit_graph
 
 
 async def run_study_session_graph(
@@ -789,7 +704,7 @@ async def run_study_session_graph(
 
 async def run_weekly_prep_graph(db, user_id: uuid.UUID) -> dict:
     """Run WF-2 via LangGraph."""
-    graph = get_weekly_prep_graph()
+    graph = _get_graph("weekly_prep")
     initial_state: WeeklyPrepState = {
         "user_id": user_id,
         "deadlines": [],
@@ -812,7 +727,7 @@ async def run_semester_init_graph(
     course_list: list[dict],
 ) -> dict:
     """Run WF-1 via LangGraph."""
-    graph = get_semester_init_graph()
+    graph = _get_graph("semester_init")
     initial_state: SemesterInitState = {
         "user_id": user_id,
         "semester_name": semester_name,
@@ -836,7 +751,7 @@ async def run_assignment_analysis_graph(
     assignment_id: uuid.UUID,
 ) -> dict:
     """Run WF-3 via LangGraph."""
-    graph = get_assignment_analysis_graph()
+    graph = _get_graph("assignment_analysis")
     initial_state: AssignmentAnalysisState = {
         "user_id": user_id,
         "assignment_id": assignment_id,
@@ -859,7 +774,7 @@ async def run_wrong_answer_review_graph(
     course_id: uuid.UUID | None = None,
 ) -> dict:
     """Run WF-5 via LangGraph."""
-    graph = get_wrong_answer_review_graph()
+    graph = _get_graph("wrong_answer_review")
     initial_state: WrongAnswerReviewState = {
         "user_id": user_id,
         "course_id": course_id,
@@ -884,7 +799,7 @@ async def run_exam_prep_graph(
     days_until_exam: int = 7,
 ) -> dict:
     """Run WF-6 via LangGraph."""
-    graph = get_exam_prep_graph()
+    graph = _get_graph("exam_prep")
     initial_state: ExamPrepState = {
         "user_id": user_id,
         "course_id": course_id,
@@ -921,7 +836,7 @@ async def run_goal_pursuit_graph(
     max_steps: int = 5,
 ) -> dict:
     """Run WF-7 Goal Pursuit (Plan-Execute-Replan) via LangGraph."""
-    graph = get_goal_pursuit_graph()
+    graph = _get_graph("goal_pursuit")
     initial_state: GoalPursuitState = {
         "user_id": user_id,
         "course_id": course_id,

@@ -5,7 +5,7 @@ from typing import Optional
 from datetime import datetime
 
 from sqlalchemy import Index, String, DateTime, ForeignKey, Text, Integer, Boolean, func
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from models.compat import CompatUUID, CompatJSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
@@ -19,36 +19,36 @@ class PracticeProblem(Base):
         Index("ix_practice_problem_course", "course_id"),
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    course_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("courses.id"))
+    id: Mapped[uuid.UUID] = mapped_column(CompatUUID, primary_key=True, default=uuid.uuid4)
+    course_id: Mapped[uuid.UUID] = mapped_column(CompatUUID, ForeignKey("courses.id"))
     content_node_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("course_content_tree.id"), nullable=True
+        CompatUUID, ForeignKey("course_content_tree.id"), nullable=True
     )
 
     # Problem data
     question_type: Mapped[str] = mapped_column(String(20))  # mc, tf, short_answer, fill_blank, matching, select_all, free_response
     question: Mapped[str] = mapped_column(Text)
-    options: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)  # For MC/matching
+    options: Mapped[Optional[dict]] = mapped_column(CompatJSONB, nullable=True)  # For MC/matching
     correct_answer: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     explanation: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     order_index: Mapped[int] = mapped_column(Integer, default=0)
 
     # v3: Knowledge point tagging + source tracking
-    knowledge_points: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True, default=list)
+    knowledge_points: Mapped[Optional[list]] = mapped_column(CompatJSONB, nullable=True, default=list)
     source: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     # Sources: extracted | ai_generated | derived
 
     # v4: VCE-inspired diagnostic fields
     difficulty_layer: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     # 1=basic concept recall, 2=standard application, 3=trap/edge case
-    problem_metadata: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    problem_metadata: Mapped[Optional[dict]] = mapped_column(CompatJSONB, nullable=True)
     # AI-generated structured annotation: {potential_traps, core_concept, bloom_level, ...}
     parent_problem_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("practice_problems.id"), nullable=True
+        CompatUUID, ForeignKey("practice_problems.id"), nullable=True
     )
     is_diagnostic: Mapped[bool] = mapped_column(Boolean, default=False)
     # True for simplified "clean" versions generated for diagnostic pairs
-    source_batch_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
+    source_batch_id: Mapped[Optional[uuid.UUID]] = mapped_column(CompatUUID, nullable=True)
     source_version: Mapped[int] = mapped_column(Integer, default=1)
     is_archived: Mapped[bool] = mapped_column(Boolean, default=False)
 
@@ -64,9 +64,9 @@ class PracticeResult(Base):
 
     __tablename__ = "practice_results"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    problem_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("practice_problems.id"))
-    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
+    id: Mapped[uuid.UUID] = mapped_column(CompatUUID, primary_key=True, default=uuid.uuid4)
+    problem_id: Mapped[uuid.UUID] = mapped_column(CompatUUID, ForeignKey("practice_problems.id"))
+    user_id: Mapped[uuid.UUID] = mapped_column(CompatUUID, ForeignKey("users.id"))
 
     user_answer: Mapped[str] = mapped_column(Text)
     is_correct: Mapped[bool] = mapped_column(Boolean)

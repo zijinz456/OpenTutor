@@ -29,6 +29,10 @@ class NotificationOut(BaseModel):
     category: str
     created_at: str
     read: bool
+    priority: str | None = None
+    action_url: str | None = None
+    action_label: str | None = None
+    metadata_json: dict | None = None
 
 
 @router.get("/", response_model=list[NotificationOut])
@@ -46,7 +50,10 @@ async def list_notifications(
 
     result = await db.execute(query)
     rows = result.scalars().all()
-    fields = ["id", "user_id", "title", "body", "category", "created_at", "read"]
+    fields = [
+        "id", "user_id", "title", "body", "category", "created_at", "read",
+        "priority", "action_url", "action_label", "metadata_json",
+    ]
     return [NotificationOut(**serialize_model(n, fields)) for n in rows]
 
 

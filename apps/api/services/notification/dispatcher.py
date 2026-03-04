@@ -140,6 +140,9 @@ async def dispatch(
     dedup_key: str | None = None,
     batch_key: str | None = None,
     scheduled_for: datetime | None = None,
+    action_url: str | None = None,
+    action_label: str | None = None,
+    metadata_json: dict | None = None,
     db: AsyncSession,
 ) -> Notification | None:
     """Central notification dispatch — dedup, cap, route, deliver, track.
@@ -152,7 +155,20 @@ async def dispatch(
             logger.debug("Notification deduped: %s", dedup_key)
             return None
 
-    # 2. Create notification record
+    # 2. Load user's notification settings
+    ns = await get_or_create_settings(user_id, db)
+
+    deliver_now = True
+    if priority != "urgent":
+        if _is_quiet_hours(ns):
+            logger.info("Quiet hours active for user %s, notification will be saved without delivery", user_id)
+            deliver_now = False
+        elif not await _check_frequency_cap(user_id, ns, db):
+            logger.info("Frequency cap exceeded for user %s, notification will be saved without delivery", user_id)
+            deliver_now = False
+
+    # 3. Create notification record after policy checks so the new row does not
+    # count against the current frequency window.
     notification = Notification(
         user_id=user_id,
         course_id=course_id,
@@ -163,28 +179,20 @@ async def dispatch(
         dedup_key=dedup_key,
         batch_key=batch_key,
         scheduled_for=scheduled_for,
+        action_url=action_url,
+        action_label=action_label,
+        metadata_json=metadata_json,
     )
     db.add(notification)
     await db.flush()
 
-    # 3. Load user's notification settings
-    ns = await get_or_create_settings(user_id, db)
-
-    # 4. Check quiet hours (skip delivery but keep the notification)
-    if priority != "urgent" and _is_quiet_hours(ns):
-        logger.info("Quiet hours active for user %s, notification saved but not delivered", user_id)
+    if not deliver_now:
         await db.commit()
         return notification
 
-    # 5. Check frequency cap
-    if priority != "urgent" and not await _check_frequency_cap(user_id, ns, db):
-        logger.info("Frequency cap exceeded for user %s, notification saved but not delivered", user_id)
-        await db.commit()
-        return notification
-
-    # 6. Deliver through enabled channels
+    # 4. Deliver through enabled channels
     channels_used: list[str] = []
-    enabled_channels = ns.channels_enabled or ["sse"]
+    enabled_channels = ns.channels_enabled if ns.channels_enabled is not None else ["sse"]
 
     for channel_name in enabled_channels:
         channel = _CHANNEL_REGISTRY.get(channel_name)
@@ -220,7 +228,7 @@ async def dispatch(
             channels_used.append(channel_name)
             logger.debug("Notification delivered via %s to user %s", channel_name, user_id)
 
-    # 7. Record which channels were used
+    # 5. Record which channels were used
     notification.sent_via = channels_used if channels_used else None
     await db.commit()
 

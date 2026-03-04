@@ -12,21 +12,23 @@ Docs: https://discord.com/developers/docs/interactions/receiving-and-responding
 
 from __future__ import annotations
 
-import base64
 import logging
 from typing import Any
 
 import httpx
 
 from config import settings
-from services.channels.base import BaseChannelAdapter, IncomingMessage, OutgoingMessage
+from services.channels.base import (
+    BaseChannelAdapter,
+    IncomingMessage,
+    OutgoingMessage,
+    _DEFAULT_TIMEOUT,
+    encode_media_response,
+)
 
 logger = logging.getLogger(__name__)
 
 DISCORD_API_BASE = "https://discord.com/api/v10"
-
-# Reusable client timeout
-_DEFAULT_TIMEOUT = httpx.Timeout(connect=5.0, read=30.0, write=10.0, pool=5.0)
 
 # Discord interaction types
 INTERACTION_PING = 1
@@ -366,19 +368,8 @@ class DiscordAdapter(BaseChannelAdapter):
                 )
                 return None
 
-            content_type = resp.headers.get("content-type", "application/octet-stream")
-            mime_type = content_type.split(";")[0].strip()
-
-            encoded = base64.b64encode(resp.content).decode("utf-8")
-
-            # Extract filename from URL path
-            filename = media_url.rsplit("/", 1)[-1].split("?")[0] if media_url else ""
-
-            return {
-                "data": encoded,
-                "mime_type": mime_type,
-                "filename": filename,
-            }
+            filename = media_url.rsplit("/", 1)[-1].split("?")[0]
+            return encode_media_response(resp, filename=filename)
 
         except httpx.HTTPError as exc:
             logger.error("Discord download_media HTTP error: %s", exc)

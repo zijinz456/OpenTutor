@@ -25,7 +25,7 @@ from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, String, func
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from models.compat import CompatJSONB, CompatUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from database import Base
@@ -37,12 +37,12 @@ class LearningEvent(Base):
     __tablename__ = "learning_events"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+        CompatUUID, primary_key=True, default=uuid.uuid4
     )
 
     # Actor — who performed the action
     user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
+        CompatUUID,
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
     )
@@ -74,12 +74,12 @@ class LearningEvent(Base):
         Integer, nullable=True
     )  # Time spent on this activity
     result_json: Mapped[Optional[dict]] = mapped_column(
-        JSONB, nullable=True
+        CompatJSONB, nullable=True
     )  # Additional result data (e.g., individual answers)
 
     # Context — surrounding information
     course_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True),
+        CompatUUID,
         ForeignKey("courses.id", ondelete="CASCADE"),
         nullable=True,
     )
@@ -90,7 +90,7 @@ class LearningEvent(Base):
         String(64), nullable=True
     )  # Chat session context
     context_json: Mapped[Optional[dict]] = mapped_column(
-        JSONB, nullable=True
+        CompatJSONB, nullable=True
     )  # Additional context (scene, topic, parent_event_id)
 
     # Timestamp

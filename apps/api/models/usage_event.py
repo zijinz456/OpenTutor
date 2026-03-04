@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String, Text
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from models.compat import CompatJSONB, CompatUUID
 
 from database import Base
 
@@ -17,9 +17,9 @@ from database import Base
 class UsageEvent(Base):
     __tablename__ = "usage_events"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
-    course_id = Column(UUID(as_uuid=True), ForeignKey("courses.id"), nullable=True)
+    id = Column(CompatUUID, primary_key=True, default=uuid.uuid4)
+    user_id = Column(CompatUUID, ForeignKey("users.id"), nullable=False, index=True)
+    course_id = Column(CompatUUID, ForeignKey("courses.id"), nullable=True)
 
     # Agent context
     agent_name = Column(String(64), nullable=True)   # "teaching", "exercise", etc.
@@ -34,7 +34,7 @@ class UsageEvent(Base):
     tool_calls = Column(Integer, nullable=False, default=0)
 
     # Metadata (intent type, swarm info, etc.)
-    metadata_json = Column(JSONB, nullable=True)
+    metadata_json = Column(CompatJSONB, nullable=True)
 
     created_at = Column(
         DateTime(timezone=True),

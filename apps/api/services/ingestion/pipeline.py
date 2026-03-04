@@ -164,6 +164,7 @@ async def extract_content(
     file_path: str | None,
     url: str | None,
     mime_type: str,
+    session_name: str | None = None,
 ) -> str:
     """Step 2: Extract text content via unified document_loader.
 
@@ -172,7 +173,9 @@ async def extract_content(
     from services.ingestion.document_loader import extract_content as unified_extract
 
     try:
-        _title, content = await unified_extract(file_path=file_path, url=url)
+        _title, content = await unified_extract(
+            file_path=file_path, url=url, session_name=session_name,
+        )
         return content
     except Exception as e:
         logger.warning(f"Content extraction failed: {e}")
@@ -233,6 +236,10 @@ async def classify_document(content: str, filename: str) -> tuple[str, str]:
     category = classify_by_filename(filename)
     if category:
         return category, "filename_regex"
+
+    normalized_name = (filename or "").lower()
+    if normalized_name.endswith((".md", ".txt", ".rst", ".html", ".htm")):
+        return "notes", "text_fallback"
 
     if not content or len(content) < 50:
         return "other", "llm_classification"
@@ -305,12 +312,15 @@ async def run_ingestion_pipeline(
     course_id: uuid.UUID | None = None,
     file_bytes: bytes | None = None,
     pre_fetched_html: str | None = None,
+    session_name: str | None = None,
 ) -> IngestionJob:
     """Run the full 7-step ingestion pipeline.
 
     Args:
         pre_fetched_html: When provided (e.g. from authenticated scraping),
             Step 2 uses this content directly instead of re-fetching the URL.
+        session_name: Optional Playwright session name for authenticated
+            Canvas API access during extraction.
 
     Returns the IngestionJob with results.
     """
@@ -365,16 +375,39 @@ async def run_ingestion_pipeline(
         # Step 2: Content extraction
         _set_job_phase(job, status="extracting", progress_percent=20)
         await db.commit()
-        if pre_fetched_html:
+
+        # For Canvas URLs with auth, prefer deep Canvas REST API extraction
+        extracted = ""
+        canvas_file_urls: list[dict] = []
+        if url and session_name:
+            from services.scraper.canvas_detector import detect_canvas_url as _detect
+            _cinfo = _detect(url)
+            if _cinfo.is_canvas:
+                from services.ingestion.document_loader import _try_canvas_api_deep
+                deep_result = await _try_canvas_api_deep(url, session_name=session_name)
+                if deep_result:
+                    extracted = deep_result.content
+                    canvas_file_urls = deep_result.file_urls
+                    logger.info(
+                        "Canvas deep extraction: %d chars, %d pages, %d modules, %d files discovered",
+                        len(extracted), deep_result.pages_fetched,
+                        deep_result.modules_found, len(canvas_file_urls),
+                    )
+
+        if not extracted and pre_fetched_html:
             # Authenticated scraping: content already fetched, parse HTML to text
-            from services.ingestion.document_loader import clean_soup, get_text_from_soup
+            # Use Canvas-aware cleaning that preserves content containers
+            from services.ingestion.document_loader import clean_soup_canvas_aware, get_text_from_soup
             from bs4 import BeautifulSoup
 
             soup = BeautifulSoup(pre_fetched_html, "lxml")
-            soup = clean_soup(soup)
+            soup = clean_soup_canvas_aware(soup)
             extracted = get_text_from_soup(soup)
-        else:
-            extracted = await extract_content(file_path, url, job.mime_type or "")
+
+        if not extracted:
+            extracted = await extract_content(
+                file_path, url, job.mime_type or "", session_name=session_name,
+            )
         job.extracted_markdown = extracted
 
         if not extracted:
@@ -442,7 +475,77 @@ async def run_ingestion_pipeline(
         await db.commit()
 
     await db.flush()
+    # Attach discovered Canvas file URLs for the caller to process
+    job._canvas_file_urls = canvas_file_urls if canvas_file_urls else []
     return job
+
+
+async def ingest_canvas_files(
+    db_factory,
+    user_id: uuid.UUID,
+    course_id: uuid.UUID,
+    file_urls: list[dict],
+    session_name: str,
+    canvas_domain: str,
+) -> int:
+    """Download and ingest Canvas files (PDFs, docs) discovered during deep extraction.
+
+    Runs as a background task after the main course scrape completes.
+    Each file is downloaded, then run through the ingestion pipeline.
+
+    Returns number of files successfully ingested.
+    """
+    from services.ingestion.document_loader import download_canvas_file
+    from config import settings
+
+    ingested = 0
+    save_dir = getattr(settings, "upload_dir", "uploads")
+
+    for file_info in file_urls:
+        try:
+            # Download the file
+            saved_path = await download_canvas_file(
+                file_info,
+                session_name=session_name,
+                target_domain=canvas_domain,
+                save_dir=save_dir,
+            )
+            if not saved_path:
+                logger.debug("Skipped Canvas file (download failed): %s", file_info.get("filename"))
+                continue
+
+            # Read file bytes for dedup
+            from pathlib import Path as _Path
+            file_bytes = _Path(saved_path).read_bytes()
+            if len(file_bytes) < 100:
+                logger.debug("Skipped Canvas file (too small): %s", file_info.get("filename"))
+                continue
+
+            filename = file_info.get("filename", "file.pdf")
+
+            # Run through ingestion pipeline
+            async with db_factory() as file_db:
+                job = await run_ingestion_pipeline(
+                    db=file_db,
+                    user_id=user_id,
+                    file_path=saved_path,
+                    filename=filename,
+                    course_id=course_id,
+                    file_bytes=file_bytes,
+                )
+                await file_db.commit()
+
+                if job.status != "failed" and (job.nodes_created or 0) > 0:
+                    ingested += 1
+                    logger.info("Ingested Canvas file: %s (%d nodes)", filename, job.nodes_created or 0)
+                else:
+                    logger.debug("Canvas file ingestion produced no nodes: %s", filename)
+
+        except Exception as e:
+            logger.debug("Failed to ingest Canvas file %s: %s", file_info.get("filename"), e)
+
+    logger.info("Canvas file ingestion complete: %d/%d files ingested", ingested, len(file_urls))
+    return ingested
 
 
 async def _dispatch_content(db: AsyncSession, job: IngestionJob) -> dict:

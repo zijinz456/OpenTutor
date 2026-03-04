@@ -342,14 +342,15 @@ async def generate_podcast(
 
     Returns MP3 audio as a streaming response.
     """
-    from services.audio.podcast import generate_study_podcast
+    from services.audio.podcast_assets import generate_and_store_podcast
 
     await get_course_or_404(db, course_id, user_id=user.id)
 
-    audio_bytes, dialogue = await generate_study_podcast(
-        course_id=str(course_id),
-        topic=body.topic,
+    audio_bytes, dialogue, asset_id = await generate_and_store_podcast(
         db=db,
+        user_id=user.id,
+        course_id=course_id,
+        topic=body.topic,
         style=body.style,
     )
 
@@ -359,6 +360,7 @@ async def generate_podcast(
         headers={
             "Content-Disposition": f'inline; filename="podcast-{body.topic[:30]}.mp3"',
             "X-Podcast-Lines": str(len(dialogue)),
+            "X-Podcast-Asset-Id": str(asset_id) if asset_id else "",
         },
     )
 

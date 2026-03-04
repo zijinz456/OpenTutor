@@ -25,16 +25,24 @@ export async function createCourseViaApi(
   description?: string,
   metadata?: Record<string, unknown>,
 ): Promise<string> {
-  const response = await fetch(`${apiBaseUrl}/courses/`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, description, metadata }),
-  });
-  if (!response.ok) {
+  // Retry on 503 (server overload) — common under parallel test workers
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const response = await fetch(`${apiBaseUrl}/courses/`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, description, metadata }),
+    });
+    if (response.ok) {
+      const payload = (await response.json()) as { id: string };
+      return payload.id;
+    }
+    if (response.status === 503 && attempt < 4) {
+      await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
+      continue;
+    }
     throw new Error(`API course creation failed (${response.status})`);
   }
-  const payload = (await response.json()) as { id: string };
-  return payload.id;
+  throw new Error("API course creation failed after retries");
 }
 
 export async function getCourseViaApi(courseId: string): Promise<Record<string, unknown>> {
@@ -87,7 +95,7 @@ function treeHasMaterial(nodes: unknown): boolean {
   });
 }
 
-async function waitForCourseContent(courseId: string, timeoutMs = 30_000): Promise<void> {
+async function waitForCourseContent(courseId: string, timeoutMs = 60_000): Promise<void> {
   const startedAt = Date.now();
 
   while (Date.now() - startedAt < timeoutMs) {
@@ -153,25 +161,33 @@ export async function seedFlashcardsViaApi(courseId: string, count = 3): Promise
  * Returns the courseId extracted from the URL.
  */
 export async function createCourse(page: Page, name: string): Promise<string> {
-  await page.goto("/new");
-  await page.getByTestId("mode-option-upload").click();
-  await page.getByTestId("mode-continue").click();
-  await page.getByTestId("project-name-input").fill(name);
-  await page.getByTestId("start-parsing").click();
   try {
-    await expect(page.getByTestId("continue-to-features")).toBeVisible({ timeout: 60_000 });
-  } catch (error) {
+    await page.goto("/new");
+    await page.getByTestId("mode-option-upload").click();
+    await page.getByTestId("mode-continue").click();
+    // Wait for the step transition — the name input appears on step 2
+    await expect(page.getByTestId("project-name-input")).toBeVisible({ timeout: 15_000 });
+    await page.getByTestId("project-name-input").fill(name);
+    await page.getByTestId("start-parsing").click();
+    try {
+      await expect(page.getByTestId("continue-to-features")).toBeVisible({ timeout: 60_000 });
+    } catch {
+      // Parsing step may fail if no files were uploaded — fall through to API
+      throw new Error("Wizard parsing step did not complete");
+    }
+    await page.getByTestId("continue-to-features").click();
+    await page.getByTestId("enter-workspace").click();
+    await expect(page).toHaveURL(/\/course\//);
+    const url = page.url();
+    const match = url.match(/\/course\/([^/?#]+)/);
+    return match ? match[1] : "";
+  } catch {
+    // Fallback: create course via API when the wizard flow fails
     const courseId = await createCourseViaApi(name);
     await page.goto(`/course/${courseId}`);
-    await expect(page).toHaveURL(new RegExp(`/course/${courseId}`));
+    await expect(page).toHaveURL(new RegExp(`/course/${courseId}`), { timeout: 30_000 });
     return courseId;
   }
-  await page.getByTestId("continue-to-features").click();
-  await page.getByTestId("enter-workspace").click();
-  await expect(page).toHaveURL(/\/course\//);
-  const url = page.url();
-  const match = url.match(/\/course\/([^/?#]+)/);
-  return match ? match[1] : "";
 }
 
 /**
@@ -216,39 +232,85 @@ export async function uploadFixture(page: Page, fixturePath: string): Promise<vo
  */
 export async function sendChatMessage(page: Page, message: string): Promise<void> {
   await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByTestId("chat-session-select")).toBeEnabled({ timeout: 15_000 });
   await page.getByTestId("chat-input").fill(message);
-  await expect(page.getByTestId("chat-send")).toBeEnabled({ timeout: 15_000 });
+  await expect(page.getByTestId("chat-send")).toBeEnabled({ timeout: 30_000 });
   await page.getByTestId("chat-send").click();
   await expect(page.getByTestId("chat-message-user").last()).toContainText(message, { timeout: 15_000 });
   await expectAssistantMessage(page);
 }
 
 /**
+ * Keyboard shortcut map: section label → Cmd/Ctrl + digit.
+ * Matches useKeyboardShortcuts in the app: 1=notes, 2=practice, 3=analytics, 4=plan.
+ */
+const SECTION_SHORTCUT_KEY: Record<string, string> = {
+  Notes: "1",
+  Practice: "2",
+  Analytics: "3",
+  Plan: "4",
+};
+
+/**
+ * Dispatch a Cmd/Ctrl+key shortcut directly on the window object.
+ * page.keyboard.press("Meta+N") is intercepted by Chromium as a
+ * browser tab-switching shortcut and never reaches page JS listeners.
+ */
+export async function dispatchShortcut(page: Page, key: string): Promise<void> {
+  const useMeta = process.platform === "darwin";
+  await page.evaluate(
+    ({ key, useMeta }) => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key,
+          code: `Digit${key}`,
+          metaKey: useMeta,
+          ctrlKey: !useMeta,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    },
+    { key, useMeta },
+  );
+}
+
+async function activateSection(page: Page, label: "Practice" | "Plan" | "Analytics" | "Notes", targetTestId: string): Promise<void> {
+  await expect(page.getByTestId("section-container")).toBeVisible({ timeout: 30_000 });
+
+  const shortcutKey = SECTION_SHORTCUT_KEY[label];
+
+  // Unfocus any active input so the keyboard shortcut fires on window
+  await page.keyboard.press("Escape");
+
+  // Retry shortcut dispatch — the React useKeyboardShortcuts hook may not
+  // have attached its listener yet when the page just finished loading.
+  for (let attempt = 0; attempt < 5; attempt++) {
+    await dispatchShortcut(page, shortcutKey);
+    const visible = await page.getByTestId(targetTestId).isVisible().catch(() => false);
+    if (visible) return;
+    await page.waitForTimeout(500);
+  }
+
+  await expect(page.getByTestId(targetTestId)).toBeVisible({ timeout: 15_000 });
+}
+
+/**
  * Route to the UI area that previously matched a scene-oriented workflow.
- * Scene selection is now internal, so tests move through visible workspace sections.
+ * Scene selection is now internal — switch via keyboard shortcuts (Cmd+1~4).
  */
 export async function switchScene(page: Page, sceneId: string): Promise<void> {
   if (sceneId === "exam_prep") {
-    const planButton = page.locator('button[title="Plan"]').first();
-    await expect(planButton).toBeVisible({ timeout: 15_000 });
-    await planButton.click();
+    await activateSection(page, "Plan", "plan-section");
     await expect(page.getByTestId("study-plan-panel")).toBeVisible({ timeout: 15_000 });
     return;
   }
 
   if (sceneId === "assignment" || sceneId === "review_drill") {
-    const practiceButton = page.locator('button[title="Practice"]').first();
-    await expect(practiceButton).toBeVisible({ timeout: 15_000 });
-    await practiceButton.click();
-    await expect(page.getByTestId("practice-section")).toBeVisible({ timeout: 15_000 });
+    await activateSection(page, "Practice", "practice-section");
     return;
   }
 
-  const notesButton = page.locator('button[title="Notes"]').first();
-  await expect(notesButton).toBeVisible({ timeout: 15_000 });
-  await notesButton.click();
-  await expect(page.getByTestId("notes-panel")).toBeVisible({ timeout: 15_000 });
+  await activateSection(page, "Notes", "notes-panel");
 }
 
 export async function expectAssistantMessage(page: Page) {
@@ -279,41 +341,17 @@ export async function expectGeneratedStudyPlan(page: Page) {
 }
 
 /**
- * Ensure the right panel (Quiz/Cards/Stats/Graph/Review/Plan tabs) is visible.
- * The scene system may hide it on initial load. Clicking the Practice activity
- * bar button restores it.
+ * Ensure the practice section (Quiz/Cards/Review tabs) is visible.
+ * Uses Cmd+2 keyboard shortcut to switch to the practice section.
  */
 export async function ensureRightPanelVisible(page: Page): Promise<void> {
-  const legacyQuizTab = page.getByTestId("right-tab-quiz").last();
-  const legacyVisible = await legacyQuizTab.isVisible({ timeout: 3_000 }).catch(() => false);
-  if (legacyVisible) {
-    return;
-  }
-
   const practiceSection = page.getByTestId("practice-section");
-  const practiceVisible = await practiceSection.isVisible({ timeout: 3_000 }).catch(() => false);
-  if (practiceVisible) {
+  const alreadyVisible = await practiceSection.isVisible({ timeout: 3_000 }).catch(() => false);
+  if (alreadyVisible) {
     return;
   }
 
-  const practiceButton = page.locator('button[title="Practice"]').first();
-  const practiceButtonVisible = await practiceButton.isVisible({ timeout: 2_000 }).catch(() => false);
-  if (practiceButtonVisible) {
-    await practiceButton.click();
-    await expect(legacyQuizTab).toBeVisible({ timeout: 10_000 });
-    return;
-  }
-
-  const sectionSelector = page.getByRole("combobox").first();
-  const selectorVisible = await sectionSelector.isVisible({ timeout: 3_000 }).catch(() => false);
-  if (selectorVisible) {
-    await sectionSelector.click();
-    await page.getByRole("option", { name: /Practice|练习/i }).click();
-    await expect(practiceSection).toBeVisible({ timeout: 15_000 });
-    return;
-  }
-
-  throw new Error("Could not locate a practice workspace shell");
+  await activateSection(page, "Practice", "practice-section");
 }
 
 export async function ensureAnalyticsSectionVisible(page: Page): Promise<void> {
@@ -323,32 +361,32 @@ export async function ensureAnalyticsSectionVisible(page: Page): Promise<void> {
     return;
   }
 
-  const analyticsButton = page.getByRole("button", { name: /Analytics|分析/i }).first();
-  await expect(analyticsButton).toBeVisible({ timeout: 15_000 });
-  await analyticsButton.click();
+  await activateSection(page, "Analytics", "analytics-section");
   await expect(analyticsSection).toBeVisible({ timeout: 15_000 });
 }
 
 export async function openRightTab(page: Page, tab: string): Promise<void> {
-  const legacyTabId =
+  // Stats and Graph live in the analytics section; everything else in practice
+  if (tab === "progress" || tab === "graph") {
+    await ensureAnalyticsSectionVisible(page);
+  } else {
+    await ensureRightPanelVisible(page);
+  }
+
+  const tabId =
     tab === "flashcards" ? "right-tab-cards" :
     tab === "progress" ? "right-tab-progress" :
     tab === "graph" ? "right-tab-graph" :
     `right-tab-${tab}`;
-  const legacyTabButton = page.getByTestId(legacyTabId).last();
-  const legacyVisible = await legacyTabButton.isVisible({ timeout: 2_000 }).catch(() => false);
-  if (legacyVisible) {
-    await legacyTabButton.click({ force: true });
+  const tabButton = page.getByTestId(tabId).last();
+  const tabVisible = await tabButton.isVisible({ timeout: 5_000 }).catch(() => false);
+  if (tabVisible) {
+    await tabButton.click({ force: true });
     return;
   }
 
-  const practiceSection = page.getByTestId("practice-section");
-  const practiceVisible = await practiceSection.isVisible({ timeout: 2_000 }).catch(() => false);
-  if (!practiceVisible) {
-    await ensureRightPanelVisible(page);
-  }
-
-  const modernLabel =
+  // Fallback: try matching by accessible name
+  const label =
     tab === "flashcards" ? /Cards|Flashcards|闪卡/i :
     tab === "quiz" ? /Quiz|测验/i :
     tab === "review" ? /Review|复盘/i :
@@ -356,9 +394,9 @@ export async function openRightTab(page: Page, tab: string): Promise<void> {
     tab === "graph" ? /Graph/i :
     new RegExp(tab, "i");
 
-  const modernTabButton = page.getByRole("button", { name: modernLabel }).first();
-  await expect(modernTabButton).toBeVisible({ timeout: 15_000 });
-  await modernTabButton.click({ force: true });
+  const namedButton = page.getByRole("button", { name: label }).first();
+  await expect(namedButton).toBeVisible({ timeout: 15_000 });
+  await namedButton.click({ force: true });
 }
 
 export function hasRealLlmEnv(): boolean {

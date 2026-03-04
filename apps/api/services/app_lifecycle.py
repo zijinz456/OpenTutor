@@ -6,6 +6,8 @@ import logging
 import os
 from contextlib import asynccontextmanager
 
+import httpx
+
 from config import settings
 from database import Base, engine
 
@@ -28,12 +30,16 @@ async def _maybe_seed_system_data() -> None:
     from database import async_session
     from services.scene.seed import seed_preset_scenes
     from services.templates.system import seed_builtin_templates
+    from services.templates.demo_course import seed_demo_course
 
     async with async_session() as db:
         await seed_builtin_templates(db)
         await seed_preset_scenes(db)
+        created = await seed_demo_course(db)
         await db.commit()
     logger.info("Seeded built-in templates and preset scenes")
+    if created:
+        logger.info("Created demo course for first-time experience")
 
 
 def _maybe_start_scheduler() -> None:
@@ -105,6 +111,37 @@ async def _maybe_disconnect_mcp_servers() -> None:
         logger.debug("MCP disconnect: %s", exc)
 
 
+async def _detect_ollama() -> None:
+    """Detect local Ollama on startup and log helpful guidance."""
+    if settings.llm_provider.lower() != "ollama":
+        return
+    try:
+        async with httpx.AsyncClient(timeout=3) as client:
+            resp = await client.get(f"{settings.ollama_base_url}/api/tags")
+            if resp.status_code == 200:
+                models = resp.json().get("models", [])
+                if models:
+                    names = [m.get("name", "?") for m in models[:5]]
+                    logger.info(
+                        "Ollama detected with %d model(s): %s",
+                        len(models), ", ".join(names),
+                    )
+                else:
+                    logger.warning(
+                        "Ollama is running but has no models. "
+                        "Pull one with:  ollama pull llama3.2:3b"
+                    )
+            else:
+                logger.warning("Ollama responded with status %d", resp.status_code)
+    except Exception:
+        logger.warning(
+            "Ollama not detected at %s. "
+            "Install from https://ollama.com or set LLM_PROVIDER / API keys "
+            "for a cloud provider.",
+            settings.ollama_base_url,
+        )
+
+
 def _start_health_monitor() -> None:
     """Start background LLM health probe loop (OpenClaw pattern)."""
     from services.llm.router import get_registry
@@ -174,6 +211,7 @@ async def _stop_plugin_system() -> None:
 async def run_startup_hooks() -> None:
     await _maybe_create_tables()
     await _maybe_seed_system_data()
+    await _detect_ollama()
     await _maybe_setup_checkpointer()
     await _maybe_connect_mcp_servers()
     await _start_plugin_system()

@@ -712,49 +712,6 @@ class ProviderRegistry:
 _registry: ProviderRegistry | None = None
 
 
-def _default_model_for_provider(provider_name: str, user_model: str) -> str:
-    """Return the appropriate model name for a provider.
-
-    The user's LLM_MODEL is assumed to be for their primary provider.
-    For non-primary providers, use a sensible default if the user model
-    doesn't match that provider's naming convention.
-    """
-    provider_defaults = {
-        "openai": "gpt-4o-mini",
-        "anthropic": "claude-sonnet-4-20250514",
-        "deepseek": "deepseek-chat",
-        "ollama": "llama3.1",
-        "openrouter": "openai/gpt-4o-mini",
-        "gemini": "gemini-2.0-flash",
-        "groq": "llama-3.3-70b-versatile",
-        "vllm": "default",
-        "lmstudio": "default",
-        "textgenwebui": "default",
-        "custom": "default",
-    }
-    # Heuristic: if the model name looks like it belongs to this provider, use it
-    provider_prefixes = {
-        "openai": ("gpt-", "o1-", "o3-", "o4-"),
-        "anthropic": ("claude-",),
-        "deepseek": ("deepseek-",),
-        "ollama": (),  # Ollama models have no consistent prefix
-        "openrouter": (),  # OpenRouter uses provider/model format
-        "gemini": ("gemini-",),
-        "groq": ("llama-", "mixtral-", "gemma-"),
-        "vllm": (),
-        "lmstudio": (),
-        "textgenwebui": (),
-        "custom": (),
-    }
-    prefixes = provider_prefixes.get(provider_name, ())
-    if not prefixes:
-        # No prefix heuristic (e.g., Ollama) — use provider default
-        return provider_defaults.get(provider_name, user_model)
-    if not any(user_model.lower().startswith(p) for p in prefixes):
-        return provider_defaults.get(provider_name, user_model)
-    return user_model
-
-
 def _register_variant(registry: ProviderRegistry, provider: str, variant_model: str, hint: str):
     """Create a variant client using the same provider but a different model."""
     primary_client = registry._providers.get(provider)
@@ -773,94 +730,78 @@ def _register_variant(registry: ProviderRegistry, provider: str, variant_model: 
         registry.register_variant(hint, variant)
 
 
+# ── Declarative provider definitions ─────────────────────────
+# Each entry: (name, settings_key_attr, base_url, default_model, model_prefixes)
+_OPENAI_COMPAT_PROVIDERS = [
+    ("openai",     "openai_api_key",     None,                                                           "gpt-4o-mini",              ("gpt-", "o1-", "o3-", "o4-")),
+    ("deepseek",   "deepseek_api_key",   "https://api.deepseek.com/v1",                                  "deepseek-chat",            ("deepseek-",)),
+    ("openrouter", "openrouter_api_key", "https://openrouter.ai/api/v1",                                 "openai/gpt-4o-mini",       ()),
+    ("gemini",     "gemini_api_key",     "https://generativelanguage.googleapis.com/v1beta/openai/",     "gemini-2.0-flash",         ("gemini-",)),
+    ("groq",       "groq_api_key",       "https://api.groq.com/openai/v1",                               "llama-3.3-70b-versatile",  ("llama-", "mixtral-", "gemma-")),
+]
+
+_LOCAL_PROVIDERS = [
+    # (name, dummy_api_key, base_url_attr)
+    ("vllm",          "none",       "vllm_base_url"),
+    ("lmstudio",      "lm-studio",  "lmstudio_base_url"),
+    ("textgenwebui",  "none",       "textgenwebui_base_url"),
+]
+
+
+def _resolve_model(user_model: str, default_model: str, prefixes: tuple[str, ...]) -> str:
+    """Pick provider-appropriate model: use user_model if it matches prefixes, else default."""
+    if not prefixes:
+        return default_model
+    if any(user_model.lower().startswith(p) for p in prefixes):
+        return user_model
+    return default_model
+
+
 def _build_registry() -> ProviderRegistry:
     """Build the provider registry from env vars."""
     registry = ProviderRegistry()
-
     provider = settings.llm_provider.lower()
     model = settings.llm_model
 
-    # Register all available providers with appropriate model names
-    if settings.openai_api_key:
-        openai_model = _default_model_for_provider("openai", model) if provider != "openai" else model
-        client = OpenAIClient(settings.openai_api_key, openai_model)
-        registry.register("openai", client, primary=(provider == "openai"))
+    # --- OpenAI-compatible cloud providers ---
+    for name, key_attr, base_url, default_model, prefixes in _OPENAI_COMPAT_PROVIDERS:
+        api_key = getattr(settings, key_attr, None)
+        if not api_key:
+            continue
+        pmodel = model if provider == name else _resolve_model(model, default_model, prefixes)
+        client = OpenAIClient(api_key, pmodel, base_url=base_url, name=name)
+        registry.register(name, client, primary=(provider == name))
 
+    # --- Anthropic (separate client class) ---
     if settings.anthropic_api_key:
-        anthropic_model = _default_model_for_provider("anthropic", model) if provider != "anthropic" else model
-        client = AnthropicClient(settings.anthropic_api_key, anthropic_model)
+        amodel = model if provider == "anthropic" else (
+            model if model.lower().startswith("claude-") else "claude-sonnet-4-20250514"
+        )
+        client = AnthropicClient(settings.anthropic_api_key, amodel)
         registry.register("anthropic", client, primary=(provider == "anthropic"))
 
-    if settings.deepseek_api_key:
-        deepseek_model = _default_model_for_provider("deepseek", model) if provider != "deepseek" else model
-        client = OpenAIClient(
-            settings.deepseek_api_key,
-            deepseek_model,
-            base_url="https://api.deepseek.com/v1",
-            name="deepseek",
-        )
-        registry.register("deepseek", client, primary=(provider == "deepseek"))
-
-    # --- New cloud providers (OpenAI-compatible) ---
-    if settings.openrouter_api_key:
-        openrouter_model = _default_model_for_provider("openrouter", model) if provider != "openrouter" else model
-        client = OpenAIClient(
-            settings.openrouter_api_key, openrouter_model,
-            base_url="https://openrouter.ai/api/v1", name="openrouter",
-        )
-        registry.register("openrouter", client, primary=(provider == "openrouter"))
-
-    if settings.gemini_api_key:
-        gemini_model = _default_model_for_provider("gemini", model) if provider != "gemini" else model
-        client = OpenAIClient(
-            settings.gemini_api_key, gemini_model,
-            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
-            name="gemini",
-        )
-        registry.register("gemini", client, primary=(provider == "gemini"))
-
-    if settings.groq_api_key:
-        groq_model = _default_model_for_provider("groq", model) if provider != "groq" else model
-        client = OpenAIClient(
-            settings.groq_api_key, groq_model,
-            base_url="https://api.groq.com/openai/v1", name="groq",
-        )
-        registry.register("groq", client, primary=(provider == "groq"))
-
-    # --- Local inference backends (activated when llm_provider matches) ---
+    # --- Ollama (opt-in local provider) ---
     if provider == "ollama":
-        client = OpenAIClient(
-            "ollama", model,
-            base_url=f"{settings.ollama_base_url}/v1", name="ollama",
+        ollama_model = model or "llama3.2:3b"
+        ollama_client = OpenAIClient(
+            "ollama",
+            ollama_model,
+            base_url=f"{settings.ollama_base_url}/v1",
+            name="ollama",
         )
-        registry.register("ollama", client, primary=True)
+        registry.register("ollama", ollama_client, primary=True)
 
-    if provider == "vllm":
-        client = OpenAIClient(
-            "none", model,
-            base_url=settings.vllm_base_url, name="vllm",
-        )
-        registry.register("vllm", client, primary=True)
-
-    if provider == "lmstudio":
-        client = OpenAIClient(
-            "lm-studio", model,
-            base_url=settings.lmstudio_base_url, name="lmstudio",
-        )
-        registry.register("lmstudio", client, primary=True)
-
-    if provider == "textgenwebui":
-        client = OpenAIClient(
-            "none", model,
-            base_url=settings.textgenwebui_base_url, name="textgenwebui",
-        )
-        registry.register("textgenwebui", client, primary=True)
+    # --- Local inference backends (only when selected) ---
+    for name, dummy_key, base_url_attr in _LOCAL_PROVIDERS:
+        if provider == name:
+            client = OpenAIClient(dummy_key, model, base_url=getattr(settings, base_url_attr), name=name)
+            registry.register(name, client, primary=True)
 
     # --- Generic OpenAI-compatible endpoint ---
     if settings.custom_llm_base_url:
-        custom_model = settings.custom_llm_model or model
         client = OpenAIClient(
-            settings.custom_llm_api_key or "none", custom_model,
+            settings.custom_llm_api_key or "none",
+            settings.custom_llm_model or model,
             base_url=settings.custom_llm_base_url, name="custom",
         )
         registry.register("custom", client, primary=(provider == "custom"))
@@ -882,21 +823,16 @@ def _build_registry() -> ProviderRegistry:
             logger.warning("LiteLLM registration failed: %s", e)
 
     # --- Model size variants (agent preference routing) ---
-    if settings.llm_model_large and settings.llm_model_large != model:
-        _register_variant(registry, provider, settings.llm_model_large, "large")
-    if settings.llm_model_small and settings.llm_model_small != model:
-        _register_variant(registry, provider, settings.llm_model_small, "small")
-
-    # --- 3-tier model routing (overrides legacy large/small when set) ---
-    if settings.llm_model_fast and settings.llm_model_fast != model:
-        _register_variant(registry, provider, settings.llm_model_fast, "fast")
-    elif "small" in registry._model_variants and "fast" not in registry._model_variants:
+    for attr, hint in [("llm_model_large", "large"), ("llm_model_small", "small"),
+                       ("llm_model_fast", "fast"), ("llm_model_standard", "standard"),
+                       ("llm_model_frontier", "frontier")]:
+        variant_model = getattr(settings, attr, None)
+        if variant_model and variant_model != model:
+            _register_variant(registry, provider, variant_model, hint)
+    # Alias fallbacks: fast↔small, frontier↔large
+    if "fast" not in registry._model_variants and "small" in registry._model_variants:
         registry.register_variant("fast", registry._model_variants["small"])
-    if settings.llm_model_standard and settings.llm_model_standard != model:
-        _register_variant(registry, provider, settings.llm_model_standard, "standard")
-    if settings.llm_model_frontier and settings.llm_model_frontier != model:
-        _register_variant(registry, provider, settings.llm_model_frontier, "frontier")
-    elif "large" in registry._model_variants and "frontier" not in registry._model_variants:
+    if "frontier" not in registry._model_variants and "large" in registry._model_variants:
         registry.register_variant("frontier", registry._model_variants["large"])
 
     # --- Mock fallback ---
@@ -908,9 +844,9 @@ def _build_registry() -> ProviderRegistry:
             )
         else:
             logger.warning(
-                "No LLM API key configured; using mock fallback provider. "
-                "Set OPENAI_API_KEY / ANTHROPIC_API_KEY / DEEPSEEK_API_KEY / "
-                "OPENROUTER_API_KEY / GEMINI_API_KEY / GROQ_API_KEY for real outputs."
+                "No LLM provider available; using mock fallback. "
+                "Install Ollama (https://ollama.com) for local AI, or set an API key "
+                "(OPENAI_API_KEY / ANTHROPIC_API_KEY / etc.) for cloud providers."
             )
             registry.register("mock", MockLLMClient(), primary=True)
 

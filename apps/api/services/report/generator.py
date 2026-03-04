@@ -50,10 +50,11 @@ async def _gather_report_data(
     user_id: uuid.UUID,
     db: AsyncSession,
     days: int = 1,
+    course_id: Optional[uuid.UUID] = None,
 ) -> dict:
     """Gather learning data for the report period."""
     from models.ingestion import StudySession, WrongAnswer
-    from models.practice import PracticeResult
+    from models.practice import PracticeProblem, PracticeResult
     from models.progress import LearningProgress
     from models.study_goal import StudyGoal
 
@@ -61,48 +62,58 @@ async def _gather_report_data(
     cutoff = now - timedelta(days=days)
 
     # Study sessions in period
+    session_filters = [
+        StudySession.user_id == user_id,
+        StudySession.started_at >= cutoff,
+    ]
+    if course_id:
+        session_filters.append(StudySession.course_id == course_id)
     sessions_result = await db.execute(
         select(func.count(StudySession.id), func.sum(StudySession.duration_minutes))
-        .where(
-            StudySession.user_id == user_id,
-            StudySession.started_at >= cutoff,
-        )
+        .where(*session_filters)
     )
     session_row = sessions_result.one()
     session_count = session_row[0] or 0
     total_minutes = session_row[1] or 0
 
     # Practice results (is_correct is boolean; cast to float for avg)
-    practice_result = await db.execute(
+    practice_filters = [
+        PracticeResult.user_id == user_id,
+        PracticeResult.answered_at >= cutoff,
+    ]
+    practice_query = (
         select(
             func.count(PracticeResult.id),
             func.avg(cast(PracticeResult.is_correct, Float)),
         )
-        .where(
-            PracticeResult.user_id == user_id,
-            PracticeResult.answered_at >= cutoff,
-        )
     )
+    if course_id:
+        practice_query = practice_query.join(PracticeProblem, PracticeProblem.id == PracticeResult.problem_id)
+        practice_filters.append(PracticeProblem.course_id == course_id)
+    practice_result = await db.execute(practice_query.where(*practice_filters))
     practice_row = practice_result.one()
     problems_attempted = practice_row[0] or 0
     avg_score = float(practice_row[1]) if practice_row[1] else 0.0
 
     # Overdue review items
-    overdue_result = await db.execute(
-        select(func.count(LearningProgress.id))
-        .where(
-            LearningProgress.user_id == user_id,
-            LearningProgress.next_review_at.isnot(None),
-            LearningProgress.next_review_at <= now,
-            LearningProgress.mastery_score < 0.9,
-        )
-    )
+    overdue_filters = [
+        LearningProgress.user_id == user_id,
+        LearningProgress.next_review_at.isnot(None),
+        LearningProgress.next_review_at <= now,
+        LearningProgress.mastery_score < 0.9,
+    ]
+    if course_id:
+        overdue_filters.append(LearningProgress.course_id == course_id)
+    overdue_result = await db.execute(select(func.count(LearningProgress.id)).where(*overdue_filters))
     overdue_count = overdue_result.scalar() or 0
 
     # Active goals
+    goal_filters = [StudyGoal.user_id == user_id, StudyGoal.status == "active"]
+    if course_id:
+        goal_filters.append(StudyGoal.course_id == course_id)
     goals_result = await db.execute(
         select(StudyGoal)
-        .where(StudyGoal.user_id == user_id, StudyGoal.status == "active")
+        .where(*goal_filters)
         .order_by(StudyGoal.updated_at.desc())
         .limit(5)
     )
@@ -120,23 +131,26 @@ async def _gather_report_data(
         })
 
     # Unmastered wrong answers
-    wrong_result = await db.execute(
-        select(func.count(WrongAnswer.id))
-        .where(WrongAnswer.user_id == user_id, WrongAnswer.mastered.is_(False))
-    )
+    wrong_filters = [WrongAnswer.user_id == user_id, WrongAnswer.mastered.is_(False)]
+    if course_id:
+        wrong_filters.append(WrongAnswer.course_id == course_id)
+    wrong_result = await db.execute(select(func.count(WrongAnswer.id)).where(*wrong_filters))
     unmastered_count = wrong_result.scalar() or 0
 
     # Mastery improvements in period — join with content tree for titles
     from models.content import CourseContentTree
 
+    mastery_filters = [
+        LearningProgress.user_id == user_id,
+        LearningProgress.updated_at >= cutoff,
+        LearningProgress.mastery_score >= 0.7,
+    ]
+    if course_id:
+        mastery_filters.append(LearningProgress.course_id == course_id)
     mastery_result = await db.execute(
         select(LearningProgress, CourseContentTree.title)
         .outerjoin(CourseContentTree, LearningProgress.content_node_id == CourseContentTree.id)
-        .where(
-            LearningProgress.user_id == user_id,
-            LearningProgress.updated_at >= cutoff,
-            LearningProgress.mastery_score >= 0.7,
-        )
+        .where(*mastery_filters)
         .order_by(LearningProgress.mastery_score.desc())
         .limit(5)
     )
@@ -148,6 +162,7 @@ async def _gather_report_data(
 
     return {
         "period_days": days,
+        "course_id": str(course_id) if course_id else None,
         "session_count": session_count,
         "total_study_minutes": total_minutes,
         "problems_attempted": problems_attempted,
@@ -190,6 +205,10 @@ async def _save_report(
 async def generate_daily_brief(
     user_id: uuid.UUID,
     db: AsyncSession,
+    *,
+    course_id: Optional[uuid.UUID] = None,
+    days: int = 1,
+    raise_on_persist_failure: bool = False,
 ) -> str:
     """Generate a personalised daily learning brief.
 
@@ -198,8 +217,7 @@ async def generate_daily_brief(
     """
     from services.llm.router import get_llm_client
 
-    days = 1
-    data = await _gather_report_data(user_id, db, days=days)
+    data = await _gather_report_data(user_id, db, days=days, course_id=course_id)
 
     try:
         client = get_llm_client(tier="fast")
@@ -220,10 +238,13 @@ async def generate_daily_brief(
             content=report_text,
             period_start=now - timedelta(days=days),
             period_end=now,
+            course_id=course_id,
             data_snapshot=data,
         )
     except Exception as e:
         logger.warning("Failed to persist daily brief: %s", e)
+        if raise_on_persist_failure:
+            raise
 
     return report_text
 
@@ -231,6 +252,10 @@ async def generate_daily_brief(
 async def generate_weekly_report(
     user_id: uuid.UUID,
     db: AsyncSession,
+    *,
+    course_id: Optional[uuid.UUID] = None,
+    days: int = 7,
+    raise_on_persist_failure: bool = False,
 ) -> str:
     """Generate a personalised weekly learning summary.
 
@@ -239,8 +264,7 @@ async def generate_weekly_report(
     """
     from services.llm.router import get_llm_client
 
-    days = 7
-    data = await _gather_report_data(user_id, db, days=days)
+    data = await _gather_report_data(user_id, db, days=days, course_id=course_id)
 
     try:
         client = get_llm_client(tier="standard")
@@ -261,10 +285,13 @@ async def generate_weekly_report(
             content=report_text,
             period_start=now - timedelta(days=days),
             period_end=now,
+            course_id=course_id,
             data_snapshot=data,
         )
     except Exception as e:
         logger.warning("Failed to persist weekly report: %s", e)
+        if raise_on_persist_failure:
+            raise
 
     return report_text
 

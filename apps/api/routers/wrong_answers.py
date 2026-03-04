@@ -3,12 +3,10 @@
 Endpoints for listing wrong answers, retrying, and generating derived questions.
 """
 
-import json
-import re
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,69 +14,14 @@ from database import get_db
 from models.ingestion import WrongAnswer
 from models.practice import PracticeProblem
 from models.user import User
+from schemas.wrong_answer import RetryRequest, RetryResponse, WrongAnswerResponse
 from services.auth.dependency import get_current_user
+from services.diagnosis.derive import derive_diagnostic
 from libs.exceptions import NotFoundError
-from services.practice.annotation import build_practice_problem
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-
-# ── Schemas ──
-
-class WrongAnswerResponse(BaseModel):
-    id: uuid.UUID
-    problem_id: uuid.UUID
-    question: str | None = None
-    question_type: str | None = None
-    user_answer: str
-    correct_answer: str | None
-    explanation: str | None
-    error_category: str | None
-    diagnosis: str | None = None
-    error_detail: dict | None = None
-    knowledge_points: list | None
-    review_count: int
-    mastered: bool
-
-    model_config = {"from_attributes": True}
-
-
-class RetryRequest(BaseModel):
-    user_answer: str
-
-
-class RetryResponse(BaseModel):
-    is_correct: bool
-    correct_answer: str | None
-    explanation: str | None
-
-
-_DERIVE_FALLBACK = {"question": "", "options": None, "correct_answer": None, "explanation": None}
-
-
-def _extract_json_object(text: str) -> dict:
-    """Extract the first balanced JSON object from mixed LLM output.
-
-    Uses brace-depth counting instead of a greedy regex to handle nested objects.
-    """
-    start = text.find("{")
-    if start == -1:
-        return {**_DERIVE_FALLBACK, "question": text}
-    depth = 0
-    for i in range(start, len(text)):
-        if text[i] == "{":
-            depth += 1
-        elif text[i] == "}":
-            depth -= 1
-            if depth == 0:
-                try:
-                    obj = json.loads(text[start : i + 1])
-                    if "question" in obj:
-                        return obj
-                except json.JSONDecodeError:
-                    pass
-                # Keep looking for the next object
-    return {**_DERIVE_FALLBACK, "question": text}
 
 
 # ── Endpoints ──
@@ -172,16 +115,7 @@ async def derive_question(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Generate a diagnostic pair: a simplified "clean" version of the wrong question.
-
-    VCE-inspired contrastive diagnosis: compare student performance on original
-    vs simplified version to determine error root cause (concept gap vs trap
-    vulnerability vs carelessness). The simplified version removes all
-    distractors/traps while preserving the core concept.
-
-    The result includes `simplifications_made` and `core_concept_preserved`
-    fields for auditability (VCE annotation pattern).
-    """
+    """Generate a diagnostic pair: a simplified "clean" version of the wrong question."""
     result = await db.execute(
         select(WrongAnswer, PracticeProblem)
         .join(PracticeProblem, WrongAnswer.problem_id == PracticeProblem.id)
@@ -196,6 +130,7 @@ async def derive_question(
 
     wa, problem = row
 
+    # Check for existing diagnostic pair first
     existing_diag_result = await db.execute(
         select(PracticeProblem)
         .where(
@@ -218,107 +153,7 @@ async def derive_question(
                 "core_concept_preserved": metadata.get("core_concept_preserved", ""),
             }
 
-    # Build metadata context for grounding (VCE pattern)
-    metadata_str = ""
-    if problem.problem_metadata:
-        meta = problem.problem_metadata
-        parts = []
-        if meta.get("core_concept"):
-            parts.append(f"Core concept: {meta['core_concept']}")
-        if meta.get("potential_traps"):
-            parts.append(f"Known traps to remove: {', '.join(meta['potential_traps'])}")
-        if meta.get("bloom_level"):
-            parts.append(f"Bloom's level: {meta['bloom_level']}")
-        if parts:
-            metadata_str = "\nQuestion metadata (use to guide simplification):\n" + "\n".join(parts)
-
-    from services.llm.router import get_llm_client
-
-    client = get_llm_client()
-    prompt = f"""You are a diagnostic question designer. A student got this question wrong.
-Generate a SIMPLIFIED "clean" diagnostic version that:
-1. Tests the EXACT SAME core concept
-2. Removes all distractors, traps, and misleading wording
-3. Uses simpler numbers/context
-4. If multi-step, only keep the key step
-
-Original question: {problem.question}
-Question type: {problem.question_type}
-Correct answer: {wa.correct_answer}
-Student's wrong answer: {wa.user_answer}
-Error category: {wa.error_category or 'unknown'}
-{metadata_str}
-
-Return JSON only:
-{{"question": "...", "options": {{"A": "...", "B": "...", "C": "...", "D": "..."}} or null, "correct_answer": "...", "explanation": "...", "simplifications_made": ["list of specific simplifications"], "core_concept_preserved": "name of the core concept being tested"}}"""
-
-    response, _ = await client.chat(
-        "You design diagnostic questions. Output valid JSON only.",
-        prompt,
-    )
-
-    try:
-        derived = json.loads(response)
-    except json.JSONDecodeError:
-        derived = _extract_json_object(response)
-
-    if not derived.get("question"):
-        derived["question"] = f"Diagnostic check: {problem.question}"
-    if derived.get("options") is None and problem.options:
-        derived["options"] = problem.options
-    if not derived.get("correct_answer"):
-        derived["correct_answer"] = wa.correct_answer or problem.correct_answer
-    if not derived.get("explanation"):
-        derived["explanation"] = (
-            "This simplified follow-up checks whether the core concept is understood "
-            "without the original traps or extra complexity."
-        )
-    if not derived.get("core_concept_preserved"):
-        derived["core_concept_preserved"] = (
-            (problem.problem_metadata or {}).get("core_concept")
-            or problem.question[:80]
-        )
-    if not derived.get("simplifications_made"):
-        derived["simplifications_made"] = ["Fallback diagnostic variant based on the original question."]
-
-    # Save as diagnostic practice problem (linked to original)
-    extra_metadata = {
-        "simplifications_made": derived.get("simplifications_made", []),
-        "core_concept_preserved": derived.get("core_concept_preserved", ""),
-        "original_problem_id": str(problem.id),
-        "wrong_answer_id": str(wa.id),
-    }
-    new_problem = build_practice_problem(
-        course_id=problem.course_id,
-        content_node_id=problem.content_node_id,
-        title=problem.problem_metadata.get("core_concept") if problem.problem_metadata else (problem.question[:80] or "Diagnostic question"),
-        question={
-            "question_type": problem.question_type,
-            "question": derived.get("question", ""),
-            "options": derived.get("options"),
-            "correct_answer": derived.get("correct_answer"),
-            "explanation": derived.get("explanation"),
-            "difficulty_layer": 1,
-            "problem_metadata": {
-                "core_concept": derived.get("core_concept_preserved")
-                or (problem.problem_metadata or {}).get("core_concept")
-                or problem.question[:80],
-                "bloom_level": "understand",
-                "potential_traps": [],
-                "layer_justification": "Simplified diagnostic variant for isolating the core concept.",
-                "skill_focus": "core concept check",
-                "source_section": (problem.problem_metadata or {}).get("source_section", "Diagnostic follow-up"),
-            },
-        },
-        order_index=problem.order_index,
-        knowledge_points=wa.knowledge_points or problem.knowledge_points,
-        source="derived",
-        parent_problem_id=problem.id,
-        is_diagnostic=True,
-        difficulty_layer_default=1,
-        extra_metadata=extra_metadata,
-    )
-    db.add(new_problem)
+    new_problem = await derive_diagnostic(db, wa, problem)
     await db.commit()
     await db.refresh(new_problem)
 
@@ -331,8 +166,8 @@ Return JSON only:
         "correct_answer": new_problem.correct_answer,
         "explanation": new_problem.explanation,
         "is_diagnostic": True,
-        "simplifications_made": derived.get("simplifications_made", []),
-        "core_concept_preserved": derived.get("core_concept_preserved", ""),
+        "simplifications_made": (new_problem.problem_metadata or {}).get("simplifications_made", []),
+        "core_concept_preserved": (new_problem.problem_metadata or {}).get("core_concept_preserved", ""),
     }
 
 
@@ -344,16 +179,12 @@ async def diagnose_from_pair(
 ):
     """Diagnose error type from a completed diagnostic pair.
 
-    Reads the student's results on both original and simplified version,
-    then applies the VCE contrastive diagnosis matrix:
-    - Both wrong → fundamental_gap (concept not understood)
-    - Clean right, original wrong → trap_vulnerability (concept OK, falls for traps)
-    - Clean wrong, original right → carelessness (overthinking simple version)
+    VCE contrastive diagnosis matrix:
+    - Both wrong → fundamental_gap
+    - Clean right, original wrong → trap_vulnerability
+    - Clean wrong, original right → carelessness
     - Both right → mastered
-
-    The diagnosis is stored on WrongAnswer.diagnosis as immutable annotation.
     """
-    # Get the wrong answer and its diagnostic pair
     wa_result = await db.execute(
         select(WrongAnswer).where(
             WrongAnswer.id == wrong_answer_id,
@@ -372,7 +203,6 @@ async def diagnose_from_pair(
             "interpretation": "Existing diagnosis reused.",
         }
 
-    # Find the diagnostic problem (clean version linked to original)
     diag_result = await db.execute(
         select(PracticeProblem).where(
             PracticeProblem.parent_problem_id == wa.problem_id,
@@ -383,13 +213,10 @@ async def diagnose_from_pair(
     if not diag_problem:
         raise NotFoundError("Diagnostic pair")
 
-    # Check if student has attempted both
     from models.practice import PracticeResult
 
-    # Original item may later become correct if the student retries and masters it.
     original_correct = wa.mastered
 
-    # Clean version attempt
     clean_result = await db.execute(
         select(PracticeResult).where(
             PracticeResult.problem_id == diag_problem.id,
@@ -406,7 +233,6 @@ async def diagnose_from_pair(
 
     clean_correct = clean_attempt.is_correct
 
-    # VCE contrastive diagnosis matrix
     if not clean_correct and not original_correct:
         diagnosis = "fundamental_gap"
     elif clean_correct and not original_correct:
@@ -416,7 +242,6 @@ async def diagnose_from_pair(
     else:
         diagnosis = "mastered"
 
-    # Store diagnosis as immutable annotation
     wa.diagnosis = diagnosis
     wa.error_detail = {
         **(wa.error_detail or {}),
@@ -447,7 +272,6 @@ async def wrong_answer_stats(
     db: AsyncSession = Depends(get_db),
 ):
     """Get wrong answer statistics for a course."""
-    # Total wrong answers
     total_result = await db.execute(
         select(func.count(WrongAnswer.id)).where(
             WrongAnswer.course_id == course_id,
@@ -456,7 +280,6 @@ async def wrong_answer_stats(
     )
     total = total_result.scalar() or 0
 
-    # Mastered count
     mastered_result = await db.execute(
         select(func.count(WrongAnswer.id)).where(
             WrongAnswer.course_id == course_id,
@@ -466,7 +289,6 @@ async def wrong_answer_stats(
     )
     mastered = mastered_result.scalar() or 0
 
-    # By error category
     category_result = await db.execute(
         select(WrongAnswer.error_category, func.count(WrongAnswer.id))
         .where(

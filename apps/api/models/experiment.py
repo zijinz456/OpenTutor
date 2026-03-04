@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import String, DateTime, Float, Integer, Boolean, ForeignKey, Text, func, Index
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from models.compat import CompatUUID, CompatJSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from database import Base
@@ -20,7 +20,7 @@ class Experiment(Base):
 
     __tablename__ = "experiments"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(CompatUUID, primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
@@ -28,7 +28,7 @@ class Experiment(Base):
     dimension: Mapped[str] = mapped_column(String(50), nullable=False)
 
     # Variant definitions: [{"id": "control", "config": {...}}, {"id": "treatment", "config": {...}}]
-    variants: Mapped[list] = mapped_column(JSONB, nullable=False)
+    variants: Mapped[list] = mapped_column(CompatJSONB, nullable=False)
 
     # Status
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -52,9 +52,9 @@ class ExperimentAssignment(Base):
 
     __tablename__ = "experiment_assignments"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    experiment_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("experiments.id"))
-    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
+    id: Mapped[uuid.UUID] = mapped_column(CompatUUID, primary_key=True, default=uuid.uuid4)
+    experiment_id: Mapped[uuid.UUID] = mapped_column(CompatUUID, ForeignKey("experiments.id"))
+    user_id: Mapped[uuid.UUID] = mapped_column(CompatUUID, ForeignKey("users.id"))
     variant_id: Mapped[str] = mapped_column(String(50), nullable=False)  # e.g., "control" or "treatment"
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -69,15 +69,15 @@ class ExperimentEvent(Base):
 
     __tablename__ = "experiment_events"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    experiment_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("experiments.id"))
-    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
+    id: Mapped[uuid.UUID] = mapped_column(CompatUUID, primary_key=True, default=uuid.uuid4)
+    experiment_id: Mapped[uuid.UUID] = mapped_column(CompatUUID, ForeignKey("experiments.id"))
+    user_id: Mapped[uuid.UUID] = mapped_column(CompatUUID, ForeignKey("users.id"))
     variant_id: Mapped[str] = mapped_column(String(50), nullable=False)
 
     metric_name: Mapped[str] = mapped_column(String(50), nullable=False)
     metric_value: Mapped[float] = mapped_column(Float, nullable=False)
 
-    metadata_json: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    metadata_json: Mapped[Optional[dict]] = mapped_column(CompatJSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (

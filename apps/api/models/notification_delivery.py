@@ -5,7 +5,7 @@ from typing import Optional
 from datetime import datetime
 
 from sqlalchemy import String, Boolean, DateTime, ForeignKey, Text, func, UniqueConstraint
-from sqlalchemy.dialects.postgresql import UUID
+from models.compat import CompatUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from database import Base
@@ -16,9 +16,9 @@ class NotificationDelivery(Base):
 
     __tablename__ = "notification_deliveries"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(CompatUUID, primary_key=True, default=uuid.uuid4)
     notification_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("notifications.id", ondelete="CASCADE")
+        CompatUUID, ForeignKey("notifications.id", ondelete="CASCADE")
     )
 
     # Channel used: "sse", "web_push", "whatsapp", "imessage"
@@ -36,7 +36,7 @@ class NotificationDelivery(Base):
     # Escalation tracking
     is_escalation: Mapped[bool] = mapped_column(Boolean, default=False)
     escalated_from_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True),
+        CompatUUID,
         ForeignKey("notification_deliveries.id", ondelete="SET NULL"),
         nullable=True,
     )

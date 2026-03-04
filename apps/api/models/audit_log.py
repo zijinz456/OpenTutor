@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import DateTime, ForeignKey, Index, String, Text, func
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from models.compat import CompatJSONB, CompatUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from database import Base
@@ -14,14 +14,14 @@ from database import Base
 class AuditLog(Base):
     __tablename__ = "audit_logs"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(CompatUUID, primary_key=True, default=uuid.uuid4)
     actor_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True),
+        CompatUUID,
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
     task_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True),
+        CompatUUID,
         ForeignKey("agent_tasks.id", ondelete="SET NULL"),
         nullable=True,
     )
@@ -29,7 +29,7 @@ class AuditLog(Base):
     action_kind: Mapped[str] = mapped_column(String(80), nullable=False)
     approval_status: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     outcome: Mapped[str] = mapped_column(String(40), nullable=False)
-    details_json: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    details_json: Mapped[Optional[dict]] = mapped_column(CompatJSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     __table_args__ = (

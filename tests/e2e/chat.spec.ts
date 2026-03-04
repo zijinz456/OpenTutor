@@ -1,10 +1,11 @@
 import { expect, test } from "@playwright/test";
 import {
   skipOnboarding,
-  createCourse,
+  createCourseViaApi,
   createCourseWithContent,
   sendChatMessage,
   expectAssistantMessage,
+  hasRealLlmEnv,
 } from "./helpers/test-utils";
 
 // ---------------------------------------------------------------------------
@@ -13,11 +14,8 @@ import {
 test.describe("Basic chat", () => {
   let courseId: string;
 
-  test.beforeAll(async ({ browser }) => {
-    const page = await browser.newPage();
-    await skipOnboarding(page);
-    courseId = await createCourse(page, "Chat Basic Tests");
-    await page.close();
+  test.beforeAll(async () => {
+    courseId = await createCourseViaApi("Chat Basic Tests");
   });
 
   test.beforeEach(async ({ page }) => {
@@ -83,6 +81,7 @@ test.describe("Basic chat", () => {
   });
 
   test("send button disabled while streaming", async ({ page }) => {
+    test.skip(!hasRealLlmEnv(), "Streaming state is only observable with a real LLM provider");
     const chatInput = page.getByTestId("chat-input");
     await chatInput.fill("Quick test for streaming state");
     await page.getByTestId("chat-send").click();
@@ -100,11 +99,8 @@ test.describe("Basic chat", () => {
 test.describe.serial("Session management", () => {
   let courseId: string;
 
-  test.beforeAll(async ({ browser }) => {
-    const page = await browser.newPage();
-    await skipOnboarding(page);
-    courseId = await createCourse(page, "Chat Session Tests");
-    await page.close();
+  test.beforeAll(async () => {
+    courseId = await createCourseViaApi("Chat Session Tests");
   });
 
   test.beforeEach(async ({ page }) => {
@@ -136,12 +132,14 @@ test.describe.serial("Session management", () => {
     // Send a message which creates/updates a session
     await sendChatMessage(page, "Session list update test message");
 
-    // The session dropdown should exist and have at least one option
+    // The session picker is a Radix Select trigger rather than a native <select>.
     const sessionSelect = page.getByTestId("chat-session-select");
     await expect(sessionSelect).toBeVisible({ timeout: 15_000 });
-    // Wait for session options to populate
-    const options = sessionSelect.locator("option");
-    await expect(options).not.toHaveCount(0, { timeout: 15_000 });
+    await sessionSelect.click();
+    await expect(page.getByRole("option", { name: "Current conversation" })).toBeVisible({ timeout: 15_000 });
+    await expect.poll(async () => await page.getByRole("option").count(), {
+      timeout: 15_000,
+    }).toBeGreaterThan(1);
   });
 });
 
@@ -199,11 +197,8 @@ test.describe.serial("Chat with content", () => {
 test.describe("Edge cases", () => {
   let courseId: string;
 
-  test.beforeAll(async ({ browser }) => {
-    const page = await browser.newPage();
-    await skipOnboarding(page);
-    courseId = await createCourse(page, "Chat Edge Case Tests");
-    await page.close();
+  test.beforeAll(async () => {
+    courseId = await createCourseViaApi("Chat Edge Case Tests");
   });
 
   test.beforeEach(async ({ page }) => {

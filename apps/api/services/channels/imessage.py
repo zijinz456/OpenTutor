@@ -10,7 +10,6 @@ Docs: https://bluebubbles.app/docs/
 from __future__ import annotations
 
 import asyncio
-import base64
 import logging
 import time
 from typing import Any, Callable, Coroutine
@@ -18,12 +17,16 @@ from typing import Any, Callable, Coroutine
 import httpx
 
 from config import settings
-from services.channels.base import BaseChannelAdapter, IncomingMessage, OutgoingMessage
+from services.channels.base import (
+    BaseChannelAdapter,
+    IncomingMessage,
+    OutgoingMessage,
+    _DEFAULT_TIMEOUT,
+    encode_media_response,
+    mime_to_extension,
+)
 
 logger = logging.getLogger(__name__)
-
-# Reusable client timeout
-_DEFAULT_TIMEOUT = httpx.Timeout(connect=5.0, read=30.0, write=10.0, pool=5.0)
 
 
 class IMessageAdapter(BaseChannelAdapter):
@@ -268,7 +271,6 @@ class IMessageAdapter(BaseChannelAdapter):
             return None
 
         if media_url:
-            # If a direct URL is provided, use it (may already include auth)
             download_url = media_url
             params: dict[str, str] = {}
             if password and "password=" not in media_url:
@@ -292,26 +294,17 @@ class IMessageAdapter(BaseChannelAdapter):
                 )
                 return None
 
-            # Determine MIME type from Content-Type header
-            content_type = resp.headers.get("content-type", "application/octet-stream")
-            mime_type = content_type.split(";")[0].strip()
-
-            encoded = base64.b64encode(resp.content).decode("utf-8")
-
-            # Try to derive a filename
+            # Try to derive filename from Content-Disposition header
             filename = ""
             content_disp = resp.headers.get("content-disposition", "")
             if "filename=" in content_disp:
                 filename = content_disp.split("filename=")[-1].strip('" ')
-            if not filename and media_id:
-                ext = _mime_to_extension(mime_type)
-                filename = f"imessage_{media_id[:12]}{ext}"
 
-            return {
-                "data": encoded,
-                "mime_type": mime_type,
-                "filename": filename,
-            }
+            result = encode_media_response(resp, filename=filename)
+            if result and not result["filename"] and media_id:
+                ext = mime_to_extension(result["mime_type"])
+                result["filename"] = f"imessage_{media_id[:12]}{ext}"
+            return result
 
         except httpx.HTTPError as exc:
             logger.error("iMessage download_media HTTP error: %s", exc)
@@ -488,25 +481,3 @@ async def stop_polling() -> None:
             pass
     _polling_task = None
     logger.info("iMessage polling shut down")
-
-
-# ── Helpers ──
-
-def _mime_to_extension(mime_type: str) -> str:
-    """Map common MIME types to file extensions."""
-    mapping = {
-        "image/jpeg": ".jpg",
-        "image/png": ".png",
-        "image/webp": ".webp",
-        "image/gif": ".gif",
-        "image/heic": ".heic",
-        "image/tiff": ".tiff",
-        "audio/mp4": ".m4a",
-        "audio/mpeg": ".mp3",
-        "audio/aac": ".aac",
-        "audio/caf": ".caf",
-        "video/mp4": ".mp4",
-        "video/quicktime": ".mov",
-        "application/pdf": ".pdf",
-    }
-    return mapping.get(mime_type, "")

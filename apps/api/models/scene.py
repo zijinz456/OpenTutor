@@ -9,7 +9,7 @@ from typing import Optional
 from datetime import datetime
 
 from sqlalchemy import String, DateTime, ForeignKey, Boolean, func
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from models.compat import CompatUUID, CompatJSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from database import Base
@@ -24,25 +24,25 @@ class Scene(Base):
 
     __tablename__ = "scenes"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(CompatUUID, primary_key=True, default=uuid.uuid4)
     scene_id: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
     display_name: Mapped[str] = mapped_column(String(100), nullable=False)
     icon: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
     is_preset: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # Tab layout configuration for this scene
-    tab_preset: Mapped[list[dict]] = mapped_column(JSONB, nullable=False)
+    tab_preset: Mapped[list[dict]] = mapped_column(CompatJSONB, nullable=False)
 
     # AI workflow identifier
     workflow: Mapped[str] = mapped_column(String(50), nullable=False)
 
     # AI behavior rules injected into system prompt
-    ai_behavior: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    ai_behavior: Mapped[dict] = mapped_column(CompatJSONB, nullable=False)
 
     # Default preference overrides for this scene
-    preferences: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    preferences: Mapped[Optional[dict]] = mapped_column(CompatJSONB, nullable=True)
 
     created_by: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+        CompatUUID, ForeignKey("users.id"), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

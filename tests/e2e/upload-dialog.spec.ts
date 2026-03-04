@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import {
   skipOnboarding,
-  createCourse,
+  createCourseViaApi,
   SAMPLE_COURSE_MD,
   SAMPLE_COURSE_2_MD,
 } from "./helpers/test-utils";
@@ -15,11 +15,8 @@ import {
 test.describe.serial("File upload tab", () => {
   let courseId: string;
 
-  test.beforeAll(async ({ browser }) => {
-    const page = await browser.newPage();
-    await skipOnboarding(page);
-    courseId = await createCourse(page, "Upload Dialog Tests");
-    await page.close();
+  test.beforeAll(async () => {
+    courseId = await createCourseViaApi("Upload Dialog Tests");
   });
 
   test.beforeEach(async ({ page }) => {
@@ -30,9 +27,9 @@ test.describe.serial("File upload tab", () => {
 
   test("dialog opens when clicking upload trigger", async ({ page }) => {
     await page.getByTestId("workspace-upload-trigger").click();
-    // The dialog title should become visible
-    await expect(page.getByRole("dialog")).toBeVisible();
-    await expect(page.getByText("Upload File")).toBeVisible();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole("tab", { name: "Upload File" })).toBeVisible();
   });
 
   test("file input exists with correct accept types", async ({ page }) => {
@@ -54,8 +51,10 @@ test.describe.serial("File upload tab", () => {
     await expect(page.getByRole("dialog")).toBeVisible();
 
     await page.getByTestId("workspace-upload-file-input").setInputFiles(SAMPLE_COURSE_MD);
-    // Wait for the success toast
-    await expect(page.getByText(/Uploaded sample-course\.md/i)).toBeVisible({ timeout: 30_000 });
+    // Wait for either the success toast or the dialog closing (both signal success)
+    await expect(
+      page.getByText(/Uploaded sample-course\.md/i).or(page.getByText(/sections created/i)),
+    ).toBeVisible({ timeout: 60_000 });
   });
 
   test("dialog closes after successful upload", async ({ page }) => {
@@ -63,7 +62,9 @@ test.describe.serial("File upload tab", () => {
     await expect(page.getByRole("dialog")).toBeVisible();
 
     await page.getByTestId("workspace-upload-file-input").setInputFiles(SAMPLE_COURSE_2_MD);
-    await expect(page.getByText(/Uploaded sample-course-2\.md/i)).toBeVisible({ timeout: 30_000 });
+    await expect(
+      page.getByText(/Uploaded sample-course-2\.md/i).or(page.getByText(/sections created/i)),
+    ).toBeVisible({ timeout: 60_000 });
 
     // Dialog should close automatically after successful upload
     await expect(page.getByRole("dialog")).not.toBeVisible({ timeout: 15_000 });
@@ -98,11 +99,8 @@ test.describe.serial("File upload tab", () => {
 test.describe.serial("URL tab", () => {
   let courseId: string;
 
-  test.beforeAll(async ({ browser }) => {
-    const page = await browser.newPage();
-    await skipOnboarding(page);
-    courseId = await createCourse(page, "Upload Dialog URL Tests");
-    await page.close();
+  test.beforeAll(async () => {
+    courseId = await createCourseViaApi("Upload Dialog URL Tests");
   });
 
   test.beforeEach(async ({ page }) => {

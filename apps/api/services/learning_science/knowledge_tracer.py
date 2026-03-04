@@ -16,6 +16,7 @@ derived from the answer history rather than static global constants.
 """
 
 import logging
+import uuid
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -158,3 +159,39 @@ def compute_mastery_from_sequence(
         state = update_mastery(state, correct, params)
 
     return state.p_mastery
+
+
+def compute_mastery_adaptive(
+    results: list[bool],
+    concept: str,
+    user_id: "uuid.UUID",
+    course_id: "uuid.UUID | None" = None,
+    question_type: str | None = None,
+) -> float:
+    """Compute mastery using EM-trained pyBKT params when available.
+
+    Transparently upgrades to trained parameters if the bkt_trainer has
+    cached fitted params for this concept (requires >= 15 observations).
+    Falls back to heuristic estimation otherwise.
+
+    This is the recommended entry point for all mastery calculations.
+    """
+    try:
+        from services.learning_science.bkt_trainer import get_trained_params
+
+        trained = get_trained_params(user_id, course_id, concept)
+        if trained:
+            params = BKTParams(
+                p_l0=trained["prior"],
+                p_t=trained["learns"],
+                p_g=trained["guesses"],
+                p_s=trained["slips"],
+            )
+            return compute_mastery_from_sequence(results, question_type, params=params)
+    except ImportError:
+        pass
+    except Exception as e:
+        logger.debug("Trained BKT param lookup failed for '%s': %s", concept, e)
+
+    # Fallback to heuristic estimation
+    return compute_mastery_from_sequence(results, question_type)

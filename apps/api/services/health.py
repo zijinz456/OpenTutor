@@ -55,6 +55,8 @@ async def get_health_status() -> dict[str, Any]:
 
     if not registry.available_providers:
         llm_status = "configuration_required" if settings.llm_required else "mock_fallback"
+    elif registry.primary_name == "mock":
+        llm_status = "mock_fallback"
     elif registry.primary_name and not provider_health.get(registry.primary_name, True):
         llm_status = "degraded"
     else:

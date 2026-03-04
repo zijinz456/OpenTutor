@@ -31,8 +31,7 @@ test.describe("Navigation", () => {
 
   test("workspace home icon navigates to dashboard", async ({ page }) => {
     await createCourse(page, "Home Icon Course");
-    // The activity bar has a Home button (title="Home")
-    await page.locator('button[title="Home"]').click();
+    await page.getByRole("link", { name: /Back/i }).click();
     await expect(page).toHaveURL("/", { timeout: 15_000 });
   });
 
@@ -40,8 +39,7 @@ test.describe("Navigation", () => {
 
   test("workspace settings icon navigates to settings", async ({ page }) => {
     await createCourse(page, "Settings Icon Course");
-    // The activity bar has a Settings button (title="Settings")
-    await page.locator('button[title="Settings"]').click();
+    await page.getByRole("link", { name: "Settings" }).click();
     await expect(page).toHaveURL(/\/settings/, { timeout: 15_000 });
   });
 
@@ -85,8 +83,7 @@ test.describe("Navigation", () => {
     // Navigate directly to the workspace URL
     await page.goto(`/course/${courseId}`);
     await expect(page).toHaveURL(new RegExp(`/course/${courseId}`), { timeout: 15_000 });
-    // The workspace should load -- activity bar home button should be visible
-    await expect(page.locator('button[title="Home"]')).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole("link", { name: /Back/i })).toBeVisible({ timeout: 15_000 });
   });
 
   // ---- browser back/forward ---------------------------------------------

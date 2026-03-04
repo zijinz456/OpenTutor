@@ -74,8 +74,19 @@ def summarize_migration_state(
 
 
 def inspect_database_migrations(connection) -> MigrationState:
-    users_table = connection.execute(sa.text("SELECT to_regclass('users')")).scalar()
-    version_table = connection.execute(sa.text("SELECT to_regclass('alembic_version')")).scalar()
+    dialect = connection.dialect.name
+    if dialect == "sqlite":
+        # SQLite: check sqlite_master for table existence
+        users_table = connection.execute(
+            sa.text("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
+        ).scalar()
+        version_table = connection.execute(
+            sa.text("SELECT name FROM sqlite_master WHERE type='table' AND name='alembic_version'")
+        ).scalar()
+    else:
+        # PostgreSQL: use to_regclass for table existence
+        users_table = connection.execute(sa.text("SELECT to_regclass('users')")).scalar()
+        version_table = connection.execute(sa.text("SELECT to_regclass('alembic_version')")).scalar()
     table_names = {
         name
         for name, present in (

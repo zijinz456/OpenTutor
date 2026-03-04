@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { skipOnboarding, createCourseWithContent, ensureRightPanelVisible } from "./helpers/test-utils";
+import { skipOnboarding, createCourseWithContent, dispatchShortcut, ensureRightPanelVisible } from "./helpers/test-utils";
 
 test.describe.serial("Keyboard Shortcuts", () => {
   test.beforeEach(async ({ page }) => {
@@ -8,8 +8,7 @@ test.describe.serial("Keyboard Shortcuts", () => {
 
   test("Cmd+1 applies notesFocused layout", async ({ page }) => {
     await createCourseWithContent(page, "KB Notes");
-    const modifier = process.platform === "darwin" ? "Meta" : "Control";
-    await page.keyboard.press(`${modifier}+1`);
+    await dispatchShortcut(page, "1");
     // Notes panel should be prominently visible
     await expect(page.getByTestId("notes-panel")).toBeVisible();
   });
@@ -17,28 +16,25 @@ test.describe.serial("Keyboard Shortcuts", () => {
   test("Cmd+2 applies quizFocused layout", async ({ page }) => {
     await createCourseWithContent(page, "KB Quiz");
     await ensureRightPanelVisible(page);
-    const modifier = process.platform === "darwin" ? "Meta" : "Control";
-    await page.keyboard.press(`${modifier}+2`);
+    await dispatchShortcut(page, "2");
     // Quiz area should be visible
     await expect(page.getByRole("button", { name: "Quiz", exact: true })).toBeVisible();
   });
 
   test("Cmd+3 applies chatFocused layout", async ({ page }) => {
     await createCourseWithContent(page, "KB Chat");
-    const modifier = process.platform === "darwin" ? "Meta" : "Control";
-    await page.keyboard.press(`${modifier}+3`);
+    await dispatchShortcut(page, "3");
     // Chat panel should be prominently visible
     await expect(page.getByTestId("chat-input")).toBeVisible();
   });
 
   test("Cmd+0 applies balanced layout", async ({ page }) => {
     await createCourseWithContent(page, "KB Balanced");
-    const modifier = process.platform === "darwin" ? "Meta" : "Control";
     // First switch to a different layout
-    await page.keyboard.press(`${modifier}+1`);
+    await dispatchShortcut(page, "1");
     await page.waitForTimeout(500);
     // Then reset to balanced
-    await page.keyboard.press(`${modifier}+0`);
+    await dispatchShortcut(page, "0");
     // Both notes and chat should be visible in balanced layout
     await expect(page.getByTestId("notes-panel")).toBeVisible();
     await expect(page.getByTestId("chat-input")).toBeVisible();
@@ -59,8 +55,7 @@ test.describe.serial("Keyboard Shortcuts", () => {
     await page.getByTestId("chat-input").click();
     // Press Escape to unfocus
     await page.keyboard.press("Escape");
-    const modifier = process.platform === "darwin" ? "Meta" : "Control";
-    await page.keyboard.press(`${modifier}+1`);
+    await dispatchShortcut(page, "1");
     await expect(page.getByTestId("notes-panel")).toBeVisible();
   });
 });

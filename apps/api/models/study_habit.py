@@ -4,7 +4,7 @@ import uuid
 from datetime import date, datetime
 
 from sqlalchemy import Integer, Date, DateTime, ForeignKey, func, Index
-from sqlalchemy.dialects.postgresql import UUID
+from models.compat import CompatUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from database import Base
@@ -15,9 +15,9 @@ class StudyHabitLog(Base):
 
     __tablename__ = "study_habit_logs"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(CompatUUID, primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE")
+        CompatUUID, ForeignKey("users.id", ondelete="CASCADE")
     )
 
     study_date: Mapped[date] = mapped_column(Date, nullable=False)

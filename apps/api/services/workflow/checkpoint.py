@@ -1,8 +1,7 @@
-"""LangGraph checkpoint persistence via PostgreSQL.
+"""LangGraph checkpoint persistence — PostgreSQL or SQLite.
 
 Provides crash-safe, cross-session workflow persistence for all LangGraph
-StateGraphs.  Uses ``langgraph-checkpoint-postgres`` with the same database
-connection string as the main application.
+StateGraphs.  Automatically selects the backend based on DATABASE_URL.
 
 Usage in graph builders::
 
@@ -21,6 +20,7 @@ import logging
 from typing import Optional
 
 from config import settings
+from database import is_sqlite
 
 logger = logging.getLogger(__name__)
 
@@ -41,14 +41,46 @@ def _get_sync_conninfo() -> str:
     return url
 
 
-async def setup_checkpointer():
-    """Initialise the async PostgreSQL checkpointer.
+def _get_sqlite_path() -> str:
+    """Extract the file path from a SQLite URL for LangGraph's SQLite saver."""
+    url = settings.database_url
+    # sqlite+aiosqlite:///path/to/db  ->  path/to/db
+    for prefix in ("sqlite+aiosqlite:///", "sqlite:///", "sqlite+aiosqlite://"):
+        if url.startswith(prefix):
+            return url[len(prefix):] or ":memory:"
+    return url
 
-    Called once during app startup.  Creates the checkpoint tables if they
-    don't exist (idempotent).
+
+async def setup_checkpointer():
+    """Initialise the checkpoint backend.
+
+    Called once during app startup.  Creates checkpoint tables if needed.
     """
     global _checkpointer, _pool
 
+    if is_sqlite():
+        try:
+            from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+
+            db_path = _get_sqlite_path()
+            _checkpointer = AsyncSqliteSaver.from_conn_string(db_path)
+            await _checkpointer.setup()
+            logger.info("LangGraph checkpoint persistence initialised (SQLite)")
+        except ImportError:
+            logger.warning(
+                "langgraph-checkpoint-sqlite not installed — "
+                "workflows will run without persistence. "
+                "Install with: pip install langgraph-checkpoint-sqlite"
+            )
+            _checkpointer = None
+        except Exception as exc:
+            logger.warning(
+                "LangGraph SQLite checkpoint init failed: %s", exc
+            )
+            _checkpointer = None
+        return
+
+    # PostgreSQL path (original implementation)
     try:
         from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
         from psycopg_pool import AsyncConnectionPool

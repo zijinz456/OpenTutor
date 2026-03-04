@@ -244,15 +244,8 @@ async def create_session_episodic_memory(
         await db.flush()
 
         # Update BM25 search vector
-        from sqlalchemy import text
-        await db.execute(
-            text("""
-                UPDATE conversation_memories
-                SET search_vector = to_tsvector('simple', :summary)
-                WHERE id = :id
-            """),
-            {"summary": memory.summary, "id": str(memory.id)},
-        )
+        from services.search.compat import update_search_vector
+        await update_search_vector(db, "conversation_memories", str(memory.id), memory.summary)
         await db.flush()
         logger.info("Session episodic memory created for user %s", user_id)
         return memory

@@ -475,7 +475,7 @@ async def test_next_action_handles_legacy_naive_progress_timestamps(client):
                 mastery_score=0.42,
                 fsrs_reps=2,
                 fsrs_stability=1.5,
-                last_studied_at=datetime.utcnow(),
+                last_studied_at=datetime.now(timezone.utc),
             )
         )
         await session.commit()

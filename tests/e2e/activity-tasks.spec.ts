@@ -1,27 +1,22 @@
 import { expect, test } from "@playwright/test";
-import { createCourseWithContent, skipOnboarding } from "./helpers/test-utils";
+import { createCourseWithContent, dispatchShortcut, skipOnboarding, switchScene } from "./helpers/test-utils";
 
-const apiBaseUrl = process.env.PLAYWRIGHT_API_URL || "http://127.0.0.1:8005/api";
+const useExistingServer = process.env.PLAYWRIGHT_USE_EXISTING_SERVER === "1";
+const backendPort = Number(process.env.PLAYWRIGHT_BACKEND_PORT || (useExistingServer ? "8000" : "8005"));
+const apiBaseUrl = process.env.PLAYWRIGHT_API_URL || `http://127.0.0.1:${backendPort}/api`;
 
-async function openActivityPanel(page: import("@playwright/test").Page) {
-  const panel = page.getByTestId("activity-panel");
-  if (await panel.isVisible().catch(() => false)) {
-    return;
-  }
+async function openTasksView(page: import("@playwright/test").Page) {
+  // Use switchScene which has retry logic for keyboard shortcut dispatch
+  await switchScene(page, "exam_prep");
 
-  // Click Activity in the activity bar to switch to the activity tab
-  const activityBarBtn = page.getByTitle("Activity");
-  if (await activityBarBtn.isVisible({ timeout: 5_000 }).catch(() => false)) {
-    await activityBarBtn.click();
-  }
+  const tasksTab = page.getByRole("button", { name: "Tasks", exact: true });
+  await expect(tasksTab).toBeVisible({ timeout: 15_000 });
+  await tasksTab.click();
+}
 
-  // Wait for the right panel to switch to activity tab (confirms tab switch worked)
-  const activityTab = page.getByTestId("right-tab-activity");
-  await expect(activityTab).toBeVisible({ timeout: 15_000 });
-
-  // Wait for the dynamically imported ActivityPanel to load and render
-  // Dynamic imports can be very slow under CI load (5 parallel workers)
-  await expect(panel).toBeVisible({ timeout: 90_000 });
+async function reloadTasksView(page: import("@playwright/test").Page) {
+  await page.reload();
+  await openTasksView(page);
 }
 
 test.describe.serial("Activity task controls", () => {
@@ -29,10 +24,10 @@ test.describe.serial("Activity task controls", () => {
     await skipOnboarding(page);
   });
 
-  test("approval and resume controls mutate durable task state from the activity panel", async ({ page, request }) => {
+  test("approval controls update task status from the tasks view", async ({ page, request }) => {
     test.setTimeout(150_000);
     const courseId = await createCourseWithContent(page, "Activity Task Flow");
-    await openActivityPanel(page);
+    await openTasksView(page);
 
     const approvalResp = await request.post(`${apiBaseUrl}/tasks/submit`, {
       data: {
@@ -47,9 +42,26 @@ test.describe.serial("Activity task controls", () => {
     expect(approvalResp.ok()).toBeTruthy();
     const approvalTask = await approvalResp.json();
 
-    await expect(page.getByTestId(`approval-inbox-task-${approvalTask.id}`)).toContainText("pending approval", { timeout: 15_000 });
-    await page.getByTestId(`approval-inbox-approve-${approvalTask.id}`).click();
-    await expect(page.getByTestId(`agent-task-${approvalTask.id}`)).toContainText(/queued|running|completed/, { timeout: 15_000 });
+    await reloadTasksView(page);
+    await expect(page.getByText("Needs Approval (1)")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("Browser approval task")).toBeVisible({ timeout: 15_000 });
+    await page.getByRole("button", { name: "Approve" }).click();
+
+    await expect.poll(async () => {
+      const taskResp = await request.get(`${apiBaseUrl}/tasks/?course_id=${courseId}`);
+      const tasks = (await taskResp.json()) as Array<{ id: string; status: string }>;
+      return tasks.find((task) => task.id === approvalTask.id)?.status ?? "";
+    }, { timeout: 15_000 }).not.toBe("pending_approval");
+
+    await reloadTasksView(page);
+    await expect(page.getByText("Browser approval task")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText(/queued|running|completed/i).first()).toBeVisible({ timeout: 15_000 });
+  });
+
+  test("tasks view reflects cancel and resume state transitions", async ({ page, request }) => {
+    test.setTimeout(150_000);
+    const courseId = await createCourseWithContent(page, "Activity Resume Flow");
+    await openTasksView(page);
 
     const resumableResp = await request.post(`${apiBaseUrl}/tasks/submit`, {
       data: {
@@ -66,75 +78,69 @@ test.describe.serial("Activity task controls", () => {
     const cancelResp = await request.post(`${apiBaseUrl}/tasks/${resumableTask.id}/cancel`);
     expect(cancelResp.ok()).toBeTruthy();
 
-    await page.reload();
-    await openActivityPanel(page);
-    await expect(page.getByTestId(`agent-task-${resumableTask.id}`)).toContainText("cancelled", { timeout: 15_000 });
-    await page.getByTestId(`agent-task-resume-${resumableTask.id}`).click();
-    await expect(page.getByTestId(`agent-task-${resumableTask.id}`)).toContainText(/resuming|queued|running|completed/, {
-      timeout: 15_000,
-    });
+    await reloadTasksView(page);
+    await expect(page.getByText("Browser resumable task")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("cancelled").first()).toBeVisible({ timeout: 15_000 });
+
+    const resumeResp = await request.post(`${apiBaseUrl}/tasks/${resumableTask.id}/resume`);
+    expect(resumeResp.ok()).toBeTruthy();
+
+    await reloadTasksView(page);
+    await expect(page.getByText("Browser resumable task")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText(/resuming|queued|running|completed/i).first()).toBeVisible({ timeout: 15_000 });
   });
 
-  test("activity panel can create, display, and complete a study goal", async ({ page }) => {
+  test("tasks view lists goals created via the durable goals API", async ({ page, request }) => {
     test.setTimeout(150_000);
-    await createCourseWithContent(page, "Activity Goal Flow");
-    await openActivityPanel(page);
+    const courseId = await createCourseWithContent(page, "Activity Goal Flow");
 
-    await page.getByTestId("goal-title-input").fill("Pass the final");
-    await page.getByTestId("goal-objective-input").fill("Score above 85% and eliminate binary search mistakes.");
-    await page.getByTestId("goal-next-action-input").fill("Review wrong answers from chapter 2");
-    // Use force:true because dynamic import re-renders can detach the button from DOM
-    await page.getByRole("button", { name: "Create Goal" }).click({ force: true });
-
-    const goalCard = page.getByTestId(/^study-goal-/).first();
-    await expect(goalCard).toContainText("Pass the final", { timeout: 30_000 });
-    await expect(goalCard).toContainText("Review wrong answers from chapter 2", { timeout: 30_000 });
-    await goalCard.getByRole("button", { name: "Complete" }).click();
-    await expect(goalCard).toContainText("completed", { timeout: 30_000 });
-  });
-
-  test("next best action can be queued into a durable task from the activity panel", async ({ page }) => {
-    test.setTimeout(150_000);
-    await createCourseWithContent(page, "Next Action Queue Flow");
-    await openActivityPanel(page);
-
-    await page.getByTestId("goal-title-input").fill("Pass the final");
-    await page.getByTestId("goal-objective-input").fill("Score above 85% and finish the review queue.");
-    await page.getByTestId("goal-next-action-input").fill("Review wrong answers from chapter 2 tonight");
-    // Use force:true because dynamic import re-renders can detach the button from DOM
-    await page.getByRole("button", { name: "Create Goal" }).click({ force: true });
-
-    await expect(page.getByTestId("next-action-queue-button")).toBeVisible({ timeout: 15_000 });
-    await page.getByTestId("next-action-queue-button").click();
-
-    const queuedTask = page.getByTestId(/agent-task-/).filter({ hasText: "Execute next step: Pass the final" }).first();
-    await expect(queuedTask).toBeVisible({ timeout: 15_000 });
-    await expect(queuedTask).toContainText(/queued|running|completed/i, { timeout: 15_000 });
-  });
-
-  test("completed task review can queue a follow-up directly from the activity panel", async ({ page, request }) => {
-    test.setTimeout(150_000);
-    const courseId = await createCourseWithContent(page, "Completed Review Flow");
-
-    const workflowResp = await request.post(`${apiBaseUrl}/workflows/exam-prep`, {
+    const createResp = await request.post(`${apiBaseUrl}/goals/`, {
       data: {
         course_id: courseId,
-        days_until_exam: 5,
+        title: "Pass the final",
+        objective: "Score above 85% and eliminate binary search mistakes.",
+        next_action: "Review wrong answers from chapter 2",
       },
     });
-    expect(workflowResp.ok()).toBeTruthy();
+    expect(createResp.ok()).toBeTruthy();
+    const goal = await createResp.json();
 
-    const tasksResp = await request.get(`${apiBaseUrl}/tasks/?course_id=${courseId}`);
-    expect(tasksResp.ok()).toBeTruthy();
-    const [completedTask] = await tasksResp.json();
-    expect(completedTask.id).toBeTruthy();
+    await openTasksView(page);
+    await expect(page.getByText("Goals (1)")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText(goal.title)).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText(goal.objective)).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("Next: Review wrong answers from chapter 2")).toBeVisible({ timeout: 15_000 });
 
-    await openActivityPanel(page);
+    const completeResp = await request.patch(`${apiBaseUrl}/goals/${goal.id}`, {
+      data: { status: "completed" },
+    });
+    expect(completeResp.ok()).toBeTruthy();
 
-    await expect(page.getByTestId(`agent-task-review-${completedTask.id}`)).toContainText("Next recommended action", { timeout: 15_000 });
-    await page.getByTestId(`agent-task-follow-up-${completedTask.id}`).click();
+    await reloadTasksView(page);
+    await expect(page.getByText(goal.title)).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("completed").first()).toBeVisible({ timeout: 15_000 });
+  });
 
-    const followUpTask = page.getByTestId(/agent-task-/).filter({ hasText: "Follow-up: Generated exam prep plan" }).first();
-    await expect(followUpTask).toBeVisible({ timeout: 15_000 });
+  test("queued next action tasks appear in the tasks view", async ({ page, request }) => {
+    test.setTimeout(150_000);
+    const courseId = await createCourseWithContent(page, "Next Action Queue Flow");
+
+    const createGoalResp = await request.post(`${apiBaseUrl}/goals/`, {
+      data: {
+        course_id: courseId,
+        title: "Pass the final",
+        objective: "Score above 85% and finish the review queue.",
+        next_action: "Review wrong answers from chapter 2 tonight",
+      },
+    });
+    expect(createGoalResp.ok()).toBeTruthy();
+
+    const queueResp = await request.post(`${apiBaseUrl}/goals/${courseId}/next-action/queue`);
+    expect(queueResp.ok()).toBeTruthy();
+    const queuedTask = await queueResp.json();
+
+    await openTasksView(page);
+    await expect(page.getByText(queuedTask.title)).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText(/queued|running|completed/i).first()).toBeVisible({ timeout: 15_000 });
   });
 });

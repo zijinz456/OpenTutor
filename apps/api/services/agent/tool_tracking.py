@@ -94,20 +94,38 @@ async def get_tool_stats(
     days: int = 30,
 ) -> list[dict]:
     """Aggregate tool call statistics per tool name."""
-    query = text("""
-        SELECT
-            tool_name,
-            COUNT(*) as total_calls,
-            COUNT(*) FILTER (WHERE status = 'success') as successful,
-            COUNT(*) FILTER (WHERE status = 'error') as failed,
-            ROUND(AVG(duration_ms)::numeric, 1) as avg_duration_ms,
-            ROUND(MAX(duration_ms)::numeric, 1) as max_duration_ms
-        FROM tool_call_events
-        WHERE user_id = :user_id
-          AND created_at > NOW() - make_interval(days => :days)
-        GROUP BY tool_name
-        ORDER BY total_calls DESC
-    """)
+    from database import is_sqlite as _is_sq
+
+    if _is_sq():
+        query = text("""
+            SELECT
+                tool_name,
+                COUNT(*) as total_calls,
+                SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as successful,
+                SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as failed,
+                ROUND(AVG(duration_ms), 1) as avg_duration_ms,
+                ROUND(MAX(duration_ms), 1) as max_duration_ms
+            FROM tool_call_events
+            WHERE user_id = :user_id
+              AND created_at > datetime('now', '-' || :days || ' days')
+            GROUP BY tool_name
+            ORDER BY total_calls DESC
+        """)
+    else:
+        query = text("""
+            SELECT
+                tool_name,
+                COUNT(*) as total_calls,
+                COUNT(*) FILTER (WHERE status = 'success') as successful,
+                COUNT(*) FILTER (WHERE status = 'error') as failed,
+                ROUND(AVG(duration_ms)::numeric, 1) as avg_duration_ms,
+                ROUND(MAX(duration_ms)::numeric, 1) as max_duration_ms
+            FROM tool_call_events
+            WHERE user_id = :user_id
+              AND created_at > NOW() - make_interval(days => :days)
+            GROUP BY tool_name
+            ORDER BY total_calls DESC
+        """)
 
     result = await db.execute(query, {"user_id": user_id, "days": days})
     rows = result.fetchall()

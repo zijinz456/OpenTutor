@@ -4,12 +4,76 @@ Each messaging platform (WhatsApp, iMessage, etc.) implements this ABC.
 Provides a uniform interface for webhook parsing, message sending, and media handling.
 """
 
+import base64
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Optional
 
+import httpx
+
 logger = logging.getLogger(__name__)
+
+# ── Shared constants ──
+
+_DEFAULT_TIMEOUT = httpx.Timeout(connect=5.0, read=30.0, write=10.0, pool=5.0)
+
+# ── Shared helpers ──
+
+# Superset mapping from all adapters (Telegram, WhatsApp, iMessage).
+_MIME_EXTENSION_MAP: dict[str, str] = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+    "image/heic": ".heic",
+    "image/tiff": ".tiff",
+    "audio/ogg": ".ogg",
+    "audio/mpeg": ".mp3",
+    "audio/mp4": ".m4a",
+    "audio/aac": ".aac",
+    "audio/caf": ".caf",
+    "video/mp4": ".mp4",
+    "video/quicktime": ".mov",
+    "application/pdf": ".pdf",
+    "application/zip": ".zip",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+}
+
+
+def mime_to_extension(mime_type: str) -> str:
+    """Map a MIME type to a file extension, returning '' if unknown."""
+    return _MIME_EXTENSION_MAP.get(mime_type, "")
+
+
+def encode_media_response(
+    resp: httpx.Response,
+    *,
+    filename: str = "",
+) -> dict | None:
+    """Build a base64-encoded media dict from an httpx response.
+
+    Returns None if the response indicates failure (non-200 status).
+
+    Args:
+        resp: A completed httpx.Response containing the media bytes.
+        filename: Filename to include in the result (caller-derived).
+
+    Returns:
+        Dict with ``data``, ``mime_type``, and ``filename`` keys, or None.
+    """
+    if resp.status_code != 200:
+        return None
+
+    content_type = resp.headers.get("content-type", "application/octet-stream")
+    mime_type = content_type.split(";")[0].strip()
+    encoded = base64.b64encode(resp.content).decode("utf-8")
+
+    return {
+        "data": encoded,
+        "mime_type": mime_type,
+        "filename": filename,
+    }
 
 
 @dataclass

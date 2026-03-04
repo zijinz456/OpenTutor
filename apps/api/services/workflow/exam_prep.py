@@ -134,6 +134,21 @@ async def run_exam_prep(
     # Step 2: Assess readiness
     readiness = await assess_readiness(db, user_id, course_id)
 
+    # Step 2b: Score prediction (Phase 4 — Learning Digital Twin)
+    prediction = None
+    try:
+        from services.prediction.score_predictor import predict_score
+
+        prediction = await predict_score(db, user_id, course_id, days_until_exam)
+        logger.info(
+            "Score prediction for exam prep: predicted=%.1f, boosted=%.1f (model=%s)",
+            prediction["predicted_score"],
+            prediction["with_extra_30min_daily"],
+            prediction["model"],
+        )
+    except Exception as e:
+        logger.debug("Score prediction unavailable for exam prep: %s", e)
+
     # Step 3: Generate prep plan
     topics_text = "\n".join(
         f"- {t['title']}: {', '.join(t['subtopics'][:5])}"
@@ -148,6 +163,19 @@ async def run_exam_prep(
         f"Sessions: {readiness['session_count']} study sessions"
     )
 
+    # Inject score prediction into the LLM prompt when available
+    prediction_text = ""
+    if prediction:
+        prediction_text = (
+            f"\n## Score Prediction (AI Model: {prediction['model']})\n"
+            f"- Current predicted exam score: **{prediction['predicted_score']:.0f}/100**\n"
+            f"- If student studies 30 extra minutes per day: **{prediction['with_extra_30min_daily']:.0f}/100** "
+            f"(+{prediction['improvement_potential']:.0f} points)\n"
+            f"- Prediction confidence: {prediction['confidence']}\n"
+            f"\nIncorporate this prediction into your plan — tell the student their "
+            f"projected score and how extra effort can improve it."
+        )
+
     client = get_llm_client()
     plan, _ = await client.chat(
         "You are an exam preparation expert. Create focused, effective study plans.",
@@ -160,13 +188,15 @@ Days until exam: {days_until_exam}
 
 ## Student Readiness
 {readiness_text}
+{prediction_text}
 
 Create a plan that includes:
-1. **Priority Topics**: Which topics to focus on (based on weak areas)
-2. **Day-by-Day Schedule**: Specific study activities for each remaining day
-3. **Review Strategy**: How to review previously learned material
-4. **Practice Problems**: Suggest types of practice for each topic
-5. **Exam Day Tips**: Last-minute preparation advice
+1. **Score Outlook**: Current predicted score and improvement potential
+2. **Priority Topics**: Which topics to focus on (based on weak areas)
+3. **Day-by-Day Schedule**: Specific study activities for each remaining day
+4. **Review Strategy**: How to review previously learned material
+5. **Practice Problems**: Suggest types of practice for each topic
+6. **Exam Day Tips**: Last-minute preparation advice
 
 Be realistic about the available time. Focus on high-impact areas.
 Output in markdown format.""",
@@ -176,6 +206,7 @@ Output in markdown format.""",
         "course": course_name,
         "topics_count": len(topics),
         "readiness": readiness,
+        "prediction": prediction,
         "days_until_exam": days_until_exam,
         "plan": plan,
     }

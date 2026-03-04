@@ -27,11 +27,19 @@ def _build_features_from_state(state: dict) -> list[float]:
 
     Must stay in sync with the training feature matrix in ``train_model``.
     """
+    total_topics = max(int(state.get("total_topics", 10) or 10), 1)
+    num_topics_mastered = min(
+        max(int(state.get("num_topics_mastered", 0) or 0), 0),
+        total_topics,
+    )
     return [
         state.get("avg_mastery", 0.5),
         state.get("study_hours_last_7d", 0.0) / 20.0,  # Normalize
         state.get("quiz_accuracy", 0.5),
         state.get("days_until_exam", 30) / 60.0,  # Normalize
+        state.get("review_consistency", 0.5),
+        num_topics_mastered / total_topics,
+        state.get("flashcard_retention", 0.5),
     ]
 
 
@@ -93,16 +101,19 @@ async def gather_prediction_state(
 
     # Quiz accuracy from recent practice results
     try:
-        from models.practice import PracticeResult
+        from models.practice import PracticeProblem, PracticeResult
 
         cutoff = datetime.now(timezone.utc) - timedelta(days=14)
         result = await db.execute(
             select(
                 func.count(PracticeResult.id),
                 func.sum(PracticeResult.is_correct.cast(int)),
-            ).where(
+            )
+            .join(PracticeProblem, PracticeProblem.id == PracticeResult.problem_id)
+            .where(
                 PracticeResult.user_id == user_id,
-                PracticeResult.created_at >= cutoff,
+                PracticeResult.answered_at >= cutoff,
+                PracticeProblem.course_id == course_id,
             )
         )
         row = result.one()
@@ -226,19 +237,31 @@ async def train_model(
             )
             return False
 
-        # Build training data from mastery snapshots
+        # Build training data from mastery snapshots using the same feature
+        # semantics as inference, so model predictions remain interpretable.
         X = []
         y = []
+        total_rows = len(rows)
+        topics_mastered_so_far = 0
         for i, row in enumerate(rows):
-            # Features: mastery at that point, position in sequence, gap type
-            X.append([
-                row.mastery_score,
-                i / len(rows),  # Normalized position
-                1.0 if row.gap_type == "knowledge" else 0.0,
-                1.0 if row.gap_type == "application" else 0.0,
-            ])
+            if row.mastery_score >= 0.7:
+                topics_mastered_so_far += 1
+            days_until_exam = max(total_rows - i, 1)
+            review_consistency = max(0.1, 1.0 - (i / max(total_rows, 1)) * 0.5)
+            flashcard_retention = 1.0 if row.gap_type in {None, "mastered"} else 0.55
+            state = {
+                "avg_mastery": row.mastery_score,
+                "study_hours_last_7d": min(20.0, 2.0 + (i / max(total_rows, 1)) * 12.0),
+                "quiz_accuracy": min(1.0, max(0.0, row.mastery_score)),
+                "days_until_exam": days_until_exam,
+                "review_consistency": review_consistency,
+                "num_topics_mastered": topics_mastered_so_far,
+                "total_topics": total_rows,
+                "flashcard_retention": flashcard_retention,
+            }
+            X.append(_build_features_from_state(state))
             # Target: future mastery (next snapshot or current)
-            future_idx = min(i + 5, len(rows) - 1)
+            future_idx = min(i + 5, total_rows - 1)
             y.append(rows[future_idx].mastery_score * 100)  # Scale to 0-100
 
         model = GradientBoostingRegressor(

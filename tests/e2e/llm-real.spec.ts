@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import {
   createCourseWithContent,
+  dispatchShortcut,
   expectAssistantMessage,
   expectGeneratedNotes,
   expectGeneratedStudyPlan,
@@ -108,8 +109,9 @@ test.describe.serial("Real LLM browser flows @llm", () => {
     await page.getByRole("button", { name: "Save New" }).click();
     await expect(page.getByText(/Saved \d+ questions to the course quiz bank/i)).toBeVisible({ timeout: 15_000 });
 
-    await page.getByRole("button", { name: "Practice" }).click();
-    await expect(page.getByTestId("quiz-panel")).toBeVisible({ timeout: 15_000 });
+    await page.keyboard.press("Escape");
+    await dispatchShortcut(page, "2");
+    await expect(page.getByTestId("practice-section")).toBeVisible({ timeout: 15_000 });
     await expect(page.getByTestId("quiz-question")).toBeVisible({ timeout: 15_000 });
   });
 });
