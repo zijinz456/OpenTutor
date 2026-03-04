@@ -7,7 +7,6 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends
 from libs.exceptions import AppError, ValidationError
-from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,7 +14,25 @@ from database import get_db
 from models.memory import ConversationMemory
 from models.preference import PreferenceSignal, UserPreference
 from models.user import User
-from schemas.preference import PreferenceCreate, PreferenceResponse, ResolvedPreferences
+from schemas.preference import (
+    DismissRequest,
+    LearningProfileResponse,
+    LearningProfileSummary,
+    LlmConnectionTestRequest,
+    LlmConnectionTestResponse,
+    LlmRuntimeConfigResponse,
+    LlmRuntimeConfigUpdate,
+    MemoryProfileResponse,
+    MemoryUpdateRequest,
+    NLPreferenceRequest,
+    NLPreferenceResult,
+    OllamaModelEntry,
+    PreferenceCreate,
+    PreferenceResponse,
+    PreferenceSignalResponse,
+    PreferenceUpdateRequest,
+    ResolvedPreferences,
+)
 from services.auth.dependency import get_current_user
 from services.llm.local_config import get_llm_runtime_config, get_ollama_models, test_llm_connection, update_llm_runtime_config
 from services.preference.engine import resolve_preferences
@@ -23,97 +40,6 @@ from services.preference.engine import resolve_preferences
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-
-class LlmProviderStatus(BaseModel):
-    provider: str
-    has_key: bool
-    masked_key: str | None = None
-    requires_key: bool = True
-
-
-class LlmRuntimeConfigResponse(BaseModel):
-    provider: str
-    model: str
-    llm_required: bool
-    providers: list[LlmProviderStatus]
-
-
-class LlmRuntimeConfigUpdate(BaseModel):
-    provider: str | None = None
-    model: str | None = None
-    llm_required: bool | None = None
-    provider_keys: dict[str, str] | None = None
-    base_url: str | None = None
-
-
-class LlmConnectionTestRequest(BaseModel):
-    provider: str
-    model: str | None = None
-    api_key: str | None = None
-
-
-class LlmConnectionTestResponse(BaseModel):
-    provider: str
-    model: str
-    ok: bool
-    response_preview: str
-    usage: dict
-
-
-class PreferenceSignalResponse(BaseModel):
-    id: uuid.UUID
-    dimension: str
-    value: str
-    signal_type: str
-    course_id: uuid.UUID | None
-    context: dict | None
-    created_at: str | None
-    dismissed_at: str | None = None
-    dismissal_reason: str | None = None
-
-
-class PreferenceUpdateRequest(BaseModel):
-    value: str | None = None
-    scope: str | None = None
-    source: str | None = None
-    scene_type: str | None = None
-
-
-class DismissRequest(BaseModel):
-    reason: str | None = None
-
-
-class MemoryProfileResponse(BaseModel):
-    id: uuid.UUID
-    summary: str
-    memory_type: str
-    category: str | None
-    importance: float
-    access_count: int
-    source_message: str | None
-    metadata_json: dict | None
-    created_at: str | None
-    updated_at: str | None
-    dismissed_at: str | None = None
-    dismissal_reason: str | None = None
-
-
-class LearningProfileSummary(BaseModel):
-    strength_areas: list[str]
-    weak_areas: list[str]
-    recurring_errors: list[str]
-    inferred_habits: list[str]
-
-
-class LearningProfileResponse(BaseModel):
-    preferences: list[PreferenceResponse]
-    dismissed_preferences: list[PreferenceResponse]
-    signals: list[PreferenceSignalResponse]
-    dismissed_signals: list[PreferenceSignalResponse]
-    memories: list[MemoryProfileResponse]
-    dismissed_memories: list[MemoryProfileResponse]
-    summary: LearningProfileSummary
 
 
 def _serialize_signal(signal: PreferenceSignal) -> PreferenceSignalResponse:
@@ -410,11 +336,6 @@ async def restore_preference_signal(
     return _serialize_signal(signal)
 
 
-class MemoryUpdateRequest(BaseModel):
-    summary: str | None = None
-    category: str | None = None
-
-
 @router.patch("/memories/{memory_id}", response_model=MemoryProfileResponse)
 async def update_memory(
     memory_id: uuid.UUID,
@@ -522,12 +443,6 @@ async def test_runtime_llm_config(
         raise AppError(message=str(exc)) from exc
 
 
-class OllamaModelEntry(BaseModel):
-    name: str
-    size: int = 0
-    modified_at: str = ""
-
-
 @router.get("/runtime/ollama/models", response_model=list[OllamaModelEntry])
 async def list_ollama_models(
     base_url: str | None = None,
@@ -595,16 +510,6 @@ def _is_direct_parse_confident(text: str, dimension: str | None, value: str | No
     has_value_signal = any(signal in normalized for signal in value_signals)
     has_context_signal = any(signal in normalized for signal in context_signals)
     return has_value_signal and has_context_signal
-
-
-class NLPreferenceRequest(BaseModel):
-    text: str
-
-
-class NLPreferenceResult(BaseModel):
-    dimension: str | None = None
-    value: str | None = None
-    label: str | None = None
 
 
 @router.post("/parse-nl", response_model=NLPreferenceResult)

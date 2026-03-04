@@ -5,9 +5,8 @@ from typing import Optional
 from datetime import datetime
 
 from sqlalchemy import String, DateTime, ForeignKey, Text, Integer, Index, func
-from sqlalchemy.dialects.postgresql import UUID, JSONB, TSVECTOR
+from models.compat import CompatUUID, CompatJSONB, CompatTSVECTOR, CompatVector
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from pgvector.sqlalchemy import Vector
 
 from database import Base
 
@@ -21,10 +20,10 @@ class CourseContentTree(Base):
 
     __tablename__ = "course_content_tree"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    course_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("courses.id"))
+    id: Mapped[uuid.UUID] = mapped_column(CompatUUID, primary_key=True, default=uuid.uuid4)
+    course_id: Mapped[uuid.UUID] = mapped_column(CompatUUID, ForeignKey("courses.id"))
     parent_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("course_content_tree.id"), nullable=True
+        CompatUUID, ForeignKey("course_content_tree.id"), nullable=True
     )
 
     # Tree structure
@@ -38,11 +37,11 @@ class CourseContentTree(Base):
     source_type: Mapped[str] = mapped_column(String(20), default="pdf")  # pdf, url, manual
 
     # Search & embedding
-    search_vector: Mapped[Optional[str]] = mapped_column(TSVECTOR, nullable=True)
-    embedding: Mapped[Optional[list]] = mapped_column(Vector(1536), nullable=True)
+    search_vector: Mapped[Optional[str]] = mapped_column(CompatTSVECTOR, nullable=True)
+    embedding: Mapped[Optional[list]] = mapped_column(CompatVector(1536), nullable=True)
 
     # Metadata
-    metadata_: Mapped[Optional[dict]] = mapped_column("metadata", JSONB, nullable=True)
+    metadata_: Mapped[Optional[dict]] = mapped_column("metadata", CompatJSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     # Relationships
@@ -51,7 +50,10 @@ class CourseContentTree(Base):
     parent = relationship("CourseContentTree", back_populates="children", remote_side=[id])
 
 
-# GIN index for fast full-text search
-Index("ix_content_tree_search_vector", CourseContentTree.search_vector, postgresql_using="gin")
+from database import is_sqlite
+
+# GIN index for fast full-text search (PostgreSQL only; SQLite uses FTS5 virtual tables)
+if not is_sqlite():
+    Index("ix_content_tree_search_vector", CourseContentTree.search_vector, postgresql_using="gin")
 Index("ix_content_tree_course_parent", CourseContentTree.course_id, CourseContentTree.parent_id)
 Index("ix_content_tree_course_order", CourseContentTree.course_id, CourseContentTree.order_index)

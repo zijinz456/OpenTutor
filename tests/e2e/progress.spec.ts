@@ -43,7 +43,10 @@ test.describe.serial("Progress Panel", () => {
     const completionVisible = await courseCompletion.count() > 0 && await courseCompletion.isVisible();
     if (completionVisible) {
       await expect(page.getByText("Total Study Time")).toBeVisible({ timeout: 5_000 });
-      await expect(page.getByText("Quiz Accuracy")).toBeVisible({ timeout: 5_000 });
+      // Verify at least one other metric card is visible (Mastered, Completion, or Not Started)
+      await expect(
+        page.getByText("Mastered").or(page.getByText("Completion")).first(),
+      ).toBeVisible({ timeout: 5_000 });
     }
     // Empty state is also valid — test passes either way
   });

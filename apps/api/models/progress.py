@@ -13,7 +13,7 @@ from typing import Optional
 from datetime import datetime
 
 from sqlalchemy import String, DateTime, ForeignKey, Text, Float, Integer, Boolean, func
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from models.compat import CompatUUID, CompatJSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from database import Base
@@ -24,11 +24,11 @@ class LearningProgress(Base):
 
     __tablename__ = "learning_progress"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
-    course_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("courses.id", ondelete="CASCADE"))
+    id: Mapped[uuid.UUID] = mapped_column(CompatUUID, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(CompatUUID, ForeignKey("users.id", ondelete="CASCADE"))
+    course_id: Mapped[uuid.UUID] = mapped_column(CompatUUID, ForeignKey("courses.id", ondelete="CASCADE"))
     content_node_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("course_content_tree.id", ondelete="CASCADE"), nullable=True
+        CompatUUID, ForeignKey("course_content_tree.id", ondelete="CASCADE"), nullable=True
     )
 
     # Progress tracking
@@ -73,22 +73,22 @@ class LearningTemplate(Base):
 
     __tablename__ = "learning_templates"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(CompatUUID, primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(200))
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     is_builtin: Mapped[bool] = mapped_column(Boolean, default=False)
     created_by: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=True
+        CompatUUID, ForeignKey("users.id", ondelete="CASCADE"), nullable=True
     )
 
     # Template preferences (key-value pairs)
-    preferences: Mapped[dict] = mapped_column(JSONB, default=dict)
+    preferences: Mapped[dict] = mapped_column(CompatJSONB, default=dict)
     # e.g. {"note_format": "step_by_step", "detail_level": "detailed", ...}
 
     # v3: Scene binding
     scene_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     # Scene this template maps to (e.g. "exam_prep", "study_session")
-    tab_preset: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    tab_preset: Mapped[Optional[dict]] = mapped_column(CompatJSONB, nullable=True)
     # Tab layout for this template [{"type": "notes", "position": 0}, ...]
     workflow: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     # AI workflow identifier
@@ -96,6 +96,6 @@ class LearningTemplate(Base):
     # Template metadata
     target_audience: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     # e.g. "STEM student", "Language learner", "Visual learner"
-    tags: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
+    tags: Mapped[Optional[list]] = mapped_column(CompatJSONB, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

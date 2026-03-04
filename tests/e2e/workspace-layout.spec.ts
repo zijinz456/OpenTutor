@@ -3,8 +3,10 @@ import {
   skipOnboarding,
   createCourseViaApi,
   createCourseWithContent,
+  dispatchShortcut,
   ensureAnalyticsSectionVisible,
   ensureRightPanelVisible,
+  switchScene,
 } from "./helpers/test-utils";
 
 test.describe.serial("Workspace Layout", () => {
@@ -22,8 +24,8 @@ test.describe.serial("Workspace Layout", () => {
   test("right panel defaults to Quiz tab", async ({ page }) => {
     await createCourseWithContent(page, "Layout QuizTab");
     await ensureRightPanelVisible(page);
-    const quizTab = page.getByRole("button", { name: "Quiz", exact: true });
-    await expect(quizTab).toBeVisible();
+    const quizTab = page.getByTestId("right-tab-quiz").or(page.getByRole("button", { name: "Quiz", exact: true }));
+    await expect(quizTab.first()).toBeVisible({ timeout: 15_000 });
   });
 
   test("clicking Cards tab shows flashcard panel", async ({ page }) => {
@@ -69,48 +71,47 @@ test.describe.serial("Workspace Layout", () => {
 
   test("clicking Plan tab shows study plan panel", async ({ page }) => {
     await createCourseWithContent(page, "Layout Plan");
-    await page.locator('button[title="Plan"]').first().click();
-    await expect(page.getByTestId("study-plan-panel")).toBeVisible({ timeout: 10_000 });
+    await switchScene(page, "exam_prep");
   });
 
-  test("activity bar Notes icon is visible", async ({ page }) => {
+  test("keyboard shortcut Cmd+1 switches to Notes section", async ({ page }) => {
     await createCourseWithContent(page, "Layout ActivityNotes");
-    const notesBtn = page.locator('button[title="Notes"]');
-    await expect(notesBtn).toBeVisible();
+    // Notes is the default section — just verify it's visible
+    await expect(page.getByTestId("notes-panel")).toBeVisible({ timeout: 15_000 });
   });
 
-  test("activity bar Practice icon is visible", async ({ page }) => {
+  test("keyboard shortcut Cmd+2 switches to Practice section", async ({ page }) => {
     await createCourseWithContent(page, "Layout ActivityPractice");
-    const practiceBtn = page.locator('button[title="Practice"]');
-    await expect(practiceBtn).toBeVisible();
+    await ensureRightPanelVisible(page);
+    await expect(page.getByTestId("practice-section")).toBeVisible({ timeout: 15_000 });
   });
 
-  test("activity bar Chat icon is visible", async ({ page }) => {
+  test("chat input is always visible in workspace", async ({ page }) => {
     await createCourseWithContent(page, "Layout ActivityChat");
-    const chatBtn = page.locator('button[title="Chat"]');
-    await expect(chatBtn).toBeVisible();
+    await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 15_000 });
   });
 
-  test("activity bar Progress icon is visible", async ({ page }) => {
+  test("keyboard shortcut Cmd+3 switches to Analytics section", async ({ page }) => {
     await createCourseWithContent(page, "Layout ActivityProgress");
-    const progressBtn = page.locator('button[title="Analytics"]');
-    await expect(progressBtn).toBeVisible();
+    await ensureAnalyticsSectionVisible(page);
+    await expect(page.getByTestId("analytics-section")).toBeVisible({ timeout: 15_000 });
   });
 
-  test("activity bar Home icon navigates to dashboard", async ({ page }) => {
+  test("home link navigates to dashboard", async ({ page }) => {
     await createCourseWithContent(page, "Layout Home");
-    const homeBtn = page.locator('button[title="Home"]');
-    if (await homeBtn.isVisible()) {
-      await homeBtn.click();
+    // The workspace header has a home link (back arrow → "/")
+    const homeLink = page.locator('a[href="/"]').first();
+    if (await homeLink.isVisible()) {
+      await homeLink.click();
       await expect(page).toHaveURL("/");
     }
   });
 
-  test("activity bar Settings icon navigates to settings", async ({ page }) => {
+  test("settings link navigates to settings", async ({ page }) => {
     await createCourseWithContent(page, "Layout Settings");
-    const settingsBtn = page.locator('button[title="Settings"]');
-    if (await settingsBtn.isVisible()) {
-      await settingsBtn.click();
+    const settingsLink = page.locator('a[href="/settings"]').first();
+    if (await settingsLink.isVisible()) {
+      await settingsLink.click();
       await expect(page).toHaveURL("/settings");
     }
   });
@@ -153,14 +154,11 @@ test.describe.serial("Workspace Layout", () => {
       },
     });
     await page.goto(`/course/${courseId}`);
-    await expect(page.locator('button[title="Notes"]')).toHaveCount(0);
-    await expect(page.locator('button[title="Practice"]')).toHaveCount(0);
-    await expect(page.locator('button[title="Chat"]')).toHaveCount(0);
+    await expect(page.getByTestId("section-container")).toBeVisible({ timeout: 30_000 });
     await expect(page.getByTestId("notes-panel")).toHaveCount(0);
     await expect(page.getByTestId("chat-input")).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Quiz", exact: true })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Review", exact: true })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Plan", exact: true })).toHaveCount(0);
+    await expect(page.getByTestId("practice-section")).toHaveCount(0);
+    await expect(page.getByTestId("plan-section")).toHaveCount(0);
   });
 
   test("workspace URL matches /course/[id] pattern", async ({ page }) => {

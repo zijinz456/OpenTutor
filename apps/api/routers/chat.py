@@ -164,6 +164,11 @@ async def get_chat_session_messages(
     if not session:
         raise NotFoundError("Chat session", session_id)
 
+    count_result = await db.execute(
+        select(func.count(ChatMessageLog.id)).where(ChatMessageLog.session_id == session_id)
+    )
+    total_count = count_result.scalar() or 0
+
     result = await db.execute(
         select(ChatMessageLog)
         .where(ChatMessageLog.session_id == session_id)
@@ -173,7 +178,7 @@ async def get_chat_session_messages(
     )
     messages = result.scalars().all()
     return {
-        "session": _serialize_session(session, len(messages)),
+        "session": _serialize_session(session, total_count),
         "messages": [
             serialize_model(message, ["id", "role", "content", "metadata_json", "created_at"])
             for message in messages

@@ -5,7 +5,7 @@ from typing import Optional
 from datetime import datetime
 
 from sqlalchemy import String, DateTime, ForeignKey, Text, func
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from models.compat import CompatUUID, CompatJSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from database import Base
@@ -16,15 +16,15 @@ class StudyPlan(Base):
 
     __tablename__ = "study_plans"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
-    course_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("courses.id"))
+    id: Mapped[uuid.UUID] = mapped_column(CompatUUID, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(CompatUUID, ForeignKey("users.id"))
+    course_id: Mapped[uuid.UUID] = mapped_column(CompatUUID, ForeignKey("courses.id"))
 
     name: Mapped[str] = mapped_column(String(200))
     scene_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
 
     # Plan content as structured JSON
-    tasks: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    tasks: Mapped[dict] = mapped_column(CompatJSONB, nullable=False)
     # e.g. {"days": [{"date": "2026-03-01", "tasks": [...]}], "total_hours": 12}
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

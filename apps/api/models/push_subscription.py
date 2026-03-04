@@ -5,7 +5,7 @@ from typing import Optional
 from datetime import datetime
 
 from sqlalchemy import String, Boolean, DateTime, ForeignKey, Text, func, Index
-from sqlalchemy.dialects.postgresql import UUID
+from models.compat import CompatUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from database import Base
@@ -16,9 +16,9 @@ class PushSubscription(Base):
 
     __tablename__ = "push_subscriptions"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(CompatUUID, primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE")
+        CompatUUID, ForeignKey("users.id", ondelete="CASCADE")
     )
 
     # Push service URL (unique per browser/device)

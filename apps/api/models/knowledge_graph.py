@@ -9,7 +9,7 @@ from typing import Optional
 from datetime import datetime
 
 from sqlalchemy import String, DateTime, ForeignKey, Text, Float, func, Index
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from models.compat import CompatUUID, CompatJSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from database import Base
@@ -20,14 +20,14 @@ class KnowledgePoint(Base):
 
     __tablename__ = "knowledge_points"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    course_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("courses.id"))
+    id: Mapped[uuid.UUID] = mapped_column(CompatUUID, primary_key=True, default=uuid.uuid4)
+    course_id: Mapped[uuid.UUID] = mapped_column(CompatUUID, ForeignKey("courses.id"))
 
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # Prerequisite knowledge point IDs (DAG structure)
-    prerequisites: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True, default=list)
+    prerequisites: Mapped[Optional[list]] = mapped_column(CompatJSONB, nullable=True, default=list)
     # e.g. ["uuid1", "uuid2"]
 
     # Mastery level (0-100), computed from quiz results + FSRS retrievability
@@ -35,10 +35,10 @@ class KnowledgePoint(Base):
 
     # Source content node that this knowledge point was extracted from
     source_content_node_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("course_content_tree.id"), nullable=True
+        CompatUUID, ForeignKey("course_content_tree.id"), nullable=True
     )
 
-    metadata_json: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    metadata_json: Mapped[Optional[dict]] = mapped_column(CompatJSONB, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

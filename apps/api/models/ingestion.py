@@ -15,7 +15,7 @@ from datetime import datetime
 
 import sqlalchemy as sa
 from sqlalchemy import String, DateTime, ForeignKey, Text, Boolean, Integer, func
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from models.compat import CompatUUID, CompatJSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from database import Base
@@ -26,8 +26,8 @@ class IngestionJob(Base):
 
     __tablename__ = "ingestion_jobs"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
+    id: Mapped[uuid.UUID] = mapped_column(CompatUUID, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(CompatUUID, ForeignKey("users.id"))
 
     # Source info
     source_type: Mapped[str] = mapped_column(String(20))  # file | url | canvas
@@ -42,7 +42,7 @@ class IngestionJob(Base):
 
     # Classification results
     course_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("courses.id", ondelete="CASCADE"), nullable=True
+        CompatUUID, ForeignKey("courses.id", ondelete="CASCADE"), nullable=True
     )
     course_preset: Mapped[bool] = mapped_column(Boolean, default=False)  # User pre-assigned
     content_category: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
@@ -62,13 +62,13 @@ class IngestionJob(Base):
 
     # Dispatch tracking
     dispatched: Mapped[bool] = mapped_column(Boolean, default=False)
-    dispatched_to: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    dispatched_to: Mapped[Optional[dict]] = mapped_column(CompatJSONB, nullable=True)
     # e.g. {"content_tree": "uuid", "assignments": "uuid"}
 
     # User corrections (for learning)
     user_corrected_category: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     user_corrected_course: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), nullable=True
+        CompatUUID, nullable=True
     )
 
     # Extracted content (intermediate)
@@ -85,9 +85,9 @@ class StudySession(Base):
 
     __tablename__ = "study_sessions"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
-    course_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("courses.id", ondelete="CASCADE"))
+    id: Mapped[uuid.UUID] = mapped_column(CompatUUID, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(CompatUUID, ForeignKey("users.id", ondelete="CASCADE"))
+    course_id: Mapped[uuid.UUID] = mapped_column(CompatUUID, ForeignKey("courses.id", ondelete="CASCADE"))
 
     # Session metrics
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -103,7 +103,7 @@ class StudySession(Base):
     # Preference signals extracted
     signals_extracted: Mapped[int] = mapped_column(Integer, default=0)
 
-    metadata_json: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    metadata_json: Mapped[Optional[dict]] = mapped_column(CompatJSONB, nullable=True)
 
 
 class Assignment(Base):
@@ -111,8 +111,8 @@ class Assignment(Base):
 
     __tablename__ = "assignments"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    course_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("courses.id", ondelete="CASCADE"))
+    id: Mapped[uuid.UUID] = mapped_column(CompatUUID, primary_key=True, default=uuid.uuid4)
+    course_id: Mapped[uuid.UUID] = mapped_column(CompatUUID, ForeignKey("courses.id", ondelete="CASCADE"))
 
     title: Mapped[str] = mapped_column(String(500))
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -121,13 +121,13 @@ class Assignment(Base):
     # Types: homework, quiz, exam, project, reading
 
     source_ingestion_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("ingestion_jobs.id"), nullable=True
+        CompatUUID, ForeignKey("ingestion_jobs.id"), nullable=True
     )
 
     status: Mapped[str] = mapped_column(String(20), default="active")
     # Status: active, submitted, graded
 
-    metadata_json: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    metadata_json: Mapped[Optional[dict]] = mapped_column(CompatJSONB, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -141,10 +141,10 @@ class WrongAnswer(Base):
         sa.Index("ix_wrong_answers_course_mastered", "course_id", "mastered"),
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
-    problem_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("practice_problems.id", ondelete="CASCADE"))
-    course_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("courses.id", ondelete="CASCADE"))
+    id: Mapped[uuid.UUID] = mapped_column(CompatUUID, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(CompatUUID, ForeignKey("users.id", ondelete="CASCADE"))
+    problem_id: Mapped[uuid.UUID] = mapped_column(CompatUUID, ForeignKey("practice_problems.id", ondelete="CASCADE"))
+    course_id: Mapped[uuid.UUID] = mapped_column(CompatUUID, ForeignKey("courses.id", ondelete="CASCADE"))
 
     user_answer: Mapped[str] = mapped_column(Text)
     correct_answer: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -153,13 +153,13 @@ class WrongAnswer(Base):
     # v3: Error classification and knowledge point tagging
     error_category: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
     # Categories: conceptual | procedural | computational | reading | careless
-    knowledge_points: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True, default=list)
+    knowledge_points: Mapped[Optional[list]] = mapped_column(CompatJSONB, nullable=True, default=list)
     # List of knowledge point IDs related to this wrong answer
 
     # v4: Diagnostic pair result + structured error detail
     diagnosis: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
     # fundamental_gap | trap_vulnerability | carelessness | mastered (from diagnostic pair)
-    error_detail: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    error_detail: Mapped[Optional[dict]] = mapped_column(CompatJSONB, nullable=True)
     # Structured classification: {category, confidence, evidence, related_concept}
 
     # Review tracking

@@ -193,6 +193,74 @@ class Tool(ABC):
         return f"- {self.name}: {self.description}  ({params_str})"
 
 
+# ── Function-based tool helpers ──
+
+
+def param(
+    name: str,
+    type: str,
+    description: str,
+    *,
+    required: bool = True,
+    enum: list[str] | None = None,
+    default: Any = None,
+) -> ToolParameter:
+    """Shorthand constructor for ToolParameter."""
+    return ToolParameter(
+        name=name, type=type, description=description,
+        required=required, enum=enum, default=default,
+    )
+
+
+class FunctionTool(Tool):
+    """Tool wrapping a plain async function — eliminates class boilerplate."""
+
+    def __init__(
+        self,
+        *,
+        name: str,
+        description: str,
+        fn: Any,
+        domain: str = "education",
+        category: ToolCategory = ToolCategory.READ,
+        params: list[ToolParameter] | None = None,
+    ):
+        self.name = name
+        self.description = description
+        self.domain = domain
+        self.category = category
+        self._params = params or []
+        self._fn = fn
+
+    def get_parameters(self) -> list[ToolParameter]:
+        return self._params
+
+    async def run(
+        self,
+        parameters: dict[str, Any],
+        ctx: Any,
+        db: AsyncSession,
+    ) -> ToolResult:
+        return await self._fn(parameters, ctx, db)
+
+
+def tool(
+    *,
+    name: str,
+    description: str,
+    domain: str = "education",
+    category: ToolCategory = ToolCategory.READ,
+    params: list[ToolParameter] | None = None,
+):
+    """Decorator that wraps an async function into a FunctionTool instance."""
+    def decorator(fn: Any) -> FunctionTool:
+        return FunctionTool(
+            name=name, description=description, domain=domain,
+            category=category, params=params, fn=fn,
+        )
+    return decorator
+
+
 # ── Tool Registry ──
 
 

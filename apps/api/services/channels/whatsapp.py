@@ -13,20 +13,22 @@ import base64
 import hashlib
 import hmac
 import logging
-import time
 from typing import Any
 
 import httpx
 
 from config import settings
-from services.channels.base import BaseChannelAdapter, IncomingMessage, OutgoingMessage
+from services.channels.base import (
+    BaseChannelAdapter,
+    IncomingMessage,
+    OutgoingMessage,
+    _DEFAULT_TIMEOUT,
+    mime_to_extension,
+)
 
 logger = logging.getLogger(__name__)
 
 GRAPH_API_BASE = "https://graph.facebook.com/v21.0"
-
-# Reusable client timeout — generous for media downloads, snappy for API calls.
-_DEFAULT_TIMEOUT = httpx.Timeout(connect=5.0, read=30.0, write=10.0, pool=5.0)
 
 
 class WhatsAppAdapter(BaseChannelAdapter):
@@ -278,6 +280,7 @@ class WhatsAppAdapter(BaseChannelAdapter):
 
                 meta = meta_resp.json()
                 download_url = meta.get("url")
+                # WhatsApp metadata provides the authoritative mime_type
                 mime_type = meta.get("mime_type", "application/octet-stream")
 
                 if not download_url:
@@ -295,8 +298,7 @@ class WhatsAppAdapter(BaseChannelAdapter):
 
                 encoded = base64.b64encode(media_resp.content).decode("utf-8")
 
-                # Derive a filename from the media ID and MIME type
-                ext = _mime_to_extension(mime_type)
+                ext = mime_to_extension(mime_type)
                 filename = f"whatsapp_{media_id[:12]}{ext}"
 
                 return {
@@ -343,22 +345,3 @@ class WhatsAppAdapter(BaseChannelAdapter):
         except httpx.HTTPError as exc:
             # Typing indicators are best-effort; don't propagate failures
             logger.debug("WhatsApp typing indicator failed: %s", exc)
-
-
-# ── Helpers ──
-
-def _mime_to_extension(mime_type: str) -> str:
-    """Map common MIME types to file extensions."""
-    mapping = {
-        "image/jpeg": ".jpg",
-        "image/png": ".png",
-        "image/webp": ".webp",
-        "image/gif": ".gif",
-        "audio/ogg": ".ogg",
-        "audio/mpeg": ".mp3",
-        "audio/aac": ".aac",
-        "video/mp4": ".mp4",
-        "application/pdf": ".pdf",
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
-    }
-    return mapping.get(mime_type, "")

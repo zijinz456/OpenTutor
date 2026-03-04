@@ -81,18 +81,24 @@ async def _fetch_latest_by_types(
     per memory type.
     """
     from sqlalchemy import text as sa_text
+    from database import is_sqlite
 
     if not memory_types:
         return []
 
     params: dict = {
         "user_id": str(user_id),
-        "memory_types": memory_types,
         "limit_per_type": limit_per_type,
     }
     course_filter = "AND (course_id = :course_id OR course_id IS NULL)" if course_id else ""
     if course_id:
         params["course_id"] = str(course_id)
+
+    # Build memory_type filter (PG uses ANY, SQLite uses IN)
+    type_placeholders = ", ".join(f":mt{i}" for i in range(len(memory_types)))
+    for i, mt in enumerate(memory_types):
+        params[f"mt{i}"] = mt
+    type_filter = f"memory_type IN ({type_placeholders})"
 
     rows = await db.execute(
         sa_text(f"""
@@ -105,7 +111,7 @@ async def _fetch_latest_by_types(
                        ) AS rn
                 FROM conversation_memories
                 WHERE user_id = :user_id
-                  AND memory_type = ANY(:memory_types)
+                  AND {type_filter}
                   AND dismissed_at IS NULL
                   {course_filter}
             ) sub

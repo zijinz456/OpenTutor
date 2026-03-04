@@ -24,8 +24,10 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select, text, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from database import is_sqlite
 from models.memory import ConversationMemory, MEMCELL_TYPES
 from services.llm.router import get_llm_client
+from services.search.compat import cosine_similarity, update_search_vector
 
 logger = logging.getLogger(__name__)
 
@@ -129,14 +131,7 @@ async def encode_memory(
             await db.flush()
             # Update search vectors for BM25
             for mem in created:
-                await db.execute(
-                    text("""
-                        UPDATE conversation_memories
-                        SET search_vector = to_tsvector('simple', :summary)
-                        WHERE id = :id
-                    """),
-                    {"summary": mem.summary, "id": str(mem.id)},
-                )
+                await update_search_vector(db, "conversation_memories", str(mem.id), mem.summary)
             await db.flush()
             logger.info("Encoded %d MemCells for user %s", len(created), user_id)
 
@@ -184,14 +179,7 @@ async def _encode_single_summary(
     await db.flush()
 
     # Update search vector
-    await db.execute(
-        text("""
-            UPDATE conversation_memories
-            SET search_vector = to_tsvector('simple', :summary)
-            WHERE id = :id
-        """),
-        {"summary": summary, "id": str(memory.id)},
-    )
+    await update_search_vector(db, "conversation_memories", str(memory.id), summary)
     await db.flush()
     logger.info("Memory encoded (fallback): %s", summary[:80])
     return [memory]
@@ -210,12 +198,7 @@ async def generate_embedding(text_content: str) -> list[float] | None:
 
 # ── Stage 2: CONSOLIDATE ──
 
-def _cosine_similarity(a: list[float], b: list[float]) -> float:
-    """Compute cosine similarity between two embedding vectors."""
-    dot = sum(x * y for x, y in zip(a, b))
-    norm_a = sum(x * x for x in a) ** 0.5
-    norm_b = sum(x * x for x in b) ** 0.5
-    return dot / (norm_a * norm_b) if norm_a and norm_b else 0.0
+_cosine_similarity = cosine_similarity
 
 
 async def consolidate_memories(
@@ -425,20 +408,109 @@ MERGE_SYSTEM_PROMPT = (
     "Preserve all unique facts. Output only the merged memory text."
 )
 
+COMPRESSION_MERGE_PROMPT = (
+    "Merge these related student memories into a single concise summary. "
+    "Preserve all unique facts and insights. The merged memory should capture "
+    "the essence of all inputs in under 80 words. Output only the merged text."
+)
+
+
+async def _merge_memory_groups(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    course_id: uuid.UUID | None,
+    groups: list[list[ConversationMemory]],
+    *,
+    system_prompt: str,
+    source_label: str,
+    log_prefix: str,
+) -> int:
+    """Merge groups of related memories via LLM.
+
+    Shared by smart_consolidate and compress_old_memories.
+    """
+    client = get_llm_client("fast")
+    total_merged = 0
+
+    for group in groups[:MAX_SMART_MERGES_PER_RUN]:
+        try:
+            mem_lines = "\n".join(f"- {m.summary}" for m in group)
+            user_prompt = (
+                f"Memories to merge ({len(group)} items, "
+                f"type={group[0].memory_type}):\n{mem_lines}"
+            )
+            merged_text, _ = await client.extract(system_prompt, user_prompt)
+            merged_text = merged_text.strip()
+            if not merged_text or len(merged_text) < 5:
+                logger.warning("%s: LLM returned empty merge, skipping group", log_prefix)
+                continue
+
+            best_importance = max(m.importance for m in group)
+            total_access = sum((m.access_count or 0) for m in group)
+            embedding = await generate_embedding(merged_text)
+
+            group_course_ids = {m.course_id for m in group}
+            merged_course_id = group_course_ids.pop() if len(group_course_ids) == 1 else course_id
+
+            merged_memory = ConversationMemory(
+                user_id=user_id,
+                course_id=merged_course_id,
+                summary=merged_text,
+                memory_type=group[0].memory_type,
+                embedding=embedding,
+                importance=best_importance,
+                access_count=total_access,
+                source_message=group[0].source_message,
+                metadata_json={
+                    "source": source_label,
+                    "merged_from": [str(m.id) for m in group],
+                    "merge_count": len(group),
+                    "merged_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+            db.add(merged_memory)
+            await db.flush()
+
+            await update_search_vector(
+                db, "conversation_memories", str(merged_memory.id), merged_memory.summary,
+            )
+
+            now = datetime.now(timezone.utc)
+            for old_mem in group:
+                old_mem.dismissed_at = now
+                old_mem.dismissal_reason = f"{source_label}: merged into {merged_memory.id}"
+                meta = old_mem.metadata_json or {}
+                meta["merged_into"] = str(merged_memory.id)
+                meta["merged_at"] = now.isoformat()
+                old_mem.metadata_json = meta
+
+            total_merged += len(group)
+            logger.info(
+                "%s: merged %d memories (type=%s) into %s",
+                log_prefix, len(group), group[0].memory_type, merged_memory.id,
+            )
+        except Exception as e:
+            logger.warning("%s: failed to merge group of %d: %s", log_prefix, len(group), e)
+            continue
+
+    if total_merged:
+        await db.flush()
+        logger.info("%s: total %d memories merged for user %s", log_prefix, total_merged, user_id)
+
+    return total_merged
+
 
 async def smart_consolidate(
     db: AsyncSession,
     user_id: uuid.UUID,
     course_id: uuid.UUID | None = None,
 ) -> int:
-    """AI-powered memory consolidation (Phase 5.1).
+    """AI-powered memory consolidation.
 
     Groups semantically similar memories and merges them using LLM.
-    Only runs when user has > 50 memories to avoid unnecessary cost.
-
+    Only runs when user has > SMART_CONSOLIDATE_THRESHOLD memories.
     Returns number of memories merged (i.e. old memories replaced).
     """
-    # ── 1. Count user memories; skip if below threshold ──
     count_filters = [
         ConversationMemory.user_id == user_id,
         ConversationMemory.dismissed_at.is_(None),
@@ -458,7 +530,6 @@ async def smart_consolidate(
         )
         return 0
 
-    # ── 2. Load all active memories for user+course ──
     query = (
         select(ConversationMemory)
         .where(*count_filters)
@@ -467,114 +538,17 @@ async def smart_consolidate(
     result = await db.execute(query)
     memories = list(result.scalars().all())
 
-    # ── 3. Group by word overlap ──
     groups = _group_by_word_overlap(memories)
     if not groups:
         logger.debug("smart_consolidate: no groups found for merging")
         return 0
 
-    # ── 4. Merge groups using LLM (max MAX_SMART_MERGES_PER_RUN) ──
-    client = get_llm_client("fast")
-    total_merged = 0
-
-    for group in groups[:MAX_SMART_MERGES_PER_RUN]:
-        try:
-            # Build the prompt with all memories in this group
-            mem_lines = "\n".join(
-                f"- {m.summary}" for m in group
-            )
-            user_prompt = (
-                f"Memories to merge ({len(group)} items, type={group[0].memory_type}):\n"
-                f"{mem_lines}"
-            )
-
-            merged_text, _ = await client.extract(
-                MERGE_SYSTEM_PROMPT,
-                user_prompt,
-            )
-            merged_text = merged_text.strip()
-            if not merged_text or len(merged_text) < 5:
-                logger.warning("smart_consolidate: LLM returned empty merge, skipping group")
-                continue
-
-            # Keep the highest importance score from the group
-            best_importance = max(m.importance for m in group)
-            total_access = sum((m.access_count or 0) for m in group)
-
-            # Generate embedding for the new merged memory
-            embedding = await generate_embedding(merged_text)
-
-            # Create the merged memory
-            merged_memory = ConversationMemory(
-                user_id=user_id,
-                course_id=course_id,
-                summary=merged_text,
-                memory_type=group[0].memory_type,  # same type (groups are same-type)
-                embedding=embedding,
-                importance=best_importance,
-                access_count=total_access,
-                source_message=group[0].source_message,
-                metadata_json={
-                    "source": "smart_consolidate",
-                    "merged_from": [str(m.id) for m in group],
-                    "merge_count": len(group),
-                    "merged_at": datetime.now(timezone.utc).isoformat(),
-                },
-            )
-            db.add(merged_memory)
-            await db.flush()
-
-            # Update BM25 search vector for the new memory
-            await db.execute(
-                text("""
-                    UPDATE conversation_memories
-                    SET search_vector = to_tsvector('simple', :summary)
-                    WHERE id = :id
-                """),
-                {"summary": merged_memory.summary, "id": str(merged_memory.id)},
-            )
-
-            # Soft-delete the old memories (mark as consolidated)
-            now = datetime.now(timezone.utc)
-            for old_mem in group:
-                old_mem.dismissed_at = now
-                old_mem.dismissal_reason = f"smart_consolidated into {merged_memory.id}"
-                # Preserve lineage in metadata
-                meta = old_mem.metadata_json or {}
-                meta["consolidated_into"] = str(merged_memory.id)
-                meta["consolidated_at"] = now.isoformat()
-                old_mem.metadata_json = meta
-
-            total_merged += len(group)
-            logger.info(
-                "smart_consolidate: merged %d memories (type=%s) into %s",
-                len(group), group[0].memory_type, merged_memory.id,
-            )
-
-        except Exception as e:
-            logger.warning(
-                "smart_consolidate: failed to merge group of %d memories: %s",
-                len(group), e,
-            )
-            continue
-
-    if total_merged:
-        await db.flush()
-        logger.info(
-            "smart_consolidate: total %d memories merged for user %s",
-            total_merged, user_id,
-        )
-
-    return total_merged
-
-
-# ── Stage 2c: LONG-TERM MEMORY COMPRESSION ──
-
-COMPRESSION_MERGE_PROMPT = (
-    "Merge these related student memories into a single concise summary. "
-    "Preserve all unique facts and insights. The merged memory should capture "
-    "the essence of all inputs in under 80 words. Output only the merged text."
-)
+    return await _merge_memory_groups(
+        db, user_id, course_id, groups,
+        system_prompt=MERGE_SYSTEM_PROMPT,
+        source_label="smart_consolidate",
+        log_prefix="smart_consolidate",
+    )
 
 
 async def compress_old_memories(
@@ -594,7 +568,6 @@ async def compress_old_memories(
     """
     cutoff = datetime.now(timezone.utc) - timedelta(days=age_threshold_days)
 
-    # ── 1. Load old, active memories ──
     filters = [
         ConversationMemory.user_id == user_id,
         ConversationMemory.dismissed_at.is_(None),
@@ -617,100 +590,17 @@ async def compress_old_memories(
         )
         return 0
 
-    # ── 2. Group by word overlap (reuse existing clustering helper) ──
     groups = _group_by_word_overlap(old_memories)
     if not groups:
         logger.debug("compress_old_memories: no groups formed from old memories")
         return 0
 
-    # ── 3. Merge each group via LLM ──
-    client = get_llm_client("fast")
-    total_compressed = 0
-
-    for group in groups[:MAX_SMART_MERGES_PER_RUN]:
-        try:
-            mem_lines = "\n".join(f"- {m.summary}" for m in group)
-            user_prompt = (
-                f"Memories to compress ({len(group)} items, "
-                f"type={group[0].memory_type}):\n{mem_lines}"
-            )
-
-            merged_text, _ = await client.extract(
-                COMPRESSION_MERGE_PROMPT,
-                user_prompt,
-            )
-            merged_text = merged_text.strip()
-            if not merged_text or len(merged_text) < 5:
-                continue
-
-            best_importance = max(m.importance for m in group)
-            total_access = sum((m.access_count or 0) for m in group)
-            embedding = await generate_embedding(merged_text)
-
-            # Determine course_id for the merged memory (use the group's if uniform)
-            group_course_ids = {m.course_id for m in group}
-            merged_course_id = group_course_ids.pop() if len(group_course_ids) == 1 else course_id
-
-            merged_memory = ConversationMemory(
-                user_id=user_id,
-                course_id=merged_course_id,
-                summary=merged_text,
-                memory_type=group[0].memory_type,
-                embedding=embedding,
-                importance=best_importance,
-                access_count=total_access,
-                source_message=group[0].source_message,
-                metadata_json={
-                    "source": "long_term_compression",
-                    "compressed_from": [str(m.id) for m in group],
-                    "original_count": len(group),
-                    "compressed_at": datetime.now(timezone.utc).isoformat(),
-                },
-            )
-            db.add(merged_memory)
-            await db.flush()
-
-            # Update BM25 search vector for the merged memory
-            await db.execute(
-                text("""
-                    UPDATE conversation_memories
-                    SET search_vector = to_tsvector('simple', :summary)
-                    WHERE id = :id
-                """),
-                {"summary": merged_memory.summary, "id": str(merged_memory.id)},
-            )
-
-            # Soft-delete originals with lineage
-            now = datetime.now(timezone.utc)
-            for old_mem in group:
-                old_mem.dismissed_at = now
-                old_mem.dismissal_reason = f"compressed into {merged_memory.id}"
-                meta = old_mem.metadata_json or {}
-                meta["compressed_into"] = str(merged_memory.id)
-                meta["compressed_at"] = now.isoformat()
-                old_mem.metadata_json = meta
-
-            total_compressed += len(group)
-            logger.info(
-                "compress_old_memories: compressed %d memories (type=%s) into %s",
-                len(group), group[0].memory_type, merged_memory.id,
-            )
-
-        except Exception as e:
-            logger.warning(
-                "compress_old_memories: failed to compress group of %d: %s",
-                len(group), e,
-            )
-            continue
-
-    if total_compressed:
-        await db.flush()
-        logger.info(
-            "compress_old_memories: total %d memories compressed for user %s",
-            total_compressed, user_id,
-        )
-
-    return total_compressed
+    return await _merge_memory_groups(
+        db, user_id, course_id, groups,
+        system_prompt=COMPRESSION_MERGE_PROMPT,
+        source_label="long_term_compression",
+        log_prefix="compress_old_memories",
+    )
 
 
 # ── Stage 2d: CROSS-COURSE MEMORY LINKING ──
@@ -988,11 +878,59 @@ async def _vector_memory_search(
     limit: int,
     memory_types: list[str] | None,
 ) -> list[dict]:
-    """Vector similarity search on memory embeddings."""
+    """Vector similarity search on memory embeddings.
+
+    PostgreSQL: pgvector <=> cosine distance operator.
+    SQLite: Python-side cosine similarity (acceptable at personal-scale data).
+    """
     query_embedding = await generate_embedding(query)
     if not query_embedding:
         return []
 
+    if is_sqlite():
+        # SQLite: load embeddings and compute cosine similarity in Python
+        base_query = (
+            select(ConversationMemory)
+            .where(
+                ConversationMemory.user_id == user_id,
+                ConversationMemory.embedding.isnot(None),
+                ConversationMemory.dismissed_at.is_(None),
+            )
+        )
+        if course_id:
+            base_query = base_query.where(ConversationMemory.course_id == course_id)
+        if memory_types:
+            base_query = base_query.where(ConversationMemory.memory_type.in_(memory_types))
+
+        result = await db.execute(base_query)
+        memories = result.scalars().all()
+
+        scored = []
+        for mem in memories:
+            emb = mem.embedding
+            if isinstance(emb, str):
+                try:
+                    emb = json.loads(emb)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+            if not emb:
+                continue
+            sim = _cosine_similarity(query_embedding, emb)
+            if sim > 0.3:
+                scored.append({
+                    "id": str(mem.id),
+                    "summary": mem.summary,
+                    "memory_type": mem.memory_type,
+                    "importance": mem.importance,
+                    "similarity": sim,
+                    "category": mem.category,
+                    "created_at": mem.created_at.isoformat(),
+                    "source": "vector",
+                })
+        scored.sort(key=lambda x: x["similarity"], reverse=True)
+        return scored[:limit]
+
+    # PostgreSQL: pgvector cosine distance
     params = {
         "embedding": str(query_embedding),
         "user_id": str(user_id),
@@ -1047,55 +985,60 @@ async def _bm25_memory_search(
     limit: int,
     memory_types: list[str] | None,
 ) -> list[dict]:
-    """BM25 keyword search on memory content via PostgreSQL full-text search."""
-    params = {
-        "user_id": str(user_id),
-        "query": query,
-        "limit": limit,
-    }
-    filters = [
-        "user_id = :user_id",
-        "search_vector IS NOT NULL",
-        "dismissed_at IS NULL",
-        "search_vector @@ plainto_tsquery('simple', :query)",
-    ]
-    if course_id:
-        filters.append("course_id = :course_id")
-        params["course_id"] = str(course_id)
-    if memory_types:
-        filters.append("memory_type = ANY(:types)")
-        params["types"] = memory_types
+    """BM25 keyword search on memory content.
 
-    # Try full-text search
-    result = await db.execute(
-        text(f"""
-            SELECT id, summary, memory_type, importance, access_count, created_at, category,
-                   ts_rank_cd(search_vector, plainto_tsquery('simple', :query), 32) AS rank
-            FROM conversation_memories
-            WHERE {" AND ".join(filters)}
-            ORDER BY rank DESC
-            LIMIT :limit
-        """),
-        params,
-    )
-    rows = result.fetchall()
-
-    if rows:
-        return [
-            {
-                "id": str(row.id),
-                "summary": row.summary,
-                "memory_type": row.memory_type,
-                "importance": row.importance,
-                "bm25_rank": float(row.rank),
-                "category": row.category,
-                "created_at": row.created_at.isoformat(),
-                "source": "bm25",
-            }
-            for row in rows
+    PostgreSQL: ts_rank_cd full-text search.
+    SQLite: Falls back to keyword matching directly.
+    """
+    # PostgreSQL: try full-text search first
+    if not is_sqlite():
+        params = {
+            "user_id": str(user_id),
+            "query": query,
+            "limit": limit,
+        }
+        filters = [
+            "user_id = :user_id",
+            "search_vector IS NOT NULL",
+            "dismissed_at IS NULL",
+            "search_vector @@ plainto_tsquery('simple', :query)",
         ]
+        if course_id:
+            filters.append("course_id = :course_id")
+            params["course_id"] = str(course_id)
+        if memory_types:
+            filters.append("memory_type = ANY(:types)")
+            params["types"] = memory_types
 
-    # Fallback: simple keyword matching
+        result = await db.execute(
+            text(f"""
+                SELECT id, summary, memory_type, importance, access_count, created_at, category,
+                       ts_rank_cd(search_vector, plainto_tsquery('simple', :query), 32) AS rank
+                FROM conversation_memories
+                WHERE {" AND ".join(filters)}
+                ORDER BY rank DESC
+                LIMIT :limit
+            """),
+            params,
+        )
+        rows = result.fetchall()
+
+        if rows:
+            return [
+                {
+                    "id": str(row.id),
+                    "summary": row.summary,
+                    "memory_type": row.memory_type,
+                    "importance": row.importance,
+                    "bm25_rank": float(row.rank),
+                    "category": row.category,
+                    "created_at": row.created_at.isoformat(),
+                    "source": "bm25",
+                }
+                for row in rows
+            ]
+
+    # Fallback (SQLite always, PG when no FTS matches): simple keyword matching
     search_words = query.lower().split()[:5]
     base_query = (
         select(ConversationMemory)

@@ -5,7 +5,6 @@ Phase 1: Full 7-step ingestion pipeline with classification + multi-format.
 """
 
 import asyncio
-import ipaddress
 import logging
 import mimetypes
 import os
@@ -15,13 +14,14 @@ import uuid
 from pathlib import Path
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, UploadFile, File, Form
+from fastapi import APIRouter, Depends, UploadFile, File, Form, Request
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
 from libs.exceptions import AppError, NotFoundError, PermissionDeniedError, ValidationError
+from libs.url_validation import validate_url, validate_url_dns
 from database import get_db, async_session
 from models.content import CourseContentTree
 from models.ingestion import IngestionJob
@@ -34,72 +34,13 @@ from services.course_access import get_course_or_404
 
 logger = logging.getLogger(__name__)
 
-
-def _is_blocked_ip(value: str) -> bool:
-    ip = ipaddress.ip_address(value)
-    return ip.is_private or ip.is_loopback or ip.is_reserved or ip.is_link_local
-
-
-def _validate_url(url: str) -> str:
-    """Validate URL to prevent SSRF attacks."""
-    parsed = urlparse(url)
-    if parsed.scheme not in ("http", "https"):
-        raise ValidationError("Only HTTP/HTTPS URLs are allowed")
-
-    hostname = parsed.hostname
-    if not hostname:
-        raise ValidationError("Invalid URL")
-
-    # Allow the deterministic local scrape fixture host before DNS resolution.
-    if settings.scrape_fixture_dir and hostname.lower() == "opentutor-e2e.local":
-        return url
-
-    # Block internal/private IPs
-    try:
-        if _is_blocked_ip(hostname):
-            raise ValidationError("Internal URLs are not allowed")
-    except ValueError:
-        # Not an IP — hostname, allow but check for obvious internal hostnames
-        blocked_hosts = {
-            "localhost",
-            "127.0.0.1",
-            "0.0.0.0",
-            "[::]",
-            "[::1]",
-            "metadata.google.internal",
-        }
-        if hostname.lower() in blocked_hosts:
-            raise ValidationError("Internal URLs are not allowed")
-        # DNS resolution is done in _validate_url_dns (async) after this function
-        pass
-
-    return url
-
-
-async def _validate_url_dns(url: str) -> None:
-    """Async DNS validation to avoid blocking the event loop."""
-    import asyncio
-    parsed = urlparse(url)
-    hostname = parsed.hostname
-    if not hostname:
-        return
-    try:
-        loop = asyncio.get_running_loop()
-        resolved = await loop.getaddrinfo(hostname, None, proto=socket.IPPROTO_TCP)
-    except socket.gaierror:
-        raise ValidationError("Hostname could not be resolved") from None
-    for entry in resolved:
-        resolved_ip = entry[4][0]
-        if _is_blocked_ip(resolved_ip):
-            raise ValidationError("Internal URLs are not allowed")
+# Backward-compatible aliases used by unit tests and older imports.
+_validate_url = validate_url
+_validate_url_dns = validate_url_dns
 
 
 def _load_scrape_fixture_html(url: str) -> str | None:
-    """Load deterministic HTML fixtures for local E2E scrape flows.
-
-    This is only active when settings.scrape_fixture_dir is configured.
-    URLs must use the reserved host opentutor-e2e.local.
-    """
+    """Load deterministic HTML fixtures for local E2E scrape flows."""
     if not settings.scrape_fixture_dir:
         return None
 
@@ -119,11 +60,7 @@ router = APIRouter()
 
 
 async def _background_auto_generate(course_id: uuid.UUID, user_id: uuid.UUID):
-    """Fire-and-forget: auto-generate starter quiz + flashcards after ingestion.
-
-    Runs after embedding completes. Best-effort — failures are logged but
-    do not block the user.
-    """
+    """Fire-and-forget: auto-generate starter quiz + flashcards after ingestion."""
     # Quiz: extract up to 5 questions from course content
     try:
         async with async_session() as db:
@@ -223,16 +160,13 @@ async def _background_embed(course_id: uuid.UUID, job_id: uuid.UUID, user_id: uu
 
 @router.post("/upload")
 async def upload_file(
+    request: Request,
     file: UploadFile = File(...),
     course_id: str = Form(...),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Upload any file → 7-step ingestion pipeline → content tree.
-
-    Supports: PDF, PPTX, DOCX, HTML, TXT, MD.
-    Phase 1: Added multi-format support + classification pipeline.
-    """
+    """Upload any file → 7-step ingestion pipeline → content tree."""
     try:
         cid = uuid.UUID(course_id)
     except ValueError as e:
@@ -240,7 +174,6 @@ async def upload_file(
 
     await get_course_or_404(db, cid, user_id=user.id)
 
-    # Validate file
     if not file.filename:
         raise ValidationError("No filename provided")
 
@@ -253,7 +186,6 @@ async def upload_file(
     if len(file_bytes) > settings.max_upload_size_mb * 1024 * 1024:
         raise ValidationError("File too large")
 
-    # Save file to disk
     import hashlib
     file_hash = hashlib.sha256(file_bytes).hexdigest()[:16]
     os.makedirs(settings.upload_dir, exist_ok=True)
@@ -261,7 +193,6 @@ async def upload_file(
     with open(save_path, "wb") as f:
         f.write(file_bytes)
 
-    # Run ingestion pipeline
     job = await run_ingestion_pipeline(
         db=db,
         user_id=user.id,
@@ -275,8 +206,8 @@ async def upload_file(
     if job.status == "failed":
         raise AppError(job.error_message or "Ingestion failed")
 
-    # Fire background embedding + auto-generation
-    if (job.dispatched_to or {}).get("content_tree", 0) > 0:
+    is_test_request = request is not None and hasattr(request.app.state, "test_session_factory")
+    if (job.nodes_created or 0) > 0 and not is_test_request:
         asyncio.create_task(_background_embed(cid, job.id, user_id=user.id))
 
     return {
@@ -285,17 +216,13 @@ async def upload_file(
         "job_id": str(job.id),
         "category": job.content_category,
         "dispatched_to": job.dispatched_to,
-        "nodes_created": (job.dispatched_to or {}).get("content_tree", 0),
+        "nodes_created": job.nodes_created or 0,
         "course_id": str(cid),
     }
 
 
 def _derive_filename(url: str) -> str:
-    """Derive a meaningful filename from a URL.
-
-    For Canvas URLs, produces "Canvas Course 250590" instead of just "250590".
-    For generic URLs, uses the last path segment or domain name.
-    """
+    """Derive a meaningful filename from a URL."""
     from services.scraper.canvas_detector import detect_canvas_url
 
     canvas_info = detect_canvas_url(url)
@@ -303,11 +230,9 @@ def _derive_filename(url: str) -> str:
         return canvas_info.friendly_name
 
     parsed = urlparse(url)
-    # Try last non-empty path segment
     segments = [s for s in parsed.path.split("/") if s]
     if segments:
         return segments[-1]
-    # Fallback to domain
     return parsed.hostname or "webpage"
 
 
@@ -316,18 +241,13 @@ async def _fetch_canvas_with_auth(
     user_id: uuid.UUID,
     db: AsyncSession,
 ) -> str | None:
-    """Attempt auth-aware fetch for Canvas URLs.
-
-    Looks up an existing auth session for the Canvas domain, then uses
-    the browser cascade with that session. Returns HTML or None.
-    """
+    """Attempt auth-aware fetch for Canvas URLs."""
     from services.scraper.canvas_detector import detect_canvas_url
 
     canvas_info = detect_canvas_url(url)
     if not canvas_info.is_canvas:
         return None
 
-    # Look up existing auth session for this Canvas domain
     result = await db.execute(
         select(models_scrape.AuthSession).where(
             models_scrape.AuthSession.user_id == user_id,
@@ -338,7 +258,6 @@ async def _fetch_canvas_with_auth(
     auth_session = result.scalar_one_or_none()
 
     if not auth_session:
-        # Also try finding a ScrapeSource with auth for this domain
         src_result = await db.execute(
             select(models_scrape.ScrapeSource).where(
                 models_scrape.ScrapeSource.user_id == user_id,
@@ -348,7 +267,6 @@ async def _fetch_canvas_with_auth(
         )
         scrape_source = src_result.scalar_one_or_none()
         if scrape_source and scrape_source.session_name:
-            # Use the scrape source's session
             try:
                 from services.browser.automation import cascade_fetch
                 html = await cascade_fetch(
@@ -360,7 +278,6 @@ async def _fetch_canvas_with_auth(
                 logger.debug("Canvas auth fetch via ScrapeSource failed: %s", e)
         return None
 
-    # Use the auth session
     session_name = auth_session.session_name
     try:
         from services.browser.automation import cascade_fetch
@@ -375,20 +292,17 @@ async def _fetch_canvas_with_auth(
 
 @router.post("/url")
 async def scrape_url(
+    request: Request,
     url: str = Form(...),
     course_id: str = Form(...),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Scrape a URL → ingestion pipeline → content tree.
-
-    For Canvas LMS URLs, automatically detects the platform and attempts
-    auth-aware fetching using saved browser sessions.
-    """
+    """Scrape a URL → ingestion pipeline → content tree."""
     fixture_html = _load_scrape_fixture_html(url)
     if fixture_html is None:
-        _validate_url(url)
-        await _validate_url_dns(url)
+        validate_url(url)
+        await validate_url_dns(url)
     try:
         cid = uuid.UUID(course_id)
     except ValueError as e:
@@ -396,7 +310,6 @@ async def scrape_url(
 
     await get_course_or_404(db, cid, user_id=user.id)
 
-    # Detect Canvas URL and attempt auth-aware fetch
     from services.scraper.canvas_detector import detect_canvas_url
 
     canvas_info = detect_canvas_url(url)
@@ -420,6 +333,12 @@ async def scrape_url(
 
     filename = _derive_filename(url)
 
+    # Pass session_name for authenticated Canvas API access
+    from routers.scrape import _default_session_name as _dsn
+    scrape_session_name = None
+    if canvas_info.is_canvas:
+        scrape_session_name = _dsn(user.id, canvas_info.domain)
+
     job = await run_ingestion_pipeline(
         db=db,
         user_id=user.id,
@@ -427,11 +346,11 @@ async def scrape_url(
         filename=filename,
         course_id=cid,
         pre_fetched_html=pre_fetched,
+        session_name=scrape_session_name,
     )
     await db.commit()
 
     if job.status == "failed":
-        # Give a more helpful error for Canvas URLs that need auth
         error_msg = job.error_message or "Scrape failed"
         if requires_auth and not pre_fetched:
             error_msg = (
@@ -441,19 +360,37 @@ async def scrape_url(
             )
         raise AppError(error_msg)
 
-    # Fire background embedding + auto-generation
-    if (job.dispatched_to or {}).get("content_tree", 0) > 0:
+    is_test_request = request is not None and hasattr(request.app.state, "test_session_factory")
+    if (job.nodes_created or 0) > 0 and not is_test_request:
         asyncio.create_task(_background_embed(cid, job.id, user_id=user.id))
+
+    # Auto-ingest discovered Canvas files (PDFs, docs) in background
+    canvas_file_urls = getattr(job, "_canvas_file_urls", [])
+    files_discovered = len(canvas_file_urls)
+    if canvas_file_urls and canvas_info.is_canvas and scrape_session_name and not is_test_request:
+        from services.ingestion.pipeline import ingest_canvas_files
+        asyncio.create_task(
+            ingest_canvas_files(
+                db_factory=async_session,
+                user_id=user.id,
+                course_id=cid,
+                file_urls=canvas_file_urls,
+                session_name=scrape_session_name,
+                canvas_domain=canvas_info.domain,
+            )
+        )
+        logger.info("Queued %d Canvas files for background ingestion", files_discovered)
 
     return {
         "status": "ok",
         "url": url,
         "job_id": str(job.id),
         "category": job.content_category,
-        "nodes_created": (job.dispatched_to or {}).get("content_tree", 0),
+        "nodes_created": job.nodes_created or 0,
         "course_id": str(cid),
         "is_canvas": canvas_info.is_canvas,
         "canvas_auth_used": requires_auth and pre_fetched is not None,
+        "files_discovered": files_discovered,
     }
 
 
@@ -528,10 +465,7 @@ async def upload_image(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Upload an image for chat context (e.g., math problem photo).
-
-    Supports: JPEG, PNG, WebP, GIF. Returns base64 for LLM consumption.
-    """
+    """Upload an image for chat context (e.g., math problem photo)."""
     import base64
     import hashlib
 
@@ -594,14 +528,12 @@ async def get_uploaded_file(
 
     file_path = Path(job.file_path).resolve()
     upload_dir = Path(settings.upload_dir).resolve()
-    # Path traversal protection
     if not str(file_path).startswith(str(upload_dir)):
         raise PermissionDeniedError("Access denied")
 
     if not file_path.exists():
         raise NotFoundError("File on disk")
 
-    # Determine media type from original filename
     media_type = mimetypes.guess_type(job.original_filename or "")[0] or "application/octet-stream"
 
     return FileResponse(

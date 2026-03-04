@@ -5,7 +5,7 @@ from typing import Optional
 from datetime import datetime
 
 from sqlalchemy import String, DateTime, ForeignKey, Text, func, Index
-from sqlalchemy.dialects.postgresql import UUID
+from models.compat import CompatUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from database import Base
@@ -16,9 +16,9 @@ class ChatSession(Base):
 
     __tablename__ = "chat_sessions"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
-    course_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("courses.id", ondelete="CASCADE"))
+    id: Mapped[uuid.UUID] = mapped_column(CompatUUID, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(CompatUUID, ForeignKey("users.id", ondelete="CASCADE"))
+    course_id: Mapped[uuid.UUID] = mapped_column(CompatUUID, ForeignKey("courses.id", ondelete="CASCADE"))
 
     scene_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     title: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

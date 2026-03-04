@@ -16,9 +16,11 @@ from routers.preferences import _normalize_preference_value
 from routers.upload import _validate_url
 from routers.wrong_answers import derive_question, diagnose_from_pair
 from routers.workflows import _raise_if_service_error
+from schemas.notification import NotificationSettingsUpdate
 from services.agent.agenda_ranking import AgendaDecision
 from services.agent.agenda_signals import AgendaSignal
 from services.auth.dependency import get_current_user
+from services.integrations import google_calendar
 from services.llm.local_config import get_llm_runtime_config, update_llm_runtime_config
 from services.llm import router as llm_router
 from services.migrations import summarize_migration_state
@@ -263,6 +265,28 @@ def test_validate_url_allows_configured_scrape_fixture_host(monkeypatch):
     monkeypatch.setattr("routers.upload.settings.scrape_fixture_dir", "/tmp/scrape-fixtures", raising=False)
 
     assert _validate_url("https://opentutor-e2e.local/binary-search") == "https://opentutor-e2e.local/binary-search"
+
+
+def test_google_calendar_oauth_state_round_trip():
+    user_id = uuid.uuid4()
+
+    state = google_calendar.build_oauth_state(user_id)
+
+    assert google_calendar.consume_oauth_state(state) == user_id
+
+
+def test_google_calendar_oauth_state_rejects_tampering():
+    user_id = uuid.uuid4()
+    state = google_calendar.build_oauth_state(user_id)
+    tampered = f"{state[:-1]}{'A' if state[-1] != 'A' else 'B'}"
+
+    with pytest.raises(ValueError):
+        google_calendar.consume_oauth_state(tampered)
+
+
+def test_notification_settings_update_rejects_unknown_channels():
+    with pytest.raises(ValueError):
+        NotificationSettingsUpdate(channels_enabled=["email", "sse"])
 
 
 @pytest.mark.asyncio

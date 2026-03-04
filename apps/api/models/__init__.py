@@ -30,6 +30,8 @@ from models.agent_kv import AgentKV
 from models.tool_call_event import ToolCallEvent
 from models.learning_event import LearningEvent
 from models.mastery_snapshot import MasterySnapshot
+from models.report import Report
+from models.integration_credential import IntegrationCredential
 
 __all__ = [
     "User",
@@ -71,4 +73,6 @@ __all__ = [
     "ToolCallEvent",
     "LearningEvent",
     "MasterySnapshot",
+    "Report",
+    "IntegrationCredential",
 ]

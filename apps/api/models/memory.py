@@ -19,8 +19,7 @@ from typing import Optional
 from datetime import datetime
 
 from sqlalchemy import String, DateTime, ForeignKey, Text, Float, Integer, func, Index
-from sqlalchemy.dialects.postgresql import UUID, JSONB, TSVECTOR
-from pgvector.sqlalchemy import Vector
+from models.compat import CompatUUID, CompatJSONB, CompatTSVECTOR, CompatVector
 from sqlalchemy.orm import Mapped, mapped_column
 
 from database import Base
@@ -50,10 +49,10 @@ class ConversationMemory(Base):
 
     __tablename__ = "conversation_memories"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
+    id: Mapped[uuid.UUID] = mapped_column(CompatUUID, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(CompatUUID, ForeignKey("users.id"))
     course_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("courses.id"), nullable=True
+        CompatUUID, ForeignKey("courses.id"), nullable=True
     )
 
     # Memory content (atomic MemCell unit)
@@ -64,10 +63,10 @@ class ConversationMemory(Base):
     category: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
 
     # Vector embedding (1536-dim for OpenAI ada-002, adjustable)
-    embedding: Mapped[list] = mapped_column(Vector(1536), nullable=True)
+    embedding: Mapped[list] = mapped_column(CompatVector(1536), nullable=True)
 
     # Full-text search vector for BM25 hybrid search (OpenClaw pattern)
-    search_vector: Mapped[Optional[str]] = mapped_column(TSVECTOR, nullable=True)
+    search_vector: Mapped[Optional[str]] = mapped_column(CompatTSVECTOR, nullable=True)
 
     # Scoring (EverMemOS importance × recency)
     importance: Mapped[float] = mapped_column(Float, default=0.5)
@@ -75,7 +74,7 @@ class ConversationMemory(Base):
 
     # Source context
     source_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    metadata_json: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    metadata_json: Mapped[Optional[dict]] = mapped_column(CompatJSONB, nullable=True)
     dismissed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     dismissal_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 

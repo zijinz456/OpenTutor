@@ -5,7 +5,7 @@ from typing import Optional
 from datetime import datetime
 
 from sqlalchemy import String, Integer, Float, Boolean, DateTime, ForeignKey, func
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from models.compat import CompatUUID, CompatJSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from database import Base
@@ -16,13 +16,13 @@ class NotificationSettings(Base):
 
     __tablename__ = "notification_settings"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(CompatUUID, primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), unique=True
+        CompatUUID, ForeignKey("users.id", ondelete="CASCADE"), unique=True
     )
 
     # Enabled notification channels: ["sse", "web_push", "whatsapp", "imessage"]
-    channels_enabled: Mapped[list] = mapped_column(JSONB, default=lambda: ["sse"])
+    channels_enabled: Mapped[list] = mapped_column(CompatJSONB, default=lambda: ["sse"])
 
     # Quiet hours — notifications are held during this window
     quiet_hours_start: Mapped[Optional[str]] = mapped_column(String(5), nullable=True)  # "22:00"

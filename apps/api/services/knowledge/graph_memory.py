@@ -24,9 +24,76 @@ from datetime import datetime, timezone
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from database import is_sqlite
 from services.llm.router import get_llm_client
+from services.search.compat import cosine_similarity as _cosine
 
 logger = logging.getLogger(__name__)
+
+
+async def _find_similar_memory(db, user_id, embedding) -> dict | None:
+    """Find the most similar knowledge memory by embedding.
+
+    PostgreSQL: uses pgvector <=> operator.
+    SQLite: loads embeddings and computes cosine similarity in Python.
+    """
+    from models.memory import ConversationMemory
+
+    if is_sqlite():
+        result = await db.execute(
+            select(ConversationMemory).where(
+                ConversationMemory.user_id == user_id,
+                ConversationMemory.memory_type == "knowledge",
+                ConversationMemory.embedding.isnot(None),
+            )
+        )
+        memories = result.scalars().all()
+
+        best, best_sim = None, 0.0
+        for mem in memories:
+            emb = mem.embedding
+            if isinstance(emb, str):
+                try:
+                    emb = json.loads(emb)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+            if not emb:
+                continue
+            sim = _cosine(embedding, emb)
+            if sim > best_sim:
+                best, best_sim = mem, sim
+        if best:
+            return {
+                "id": str(best.id),
+                "summary": best.summary,
+                "metadata_json": best.metadata_json,
+                "similarity": best_sim,
+            }
+        return None
+
+    # PostgreSQL: pgvector cosine distance
+    result = await db.execute(
+        text("""
+            SELECT id, summary, metadata_json,
+                   1 - (embedding <=> :embedding::vector) as similarity
+            FROM conversation_memories
+            WHERE user_id = :user_id
+              AND memory_type = 'knowledge'
+              AND embedding IS NOT NULL
+            ORDER BY embedding <=> :embedding::vector
+            LIMIT 1
+        """),
+        {"embedding": str(embedding), "user_id": str(user_id)},
+    )
+    row = result.fetchone()
+    if row:
+        return {
+            "id": str(row.id),
+            "summary": row.summary,
+            "metadata_json": row.metadata_json,
+            "similarity": row.similarity,
+        }
+    return None
 
 # ── Education-specific entity and relation types ──
 
@@ -163,35 +230,20 @@ async def store_graph_entities(
 
         # Check for existing similar entity (mem0 similarity merge, threshold 0.7)
         if embedding:
-            existing = await db.execute(
-                text("""
-                    SELECT id, summary, metadata_json,
-                           1 - (embedding <=> :embedding::vector) as similarity
-                    FROM conversation_memories
-                    WHERE user_id = :user_id
-                      AND memory_type = 'knowledge'
-                      AND embedding IS NOT NULL
-                    ORDER BY embedding <=> :embedding::vector
-                    LIMIT 1
-                """),
-                {
-                    "embedding": str(embedding),
-                    "user_id": str(user_id),
-                },
-            )
-            row = existing.fetchone()
-            if row and row.similarity > 0.7:
+            row = await _find_similar_memory(db, user_id, embedding)
+            if row and row.get("similarity", 0) > 0.7:
                 # Merge: increment mentions count (mem0 frequency tracking)
-                meta = row.metadata_json or {}
+                meta = row.get("metadata_json") or {}
                 meta["mentions"] = meta.get("mentions", 0) + 1
                 meta["last_seen"] = datetime.now(timezone.utc).isoformat()
+                now_str = datetime.now(timezone.utc).isoformat()
                 await db.execute(
                     text("""
                         UPDATE conversation_memories
-                        SET metadata_json = :meta, updated_at = NOW()
+                        SET metadata_json = :meta, updated_at = :now
                         WHERE id = :id
                     """),
-                    {"meta": json.dumps(meta), "id": str(row.id)},
+                    {"meta": json.dumps(meta), "id": row["id"], "now": now_str},
                 )
                 continue
 

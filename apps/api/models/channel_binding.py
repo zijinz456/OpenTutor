@@ -10,7 +10,7 @@ from typing import Optional
 from datetime import datetime
 
 from sqlalchemy import String, Boolean, DateTime, ForeignKey, func, Index, UniqueConstraint
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from models.compat import CompatUUID, CompatJSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from database import Base
@@ -21,9 +21,9 @@ class ChannelBinding(Base):
 
     __tablename__ = "channel_bindings"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(CompatUUID, primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE")
+        CompatUUID, ForeignKey("users.id", ondelete="CASCADE")
     )
 
     # External channel identity
@@ -38,11 +38,11 @@ class ChannelBinding(Base):
 
     # Per-channel active course context (stateless messaging needs this)
     active_course_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("courses.id", ondelete="SET NULL"), nullable=True
+        CompatUUID, ForeignKey("courses.id", ondelete="SET NULL"), nullable=True
     )
 
     # Extensible metadata (e.g. push token, locale, profile picture URL)
-    metadata_json: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    metadata_json: Mapped[Optional[dict]] = mapped_column(CompatJSONB, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     last_message_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -55,6 +55,28 @@ async def _get_user_ids() -> list[uuid.UUID]:
         return [row[0] for row in result.all()]
 
 
+async def _for_each_user(processor, label: str) -> int:
+    """Run a processor callback for every user, each in its own DB session.
+
+    ``processor(user_id, db)`` should return a truthy value when the
+    operation counted as successful.  Exceptions are logged and
+    do not abort the loop.
+
+    Returns the count of successful invocations.
+    """
+    user_ids = await _get_user_ids()
+    count = 0
+    for user_id in user_ids:
+        try:
+            async with async_session() as db:
+                result = await processor(user_id, db)
+                if result:
+                    count += 1
+        except Exception as e:
+            logger.error("%s failed for user %s: %s", label, user_id, e)
+    return count
+
+
 async def _push_notification(
     user_id: uuid.UUID,
     title: str,
@@ -63,6 +85,9 @@ async def _push_notification(
     course_id: uuid.UUID | None = None,
     priority: str = "normal",
     dedup_key: str | None = None,
+    action_url: str | None = None,
+    action_label: str | None = None,
+    metadata_json: dict | None = None,
 ):
     """Dispatch notification via NotificationDispatcher.
 
@@ -78,6 +103,9 @@ async def _push_notification(
             course_id=course_id,
             priority=priority,
             dedup_key=dedup_key,
+            action_url=action_url,
+            action_label=action_label,
+            metadata_json=metadata_json,
             db=db,
         )
 
@@ -168,12 +196,12 @@ async def agenda_tick_job():
     try:
         async with async_session() as _db:
             from sqlalchemy import text as sa_text
-            rows = await _db.execute(
-                sa_text("""
-                    SELECT DISTINCT user_id FROM chat_messages
-                    WHERE created_at >= NOW() - INTERVAL '7 days'
-                """)
-            )
+            from database import is_sqlite as _is_sq
+            if _is_sq():
+                _recent_q = "SELECT DISTINCT user_id FROM chat_messages WHERE created_at >= datetime('now', '-7 days')"
+            else:
+                _recent_q = "SELECT DISTINCT user_id FROM chat_messages WHERE created_at >= NOW() - INTERVAL '7 days'"
+            rows = await _db.execute(sa_text(_recent_q))
             recent_active = {row[0] for row in rows.fetchall()}
             for uid in user_ids:
                 if uid in recent_active:
@@ -353,25 +381,18 @@ async def timing_analysis_job():
     from services.notification.timing import compute_preferred_study_time
     from services.notification.dispatcher import get_or_create_settings
 
-    user_ids = await _get_user_ids()
-    updated = 0
+    async def _process(user_id, db):
+        preferred_time, confidence = await compute_preferred_study_time(user_id, db)
+        if preferred_time is not None:
+            ns = await get_or_create_settings(user_id, db)
+            ns.preferred_study_time = preferred_time
+            ns.study_time_confidence = confidence
+            await db.commit()
+            return True
+        return False
 
-    for user_id in user_ids:
-        try:
-            async with async_session() as db:
-                preferred_time, confidence = await compute_preferred_study_time(
-                    user_id, db
-                )
-                if preferred_time is not None:
-                    ns = await get_or_create_settings(user_id, db)
-                    ns.preferred_study_time = preferred_time
-                    ns.study_time_confidence = confidence
-                    await db.commit()
-                    updated += 1
-        except Exception as e:
-            logger.error("Timing analysis failed for user %s: %s", user_id, e)
-
-    logger.info("Timing analysis complete: updated %d/%d users", updated, len(user_ids))
+    updated = await _for_each_user(_process, "Timing analysis")
+    logger.info("Timing analysis complete: updated %d users", updated)
 
 
 async def escalation_check_job():
@@ -506,46 +527,77 @@ async def _has_scheduled_weekly_task(
     return result.scalar_one_or_none() is not None
 
 
-async def daily_brief_job():
-    """Daily learning brief — personalised morning summary.
+async def _broadcast_report_job(
+    name: str,
+    generator_module: str,
+    generator_func_name: str,
+    title: str,
+    category: str,
+    dedup_pattern: str,
+    action_label: str,
+):
+    """Shared helper for broadcast report jobs (daily brief, weekly report, etc.).
 
-    Generates a short report and sends it as a notification.
-    Runs every morning at 8:00 AM.
+    Fetches all users, generates a report per user via the given generator
+    function, and dispatches a notification with the result.
     """
-    logger.info("Running daily brief job...")
-    from services.report.generator import generate_daily_brief
+    import importlib
+
+    logger.info("Running %s job...", name)
+    module = importlib.import_module(generator_module)
+    generator = getattr(module, generator_func_name)
 
     user_ids = await _get_user_ids()
     sem = asyncio.Semaphore(5)
     sent = 0
 
-    async def _send_brief(user_id: uuid.UUID) -> bool:
+    async def _send(user_id: uuid.UUID) -> bool:
         async with sem, async_session() as db:
-            brief = await generate_daily_brief(user_id, db)
-            if brief:
+            content = await generator(user_id, db)
+            if content:
+                now_str = datetime.now(timezone.utc).strftime(dedup_pattern)
                 await dispatch_notification(
                     user_id=user_id,
-                    title="Good morning — your daily learning brief",
-                    body=brief[:500],
-                    category="daily_brief",
+                    title=title,
+                    body=content[:500],
+                    category=category,
                     priority="normal",
-                    dedup_key=f"daily_brief:{user_id}:{datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
+                    dedup_key=f"{category}:{user_id}:{now_str}",
+                    action_url="/dashboard",
+                    action_label=action_label,
                     db=db,
                 )
                 return True
             return False
 
     results = await asyncio.gather(
-        *[_send_brief(uid) for uid in user_ids],
+        *[_send(uid) for uid in user_ids],
         return_exceptions=True,
     )
     for r in results:
         if r is True:
             sent += 1
         elif isinstance(r, Exception):
-            logger.error("Daily brief failed: %s", r)
+            logger.error("%s failed: %s", name, r)
 
-    logger.info("Daily brief complete: sent to %d users", sent)
+    logger.info("%s complete: sent to %d users", name, sent)
+
+
+async def daily_brief_job():
+    """Daily learning brief — personalised morning summary.
+
+    Generates a short report and sends it as a notification.
+    Runs every morning at 8:00 AM.
+    """
+    await _broadcast_report_job(
+        name="Daily brief",
+        generator_module="services.report.generator",
+        generator_func_name="generate_daily_brief",
+        title="Good morning — your daily learning brief",
+        category="daily_brief",
+        dedup_pattern="%Y-%m-%d",
+        action_label="View Dashboard",
+    )
 
 
 async def weekly_report_job():
@@ -553,40 +605,15 @@ async def weekly_report_job():
 
     Runs every Sunday at 8:00 PM.
     """
-    logger.info("Running weekly report job...")
-    from services.report.generator import generate_weekly_report
-
-    user_ids = await _get_user_ids()
-    sem = asyncio.Semaphore(5)
-    sent = 0
-
-    async def _send_report(user_id: uuid.UUID) -> bool:
-        async with sem, async_session() as db:
-            report = await generate_weekly_report(user_id, db)
-            if report:
-                await dispatch_notification(
-                    user_id=user_id,
-                    title="Your weekly learning summary",
-                    body=report[:500],
-                    category="weekly_report",
-                    priority="normal",
-                    dedup_key=f"weekly_report:{user_id}:{datetime.now(timezone.utc).strftime('%Y-%W')}",
-                    db=db,
-                )
-                return True
-            return False
-
-    results = await asyncio.gather(
-        *[_send_report(uid) for uid in user_ids],
-        return_exceptions=True,
+    await _broadcast_report_job(
+        name="Weekly report",
+        generator_module="services.report.generator",
+        generator_func_name="generate_weekly_report",
+        title="Your weekly learning summary",
+        category="weekly_report",
+        dedup_pattern="%Y-%W",
+        action_label="View Details",
     )
-    for r in results:
-        if r is True:
-            sent += 1
-        elif isinstance(r, Exception):
-            logger.error("Weekly report failed: %s", r)
-
-    logger.info("Weekly report complete: sent to %d users", sent)
 
 
 async def smart_review_trigger_job():
@@ -599,87 +626,82 @@ async def smart_review_trigger_job():
     from models.progress import LearningProgress
     from services.spaced_repetition.fsrs import FSRSCard, estimate_session_urgency
 
-    user_ids = await _get_user_ids()
-    triggered = 0
+    async def _process(user_id, db):
+        now = datetime.now(timezone.utc)
+        items_result = await db.execute(
+            select(LearningProgress)
+            .where(
+                LearningProgress.user_id == user_id,
+                LearningProgress.next_review_at.isnot(None),
+                LearningProgress.next_review_at <= now,
+                LearningProgress.mastery_score < 0.9,
+            )
+            .order_by(LearningProgress.next_review_at.asc())
+            .limit(50)
+        )
+        items = items_result.scalars().all()
+        if not items:
+            return False
 
-    for user_id in user_ids:
-        try:
-            async with async_session() as db:
-                # Load all due learning progress items
-                now = datetime.now(timezone.utc)
-                items_result = await db.execute(
-                    select(LearningProgress)
-                    .where(
-                        LearningProgress.user_id == user_id,
-                        LearningProgress.next_review_at.isnot(None),
-                        LearningProgress.next_review_at <= now,
-                        LearningProgress.mastery_score < 0.9,
-                    )
-                    .order_by(LearningProgress.next_review_at.asc())
-                    .limit(50)
-                )
-                items = items_result.scalars().all()
+        # Convert to FSRSCard for cost estimation
+        cards = []
+        for item in items:
+            due_at = item.next_review_at
+            if due_at and due_at.tzinfo is None:
+                due_at = due_at.replace(tzinfo=timezone.utc)
+            stability = float(item.fsrs_stability) if item.fsrs_stability and item.fsrs_stability > 0 else 1.0
+            cards.append(FSRSCard(stability=stability, due=due_at))
 
-                if not items:
-                    continue
+        assessment = estimate_session_urgency(cards, now)
 
-                # Convert to FSRSCard for cost estimation
-                cards = []
-                for item in items:
-                    due_at = item.next_review_at
-                    if due_at and due_at.tzinfo is None:
-                        due_at = due_at.replace(tzinfo=timezone.utc)
-                    # Use real FSRS stability from the model (falls back to 1.0 for new cards)
-                    stability = float(item.fsrs_stability) if item.fsrs_stability and item.fsrs_stability > 0 else 1.0
-                    cards.append(FSRSCard(
-                        stability=stability,
-                        due=due_at,
-                    ))
+        if assessment["urgency"] not in ("high", "critical"):
+            return False
 
-                assessment = estimate_session_urgency(cards, now)
+        # Skip if a review_session is already queued/running for this user
+        active_review = await db.execute(
+            select(AgentTask.id)
+            .where(
+                AgentTask.user_id == user_id,
+                AgentTask.task_type == "review_session",
+                AgentTask.status.in_(("queued", "running", "pending_approval")),
+            )
+            .limit(1)
+        )
+        if active_review.scalar_one_or_none() is not None:
+            return False
 
-                if assessment["urgency"] in ("high", "critical"):
-                    # Skip if a review_session is already queued/running for this user
-                    active_review = await db.execute(
-                        select(AgentTask.id)
-                        .where(
-                            AgentTask.user_id == user_id,
-                            AgentTask.task_type == "review_session",
-                            AgentTask.status.in_(("queued", "running", "pending_approval")),
-                        )
-                        .limit(1)
-                    )
-                    if active_review.scalar_one_or_none() is not None:
-                        continue
+        await submit_task(
+            user_id=user_id,
+            task_type="review_session",
+            title=f"Review {assessment['due_count']} at-risk items",
+            summary=assessment["recommendation"],
+            source="smart_review_trigger",
+            input_json={
+                "session_kind": "due_review",
+                "trigger_signal": "forgetting_cost",
+                "forgetting_cost": assessment["forgetting_cost"],
+            },
+            requires_approval=False,
+            max_attempts=2,
+        )
+        await dispatch_notification(
+            user_id=user_id,
+            title="Review time",
+            body=assessment["recommendation"],
+            category="smart_review",
+            priority="high" if assessment["urgency"] == "critical" else "normal",
+            dedup_key=f"smart_review:{user_id}:{now.strftime('%Y-%m-%d')}",
+            action_url="/review",
+            action_label="Review Now",
+            metadata_json={
+                "due_count": assessment["due_count"],
+                "urgency": assessment["urgency"],
+            },
+            db=db,
+        )
+        return True
 
-                    await submit_task(
-                        user_id=user_id,
-                        task_type="review_session",
-                        title=f"Review {assessment['due_count']} at-risk items",
-                        summary=assessment["recommendation"],
-                        source="smart_review_trigger",
-                        input_json={
-                            "session_kind": "due_review",
-                            "trigger_signal": "forgetting_cost",
-                            "forgetting_cost": assessment["forgetting_cost"],
-                        },
-                        requires_approval=False,
-                        max_attempts=2,
-                    )
-                    await dispatch_notification(
-                        user_id=user_id,
-                        title="Review time",
-                        body=assessment["recommendation"],
-                        category="smart_review",
-                        priority="high" if assessment["urgency"] == "critical" else "normal",
-                        dedup_key=f"smart_review:{user_id}:{now.strftime('%Y-%m-%d')}",
-                        db=db,
-                    )
-                    triggered += 1
-
-        except Exception as e:
-            logger.error("Smart review trigger failed for user %s: %s", user_id, e)
-
+    triggered = await _for_each_user(_process, "Smart review trigger")
     logger.info("Smart review trigger complete: triggered for %d users", triggered)
 
 
@@ -790,6 +812,73 @@ async def cross_course_linking_job():
                         {"patterns": patterns, "updated_at": datetime.now(timezone.utc).isoformat()},
                         course_id=None,
                     )
+
+                    # Auto-generate review tasks for large mastery gaps
+                    for pattern in patterns:
+                        masteries = [c["mastery"] for c in pattern["courses"]]
+                        gap = max(masteries) - min(masteries)
+                        if gap < 0.3:
+                            continue
+
+                        # Find the weak course (lowest mastery)
+                        weak = min(pattern["courses"], key=lambda c: c["mastery"])
+                        strong = max(pattern["courses"], key=lambda c: c["mastery"])
+                        weak_course_id = uuid.UUID(weak["course_id"])
+
+                        # Skip if a cross_course_review task already exists
+                        existing = await db.execute(
+                            select(AgentTask.id)
+                            .where(
+                                AgentTask.user_id == user_id,
+                                AgentTask.task_type == "cross_course_review",
+                                AgentTask.status.in_(("queued", "running", "pending_approval")),
+                            )
+                            .limit(1)
+                        )
+                        if existing.scalar_one_or_none() is not None:
+                            continue
+
+                        await submit_task(
+                            user_id=user_id,
+                            task_type="cross_course_review",
+                            title=f"Review '{pattern['topic']}' for {weak['course_name']}",
+                            summary=(
+                                f"You've mastered '{pattern['topic']}' in {strong['course_name']} "
+                                f"({strong['mastery']:.0%}) but it's weaker in "
+                                f"{weak['course_name']} ({weak['mastery']:.0%}). "
+                                f"A focused review can help transfer your knowledge."
+                            ),
+                            source="cross_course_linking",
+                            input_json={
+                                "topic": pattern["topic"],
+                                "strong_course": strong,
+                                "weak_course": weak,
+                                "mastery_gap": round(gap, 3),
+                            },
+                            requires_approval=False,
+                            max_attempts=2,
+                        )
+                        await dispatch_notification(
+                            user_id=user_id,
+                            title=f"Knowledge transfer: {pattern['topic']}",
+                            body=(
+                                f"You know '{pattern['topic']}' well in {strong['course_name']} "
+                                f"({strong['mastery']:.0%}) — review it in {weak['course_name']} "
+                                f"({weak['mastery']:.0%}) to strengthen both."
+                            ),
+                            category="cross_course",
+                            course_id=weak_course_id,
+                            priority="normal",
+                            dedup_key=f"cross_course:{user_id}:{pattern['topic'][:30]}",
+                            action_url=f"/study/course/{weak['course_id']}",
+                            action_label="Review Now",
+                            metadata_json={
+                                "topic": pattern["topic"],
+                                "mastery_gap": round(gap, 3),
+                            },
+                            db=db,
+                        )
+
                     await db.commit()
                     links_found += len(patterns)
 
@@ -799,111 +888,36 @@ async def cross_course_linking_job():
     logger.info("Cross-course linking complete: links_found=%d", links_found)
 
 
+_SCHEDULED_JOBS: list[tuple] = [
+    # (func, trigger, job_id, name)
+    # Core agent loop
+    (agenda_tick_job, IntervalTrigger(hours=2), "agenda_tick", "Agenda Tick (unified proactive agent loop)"),
+    # Standalone maintenance jobs
+    (weekly_prep_job, CronTrigger(day_of_week="mon", hour=8, minute=0), "weekly_prep", "Weekly Study Prep (WF-2)"),
+    (scrape_refresh_job, IntervalTrigger(hours=1), "scrape_refresh", "Auto-Scrape Refresh"),
+    (memory_consolidation_job, IntervalTrigger(hours=6), "memory_consolidation", "Memory Consolidation (dedup + decay + categorize)"),
+    (timing_analysis_job, CronTrigger(hour=3, minute=0), "timing_analysis", "Study Timing Analysis"),
+    (escalation_check_job, IntervalTrigger(hours=2), "escalation_check", "Notification Escalation Check"),
+    # Phase 1: Proactive agent jobs
+    (daily_brief_job, CronTrigger(hour=8, minute=0), "daily_brief", "Daily Learning Brief"),
+    (weekly_report_job, CronTrigger(day_of_week="sun", hour=20, minute=0), "weekly_report", "Weekly Learning Report"),
+    (smart_review_trigger_job, IntervalTrigger(hours=4), "smart_review_trigger", "Smart Review Trigger (forgetting cost)"),
+    # Phase 4: Training + linking
+    (bkt_score_training_job, CronTrigger(day_of_week="sat", hour=3, minute=0), "bkt_score_training", "BKT + Score Prediction Training"),
+    (cross_course_linking_job, IntervalTrigger(hours=12), "cross_course_linking", "Cross-Course Knowledge Linking"),
+]
+
+
 def start_scheduler():
     """Start the APScheduler with all configured jobs."""
-
-    # --- Core agent loop: unified agenda tick (every 2 hours) ---
-    scheduler.add_job(
-        agenda_tick_job,
-        trigger=IntervalTrigger(hours=2),
-        id="agenda_tick",
-        name="Agenda Tick (unified proactive agent loop)",
-        replace_existing=True,
-    )
-
-    # --- Standalone maintenance jobs ---
-
-    # Weekly prep: every Monday at 8:00 AM
-    scheduler.add_job(
-        weekly_prep_job,
-        trigger=CronTrigger(day_of_week="mon", hour=8, minute=0),
-        id="weekly_prep",
-        name="Weekly Study Prep (WF-2)",
-        replace_existing=True,
-    )
-
-    # Auto-scrape refresh: every hour
-    scheduler.add_job(
-        scrape_refresh_job,
-        trigger=IntervalTrigger(hours=1),
-        id="scrape_refresh",
-        name="Auto-Scrape Refresh",
-        replace_existing=True,
-    )
-
-    # Memory consolidation: every 6 hours
-    scheduler.add_job(
-        memory_consolidation_job,
-        trigger=IntervalTrigger(hours=6),
-        id="memory_consolidation",
-        name="Memory Consolidation (dedup + decay + categorize)",
-        replace_existing=True,
-    )
-
-    # Timing analysis: daily at 3:00 AM
-    scheduler.add_job(
-        timing_analysis_job,
-        trigger=CronTrigger(hour=3, minute=0),
-        id="timing_analysis",
-        name="Study Timing Analysis",
-        replace_existing=True,
-    )
-
-    # Escalation check: every 2 hours
-    scheduler.add_job(
-        escalation_check_job,
-        trigger=IntervalTrigger(hours=2),
-        id="escalation_check",
-        name="Notification Escalation Check",
-        replace_existing=True,
-    )
-
-    # --- Phase 1: Proactive agent jobs ---
-
-    # Daily learning brief: every day at 8:00 AM
-    scheduler.add_job(
-        daily_brief_job,
-        trigger=CronTrigger(hour=8, minute=0),
-        id="daily_brief",
-        name="Daily Learning Brief",
-        replace_existing=True,
-    )
-
-    # Weekly learning report: every Sunday at 8:00 PM
-    scheduler.add_job(
-        weekly_report_job,
-        trigger=CronTrigger(day_of_week="sun", hour=20, minute=0),
-        id="weekly_report",
-        name="Weekly Learning Report",
-        replace_existing=True,
-    )
-
-    # Smart review trigger: every 4 hours (Orbit-style forgetting cost)
-    scheduler.add_job(
-        smart_review_trigger_job,
-        trigger=IntervalTrigger(hours=4),
-        id="smart_review_trigger",
-        name="Smart Review Trigger (forgetting cost)",
-        replace_existing=True,
-    )
-
-    # Phase 4: Weekly BKT parameter training + score prediction model refresh
-    scheduler.add_job(
-        bkt_score_training_job,
-        trigger=CronTrigger(day_of_week="sat", hour=3, minute=0),
-        id="bkt_score_training",
-        name="BKT + Score Prediction Training",
-        replace_existing=True,
-    )
-
-    # Phase 4: Cross-course knowledge linking (every 12 hours)
-    scheduler.add_job(
-        cross_course_linking_job,
-        trigger=IntervalTrigger(hours=12),
-        id="cross_course_linking",
-        name="Cross-Course Knowledge Linking",
-        replace_existing=True,
-    )
+    for func, trigger, job_id, name in _SCHEDULED_JOBS:
+        scheduler.add_job(
+            func,
+            trigger=trigger,
+            id=job_id,
+            name=name,
+            replace_existing=True,
+        )
 
     scheduler.start()
     logger.info("Scheduler started with %d jobs", len(scheduler.get_jobs()))

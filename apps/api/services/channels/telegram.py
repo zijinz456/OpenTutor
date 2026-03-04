@@ -9,22 +9,24 @@ Docs: https://core.telegram.org/bots/api
 
 from __future__ import annotations
 
-import base64
 import logging
-import time
 from typing import Any
 
 import httpx
 
 from config import settings
-from services.channels.base import BaseChannelAdapter, IncomingMessage, OutgoingMessage
+from services.channels.base import (
+    BaseChannelAdapter,
+    IncomingMessage,
+    OutgoingMessage,
+    _DEFAULT_TIMEOUT,
+    encode_media_response,
+    mime_to_extension,
+)
 
 logger = logging.getLogger(__name__)
 
 TELEGRAM_API_BASE = "https://api.telegram.org"
-
-# Reusable client timeout
-_DEFAULT_TIMEOUT = httpx.Timeout(connect=5.0, read=30.0, write=10.0, pool=5.0)
 
 
 class TelegramAdapter(BaseChannelAdapter):
@@ -255,7 +257,6 @@ class TelegramAdapter(BaseChannelAdapter):
         try:
             async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT) as client:
                 if media_url:
-                    # Direct download
                     resp = await client.get(media_url)
                 else:
                     # Step 1: Get file path via getFile API
@@ -287,23 +288,11 @@ class TelegramAdapter(BaseChannelAdapter):
                     )
                     return None
 
-                # Determine MIME type from Content-Type header or file extension
-                content_type = resp.headers.get("content-type", "application/octet-stream")
-                mime_type = content_type.split(";")[0].strip()
-
-                encoded = base64.b64encode(resp.content).decode("utf-8")
-
-                # Derive filename
-                filename = ""
-                if media_id:
-                    ext = _mime_to_extension(mime_type)
-                    filename = f"telegram_{media_id[:12]}{ext}"
-
-                return {
-                    "data": encoded,
-                    "mime_type": mime_type,
-                    "filename": filename,
-                }
+                result = encode_media_response(resp)
+                if result and media_id:
+                    ext = mime_to_extension(result["mime_type"])
+                    result["filename"] = f"telegram_{media_id[:12]}{ext}"
+                return result
 
         except httpx.HTTPError as exc:
             logger.error("Telegram download_media HTTP error: %s", exc)
@@ -335,22 +324,3 @@ class TelegramAdapter(BaseChannelAdapter):
         except httpx.HTTPError as exc:
             # Typing indicators are best-effort
             logger.debug("Telegram typing indicator failed: %s", exc)
-
-
-# ── Helpers ──
-
-def _mime_to_extension(mime_type: str) -> str:
-    """Map common MIME types to file extensions."""
-    mapping = {
-        "image/jpeg": ".jpg",
-        "image/png": ".png",
-        "image/webp": ".webp",
-        "image/gif": ".gif",
-        "audio/ogg": ".ogg",
-        "audio/mpeg": ".mp3",
-        "audio/mp4": ".m4a",
-        "video/mp4": ".mp4",
-        "application/pdf": ".pdf",
-        "application/zip": ".zip",
-    }
-    return mapping.get(mime_type, "")

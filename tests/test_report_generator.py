@@ -18,13 +18,20 @@ from services.report.generator import (
 )
 
 
+def _make_db():
+    db = MagicMock()
+    db.commit = AsyncMock()
+    db.refresh = AsyncMock()
+    return db
+
+
 # ── generate_daily_brief ──
 
 
 @pytest.mark.asyncio
 async def test_daily_brief_uses_llm():
     """Should use LLM to generate brief when available."""
-    db = AsyncMock()
+    db = _make_db()
 
     mock_client = MagicMock()
     mock_client.chat = AsyncMock(return_value=("Good morning! Here's your brief...", None))
@@ -44,7 +51,7 @@ async def test_daily_brief_uses_llm():
 @pytest.mark.asyncio
 async def test_daily_brief_fallback_on_llm_failure():
     """Should fall back to text report when LLM fails."""
-    db = AsyncMock()
+    db = _make_db()
 
     with (
         patch("services.report.generator._gather_report_data", new_callable=AsyncMock) as mock_gather,
@@ -69,7 +76,7 @@ async def test_daily_brief_fallback_on_llm_failure():
 @pytest.mark.asyncio
 async def test_weekly_report_uses_llm():
     """Should use LLM to generate weekly report."""
-    db = AsyncMock()
+    db = _make_db()
 
     mock_client = MagicMock()
     mock_client.chat = AsyncMock(return_value=("## This Week's Highlights...", None))
@@ -88,7 +95,7 @@ async def test_weekly_report_uses_llm():
 @pytest.mark.asyncio
 async def test_weekly_report_fallback_on_llm_failure():
     """Should fall back to text report when LLM fails."""
-    db = AsyncMock()
+    db = _make_db()
 
     with (
         patch("services.report.generator._gather_report_data", new_callable=AsyncMock) as mock_gather,

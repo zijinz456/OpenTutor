@@ -103,8 +103,6 @@ export default function CoursePage() {
       >
         <SectionContainer
           courseId={courseId}
-          visibleSections={visibleSections}
-          chatEnabled={features.free_qa}
           reviewEnabled={features.wrong_answer}
         />
       </AppShell>

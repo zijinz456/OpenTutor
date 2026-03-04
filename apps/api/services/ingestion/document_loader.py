@@ -49,6 +49,7 @@ async def extract_content(
     file_path: str | None = None,
     url: str | None = None,
     query: str | None = None,
+    session_name: str | None = None,
 ) -> tuple[str, str]:
     """Unified content extraction entry point.
 
@@ -59,9 +60,10 @@ async def extract_content(
         query: Optional search query for BM25 content filtering (Crawl4AI).
                When provided, noisy web pages are filtered to keep only
                query-relevant sections.
+        session_name: Optional Playwright session name for authenticated Canvas API access.
     """
     if url:
-        return await _extract_from_url(url, query=query)
+        return await _extract_from_url(url, query=query, session_name=session_name)
 
     if not file_path:
         return "", ""
@@ -83,7 +85,29 @@ async def extract_content(
         return await asyncio.to_thread(_extract_plain_text, file_path)
 
     # Unknown → try text read
-    return await asyncio.to_thread(_extract_unknown_as_text, file_path)
+    return await asyncio.to_thread(_extract_plain_text, file_path)
+
+
+def _build_crawl4ai_config(query: str | None = None):
+    """Build Crawl4AI CrawlerRunConfig with optional BM25 filtering."""
+    from crawl4ai import CrawlerRunConfig
+    from crawl4ai.markdown_generation_strategy import DefaultMarkdownGenerator
+
+    markdown_generator = DefaultMarkdownGenerator()
+    if query:
+        try:
+            from crawl4ai.content_filter_strategy import BM25ContentFilter
+
+            markdown_generator = DefaultMarkdownGenerator(
+                content_filter=BM25ContentFilter(user_query=query, bm25_threshold=1.0)
+            )
+        except ImportError:
+            pass
+    return CrawlerRunConfig(
+        excluded_tags=["nav", "footer", "sidebar"],
+        word_count_threshold=100,
+        markdown_generator=markdown_generator,
+    )
 
 
 async def extract_content_rich(
@@ -95,29 +119,10 @@ async def extract_content_rich(
     Uses Crawl4AI with optional BM25 filtering. Falls back to basic extraction.
     """
     try:
-        from crawl4ai import AsyncWebCrawler, CrawlerRunConfig
-        from crawl4ai.markdown_generation_strategy import DefaultMarkdownGenerator
-
-        markdown_generator = DefaultMarkdownGenerator()
-        if query:
-            try:
-                from crawl4ai.content_filter_strategy import BM25ContentFilter
-
-                markdown_generator = DefaultMarkdownGenerator(
-                    content_filter=BM25ContentFilter(
-                        user_query=query,
-                        bm25_threshold=1.0,
-                    )
-                )
-            except ImportError:
-                pass
+        from crawl4ai import AsyncWebCrawler
 
         async with AsyncWebCrawler() as crawler:
-            config = CrawlerRunConfig(
-                excluded_tags=["nav", "footer", "sidebar"],
-                word_count_threshold=100,
-                markdown_generator=markdown_generator,
-            )
+            config = _build_crawl4ai_config(query)
             result = await crawler.arun(url=url, config=config)
             if result.success:
                 return _crawl_result_to_extraction(result, url, query)
@@ -144,28 +149,9 @@ async def extract_content_batch(
         return []
 
     try:
-        from crawl4ai import AsyncWebCrawler, CrawlerRunConfig
-        from crawl4ai.markdown_generation_strategy import DefaultMarkdownGenerator
+        from crawl4ai import AsyncWebCrawler
 
-        markdown_generator = DefaultMarkdownGenerator()
-        if query:
-            try:
-                from crawl4ai.content_filter_strategy import BM25ContentFilter
-
-                markdown_generator = DefaultMarkdownGenerator(
-                    content_filter=BM25ContentFilter(
-                        user_query=query,
-                        bm25_threshold=1.0,
-                    )
-                )
-            except ImportError:
-                pass
-
-        config = CrawlerRunConfig(
-            excluded_tags=["nav", "footer", "sidebar"],
-            word_count_threshold=100,
-            markdown_generator=markdown_generator,
-        )
+        config = _build_crawl4ai_config(query)
 
         async with AsyncWebCrawler() as crawler:
             results = await crawler.arun_many(urls=urls, config=config)
@@ -256,13 +242,175 @@ def _crawl_result_to_extraction(result, url: str, query: str | None = None) -> E
 # to get structured data instead of scraping rendered HTML.
 
 
-async def _try_canvas_api(url: str) -> tuple[str, str] | None:
+def _load_session_cookies(
+    session_name: str | None,
+    target_domain: str | None = None,
+) -> dict[str, str]:
+    """Load cookies from a saved Playwright session file for httpx use.
+
+    Reads the storageState JSON and extracts cookies as a flat dict
+    suitable for httpx.AsyncClient(cookies=...).
+
+    Args:
+        target_domain: If provided, only return cookies that match this domain
+            (exact match or parent domain match). This is critical for Canvas
+            where auth cookies (canvas_session, _csrf_token) live on the
+            exact domain, not on analytics tracking domains.
+    """
+    if not session_name:
+        return {}
+    try:
+        from services.browser.session_manager import SessionManager
+        import json
+
+        state_path = SessionManager.state_file(session_name)
+        if not state_path.exists():
+            return {}
+
+        state = json.loads(state_path.read_text())
+        cookies = {}
+        for cookie in state.get("cookies", []):
+            cookie_domain = cookie.get("domain", "").lstrip(".")
+            name = cookie["name"]
+
+            if target_domain:
+                # Match exact domain or parent domain
+                td = target_domain.lstrip(".")
+                if cookie_domain == td or td.endswith("." + cookie_domain):
+                    cookies[name] = cookie["value"]
+            else:
+                cookies[name] = cookie["value"]
+        return cookies
+    except Exception as e:
+        logger.debug("Failed to load session cookies for %s: %s", session_name, e)
+        return {}
+
+
+@dataclass
+class CanvasExtraction:
+    """Result of deep Canvas API extraction."""
+    title: str
+    content: str
+    file_urls: list[dict] = field(default_factory=list)
+    """List of discovered file dicts: {"url": str, "filename": str, "content_type": str}"""
+    pages_fetched: int = 0
+    modules_found: int = 0
+
+
+def _extract_file_urls_from_html(html: str, base_url: str) -> list[dict]:
+    """Extract PDF and document file URLs from Canvas page HTML body.
+
+    Finds links to files hosted on Canvas (course files, module attachments)
+    and returns them as structured dicts for downstream downloading.
+    """
+    from bs4 import BeautifulSoup
+    from urllib.parse import urljoin, urlparse
+
+    soup = BeautifulSoup(html, "lxml")
+    files: list[dict] = []
+    seen_urls: set[str] = set()
+
+    for a_tag in soup.find_all("a", href=True):
+        href = a_tag["href"]
+        full_url = urljoin(base_url, href)
+
+        # Skip already-seen URLs
+        if full_url in seen_urls:
+            continue
+
+        # Match Canvas file URLs: /courses/{id}/files/{file_id}
+        # or direct download links: /files/{file_id}/download
+        is_canvas_file = bool(re.search(r"/files/\d+", href))
+        # Match direct PDF/document links
+        parsed = urlparse(full_url)
+        ext = Path(parsed.path).suffix.lower()
+        is_doc_link = ext in {".pdf", ".doc", ".docx", ".pptx", ".ppt", ".xlsx", ".xls"}
+
+        if is_canvas_file or is_doc_link:
+            seen_urls.add(full_url)
+            link_text = a_tag.get_text(strip=True) or Path(parsed.path).stem
+            # Normalize Canvas file URLs to download form
+            download_url = full_url
+            if is_canvas_file and "/download" not in full_url:
+                # Strip query params like ?wrap=1 and add /download
+                clean = full_url.split("?")[0].rstrip("/")
+                download_url = f"{clean}/download"
+
+            filename = link_text
+            if not any(filename.lower().endswith(e) for e in (".pdf", ".doc", ".docx", ".pptx")):
+                filename = f"{link_text}{ext}" if ext else f"{link_text}.pdf"
+
+            content_type = "application/pdf" if ext == ".pdf" or not ext else f"application/{ext.lstrip('.')}"
+            files.append({
+                "url": download_url,
+                "display_url": full_url,
+                "filename": filename,
+                "content_type": content_type,
+            })
+
+    return files
+
+
+async def _canvas_api_paginate(
+    client,
+    url: str,
+    params: dict | None = None,
+    max_pages: int = 5,
+) -> list[dict]:
+    """Fetch all pages of a Canvas API endpoint using Link header pagination."""
+    results = []
+    next_url = url
+    page_count = 0
+    while next_url and page_count < max_pages:
+        resp = await client.get(next_url, params=params if page_count == 0 else None)
+        if resp.status_code != 200:
+            break
+        data = resp.json()
+        if isinstance(data, list):
+            results.extend(data)
+        else:
+            results.append(data)
+        # Parse Link header for next page
+        link_header = resp.headers.get("link", "")
+        next_url = None
+        for part in link_header.split(","):
+            if 'rel="next"' in part:
+                next_url = part.split(";")[0].strip().strip("<>")
+        page_count += 1
+        params = None  # params only on first request
+    return results
+
+
+async def _try_canvas_api(
+    url: str,
+    session_name: str | None = None,
+) -> tuple[str, str] | None:
     """Canvas REST API extraction — get structured course data.
 
-    When the URL points to a Canvas course page, calls Canvas REST API
-    endpoints to extract syllabus, pages, assignments etc. as clean text.
-    Requires session cookies (handled by httpx with browser cookie jar).
+    Wrapper that returns (title, content) for backward compatibility.
+    Calls _try_canvas_api_deep internally.
+    """
+    result = await _try_canvas_api_deep(url, session_name=session_name)
+    if result:
+        return result.title, result.content
+    return None
 
+
+async def _try_canvas_api_deep(
+    url: str,
+    session_name: str | None = None,
+) -> CanvasExtraction | None:
+    """Deep Canvas REST API extraction — full course content + file discovery.
+
+    Fetches:
+    1. Course info + syllabus
+    2. All modules with deep item content (page bodies, not just titles)
+    3. Assignments with descriptions
+    4. All pages with full body content
+    5. Quiz titles and questions (for study material)
+    6. Discovered PDF/document file URLs from all page bodies
+
+    Uses saved Playwright session cookies for authenticated API access.
     Ported from learning-agent-extension canvas.js API fetcher pattern.
     """
     try:
@@ -274,14 +422,24 @@ async def _try_canvas_api(url: str) -> tuple[str, str] | None:
 
         api_base = canvas_info.api_base
         course_id = canvas_info.course_id
+        base_url = f"https://{canvas_info.domain}"
 
         import httpx
 
-        # Try fetching course info via Canvas API (works if user has public API access)
-        async with httpx.AsyncClient(follow_redirects=True, timeout=15) as client:
-            parts: list[str] = []
+        # Load session cookies for authenticated API access (domain-filtered)
+        cookies = _load_session_cookies(session_name, target_domain=canvas_info.domain) if session_name else {}
+        if session_name:
+            logger.info("Canvas deep API using %d cookies from session %s for %s", len(cookies), session_name, canvas_info.domain)
 
-            # Course info + syllabus
+        all_file_urls: list[dict] = []
+        seen_page_slugs: set[str] = set()
+        pages_fetched = 0
+
+        async with httpx.AsyncClient(follow_redirects=True, timeout=20, cookies=cookies) as client:
+            parts: list[str] = []
+            course_title = f"Course {course_id}"
+
+            # ── 1. Course info + syllabus ──
             try:
                 resp = await client.get(
                     f"{api_base}/courses/{course_id}",
@@ -289,109 +447,331 @@ async def _try_canvas_api(url: str) -> tuple[str, str] | None:
                 )
                 if resp.status_code == 200:
                     data = resp.json()
-                    title = data.get("name", f"Course {course_id}")
-                    parts.append(f"# {title}\n")
+                    course_title = data.get("name", course_title)
+                    parts.append(f"# {course_title}\n")
                     if data.get("syllabus_body"):
                         from bs4 import BeautifulSoup
                         soup = BeautifulSoup(data["syllabus_body"], "lxml")
                         syllabus_text = soup.get_text(strip=True, separator="\n")
                         if syllabus_text:
                             parts.append(f"## Syllabus\n{syllabus_text}\n")
+                        # Discover files in syllabus HTML
+                        file_urls = _extract_file_urls_from_html(data["syllabus_body"], base_url)
+                        all_file_urls.extend(file_urls)
                 else:
-                    # API not accessible (auth required or disabled)
                     return None
             except Exception:
                 return None
 
-            # Modules with items
+            # ── 2. Modules with DEEP item content ──
+            modules_found = 0
             try:
-                resp = await client.get(
+                modules = await _canvas_api_paginate(
+                    client,
                     f"{api_base}/courses/{course_id}/modules",
                     params={"include[]": "items", "per_page": "100"},
                 )
-                if resp.status_code == 200:
-                    modules = resp.json()
-                    if modules:
-                        parts.append("## Modules\n")
-                        for mod in modules:
-                            parts.append(f"### {mod.get('name', 'Module')}")
-                            for item in mod.get("items", []):
-                                parts.append(f"- {item.get('title', 'Item')} ({item.get('type', '')})")
-                        parts.append("")
-            except Exception:
-                pass
+                if modules:
+                    modules_found = len(modules)
+                    parts.append("## Modules\n")
+                    for mod in modules:
+                        mod_name = mod.get("name", "Module")
+                        parts.append(f"### {mod_name}")
+                        items = mod.get("items", [])
 
-            # Assignments
+                        for item in items:
+                            item_type = item.get("type", "")
+                            item_title = item.get("title", "Item")
+
+                            if item_type == "Page":
+                                # Deep fetch: get full page body via API
+                                page_url = item.get("page_url", "")
+                                if page_url and page_url not in seen_page_slugs:
+                                    seen_page_slugs.add(page_url)
+                                    try:
+                                        page_resp = await client.get(
+                                            f"{api_base}/courses/{course_id}/pages/{page_url}",
+                                        )
+                                        if page_resp.status_code == 200:
+                                            page_data = page_resp.json()
+                                            body = page_data.get("body", "")
+                                            parts.append(f"#### {item_title}")
+                                            if body:
+                                                from bs4 import BeautifulSoup
+                                                soup = BeautifulSoup(body, "lxml")
+                                                page_text = soup.get_text(strip=True, separator="\n")
+                                                if page_text:
+                                                    parts.append(page_text)
+                                                # Discover files in page HTML
+                                                file_urls = _extract_file_urls_from_html(body, base_url)
+                                                all_file_urls.extend(file_urls)
+                                            pages_fetched += 1
+                                    except Exception as e:
+                                        logger.debug("Failed to fetch page %s: %s", page_url, e)
+                                        parts.append(f"- {item_title} (Page)")
+
+                            elif item_type == "File":
+                                # Direct file attachment in module
+                                content_id = item.get("content_id")
+                                if content_id:
+                                    file_url = f"{base_url}/courses/{course_id}/files/{content_id}/download?verifier="
+                                    all_file_urls.append({
+                                        "url": file_url,
+                                        "display_url": f"{base_url}/courses/{course_id}/files/{content_id}",
+                                        "filename": f"{item_title}.pdf",
+                                        "content_type": "application/pdf",
+                                    })
+                                parts.append(f"- {item_title} (File)")
+
+                            elif item_type == "Assignment":
+                                parts.append(f"- {item_title} (Assignment)")
+
+                            elif item_type == "Quiz":
+                                parts.append(f"- {item_title} (Quiz)")
+
+                            elif item_type == "ExternalUrl":
+                                ext_url = item.get("external_url", "")
+                                parts.append(f"- {item_title} (Link: {ext_url})")
+
+                            elif item_type == "SubHeader":
+                                parts.append(f"**{item_title}**")
+
+                            else:
+                                parts.append(f"- {item_title} ({item_type})")
+
+                    parts.append("")
+            except Exception as e:
+                logger.debug("Modules deep fetch failed: %s", e)
+
+            # ── 3. Assignments with descriptions ──
             try:
-                resp = await client.get(
+                assignments = await _canvas_api_paginate(
+                    client,
                     f"{api_base}/courses/{course_id}/assignments",
                     params={"per_page": "100"},
                 )
-                if resp.status_code == 200:
-                    assignments = resp.json()
-                    if assignments:
-                        parts.append("## Assignments\n")
-                        for a in assignments:
-                            line = f"- **{a.get('name', 'Assignment')}**"
-                            if a.get("due_at"):
-                                line += f" (due: {a['due_at'][:10]})"
-                            if a.get("points_possible"):
-                                line += f" [{a['points_possible']} pts]"
-                            parts.append(line)
-                            # Include description text if available
-                            desc = a.get("description")
-                            if desc:
-                                from bs4 import BeautifulSoup
-                                soup = BeautifulSoup(desc, "lxml")
-                                desc_text = soup.get_text(strip=True, separator=" ")[:500]
-                                if desc_text:
-                                    parts.append(f"  {desc_text}")
-                        parts.append("")
+                if assignments:
+                    parts.append("## Assignments\n")
+                    for a in assignments:
+                        line = f"- **{a.get('name', 'Assignment')}**"
+                        if a.get("due_at"):
+                            line += f" (due: {a['due_at'][:10]})"
+                        if a.get("points_possible"):
+                            line += f" [{a['points_possible']} pts]"
+                        parts.append(line)
+                        desc = a.get("description")
+                        if desc:
+                            from bs4 import BeautifulSoup
+                            soup = BeautifulSoup(desc, "lxml")
+                            desc_text = soup.get_text(strip=True, separator=" ")[:500]
+                            if desc_text:
+                                parts.append(f"  {desc_text}")
+                            # Discover files in assignment descriptions
+                            file_urls = _extract_file_urls_from_html(desc, base_url)
+                            all_file_urls.extend(file_urls)
+                    parts.append("")
             except Exception:
                 pass
 
-            # Pages (list + front page)
+            # ── 4. Pages not already fetched via modules ──
             try:
-                resp = await client.get(
+                pages = await _canvas_api_paginate(
+                    client,
                     f"{api_base}/courses/{course_id}/pages",
                     params={"per_page": "50"},
                 )
-                if resp.status_code == 200:
-                    pages = resp.json()
-                    if pages:
-                        parts.append("## Pages\n")
-                        for p in pages[:20]:  # Limit to first 20 pages
-                            slug = p.get("url", "")
-                            title_text = p.get("title", "Page")
+                unfetched = [p for p in pages if p.get("url", "") not in seen_page_slugs]
+                if unfetched:
+                    parts.append("## Additional Pages\n")
+                    for p in unfetched[:30]:
+                        slug = p.get("url", "")
+                        title_text = p.get("title", "Page")
+                        seen_page_slugs.add(slug)
+                        try:
+                            page_resp = await client.get(
+                                f"{api_base}/courses/{course_id}/pages/{slug}",
+                            )
+                            if page_resp.status_code == 200:
+                                page_data = page_resp.json()
+                                body = page_data.get("body", "")
+                                parts.append(f"### {title_text}")
+                                if body:
+                                    from bs4 import BeautifulSoup
+                                    soup = BeautifulSoup(body, "lxml")
+                                    page_text = soup.get_text(strip=True, separator="\n")
+                                    if page_text:
+                                        parts.append(page_text)
+                                    file_urls = _extract_file_urls_from_html(body, base_url)
+                                    all_file_urls.extend(file_urls)
+                                pages_fetched += 1
+                        except Exception:
                             parts.append(f"### {title_text}")
-                            # Fetch individual page body
-                            try:
-                                page_resp = await client.get(
-                                    f"{api_base}/courses/{course_id}/pages/{slug}",
-                                )
-                                if page_resp.status_code == 200:
-                                    page_data = page_resp.json()
-                                    body = page_data.get("body")
-                                    if body:
-                                        from bs4 import BeautifulSoup
-                                        soup = BeautifulSoup(body, "lxml")
-                                        page_text = soup.get_text(strip=True, separator="\n")
-                                        if page_text:
-                                            parts.append(page_text[:2000])
-                            except Exception:
-                                pass
-                        parts.append("")
+                    parts.append("")
             except Exception:
                 pass
 
+            # ── 5. Quizzes (titles + questions for study material) ──
+            try:
+                quizzes = await _canvas_api_paginate(
+                    client,
+                    f"{api_base}/courses/{course_id}/quizzes",
+                    params={"per_page": "50"},
+                )
+                if quizzes:
+                    parts.append("## Quizzes\n")
+                    for q in quizzes:
+                        q_title = q.get("title", "Quiz")
+                        q_desc = q.get("description", "")
+                        q_count = q.get("question_count", 0)
+                        q_points = q.get("points_possible", "")
+                        parts.append(f"### {q_title}")
+                        if q_points:
+                            parts.append(f"Points: {q_points} | Questions: {q_count}")
+                        if q_desc:
+                            from bs4 import BeautifulSoup
+                            soup = BeautifulSoup(q_desc, "lxml")
+                            desc_text = soup.get_text(strip=True, separator="\n")
+                            if desc_text:
+                                parts.append(desc_text[:1000])
+                        # Try to fetch quiz questions (may be restricted)
+                        quiz_id = q.get("id")
+                        if quiz_id:
+                            try:
+                                qq_resp = await client.get(
+                                    f"{api_base}/courses/{course_id}/quizzes/{quiz_id}/questions",
+                                    params={"per_page": "50"},
+                                )
+                                if qq_resp.status_code == 200:
+                                    questions = qq_resp.json()
+                                    for qi, question in enumerate(questions, 1):
+                                        q_text = question.get("question_text", "")
+                                        if q_text:
+                                            from bs4 import BeautifulSoup
+                                            soup = BeautifulSoup(q_text, "lxml")
+                                            parts.append(f"Q{qi}: {soup.get_text(strip=True)}")
+                                        answers = question.get("answers", [])
+                                        for ans in answers:
+                                            ans_text = ans.get("text", "") or ans.get("html", "")
+                                            if ans_text:
+                                                parts.append(f"  - {ans_text}")
+                            except Exception:
+                                pass
+                    parts.append("")
+            except Exception:
+                pass
+
+            # Deduplicate file URLs
+            seen_file_urls: set[str] = set()
+            unique_files: list[dict] = []
+            for f in all_file_urls:
+                display = f.get("display_url", f["url"])
+                if display not in seen_file_urls:
+                    seen_file_urls.add(display)
+                    unique_files.append(f)
+
             content = "\n".join(parts)
             if len(content) >= 100:
-                return title if "title" in dir() else canvas_info.friendly_name, content
+                logger.info(
+                    "Canvas deep extraction: %d chars, %d pages fetched, %d modules, %d files discovered",
+                    len(content), pages_fetched, modules_found, len(unique_files),
+                )
+                return CanvasExtraction(
+                    title=course_title,
+                    content=content,
+                    file_urls=unique_files,
+                    pages_fetched=pages_fetched,
+                    modules_found=modules_found,
+                )
 
     except ImportError:
         logger.debug("Canvas API extraction skipped: missing dependencies")
     except Exception as e:
-        logger.debug("Canvas API extraction failed for %s: %s", url, e)
+        logger.debug("Canvas deep API extraction failed for %s: %s", url, e)
+
+    return None
+
+
+async def download_canvas_file(
+    file_info: dict,
+    session_name: str | None,
+    target_domain: str | None,
+    save_dir: str = "uploads",
+) -> str | None:
+    """Download a Canvas file and save to disk.
+
+    Canvas file URLs have two forms:
+    - /courses/{id}/files/{file_id}?wrap=1 → returns HTML preview page
+    - /courses/{id}/files/{file_id}/download → returns actual binary file
+
+    This function ensures we always request the /download form.
+    """
+    import httpx
+    import os
+    import hashlib
+
+    url = file_info["url"]
+    display_url = file_info.get("display_url", url)
+    filename = file_info.get("filename", "file.pdf")
+    filename = re.sub(r'[<>:"/\\|?*]', "_", filename)
+
+    cookies = _load_session_cookies(session_name, target_domain=target_domain) if session_name else {}
+
+    def _ensure_download_url(u: str) -> str:
+        """Ensure a Canvas file URL uses the /download path."""
+        clean = u.split("?")[0].rstrip("/")
+        if clean.endswith("/download"):
+            return clean
+        # /courses/X/files/Y → /courses/X/files/Y/download
+        if re.search(r"/files/\d+$", clean):
+            return f"{clean}/download"
+        return clean
+
+    def _is_binary_content(resp) -> bool:
+        """Check if the response contains binary file data (not HTML)."""
+        ct = resp.headers.get("content-type", "")
+        if "text/html" in ct:
+            return False
+        if any(t in ct for t in ("application/pdf", "application/octet", "application/vnd", "application/zip")):
+            return True
+        # Check magic bytes
+        if resp.content[:4] == b"%PDF":
+            return True
+        if resp.content[:2] == b"PK":  # ZIP/PPTX/DOCX
+            return True
+        return len(resp.content) > 1000 and b"<html" not in resp.content[:500].lower()
+
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=60, cookies=cookies) as client:
+            # Build download URL candidates in priority order
+            candidates = []
+            candidates.append(_ensure_download_url(url))
+            if display_url and display_url != url:
+                candidates.append(_ensure_download_url(display_url))
+            # Deduplicate while preserving order
+            seen = set()
+            unique_candidates = []
+            for c in candidates:
+                if c not in seen:
+                    seen.add(c)
+                    unique_candidates.append(c)
+
+            for try_url in unique_candidates:
+                try:
+                    resp = await client.get(try_url)
+                    if resp.status_code == 200 and _is_binary_content(resp) and len(resp.content) > 100:
+                        os.makedirs(save_dir, exist_ok=True)
+                        file_hash = hashlib.sha256(resp.content).hexdigest()[:12]
+                        save_path = os.path.join(save_dir, f"{file_hash}_{filename}")
+                        with open(save_path, "wb") as f:
+                            f.write(resp.content)
+                        logger.info("Downloaded Canvas file: %s (%d bytes)", filename, len(resp.content))
+                        return save_path
+                except Exception as e:
+                    logger.debug("Download attempt failed for %s: %s", try_url, e)
+
+            logger.debug("All download attempts failed for: %s", filename)
+    except Exception as e:
+        logger.debug("Canvas file download error for %s: %s", filename, e)
 
     return None
 
@@ -399,7 +779,11 @@ async def _try_canvas_api(url: str) -> tuple[str, str] | None:
 # ── Crawl4AI extraction (web + PDF + HTML) ──
 
 
-async def _extract_from_url(url: str, query: str | None = None) -> tuple[str, str]:
+async def _extract_from_url(
+    url: str,
+    query: str | None = None,
+    session_name: str | None = None,
+) -> tuple[str, str]:
     """URL extraction — multi-layer cascade with Canvas API priority.
 
     Fallback cascade:
@@ -410,7 +794,7 @@ async def _extract_from_url(url: str, query: str | None = None) -> tuple[str, st
     4. Playwright (existing cascade from automation.py)
     """
     # Layer 0: Canvas REST API (structured data — bypasses HTML scraping)
-    result = await _try_canvas_api(url)
+    result = await _try_canvas_api(url, session_name=session_name)
     if result:
         return result
 
@@ -444,30 +828,10 @@ async def _try_crawl4ai_url(url: str, query: str | None = None) -> tuple[str, st
     query-relevant sections from noisy web pages (Crawl4AI BM25ContentFilter).
     """
     try:
-        from crawl4ai import AsyncWebCrawler, CrawlerRunConfig
-        from crawl4ai.markdown_generation_strategy import DefaultMarkdownGenerator
-
-        # Configure BM25 content filtering when a query is provided
-        markdown_generator = DefaultMarkdownGenerator()
-        if query:
-            try:
-                from crawl4ai.content_filter_strategy import BM25ContentFilter
-
-                markdown_generator = DefaultMarkdownGenerator(
-                    content_filter=BM25ContentFilter(
-                        user_query=query,
-                        bm25_threshold=1.0,
-                    )
-                )
-            except ImportError:
-                logger.debug("BM25ContentFilter not available, using default markdown")
+        from crawl4ai import AsyncWebCrawler
 
         async with AsyncWebCrawler() as crawler:
-            config = CrawlerRunConfig(
-                excluded_tags=["nav", "footer", "sidebar"],
-                word_count_threshold=100,
-                markdown_generator=markdown_generator,
-            )
+            config = _build_crawl4ai_config(query)
             result = await crawler.arun(url=url, config=config)
             if result.success:
                 md = result.markdown
@@ -731,21 +1095,12 @@ def _extract_office_fallback(file_path: str, ext: str) -> tuple[str, str]:
 
 
 def _extract_plain_text(file_path: str) -> tuple[str, str]:
-    """Direct text read for .txt, .md, .rst files."""
+    """Direct text read for .txt, .md, .rst, and unknown files."""
     try:
         content = Path(file_path).read_text(errors="ignore")
         return Path(file_path).stem, content
     except Exception:
         return Path(file_path).stem, ""
-
-
-def _extract_unknown_as_text(file_path: str) -> tuple[str, str]:
-    """Best-effort fallback for unknown extensions."""
-    try:
-        content = Path(file_path).read_text(errors="ignore")
-        return Path(file_path).stem, content
-    except Exception:
-        return "", ""
 
 
 def _get_marker_models() -> dict:
@@ -782,6 +1137,40 @@ def clean_soup(soup):
 
     for tag in soup.find_all(has_disallowed_class):
         tag.decompose()
+
+    return soup
+
+
+def clean_soup_canvas_aware(soup):
+    """Canvas-aware HTML cleaner that preserves course content containers.
+
+    Canvas LMS puts content inside elements that generic cleaners strip out
+    (e.g. nav-like sidebars, module containers). This cleaner only removes
+    truly non-content elements while preserving Canvas-specific structure.
+    """
+    # Only remove script, style, and SVG — preserve everything else
+    for tag in soup.find_all(["script", "style", "svg", "noscript"]):
+        tag.decompose()
+
+    # Remove Canvas chrome (global nav, breadcrumbs, footer) but keep content
+    canvas_chrome_ids = [
+        "header", "menu", "left-side", "breadcrumbs",
+        "flash_message_holder", "footer",
+    ]
+    for chrome_id in canvas_chrome_ids:
+        elem = soup.find(id=chrome_id)
+        if elem:
+            elem.decompose()
+
+    # Try to extract just the main content area if it exists
+    content_area = (
+        soup.find(id="content")
+        or soup.find(id="wiki_page_show")
+        or soup.find(class_="ic-app-main-content")
+        or soup.find(role="main")
+    )
+    if content_area:
+        return content_area
 
     return soup
 

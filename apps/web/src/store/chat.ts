@@ -158,8 +158,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
   loadSessionMessages: async (courseId, sessionId) => {
     set({ isLoadingSessions: true, error: null });
     try {
-      const result = await getChatSessionMessages(sessionId);
-      const hydratedMessages: ChatMessage[] = result.messages.map((message) => ({
+      const pageSize = 200;
+      const persistedMessages = [];
+      let offset = 0;
+      let totalMessages = Number.POSITIVE_INFINITY;
+
+      while (offset < totalMessages) {
+        const result = await getChatSessionMessages(sessionId, {
+          limit: pageSize,
+          offset,
+        });
+        totalMessages = result.session.message_count;
+        persistedMessages.push(...result.messages);
+        if (result.messages.length === 0) {
+          break;
+        }
+        offset += result.messages.length;
+      }
+
+      const hydratedMessages: ChatMessage[] = persistedMessages.map((message) => ({
         id: message.id,
         role: message.role,
         content: message.content,

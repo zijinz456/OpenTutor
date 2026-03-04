@@ -2,8 +2,11 @@
 
 import uuid
 from datetime import datetime
+from typing import ClassVar
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+ALLOWED_NOTIFICATION_CHANNELS = {"sse", "web_push", "telegram"}
 
 
 # ---------- Notification Settings ----------
@@ -41,6 +44,39 @@ class NotificationSettingsUpdate(BaseModel):
     max_notifications_per_day: int | None = Field(None, ge=1, le=500)
     escalation_enabled: bool | None = None
     escalation_delay_hours: int | None = Field(None, ge=1, le=48)
+    _TIME_FIELDS: ClassVar[set[str]] = {"quiet_hours_start", "quiet_hours_end"}
+
+    @field_validator("channels_enabled")
+    @classmethod
+    def validate_channels_enabled(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return value
+        normalized = [channel.strip() for channel in value if channel.strip()]
+        invalid = sorted({channel for channel in normalized if channel not in ALLOWED_NOTIFICATION_CHANNELS})
+        if invalid:
+            raise ValueError(
+                "Unsupported notification channels: "
+                + ", ".join(invalid)
+            )
+        return normalized
+
+    @field_validator("quiet_hours_start", "quiet_hours_end")
+    @classmethod
+    def validate_time_fields(cls, value: str | None) -> str | None:
+        if value in (None, ""):
+            return None
+        datetime.strptime(value, "%H:%M")
+        return value
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        import zoneinfo
+
+        zoneinfo.ZoneInfo(value)
+        return value
 
 
 # ---------- Push Subscription ----------

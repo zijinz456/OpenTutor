@@ -1,5 +1,10 @@
 import { expect, test } from "@playwright/test";
-import { skipOnboarding, createCourseWithContent, expectGeneratedNotes } from "./helpers/test-utils";
+import {
+  skipOnboarding,
+  createCourseWithContent,
+  expectGeneratedNotes,
+  hasRealLlmEnv,
+} from "./helpers/test-utils";
 
 test.describe.serial("Notes Panel", () => {
   test.beforeEach(async ({ page }) => {
@@ -64,6 +69,7 @@ test.describe.serial("Notes Panel", () => {
   });
 
   test("Generate button triggers AI note generation", async ({ page }) => {
+    test.skip(!hasRealLlmEnv(), "Requires a real LLM provider");
     await createCourseWithContent(page);
     await expect(page.getByTestId("notes-panel")).toBeVisible({ timeout: 30_000 });
     await page.getByTestId("notes-generate").click();
@@ -72,6 +78,7 @@ test.describe.serial("Notes Panel", () => {
   });
 
   test("generated notes preview appears", async ({ page }) => {
+    test.skip(!hasRealLlmEnv(), "Requires a real LLM provider");
     await createCourseWithContent(page);
     await expect(page.getByTestId("notes-panel")).toBeVisible({ timeout: 30_000 });
     await page.getByTestId("notes-generate").click();
@@ -82,6 +89,7 @@ test.describe.serial("Notes Panel", () => {
   });
 
   test("preview shows generated notes content", async ({ page }) => {
+    test.skip(!hasRealLlmEnv(), "Requires a real LLM provider");
     await createCourseWithContent(page);
     await expect(page.getByTestId("notes-panel")).toBeVisible({ timeout: 30_000 });
     await page.getByTestId("notes-generate").click();
@@ -89,6 +97,7 @@ test.describe.serial("Notes Panel", () => {
   });
 
   test("Save New button saves notes and shows toast", async ({ page }) => {
+    test.skip(!hasRealLlmEnv(), "Requires a real LLM provider");
     await createCourseWithContent(page);
     await expect(page.getByTestId("notes-panel")).toBeVisible({ timeout: 30_000 });
     await page.getByTestId("notes-generate").click();
@@ -98,6 +107,7 @@ test.describe.serial("Notes Panel", () => {
   });
 
   test("generate button disabled during generation", async ({ page }) => {
+    test.skip(!hasRealLlmEnv(), "Requires a real LLM provider");
     await createCourseWithContent(page);
     await expect(page.getByTestId("notes-panel")).toBeVisible({ timeout: 30_000 });
     await page.getByTestId("notes-generate").click();

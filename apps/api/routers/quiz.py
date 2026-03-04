@@ -2,12 +2,10 @@
 
 import logging
 import uuid
-from typing import Any
 
 logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, BackgroundTasks, Depends
-from pydantic import BaseModel, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,10 +13,18 @@ from database import async_session, get_db
 from models.content import CourseContentTree
 from models.practice import PracticeProblem, PracticeResult
 from models.user import User
+from schemas.quiz import (
+    AnswerResponse,
+    ExtractRequest,
+    MasterySnapshotResponse,
+    ProblemResponse,
+    SaveGeneratedRequest,
+    SubmitAnswerRequest,
+)
 from services.auth.dependency import get_current_user
 from services.course_access import get_course_or_404
 from services.parser.quiz import extract_questions
-from services.practice.annotation import build_practice_problem, normalize_question_options, parse_question_array
+from services.practice.annotation import build_practice_problem, parse_question_array
 from libs.exceptions import (
     NotFoundError,
     ValidationError,
@@ -26,44 +32,6 @@ from libs.exceptions import (
 )
 
 router = APIRouter()
-
-
-class ExtractRequest(BaseModel):
-    course_id: uuid.UUID
-    content_node_id: uuid.UUID | None = None
-
-
-class SubmitAnswerRequest(BaseModel):
-    problem_id: uuid.UUID
-    user_answer: str
-
-
-class SaveGeneratedRequest(BaseModel):
-    course_id: uuid.UUID
-    raw_content: str
-    title: str | None = None
-    replace_batch_id: uuid.UUID | None = None
-
-
-class ProblemResponse(BaseModel):
-    id: uuid.UUID
-    question_type: str
-    question: str
-    options: dict[str, str] | None
-    order_index: int
-
-    model_config = {"from_attributes": True}
-
-    @field_validator("options", mode="before")
-    @classmethod
-    def normalize_options(cls, value: Any) -> dict[str, str] | None:
-        return normalize_question_options(value)
-
-
-class AnswerResponse(BaseModel):
-    is_correct: bool
-    correct_answer: str | None
-    explanation: str | None
 
 
 @router.get("/{course_id}/generated-batches")
@@ -177,7 +145,6 @@ async def save_generated_quiz(
 @router.post("/extract")
 async def extract_quiz(body: ExtractRequest, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """Extract questions from a content node or all nodes in a course."""
-    # Verify course ownership
     await get_course_or_404(db, body.course_id, user_id=user.id)
 
     try:
@@ -193,7 +160,6 @@ async def extract_quiz(body: ExtractRequest, user: User = Depends(get_current_us
                 node.content, node.title, body.course_id, body.content_node_id
             )
         else:
-            # Extract from all content nodes in the course
             result = await db.execute(
                 select(CourseContentTree)
                 .where(CourseContentTree.course_id == body.course_id)
@@ -236,11 +202,7 @@ async def extract_quiz(body: ExtractRequest, user: User = Depends(get_current_us
 
 @router.get("/{course_id}", response_model=list[ProblemResponse])
 async def list_problems(course_id: uuid.UUID, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    """List user-facing practice problems for a course.
-
-    Diagnostic pair questions are excluded from the default quiz list because
-    they are remediation artifacts, not part of the main practice set.
-    """
+    """List user-facing practice problems for a course."""
     result = await db.execute(
         select(PracticeProblem)
         .where(PracticeProblem.course_id == course_id)
@@ -272,87 +234,11 @@ async def _auto_derive_diagnostic(wrong_answer_id: uuid.UUID, user_id: uuid.UUID
             )
             if existing.scalar_one_or_none():
                 return
-            # Only auto-derive for non-diagnostic problems with difficulty_layer >= 2
             if problem.is_diagnostic or (problem.difficulty_layer and problem.difficulty_layer < 2):
                 return
-            # Use the derive logic inline (lighter than calling the endpoint)
-            from services.llm.router import get_llm_client
-            from services.practice.annotation import build_practice_problem
-            import json
 
-            client = get_llm_client()
-            metadata_str = ""
-            if problem.problem_metadata:
-                meta = problem.problem_metadata
-                parts = []
-                if meta.get("core_concept"):
-                    parts.append(f"Core concept: {meta['core_concept']}")
-                if meta.get("potential_traps"):
-                    parts.append(f"Known traps to remove: {', '.join(meta['potential_traps'])}")
-                if parts:
-                    metadata_str = "\nQuestion metadata:\n" + "\n".join(parts)
-
-            prompt = f"""You are a diagnostic question designer. A student got this question wrong.
-Generate a SIMPLIFIED "clean" diagnostic version that:
-1. Tests the EXACT SAME core concept
-2. Removes all distractors, traps, and misleading wording
-3. Uses simpler numbers/context
-4. If multi-step, only keep the key step
-
-Original question: {problem.question}
-Question type: {problem.question_type}
-Correct answer: {wa.correct_answer}
-Student's wrong answer: {wa.user_answer}
-Error category: {wa.error_category or 'unknown'}
-{metadata_str}
-
-Return JSON only:
-{{"question": "...", "options": {{"A": "...", "B": "...", "C": "...", "D": "..."}} or null, "correct_answer": "...", "explanation": "...", "simplifications_made": ["list of simplifications"], "core_concept_preserved": "concept name"}}"""
-
-            response, _ = await client.chat(
-                "You design diagnostic questions. Output valid JSON only.", prompt,
-            )
-            try:
-                derived = json.loads(response)
-            except json.JSONDecodeError:
-                derived = {"question": response[:500]}
-
-            if not derived.get("question"):
-                return
-
-            new_problem = build_practice_problem(
-                course_id=problem.course_id,
-                content_node_id=problem.content_node_id,
-                title=(problem.problem_metadata or {}).get("core_concept", problem.question[:80]),
-                question={
-                    "question_type": problem.question_type,
-                    "question": derived.get("question", ""),
-                    "options": derived.get("options"),
-                    "correct_answer": derived.get("correct_answer") or wa.correct_answer,
-                    "explanation": derived.get("explanation", "Simplified diagnostic check."),
-                    "difficulty_layer": 1,
-                    "problem_metadata": {
-                        "core_concept": derived.get("core_concept_preserved", ""),
-                        "bloom_level": "understand",
-                        "potential_traps": [],
-                        "layer_justification": "Auto-generated diagnostic pair.",
-                    },
-                },
-                order_index=problem.order_index,
-                knowledge_points=wa.knowledge_points or problem.knowledge_points,
-                source="derived",
-                parent_problem_id=problem.id,
-                is_diagnostic=True,
-                difficulty_layer_default=1,
-                extra_metadata={
-                    "simplifications_made": derived.get("simplifications_made", []),
-                    "core_concept_preserved": derived.get("core_concept_preserved", ""),
-                    "original_problem_id": str(problem.id),
-                    "wrong_answer_id": str(wa.id),
-                    "auto_generated": True,
-                },
-            )
-            db.add(new_problem)
+            from services.diagnosis.derive import derive_diagnostic
+            await derive_diagnostic(db, wa, problem)
             await db.commit()
             logger.info("Auto-generated diagnostic pair for wrong answer %s", wrong_answer_id)
     except Exception as e:
@@ -374,12 +260,10 @@ async def submit_answer(
     if not problem:
         raise NotFoundError("Problem", body.problem_id)
 
-    # Check correctness
     is_correct = False
     if problem.correct_answer:
         is_correct = body.user_answer.strip().lower() == problem.correct_answer.strip().lower()
 
-    # Record result with layer metadata
     pr = PracticeResult(
         problem_id=problem.id,
         user_id=user.id,
@@ -389,7 +273,6 @@ async def submit_answer(
         difficulty_layer=problem.difficulty_layer,
     )
 
-    # v4: Structured error classification for wrong answers
     error_category = None
     classification = None
     if not is_correct and problem.correct_answer:
@@ -408,7 +291,6 @@ async def submit_answer(
 
     db.add(pr)
 
-    # v3: Auto-archive wrong answers for review system
     wa = None
     if not is_correct:
         from models.ingestion import WrongAnswer
@@ -425,7 +307,6 @@ async def submit_answer(
         )
         db.add(wa)
 
-    # v4: Update progress with weighted decay mastery + FSRS
     try:
         from services.progress.tracker import update_quiz_result
         await update_quiz_result(
@@ -436,7 +317,6 @@ async def submit_answer(
     except Exception as e:
         logger.warning("Progress update failed (best-effort): %s", e)
 
-    # Phase 4: Record quiz_accuracy metric for strategy experiments
     try:
         from services.experiment.engine import get_experiment_config, record_metric
         exp_config = await get_experiment_config(db, user.id, "strategy")
@@ -454,7 +334,6 @@ async def submit_answer(
 
     await db.commit()
 
-    # Emit standardized learning event for analytics + plugin hooks
     try:
         from services.analytics.events import emit_quiz_answered
         await emit_quiz_answered(
@@ -471,7 +350,27 @@ async def submit_answer(
     except Exception:
         logger.debug("Learning event emission failed (best-effort)")
 
-    # Auto-derive diagnostic pair in background for wrong answers
+    try:
+        from services.experiment.bandit import record_strategy_outcome
+        from services.agent.kv_store import kv_get, kv_delete
+
+        pending = await kv_get(
+            db, user.id, "bandit", "pending_reward",
+            course_id=problem.course_id,
+        )
+        if pending:
+            await record_strategy_outcome(
+                user_id=user.id,
+                strategy_idx=pending["strategy_idx"],
+                context_vector=pending["context_vector"],
+                correct=is_correct,
+            )
+            await kv_delete(db, user.id, "bandit", "pending_reward",
+                            course_id=problem.course_id)
+            await db.commit()
+    except Exception:
+        logger.debug("Bandit reward recording skipped (best-effort)")
+
     if not is_correct and wa:
         background_tasks.add_task(_auto_derive_diagnostic, wa.id, user.id)
 
@@ -483,13 +382,6 @@ async def submit_answer(
 
 
 # ── Phase 4: Mastery history time-series endpoint ──
-
-
-class MasterySnapshotResponse(BaseModel):
-    mastery_score: float
-    gap_type: str | None
-    content_node_id: str | None
-    recorded_at: str
 
 
 @router.get("/{course_id}/mastery-history", response_model=list[MasterySnapshotResponse])
@@ -527,5 +419,5 @@ async def mastery_history(
             content_node_id=str(s.content_node_id) if s.content_node_id else None,
             recorded_at=s.recorded_at.isoformat(),
         )
-        for s in reversed(snapshots)  # Return in chronological order
+        for s in reversed(snapshots)
     ]

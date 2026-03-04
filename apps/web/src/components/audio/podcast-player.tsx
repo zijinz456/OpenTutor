@@ -2,191 +2,122 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import {
   Play,
   Pause,
   SkipBack,
   SkipForward,
-  Loader2,
   Podcast,
 } from "lucide-react";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
-
-type PodcastStyle = "review" | "deep_dive" | "exam_prep";
-
 interface PodcastPlayerProps {
-  courseId: string;
-  topic: string;
-  style?: PodcastStyle;
+  audioUrl: string;
+  title: string;
+  script?: { speaker: string; text: string }[];
   className?: string;
 }
+
+const PLAYBACK_SPEEDS = [0.75, 1, 1.25, 1.5, 2] as const;
 
 /**
  * Podcast player component.
  *
- * Generates a study podcast from course materials via the backend,
- * then provides playback controls.
+ * Renders an audio player with playback controls, a progress bar,
+ * speed selector, and optional dialogue script display.
  */
 export function PodcastPlayer({
-  courseId,
-  topic,
-  style = "review",
+  audioUrl,
+  title,
+  script,
   className,
 }: PodcastPlayerProps) {
-  const [state, setState] = useState<"idle" | "generating" | "ready" | "playing" | "paused" | "error">("idle");
-  const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [playbackRate, setPlaybackRate] = useState(1.0);
-  const [error, setError] = useState<string | null>(null);
+  const [playbackRate, setPlaybackRate] = useState(1);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const stopTimer = useCallback(() => {
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
-  }, []);
+  // Initialize audio element
+  useEffect(() => {
+    const audio = new Audio(audioUrl);
+    audioRef.current = audio;
 
-  const startTimer = useCallback(() => {
-    stopTimer();
-    timerRef.current = setInterval(() => {
-      if (audioRef.current) {
-        setCurrentTime(audioRef.current.currentTime);
-      }
-    }, 250);
-  }, [stopTimer]);
+    const onLoadedMetadata = () => setDuration(audio.duration);
+    const onTimeUpdate = () => setCurrentTime(audio.currentTime);
+    const onEnded = () => {
+      setIsPlaying(false);
+      setCurrentTime(0);
+    };
+    const onPlay = () => setIsPlaying(true);
+    const onPause = () => setIsPlaying(false);
 
-  /** Clean up previous audio element before creating a new one */
-  const cleanupAudio = useCallback(() => {
-    stopTimer();
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.removeAttribute("src");
-      audioRef.current.load();
+    audio.addEventListener("loadedmetadata", onLoadedMetadata);
+    audio.addEventListener("timeupdate", onTimeUpdate);
+    audio.addEventListener("ended", onEnded);
+    audio.addEventListener("play", onPlay);
+    audio.addEventListener("pause", onPause);
+
+    return () => {
+      audio.removeEventListener("loadedmetadata", onLoadedMetadata);
+      audio.removeEventListener("timeupdate", onTimeUpdate);
+      audio.removeEventListener("ended", onEnded);
+      audio.removeEventListener("play", onPlay);
+      audio.removeEventListener("pause", onPause);
+      audio.pause();
+      audio.removeAttribute("src");
+      audio.load();
       audioRef.current = null;
-    }
-    if (audioUrl) {
-      URL.revokeObjectURL(audioUrl);
-      setAudioUrl(null);
-    }
-  }, [audioUrl, stopTimer]);
-
-  /** Generate podcast from backend */
-  const generate = useCallback(async () => {
-    // Clean up any previous audio before generating new one
-    cleanupAudio();
-
-    setState("generating");
-    setError(null);
-    setCurrentTime(0);
-    setDuration(0);
-
-    try {
-      const res = await fetch(`${API_BASE}/voice/podcast/${courseId}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ topic, style }),
-      });
-
-      if (!res.ok) {
-        throw new Error(`Generation failed: ${res.statusText}`);
-      }
-
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      setAudioUrl(url);
-
-      const audio = new Audio(url);
-      audioRef.current = audio;
-
-      audio.addEventListener("loadedmetadata", () => {
-        setDuration(audio.duration);
-        setState("ready");
-      });
-
-      audio.addEventListener("ended", () => {
-        setState("ready");
-        setCurrentTime(0);
-        stopTimer();
-      });
-
-      audio.addEventListener("error", () => {
-        setState("error");
-        setError("Failed to load audio");
-      });
-    } catch (e) {
-      setState("error");
-      setError(e instanceof Error ? e.message : "Generation failed");
-    }
-  }, [courseId, topic, style, cleanupAudio, stopTimer]);
+    };
+  }, [audioUrl]);
 
   const play = useCallback(() => {
     if (!audioRef.current) return;
     audioRef.current.playbackRate = playbackRate;
     audioRef.current.play().then(
-      () => {
-        setState("playing");
-        startTimer();
-      },
+      () => {},
       (err) => {
-        // Autoplay blocked or other playback error
         console.error("Playback failed:", err);
-        setState("error");
-        setError("Playback blocked — interact with the page and try again");
       },
     );
-  }, [playbackRate, startTimer]);
+  }, [playbackRate]);
 
   const pause = useCallback(() => {
     audioRef.current?.pause();
-    setState("paused");
-    stopTimer();
-  }, [stopTimer]);
+  }, []);
 
-  const seek = useCallback((seconds: number) => {
-    if (!audioRef.current) return;
-    audioRef.current.currentTime = Math.max(0, Math.min(seconds, duration));
-    setCurrentTime(audioRef.current.currentTime);
-  }, [duration]);
+  const seek = useCallback(
+    (seconds: number) => {
+      if (!audioRef.current) return;
+      audioRef.current.currentTime = Math.max(0, Math.min(seconds, duration));
+      setCurrentTime(audioRef.current.currentTime);
+    },
+    [duration],
+  );
 
-  const skip = useCallback((delta: number) => {
-    if (!audioRef.current) return;
-    seek(audioRef.current.currentTime + delta);
-  }, [seek]);
+  const skip = useCallback(
+    (delta: number) => {
+      if (!audioRef.current) return;
+      seek(audioRef.current.currentTime + delta);
+    },
+    [seek],
+  );
 
   const cycleSpeed = useCallback(() => {
-    const speeds = [0.75, 1.0, 1.25, 1.5, 2.0];
-    const idx = speeds.indexOf(playbackRate);
-    const next = speeds[(idx + 1) % speeds.length];
+    const idx = PLAYBACK_SPEEDS.indexOf(playbackRate as (typeof PLAYBACK_SPEEDS)[number]);
+    const next = PLAYBACK_SPEEDS[(idx + 1) % PLAYBACK_SPEEDS.length];
     setPlaybackRate(next);
     if (audioRef.current) {
       audioRef.current.playbackRate = next;
     }
   }, [playbackRate]);
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current.removeAttribute("src");
-        audioRef.current.load();
-      }
-    };
-  }, []);
-
-  // Revoke object URL on unmount or URL change
-  useEffect(() => {
-    return () => {
-      if (audioUrl) URL.revokeObjectURL(audioUrl);
-    };
-  }, [audioUrl]);
 
   const formatTime = (s: number) => {
     const m = Math.floor(s / 60);
@@ -194,124 +125,107 @@ export function PodcastPlayer({
     return `${m}:${sec.toString().padStart(2, "0")}`;
   };
 
-  if (state === "idle") {
-    return (
-      <div className={cn("flex items-center gap-3 rounded-lg border p-3", className)}>
-        <Podcast className="size-5 text-muted-foreground" />
-        <div className="flex-1">
-          <p className="text-sm font-medium">Study Podcast</p>
-          <p className="text-xs text-muted-foreground">{topic}</p>
-        </div>
-        <Button size="sm" onClick={() => void generate()}>
-          Generate
-        </Button>
-      </div>
-    );
-  }
+  const progressPct = duration > 0 ? (currentTime / duration) * 100 : 0;
 
-  if (state === "generating") {
-    return (
-      <div className={cn("flex items-center gap-3 rounded-lg border p-3", className)}>
-        <Loader2 className="size-5 animate-spin text-primary" />
-        <div className="flex-1">
-          <p className="text-sm font-medium">Generating podcast...</p>
-          <p className="text-xs text-muted-foreground">Creating dialogue and synthesizing audio for: {topic}</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (state === "error") {
-    return (
-      <div className={cn("flex items-center gap-3 rounded-lg border border-destructive/30 p-3", className)}>
-        <Podcast className="size-5 text-destructive" />
-        <div className="flex-1">
-          <p className="text-sm font-medium text-destructive">Generation failed</p>
-          <p className="text-xs text-muted-foreground">{error}</p>
-        </div>
-        <Button size="sm" variant="outline" onClick={() => void generate()}>
-          Retry
-        </Button>
-      </div>
-    );
-  }
-
-  // Ready / Playing / Paused
   return (
-    <div className={cn("rounded-lg border p-3 space-y-2", className)}>
-      <div className="flex items-center gap-2">
-        <Podcast className="size-4 text-primary" />
-        <span className="text-sm font-medium flex-1">{topic}</span>
-        <button
-          type="button"
-          onClick={cycleSpeed}
-          className="text-xs px-1.5 py-0.5 rounded bg-muted hover:bg-muted/80 font-mono"
-          title="Change playback speed"
-        >
-          {playbackRate}x
-        </button>
-      </div>
+    <Card className={cn("w-full", className)}>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Podcast className="size-5 text-primary" />
+          {title}
+        </CardTitle>
+      </CardHeader>
 
-      {/* Progress bar */}
-      <div
-        className="relative h-1.5 rounded-full bg-muted cursor-pointer"
-        onClick={(e) => {
-          const rect = e.currentTarget.getBoundingClientRect();
-          const pct = (e.clientX - rect.left) / rect.width;
-          seek(pct * duration);
-        }}
-      >
+      <CardContent className="space-y-4">
+        {/* Progress bar */}
         <div
-          className="absolute inset-y-0 left-0 rounded-full bg-primary transition-all"
-          style={{ width: `${duration > 0 ? (currentTime / duration) * 100 : 0}%` }}
-        />
-      </div>
-
-      <div className="flex items-center justify-between">
-        <span className="text-[11px] text-muted-foreground font-mono">
-          {formatTime(currentTime)}
-        </span>
-
-        <div className="flex items-center gap-1">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            onClick={() => skip(-15)}
-            title="Back 15s"
-          >
-            <SkipBack className="size-3.5" />
-          </Button>
-
-          <Button
-            type="button"
-            variant="default"
-            size="icon-xs"
-            onClick={state === "playing" ? pause : play}
-            title={state === "playing" ? "Pause" : "Play"}
-          >
-            {state === "playing" ? (
-              <Pause className="size-3.5" />
-            ) : (
-              <Play className="size-3.5" />
-            )}
-          </Button>
-
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            onClick={() => skip(15)}
-            title="Forward 15s"
-          >
-            <SkipForward className="size-3.5" />
-          </Button>
+          className="relative h-2 cursor-pointer rounded-full bg-muted"
+          onClick={(e) => {
+            const rect = e.currentTarget.getBoundingClientRect();
+            const pct = (e.clientX - rect.left) / rect.width;
+            seek(pct * duration);
+          }}
+        >
+          <div
+            className="absolute inset-y-0 left-0 rounded-full bg-primary transition-all"
+            style={{ width: `${progressPct}%` }}
+          />
         </div>
 
-        <span className="text-[11px] text-muted-foreground font-mono">
-          {formatTime(duration)}
-        </span>
-      </div>
-    </div>
+        {/* Controls */}
+        <div className="flex items-center justify-between">
+          <span className="font-mono text-xs text-muted-foreground">
+            {formatTime(currentTime)}
+          </span>
+
+          <div className="flex items-center gap-1">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={() => skip(-15)}
+              title="Back 15s"
+            >
+              <SkipBack className="size-4" />
+            </Button>
+
+            <Button
+              type="button"
+              variant="default"
+              size="icon"
+              onClick={isPlaying ? pause : play}
+              title={isPlaying ? "Pause" : "Play"}
+            >
+              {isPlaying ? (
+                <Pause className="size-4" />
+              ) : (
+                <Play className="size-4" />
+              )}
+            </Button>
+
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={() => skip(15)}
+              title="Forward 15s"
+            >
+              <SkipForward className="size-4" />
+            </Button>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={cycleSpeed}
+              className="rounded bg-muted px-2 py-0.5 font-mono text-xs hover:bg-muted/80"
+              title="Change playback speed"
+            >
+              {playbackRate}x
+            </button>
+            <span className="font-mono text-xs text-muted-foreground">
+              {formatTime(duration)}
+            </span>
+          </div>
+        </div>
+
+        {/* Dialogue script */}
+        {script && script.length > 0 && (
+          <div className="mt-4 max-h-64 space-y-3 overflow-y-auto rounded-md border p-3">
+            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              Transcript
+            </p>
+            {script.map((line, i) => (
+              <div key={i} className="flex gap-2 text-sm">
+                <span className="shrink-0 font-semibold text-primary">
+                  {line.speaker}:
+                </span>
+                <span className="text-foreground">{line.text}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }

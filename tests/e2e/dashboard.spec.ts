@@ -5,7 +5,7 @@ import { skipOnboarding, createCourse } from "./helpers/test-utils";
  * Dashboard tests (Phase 1 -- no course content required).
  *
  * The dashboard at / shows:
- *   - Header with OpenTutor branding, settings icon, analytics icon
+ *   - Header with OpenTutor branding and settings entry
  *   - Title "Your Courses"
  *   - Big indigo create button -> /new
  *   - Course card grid with initials, name, updated date, and real file/task counts
@@ -52,26 +52,22 @@ test.describe("Dashboard", () => {
     await expect(page).toHaveURL(/\/settings/, { timeout: 15_000 });
   });
 
-  // ---- analytics icon ---------------------------------------------------
-
-  test("analytics button navigates to /analytics", async ({ page }) => {
+  test("dashboard sidebar shows dashboard and settings navigation", async ({ page }) => {
     await page.goto("/");
-    await page.getByText("Analytics").first().click();
-    await expect(page).toHaveURL(/\/analytics/, { timeout: 15_000 });
+    await expect(page.getByText("Dashboard").first()).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("Settings").first()).toBeVisible({ timeout: 15_000 });
   });
 
   // ---- loading state ----------------------------------------------------
 
-  test("shows loading text while fetching", async ({ page }) => {
+  test("shows loading skeleton while fetching", async ({ page }) => {
     // Slow down API to observe the loading state
     await page.route("**/api/courses*", async (route) => {
       await new Promise((r) => setTimeout(r, 2000));
       await route.continue();
     });
     await page.goto("/");
-    // The loading text uses i18n general.loading key - check for any loading indicator
-    const loadingIndicator = page.getByText("Loading");
-    await expect(loadingIndicator.first()).toBeVisible({ timeout: 5_000 });
+    await expect(page.locator(".animate-pulse").first()).toBeVisible({ timeout: 5_000 });
   });
 
   // ---- course card after creation ---------------------------------------

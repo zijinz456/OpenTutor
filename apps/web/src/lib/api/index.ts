@@ -1,0 +1,173 @@
+/**
+ * Barrel re-export for the modular API layer.
+ *
+ * Every public type and function that was previously exported from
+ * the monolithic api.ts is re-exported here so that all existing
+ * `import { ... } from "@/lib/api"` statements continue to work.
+ */
+
+export type { JsonObject, NullableDateTime } from "./client";
+
+export {
+  listCourseOverview,
+  getHealthStatus,
+  createCourse,
+  updateCourse,
+  deleteCourse,
+  getContentTree,
+  restructureNotes,
+  saveGeneratedNotes,
+  listGeneratedNoteBatches,
+  uploadFile,
+  scrapeUrl,
+  getFileUrl,
+  listAuthSessions,
+  canvasBrowserLogin,
+} from "./courses";
+
+export type {
+  CourseWorkspaceFeatures,
+  CourseAutoScrapeSettings,
+  CourseMetadata,
+  Course,
+  CourseOverviewCard,
+  HealthStatus,
+  ContentNode,
+  RestructuredNotes,
+  AuthSessionSummary,
+} from "./courses";
+
+export {
+  streamChat,
+  listChatSessions,
+  getChatSessionMessages,
+} from "./chat";
+
+export type {
+  ChatAction,
+  ChatHistoryMessage,
+  ChatSessionSummary,
+  ChatProvenance,
+  ChatMessageMetadata,
+  PlanProgressEvent,
+  ImageAttachment,
+} from "./chat";
+
+export {
+  listWrongAnswers,
+  retryWrongAnswer,
+  deriveQuestion,
+  diagnoseWrongAnswer,
+  getWrongAnswerStats,
+  extractQuiz,
+  listProblems,
+  listGeneratedQuizBatches,
+  submitAnswer,
+  generateFlashcards,
+  saveGeneratedFlashcards,
+  listGeneratedFlashcardBatches,
+  reviewFlashcard,
+  getDueFlashcards,
+  getWrongAnswerReview,
+} from "./practice";
+
+export type {
+  DerivedQuestionResult,
+  WrongAnswerStats,
+  WrongAnswer,
+  QuizProblem,
+  GeneratedQuizBatchSummary,
+  GeneratedAssetBatchSummary,
+  AnswerResult,
+  DueFlashcardsResult,
+  Flashcard,
+} from "./practice";
+
+export {
+  getCourseProgress,
+  getLearningOverview,
+  getGlobalTrends,
+  getMemoryStats,
+  triggerConsolidation,
+  getKnowledgeGraph,
+  getExamPrepPlan,
+  saveStudyPlan,
+  listStudyPlanBatches,
+  listAgentTasks,
+  submitAgentTask,
+  approveAgentTask,
+  rejectAgentTask,
+  listStudyGoals,
+  getNextAction,
+  listTemplates,
+  applyTemplate,
+} from "./progress";
+
+export type {
+  CourseProgress,
+  LearningOverview,
+  LearningTrends,
+  MemoryStats,
+  KnowledgeGraphNode,
+  KnowledgeGraphEdge,
+  AgentTask,
+  AgentTaskReview,
+  NextActionResponse,
+  StudyGoal,
+} from "./progress";
+
+export {
+  getLearningProfile,
+  setPreference,
+  getLlmRuntimeConfig,
+  updateLlmRuntimeConfig,
+  testLlmRuntimeConnection,
+  getOllamaModels,
+  listPreferenceSignals,
+} from "./preferences";
+
+export type {
+  Preference,
+  MemoryProfileItem,
+  LearningProfile,
+  LlmRuntimeConfig,
+  LlmConnectionTestResult,
+  OllamaModel,
+  PreferenceSignal,
+} from "./preferences";
+
+export {
+  getVapidKey,
+  subscribePush,
+  unsubscribePush,
+  listNotifications,
+  markNotificationRead,
+  getNotificationSettings,
+  updateNotificationSettings,
+} from "./notifications";
+
+export type {
+  Notification,
+  NotificationSettings,
+} from "./notifications";
+
+export {
+  getUsageSummary,
+  getExportSessionUrl,
+  getAnkiExportUrl,
+  getCalendarExportUrl,
+} from "./usage";
+
+export type {
+  UsageSummary,
+} from "./usage";
+
+export {
+  listIngestionJobs,
+  createScrapeSource,
+} from "./ingestion";
+
+export type {
+  IngestionJobSummary,
+  ScrapeSource,
+} from "./ingestion";

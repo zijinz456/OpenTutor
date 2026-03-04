@@ -32,6 +32,15 @@ STALE_BUCKET_SECONDS = 120.0  # evict rate-limit buckets after 2 min inactivity
 MAX_USER_INPUT_LENGTH = 10_000
 
 
+def _extract_client_ip(request: Request) -> str:
+    """Resolve client IP consistently across security middleware."""
+    if settings.trust_proxy_headers:
+        forwarded = request.headers.get("x-forwarded-for")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
 # ── Security Headers ──
 
 SECURITY_HEADERS = {
@@ -111,13 +120,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self._cleanup_interval: float = 300.0  # 5 minutes
 
     def _get_client_ip(self, request: Request) -> str:
-        # Only trust X-Forwarded-For when behind a known reverse proxy.
-        # In direct-access mode, attackers can spoof this header to bypass rate limits.
-        if settings.trust_proxy_headers:
-            forwarded = request.headers.get("x-forwarded-for")
-            if forwarded:
-                return forwarded.split(",")[0].strip()
-        return request.client.host if request.client else "unknown"
+        return _extract_client_ip(request)
 
     def _maybe_cleanup_buckets(self) -> None:
         """Evict stale rate limit buckets to prevent unbounded memory growth."""
@@ -257,9 +260,7 @@ class AuditLogMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         duration_ms = (time.monotonic() - start) * 1000
 
-        client_ip = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
-        if not client_ip and request.client:
-            client_ip = request.client.host
+        client_ip = _extract_client_ip(request)
 
         logger.info(
             "AUDIT | %s %s | status=%d | ip=%s | %.0fms",
