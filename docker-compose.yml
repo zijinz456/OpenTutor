@@ -58,6 +58,7 @@ services:
       CODE_SANDBOX_IMAGE: ${CODE_SANDBOX_IMAGE:-python:3.11-alpine}
       ALLOW_INSECURE_PROCESS_SANDBOX: ${ALLOW_INSECURE_PROCESS_SANDBOX:-false}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+      SERVE_BUILTIN_UI: "false"
       UPLOAD_DIR: /app/uploads
       SCRAPE_FIXTURE_DIR: /fixtures/e2e/scrape
     volumes:

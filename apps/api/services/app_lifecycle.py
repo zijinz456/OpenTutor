@@ -90,6 +90,10 @@ async def _maybe_stop_activity_engine() -> None:
 
 async def _maybe_connect_mcp_servers() -> None:
     """Connect to MCP servers and register their tools."""
+    if not settings.mcp_enabled:
+        logger.info("MCP tool loading disabled by configuration")
+        return
+
     try:
         from services.agent.tools.mcp_client import load_mcp_tools
 
@@ -103,6 +107,9 @@ async def _maybe_connect_mcp_servers() -> None:
 
 
 async def _maybe_disconnect_mcp_servers() -> None:
+    if not settings.mcp_enabled:
+        return
+
     try:
         from services.agent.tools.mcp_client import shutdown_mcp_providers
 
@@ -111,35 +118,66 @@ async def _maybe_disconnect_mcp_servers() -> None:
         logger.debug("MCP disconnect: %s", exc)
 
 
-async def _detect_ollama() -> None:
-    """Detect local Ollama on startup and log helpful guidance."""
-    if settings.llm_provider.lower() != "ollama":
+async def _detect_local_llm() -> None:
+    """Detect local LLM providers (Ollama, LM Studio) on startup.
+
+    If a provider is found and no explicit LLM is configured,
+    auto-configure it so the user doesn't need to edit .env.
+    Inspired by OpenClaw's auto-detection and AnythingLLM's provider discovery.
+    """
+    import asyncio
+
+    detected: list[dict] = []
+
+    async def _probe_ollama() -> dict | None:
+        try:
+            async with httpx.AsyncClient(timeout=3) as client:
+                resp = await client.get(f"{settings.ollama_base_url}/api/tags")
+                if resp.status_code == 200:
+                    models = resp.json().get("models", [])
+                    return {"provider": "ollama", "url": settings.ollama_base_url, "models": [m.get("name", "?") for m in models]}
+        except Exception:
+            pass
+        return None
+
+    async def _probe_lmstudio() -> dict | None:
+        try:
+            async with httpx.AsyncClient(timeout=3) as client:
+                resp = await client.get(f"{settings.lmstudio_base_url}/models")
+                if resp.status_code == 200:
+                    data = resp.json()
+                    models = [m["id"] for m in data.get("data", [])]
+                    return {"provider": "lmstudio", "url": settings.lmstudio_base_url, "models": models}
+        except Exception:
+            pass
+        return None
+
+    results = await asyncio.gather(_probe_ollama(), _probe_lmstudio(), return_exceptions=True)
+    for r in results:
+        if isinstance(r, dict) and r is not None:
+            detected.append(r)
+
+    if not detected:
+        if settings.llm_provider.lower() in ("ollama", "lmstudio"):
+            logger.warning(
+                "No local LLM detected. Install Ollama (https://ollama.com) "
+                "or set LLM_PROVIDER / API keys for a cloud provider."
+            )
         return
-    try:
-        async with httpx.AsyncClient(timeout=3) as client:
-            resp = await client.get(f"{settings.ollama_base_url}/api/tags")
-            if resp.status_code == 200:
-                models = resp.json().get("models", [])
-                if models:
-                    names = [m.get("name", "?") for m in models[:5]]
-                    logger.info(
-                        "Ollama detected with %d model(s): %s",
-                        len(models), ", ".join(names),
-                    )
-                else:
-                    logger.warning(
-                        "Ollama is running but has no models. "
-                        "Pull one with:  ollama pull llama3.2:3b"
-                    )
-            else:
-                logger.warning("Ollama responded with status %d", resp.status_code)
-    except Exception:
-        logger.warning(
-            "Ollama not detected at %s. "
-            "Install from https://ollama.com or set LLM_PROVIDER / API keys "
-            "for a cloud provider.",
-            settings.ollama_base_url,
-        )
+
+    for p in detected:
+        model_count = len(p["models"])
+        names = ", ".join(p["models"][:5])
+        if model_count > 0:
+            logger.info(
+                "%s detected at %s with %d model(s): %s",
+                p["provider"].upper(), p["url"], model_count, names,
+            )
+        else:
+            logger.warning(
+                "%s is running at %s but has no models loaded.",
+                p["provider"].upper(), p["url"],
+            )
 
 
 def _start_health_monitor() -> None:
@@ -183,6 +221,10 @@ async def _maybe_teardown_checkpointer() -> None:
 
 async def _start_plugin_system() -> None:
     """Initialize pluggy-based plugin system and call startup hooks."""
+    if not settings.plugin_system_enabled:
+        logger.info("Plugin system disabled by configuration")
+        return
+
     try:
         from services.plugin.manager import get_plugin_manager
 
@@ -199,6 +241,9 @@ async def _start_plugin_system() -> None:
 
 
 async def _stop_plugin_system() -> None:
+    if not settings.plugin_system_enabled:
+        return
+
     try:
         from services.plugin.manager import get_plugin_manager
 
@@ -211,7 +256,7 @@ async def _stop_plugin_system() -> None:
 async def run_startup_hooks() -> None:
     await _maybe_create_tables()
     await _maybe_seed_system_data()
-    await _detect_ollama()
+    await _detect_local_llm()
     await _maybe_setup_checkpointer()
     await _maybe_connect_mcp_servers()
     await _start_plugin_system()

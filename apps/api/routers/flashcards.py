@@ -13,6 +13,7 @@ from database import get_db
 from models.user import User
 from services.auth.dependency import get_current_user
 from services.course_access import get_course_or_404
+from services.llm.readiness import ensure_llm_ready
 
 router = APIRouter()
 
@@ -40,6 +41,7 @@ async def generate_flashcards(body: GenerateRequest, db: AsyncSession = Depends(
     """Generate flashcards from course content using LLM + FSRS."""
     from services.spaced_repetition.flashcards import generate_flashcards
 
+    await ensure_llm_ready("Flashcard generation")
     try:
         cards = await generate_flashcards(
             db, body.course_id, body.content_node_id, body.count

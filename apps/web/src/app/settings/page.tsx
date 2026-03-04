@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import { useT } from "@/lib/i18n-context";
 import {
   getHealthStatus,
@@ -20,6 +21,7 @@ import {
   DataExportSection,
   TemplatesSection,
 } from "./sections";
+import { RuntimeAlert } from "@/components/shared/runtime-alert";
 
 export default function SettingsPage() {
   const router = useRouter();
@@ -33,32 +35,44 @@ export default function SettingsPage() {
   const [provider, setProvider] = useState<ProviderName>("ollama");
   const [model, setModel] = useState("llama3.2:3b");
   const [llmRequired, setLlmRequired] = useState(false);
+  const healthErrorShown = useRef(false);
+  const runtimeErrorShown = useRef(false);
 
   const loadHealth = useCallback(async () => {
     setHealthLoading(true);
     try {
       setHealth(await getHealthStatus());
-    } catch {
+      healthErrorShown.current = false;
+    } catch (error) {
       setHealth(null);
+      if (!healthErrorShown.current) {
+        toast.error(error instanceof Error ? error.message : t("settings.runtimeUnavailable"));
+        healthErrorShown.current = true;
+      }
     } finally {
       setHealthLoading(false);
     }
-  }, []);
+  }, [t]);
 
   const loadRuntimeConfig = useCallback(async () => {
     setRuntimeLoading(true);
     try {
       const config = await getLlmRuntimeConfig();
       setRuntimeConfig(config);
-      setProvider((config.provider as ProviderName) || "openai");
-      setModel(config.model || "gpt-4o-mini");
+      setProvider((config.provider as ProviderName) || "ollama");
+      setModel(config.model || "llama3.2:3b");
       setLlmRequired(config.llm_required);
-    } catch {
+      runtimeErrorShown.current = false;
+    } catch (error) {
       setRuntimeConfig(null);
+      if (!runtimeErrorShown.current) {
+        toast.error(error instanceof Error ? error.message : t("settings.runtimeUnavailable"));
+        runtimeErrorShown.current = true;
+      }
     } finally {
       setRuntimeLoading(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     void loadHealth();
@@ -87,6 +101,8 @@ export default function SettingsPage() {
       </header>
 
       <div className="max-w-4xl mx-auto p-6 space-y-8">
+        <RuntimeAlert health={health} />
+
         <RuntimeStatusSection
           health={health}
           healthLoading={healthLoading}

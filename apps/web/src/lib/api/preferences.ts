@@ -97,6 +97,41 @@ export async function setPreference(
   });
 }
 
+// ── Dismiss / Restore ──
+
+export async function dismissPreference(id: string, reason?: string): Promise<Preference> {
+  return request(`/preferences/${id}/dismiss`, {
+    method: "POST",
+    body: JSON.stringify({ reason: reason ?? null }),
+  });
+}
+
+export async function restorePreference(id: string): Promise<Preference> {
+  return request(`/preferences/${id}/restore`, { method: "POST" });
+}
+
+export async function dismissSignal(id: string, reason?: string): Promise<PreferenceSignal> {
+  return request(`/preferences/signals/${id}/dismiss`, {
+    method: "POST",
+    body: JSON.stringify({ reason: reason ?? null }),
+  });
+}
+
+export async function restoreSignal(id: string): Promise<PreferenceSignal> {
+  return request(`/preferences/signals/${id}/restore`, { method: "POST" });
+}
+
+export async function dismissMemory(id: string, reason?: string): Promise<MemoryProfileItem> {
+  return request(`/preferences/memories/${id}/dismiss`, {
+    method: "POST",
+    body: JSON.stringify({ reason: reason ?? null }),
+  });
+}
+
+export async function restoreMemory(id: string): Promise<MemoryProfileItem> {
+  return request(`/preferences/memories/${id}/restore`, { method: "POST" });
+}
+
 // ── LLM Runtime Config ──
 
 interface LlmRuntimeProviderStatus {

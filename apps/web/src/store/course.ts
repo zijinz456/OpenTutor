@@ -26,6 +26,7 @@ interface CourseState {
   contentTree: ContentNode[];
   ingestionJobs: IngestionJobSummary[];
   loading: boolean;
+  error: string | null;
 
   fetchCourses: () => Promise<void>;
   setActiveCourse: (course: Course | null) => void;
@@ -40,27 +41,29 @@ export const useCourseStore = create<CourseState>((set, get) => ({
   contentTree: [],
   ingestionJobs: [],
   loading: false,
+  error: null,
 
   fetchCourses: async () => {
     // Return cached data immediately if still fresh.
     const cached = ttlCache.get<Course[]>(COURSES_CACHE_KEY);
     if (cached) {
-      set({ courses: cached, loading: false });
+      set({ courses: cached, loading: false, error: null });
       return;
     }
 
-    set({ loading: true });
+    set({ loading: true, error: null });
     try {
       const courses = await listCourseOverview();
       ttlCache.set(COURSES_CACHE_KEY, courses, COURSES_TTL_MS);
-      set({ courses, loading: false });
-    } catch {
-      set({ loading: false });
+      set({ courses, loading: false, error: null });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to load courses";
+      set({ loading: false, error: message });
     }
   },
 
   setActiveCourse: (course) => {
-    set({ activeCourse: course, contentTree: [] });
+    set({ activeCourse: course, contentTree: [], error: null });
     if (course) {
       get().fetchContentTree(course.id);
     }
@@ -69,25 +72,27 @@ export const useCourseStore = create<CourseState>((set, get) => ({
   addCourse: async (name, description, metadata) => {
     const course = await createCourse(name, description, metadata);
     ttlCache.invalidate(COURSES_CACHE_KEY);
-    set((s) => ({ courses: [course, ...s.courses] }));
+    set((s) => ({ courses: [course, ...s.courses], error: null }));
     return course;
   },
 
   fetchContentTree: async (courseId) => {
     try {
       const tree = await getContentTree(courseId);
-      set({ contentTree: tree });
-    } catch {
-      // silently fail
+      set({ contentTree: tree, error: null });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to load course content";
+      set({ error: message });
     }
   },
 
   fetchIngestionJobs: async (courseId) => {
     try {
       const jobs = await listIngestionJobs(courseId);
-      set({ ingestionJobs: jobs });
-    } catch {
-      // silently fail
+      set({ ingestionJobs: jobs, error: null });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to load ingestion jobs";
+      set({ error: message });
     }
   },
 }));

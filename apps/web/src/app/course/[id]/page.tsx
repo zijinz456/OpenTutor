@@ -1,21 +1,27 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import { useCourseStore } from "@/store/course";
 import { useChatStore } from "@/store/chat";
 import { useWorkspaceStore, type SectionId } from "@/store/workspace";
 import { resolveWorkspaceFeatures } from "@/lib/course-config";
+import { getHealthStatus, type HealthStatus } from "@/lib/api";
+import { ttlCache } from "@/lib/cache";
 import { AppShell } from "@/components/shell/app-shell";
 import { WorkspaceHeader } from "@/components/shell/workspace-header";
 import { CourseTree } from "@/components/course-tree/course-tree";
 import { ChatView } from "@/components/chat/chat-view";
 import { SectionContainer } from "@/components/sections/section-container";
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
+import { RuntimeAlert } from "@/components/shared/runtime-alert";
 
 export default function CoursePage() {
   const params = useParams();
   const courseId = params.id as string;
+  const [health, setHealth] = useState<HealthStatus | null>(
+    () => ttlCache.get<HealthStatus>("course:health") ?? null,
+  );
 
   const {
     activeCourse,
@@ -45,6 +51,15 @@ export default function CoursePage() {
   useEffect(() => {
     void fetchIngestionJobs(courseId);
   }, [courseId, fetchIngestionJobs]);
+
+  useEffect(() => {
+    getHealthStatus()
+      .then((data) => {
+        ttlCache.set("course:health", data, 30_000);
+        setHealth(data);
+      })
+      .catch(() => {});
+  }, []);
 
   const course = activeCourse ?? courses.find((item) => item.id === courseId) ?? null;
 
@@ -96,6 +111,9 @@ export default function CoursePage() {
   return (
     <div className="h-screen flex flex-col bg-background">
       <WorkspaceHeader courseName={course?.name || "Course"} />
+      <div className="px-3 pt-3">
+        <RuntimeAlert health={health} />
+      </div>
       <AppShell
         courseId={courseId}
         tree={<CourseTree courseId={courseId} />}

@@ -11,7 +11,7 @@ import time
 import logging
 from enum import Enum
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +63,18 @@ class IntentType(str, Enum):
 
 
 @dataclass
+class InputRequirement:
+    """Declares an input that an agent would like answered before execution.
+
+    Inspired by OpenClaw's SKILL.md 'Inputs' section pattern.
+    """
+    key: str                                        # e.g., "deadline", "difficulty"
+    question: str                                   # Human-readable question
+    options: list[str]                              # Suggested options for the user
+    check: Callable[["AgentContext"], bool]          # Returns True if already satisfied
+
+
+@dataclass
 class AgentContext:
     """Shared context passed between orchestrator and specialist agents.
 
@@ -96,6 +108,9 @@ class AgentContext:
 
     # Adaptive difficulty (populated during context loading for QUIZ intent)
     difficulty_guidance: str | None = None
+
+    # Pre-task clarification (OpenClaw Inputs pattern)
+    clarify_inputs: dict[str, str] = field(default_factory=dict)
 
     # Execution state (OpenAkita TaskState pattern)
     phase: TaskPhase = TaskPhase.IDLE
@@ -198,6 +213,82 @@ class AgentContext:
             merge_strategy=self.merge_strategy,
         )
         return snap
+
+    def to_postprocess_payload(self) -> dict[str, Any]:
+        """Serialize the minimal context needed for durable post-processing."""
+        return {
+            "user_id": str(self.user_id),
+            "course_id": str(self.course_id),
+            "conversation_id": str(self.conversation_id) if self.conversation_id else None,
+            "session_id": str(self.session_id),
+            "user_message": self.user_message,
+            "active_tab": self.active_tab,
+            "intent": self.intent.value if self.intent else IntentType.GENERAL.value,
+            "intent_confidence": self.intent_confidence,
+            "scene": self.scene,
+            "phase": self.phase.value if self.phase else TaskPhase.IDLE.value,
+            "delegated_agent": self.delegated_agent,
+            "response": self.response,
+            "actions": list(self.actions),
+            "extracted_signal": self.extracted_signal,
+            "tool_calls": list(self.tool_calls),
+            "react_iterations": self.react_iterations,
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "total_tokens": self.total_tokens,
+            "created_at": self.created_at,
+            "completed_at": self.completed_at,
+            "error": self.error,
+            "metadata": dict(self.metadata),
+            "swarm_mode": self.swarm_mode,
+            "merge_strategy": self.merge_strategy,
+        }
+
+    @classmethod
+    def from_postprocess_payload(cls, payload: dict[str, Any]) -> "AgentContext":
+        """Rehydrate a post-process snapshot from a durable task payload."""
+        conversation_id = payload.get("conversation_id")
+        session_id = payload.get("session_id")
+        intent_raw = payload.get("intent") or IntentType.GENERAL.value
+        phase_raw = payload.get("phase") or TaskPhase.IDLE.value
+
+        try:
+            intent = IntentType(intent_raw)
+        except ValueError:
+            intent = IntentType.GENERAL
+
+        try:
+            phase = TaskPhase(phase_raw)
+        except ValueError:
+            phase = TaskPhase.IDLE
+
+        return cls(
+            user_id=uuid.UUID(str(payload["user_id"])),
+            course_id=uuid.UUID(str(payload["course_id"])),
+            conversation_id=uuid.UUID(str(conversation_id)) if conversation_id else None,
+            session_id=uuid.UUID(str(session_id)) if session_id else uuid.uuid4(),
+            user_message=str(payload.get("user_message") or ""),
+            active_tab=str(payload.get("active_tab") or ""),
+            intent=intent,
+            intent_confidence=float(payload.get("intent_confidence") or 0.0),
+            scene=payload.get("scene") or SceneName.STUDY_SESSION.value,
+            phase=phase,
+            delegated_agent=payload.get("delegated_agent"),
+            response=str(payload.get("response") or ""),
+            actions=list(payload.get("actions") or []),
+            extracted_signal=payload.get("extracted_signal"),
+            tool_calls=list(payload.get("tool_calls") or []),
+            react_iterations=int(payload.get("react_iterations") or 0),
+            input_tokens=int(payload.get("input_tokens") or 0),
+            output_tokens=int(payload.get("output_tokens") or 0),
+            total_tokens=int(payload.get("total_tokens") or 0),
+            created_at=float(payload.get("created_at") or time.time()),
+            completed_at=payload.get("completed_at"),
+            error=payload.get("error"),
+            metadata=dict(payload.get("metadata") or {}),
+            swarm_mode=bool(payload.get("swarm_mode")),
+            merge_strategy=str(payload.get("merge_strategy") or "llm_synthesize"),
+        )
 
     def to_status_dict(self) -> dict:
         """Serializable status for frontend progress display."""

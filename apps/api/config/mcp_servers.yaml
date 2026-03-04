@@ -6,7 +6,7 @@
 #
 # Transport types:
 #   stdio: Launch subprocess, communicate via stdin/stdout JSON-RPC
-#   sse:   Connect to HTTP SSE endpoint (not yet implemented)
+#   sse:   Connect to an MCP HTTP SSE endpoint
 #
 # Environment variables: Use ${VAR_NAME} syntax to reference env vars.
 #

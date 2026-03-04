@@ -21,6 +21,7 @@ from models.user import User
 from services.auth.dependency import get_current_user
 from services.course_access import get_course_or_404
 from services.activity.tasks import create_task
+from services.llm.readiness import ensure_llm_ready
 from services.provenance import build_provenance
 from libs.exceptions import (
     AppError,
@@ -86,6 +87,7 @@ async def semester_init(body: SemesterInitRequest, user: User = Depends(get_curr
     """WF-1: Initialize a new semester with courses and study plan."""
     from services.workflow.semester_init import run_semester_init
 
+    await ensure_llm_ready("Semester initialization")
     try:
         result = await run_semester_init(db, user.id, body.semester_name, body.courses)
         await create_task(
@@ -119,6 +121,7 @@ async def weekly_prep(user: User = Depends(get_current_user), db: AsyncSession =
     """WF-2: Generate weekly study plan based on deadlines and progress."""
     from services.workflow.weekly_prep import run_weekly_prep
 
+    await ensure_llm_ready("Weekly prep")
     try:
         result = await run_weekly_prep(db, user.id)
         await create_task(
@@ -151,6 +154,7 @@ async def assignment_analysis(body: AssignmentAnalysisRequest, user: User = Depe
     """WF-3: Analyze an assignment and generate approach guide."""
     from services.workflow.assignment_analysis import run_assignment_analysis
 
+    await ensure_llm_ready("Assignment analysis")
     try:
         result = await run_assignment_analysis(db, user.id, body.assignment_id)
         _raise_if_service_error(result)
@@ -195,6 +199,7 @@ async def wrong_answer_review(
     """WF-5: Generate review material based on wrong answers."""
     from services.workflow.wrong_answer_review import run_wrong_answer_review
 
+    await ensure_llm_ready("Wrong-answer review")
     try:
         result = await run_wrong_answer_review(db, user.id, course_id)
         await create_task(
@@ -249,6 +254,7 @@ async def exam_prep(body: ExamPrepRequest, user: User = Depends(get_current_user
     """WF-6: Generate exam preparation plan."""
     from services.workflow.exam_prep import run_exam_prep
 
+    await ensure_llm_ready("Exam prep")
     try:
         result = await run_exam_prep(
             db, user.id, body.course_id, body.exam_topic, body.days_until_exam

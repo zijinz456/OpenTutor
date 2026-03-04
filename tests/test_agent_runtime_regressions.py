@@ -212,6 +212,34 @@ def test_build_provenance_includes_explainable_scene_and_content_details():
     assert provenance["content_refs"][0]["title"] == "Week 6 Review"
 
 
+def test_build_provenance_carries_evidence_summary_fields():
+    ctx = AgentContext(
+        user_id=uuid.uuid4(),
+        course_id=uuid.uuid4(),
+        user_message="explain invariants and boundary updates",
+        scene="study_session",
+    )
+    ctx.content_docs = [
+        {
+            "title": "Binary Search Invariants",
+            "source_type": "pdf",
+            "content": "Keep the target inside the bounds.",
+            "evidence_summary": "Matches: invariants, boundary updates — Keep the target inside the bounds.",
+            "matched_terms": ["invariants", "boundary"],
+            "matched_facets": ["boundary updates"],
+            "section_hit_count": 2,
+        }
+    ]
+
+    provenance = _build_provenance(ctx)
+
+    assert provenance["content_refs"][0]["evidence_summary"].startswith("Matches:")
+    assert provenance["content_refs"][0]["matched_terms"] == ["invariants", "boundary"]
+    assert provenance["content_refs"][0]["section_hit_count"] == 2
+    assert provenance["content_evidence_groups"][0]["label"] == "boundary updates"
+    assert provenance["content_evidence_groups"][0]["section_count"] == 2
+
+
 @pytest.mark.asyncio
 async def test_run_agent_turn_records_verifier_and_repaired_response(monkeypatch):
     repairing_agent = _RepairingAgent()
@@ -280,3 +308,61 @@ async def test_orchestrate_stream_complex_request_returns_task_link(monkeypatch)
     assert payload["agent"] == "coordinator"
     assert payload["task_link"]["task_type"] == "multi_step"
     assert payload["verifier"]["code"] == "background_task_created"
+
+
+@pytest.mark.asyncio
+async def test_orchestrate_stream_enqueues_durable_post_process_task(monkeypatch):
+    class _Agent(_StreamingOnlyAgent):
+        def get_required_inputs(self):
+            return []
+
+        async def stream(self, ctx, _db):
+            ctx.response += "Durable background work."
+            yield "Durable background work."
+
+    dummy_agent = _Agent(["Durable background work."], usage={"input_tokens": 8, "output_tokens": 5})
+    submitted: dict[str, object] = {}
+
+    async def fake_classify_intent(ctx):
+        ctx.intent = IntentType.LEARN
+        ctx.intent_confidence = 0.95
+        return ctx
+
+    async def fake_load_context(ctx, _db, db_factory=None):
+        return ctx
+
+    async def fake_apply_verifier(ctx, _agent):
+        return ctx
+
+    async def fake_apply_reflection(ctx):
+        return ctx
+
+    async def fake_submit_task(**kwargs):
+        submitted.update(kwargs)
+        return SimpleNamespace(id=uuid.uuid4(), task_type=kwargs["task_type"], status="queued")
+
+    monkeypatch.setattr("services.agent.orchestrator.classify_intent", fake_classify_intent)
+    monkeypatch.setattr("services.agent.orchestrator.load_context", fake_load_context)
+    monkeypatch.setattr("services.agent.orchestrator.get_agent", lambda _intent: dummy_agent)
+    monkeypatch.setattr("services.agent.orchestrator.apply_verifier", fake_apply_verifier)
+    monkeypatch.setattr("services.agent.orchestrator.apply_reflection", fake_apply_reflection)
+    monkeypatch.setattr("services.agent.task_planner.is_complex_request", lambda _message: False)
+    monkeypatch.setattr("services.activity.engine.submit_task", fake_submit_task)
+
+    events = []
+    async for event in orchestrate_stream(
+        user_id=uuid.uuid4(),
+        course_id=uuid.uuid4(),
+        message="Explain quicksort",
+        db=None,
+        db_factory=None,
+    ):
+        events.append(event)
+
+    done_event = next(event for event in events if event["event"] == "done")
+    payload = json.loads(done_event["data"])
+    assert payload["agent"] == "dummy"
+    assert submitted["task_type"] == "chat_post_process"
+    assert submitted["source"] == "agent"
+    assert submitted["max_attempts"] == 3
+    assert submitted["input_json"]["context"]["response"] == "Durable background work."

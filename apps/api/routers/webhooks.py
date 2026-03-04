@@ -15,6 +15,7 @@ from fastapi import APIRouter, Query, Request, Response
 
 from config import settings
 from database import async_session
+from services.agent.background_runtime import track_background_task
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -84,10 +85,10 @@ async def whatsapp_webhook(request: Request) -> Response:
         return Response(status_code=200)
 
     # Dispatch in background so we can ACK the webhook immediately
-    asyncio.create_task(
+    track_background_task(asyncio.create_task(
         _dispatch_with_session(adapter, incoming),
         name=f"whatsapp-dispatch-{incoming.message_id}",
-    )
+    ))
 
     return Response(status_code=200)
 
@@ -131,10 +132,10 @@ async def imessage_webhook(request: Request) -> Response:
         return Response(status_code=200)
 
     # Dispatch in background
-    asyncio.create_task(
+    track_background_task(asyncio.create_task(
         _dispatch_with_session(adapter, incoming),
         name=f"imessage-dispatch-{incoming.message_id}",
-    )
+    ))
 
     return Response(status_code=200)
 
@@ -179,10 +180,10 @@ async def telegram_webhook(request: Request) -> Response:
         return Response(status_code=200)
 
     # Dispatch in background
-    asyncio.create_task(
+    track_background_task(asyncio.create_task(
         _dispatch_with_session(adapter, incoming),
         name=f"telegram-dispatch-{incoming.message_id}",
-    )
+    ))
 
     return Response(status_code=200)
 
@@ -251,12 +252,12 @@ async def discord_webhook(request: Request) -> Response:
     )
 
     # Dispatch processing in background, then follow up with the response
-    asyncio.create_task(
+    track_background_task(asyncio.create_task(
         _dispatch_discord_interaction(
             adapter, incoming, interaction_id, interaction_token,
         ),
         name=f"discord-dispatch-{incoming.message_id}",
-    )
+    ))
 
     return Response(status_code=200)
 

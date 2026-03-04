@@ -23,6 +23,7 @@ export function UploadDialog({
 }: UploadDialogProps) {
   const t = useT();
   const [uploading, setUploading] = useState(false);
+  const [progress, setProgress] = useState(0);
   const [url, setUrl] = useState("");
   const [urlError, setUrlError] = useState("");
   const [dragging, setDragging] = useState(false);
@@ -31,8 +32,9 @@ export function UploadDialog({
   const processFile = useCallback(
     async (file: File) => {
       setUploading(true);
+      setProgress(0);
       try {
-        const result = await uploadFile(courseId, file);
+        const result = await uploadFile(courseId, file, (pct) => setProgress(pct));
         toast.success(`Uploaded ${file.name}: ${result.nodes_created} sections created`);
         await fetchContentTree(courseId);
         onOpenChange(false);
@@ -40,6 +42,7 @@ export function UploadDialog({
         toast.error(`Upload failed: ${(error as Error).message}`);
       } finally {
         setUploading(false);
+        setProgress(0);
       }
     },
     [courseId, fetchContentTree, onOpenChange],
@@ -157,6 +160,19 @@ export function UploadDialog({
                   </span>
                 </Button>
               </label>
+              {uploading && (
+                <div className="mt-3 w-full">
+                  <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-primary transition-all duration-300"
+                      style={{ width: `${progress}%` }}
+                    />
+                  </div>
+                  <p className="mt-1 text-center text-xs text-muted-foreground">
+                    {progress < 100 ? `Uploading... ${progress}%` : "Processing..."}
+                  </p>
+                </div>
+              )}
             </div>
           </TabsContent>
 

@@ -1,6 +1,7 @@
 """OpenTutor Zenus API — FastAPI entry point."""
 
 import logging
+import logging.handlers
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,6 +15,32 @@ from services.app_lifecycle import lifespan
 from services.llm.router import LLMConfigurationError
 from services.router_registry import register_routers
 
+
+def _configure_logging() -> None:
+    """Set up root logger with optional rotating file handler."""
+    root = logging.getLogger()
+    fmt = logging.Formatter(
+        "%(asctime)s %(levelname)-8s [%(name)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    # Add file handler if LOG_FILE is configured
+    if settings.log_file:
+        try:
+            import os
+            os.makedirs(os.path.dirname(settings.log_file) or ".", exist_ok=True)
+            fh = logging.handlers.RotatingFileHandler(
+                settings.log_file,
+                maxBytes=settings.log_max_bytes,
+                backupCount=settings.log_backup_count,
+                encoding="utf-8",
+            )
+            fh.setFormatter(fmt)
+            root.addHandler(fh)
+        except OSError as exc:
+            root.warning("Failed to set up log file %s: %s", settings.log_file, exc)
+
+
+_configure_logging()
 logger = logging.getLogger(__name__)
 
 
@@ -74,6 +101,10 @@ def _mount_mcp(app: FastAPI) -> None:
     1. FastApiMCP at ``/mcp`` — auto-exposes all FastAPI routes.
     2. Education MCP at ``/mcp/education`` — curated high-level learning tools.
     """
+    if not settings.mcp_enabled:
+        logger.info("MCP mounts disabled by configuration")
+        return
+
     # 1. Auto-expose all routes
     try:
         from fastapi_mcp import FastApiMCP

@@ -12,6 +12,13 @@ interface ChatVerifierResult {
   message: string;
 }
 
+export interface ChatVerifierDiagnostics {
+  request_coverage?: number;
+  evidence_coverage?: number;
+  request_overlap_terms?: string[];
+  evidence_overlap_terms?: string[];
+}
+
 interface ChatTaskLink {
   task_id: string;
   task_type: string;
@@ -88,6 +95,19 @@ interface ChatContentReference {
   title?: string;
   source_type?: string;
   preview?: string;
+  evidence_summary?: string;
+  matched_terms?: string[];
+  matched_facets?: string[];
+  section_hit_count?: number;
+}
+
+interface ChatEvidenceGroup {
+  label?: string;
+  titles?: string[];
+  matched_terms?: string[];
+  matched_facets?: string[];
+  section_count?: number;
+  summary?: string | null;
 }
 
 export interface ChatProvenance {
@@ -101,6 +121,7 @@ export interface ChatProvenance {
   content_count?: number;
   content_titles?: string[];
   content_refs?: ChatContentReference[];
+  content_evidence_groups?: ChatEvidenceGroup[];
   memory_count?: number;
   tool_count?: number;
   tool_names?: string[];
@@ -119,6 +140,7 @@ export interface ChatMessageMetadata {
   reflection?: JsonObject | null;
   provenance?: ChatProvenance | null;
   verifier?: ChatVerifierResult | null;
+  verifier_diagnostics?: ChatVerifierDiagnostics | null;
   task_link?: ChatTaskLink | null;
 }
 
@@ -146,7 +168,16 @@ type StreamEvent =
   | { type: "replace"; content: string }
   | { type: "tool_status"; status: "running" | "complete"; tool: string; explanation?: string }
   | { type: "tool_progress"; tool: string; message: string; step: number; total: number }
+  | { type: "clarify"; clarify: ClarifyOption }
   | { type: "done"; sessionId?: string; agent?: string; intent?: string; tokens?: number; metadata?: ChatMessageMetadata };
+
+export interface ClarifyOption {
+  key: string;
+  question: string;
+  options: string[];
+  agent: string;
+  totalMissing: number;
+}
 
 export interface ImageAttachment {
   data: string;       // base64-encoded
@@ -271,6 +302,19 @@ export async function* streamChat(
           step: (data.step ?? 0) as number,
           total: (data.total ?? 0) as number,
         };
+      } else if (resolvedEvent === "clarify") {
+        if (data.key && data.question && Array.isArray(data.options)) {
+          yield {
+            type: "clarify",
+            clarify: {
+              key: data.key as string,
+              question: data.question as string,
+              options: data.options as string[],
+              agent: (data.agent ?? "unknown") as string,
+              totalMissing: (data.total_missing ?? 1) as number,
+            },
+          };
+        }
       } else if (resolvedEvent === "done") {
         yield {
           type: "done",
@@ -285,6 +329,7 @@ export async function* streamChat(
             actions: data.actions,
             provenance: data.provenance,
             verifier: data.verifier,
+            verifier_diagnostics: data.verifier_diagnostics,
             task_link: data.task_link,
             reflection: data.reflection,
           },

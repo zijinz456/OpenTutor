@@ -11,6 +11,7 @@ from services.practice.annotation import normalize_question_options
 class ExtractRequest(BaseModel):
     course_id: uuid.UUID
     content_node_id: uuid.UUID | None = None
+    count: int | None = None
 
 
 class SubmitAnswerRequest(BaseModel):

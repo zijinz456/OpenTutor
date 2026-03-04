@@ -35,6 +35,7 @@ from services.activity.tasks import (
     _truncate_summary,
     attach_task_review_payload,
     build_task_review_payload,
+    create_task,
     infer_task_policy,
     infer_approval_status,
     normalize_task_status,
@@ -376,6 +377,27 @@ async def submit_task(
         if settings.activity_use_redis_notify and task.status != APPROVAL_REQUIRED_STATUS:
             await notify_task_ready(str(task.id))
 
+        # Dispatch a user notification when a task needs approval
+        if task.status == APPROVAL_REQUIRED_STATUS:
+            try:
+                from services.notification.dispatcher import dispatch as dispatch_notification
+
+                async with async_session() as notif_db:
+                    await dispatch_notification(
+                        user_id=user_id,
+                        title=f"Task needs approval: {title}",
+                        body=task.approval_reason or f"The agent wants to run '{task_type}'. Please approve or reject.",
+                        category="task_approval",
+                        course_id=course_id,
+                        priority="high",
+                        dedup_key=f"task_approval:{task.id}",
+                        action_url=f"/course/{course_id}" if course_id else None,
+                        action_label="Review Task",
+                        db=notif_db,
+                    )
+            except Exception as exc:
+                logger.warning("Failed to dispatch approval notification: %s", exc)
+
         return task
 
 
@@ -628,6 +650,25 @@ async def _mark_task_success(task_id: uuid.UUID, *, result_payload: JsonObject, 
         task.summary = _truncate_summary(summary)
         task.result_json = stored_result
         metadata = dict(task.metadata_json or {})
+        auto_repair_task_id = await _queue_auto_repair_follow_up(
+            db,
+            task,
+            stored_result,
+        )
+        if auto_repair_task_id:
+            metadata["auto_repair_task_id"] = auto_repair_task_id
+            task_review = task.result_json.get("task_review") if isinstance(task.result_json, dict) else None
+            follow_up = task_review.get("follow_up") if isinstance(task_review, dict) else None
+            if isinstance(follow_up, dict):
+                updated_follow_up = dict(follow_up)
+                updated_follow_up["auto_queued"] = True
+                updated_follow_up["queued_task_id"] = auto_repair_task_id
+                updated_task_review = dict(task_review)
+                updated_task_review["follow_up"] = updated_follow_up
+                updated_result = dict(task.result_json)
+                updated_result["task_review"] = updated_task_review
+                task.result_json = updated_result
+        task.metadata_json = metadata
         merged_provenance = merge_provenance(
             metadata.get("provenance") if isinstance(metadata.get("provenance"), dict) else None,
             result_payload.get("provenance") if isinstance(result_payload, dict) else None,
@@ -654,6 +695,81 @@ async def _mark_task_success(task_id: uuid.UUID, *, result_payload: JsonObject, 
         )
         await db.commit()
         return True
+
+
+async def _queue_auto_repair_follow_up(
+    db: AsyncSession,
+    task: AgentTask,
+    result_payload: JsonObject,
+) -> str | None:
+    """Automatically queue a durable repair plan for failed multi-step tasks."""
+    if task.task_type != "multi_step" or task.source == "task_auto_repair":
+        return None
+    if not task.course_id:
+        return None
+
+    task_review = result_payload.get("task_review")
+    if not isinstance(task_review, dict):
+        return None
+    follow_up = task_review.get("follow_up")
+    if not isinstance(follow_up, dict) or not follow_up.get("ready"):
+        return None
+    if str(follow_up.get("task_type") or "").strip() != "multi_step":
+        return None
+    label = str(follow_up.get("label") or "").lower()
+    if "repair" not in label:
+        return None
+
+    existing_auto_repair_id = (task.metadata_json or {}).get("auto_repair_task_id")
+    if existing_auto_repair_id:
+        return str(existing_auto_repair_id)
+
+    input_json = dict(follow_up.get("input_json") or {})
+    plan_prompt = str(follow_up.get("plan_prompt") or follow_up.get("summary") or follow_up.get("title") or "").strip()
+    if "course_id" not in input_json:
+        input_json["course_id"] = str(task.course_id)
+    if not input_json.get("steps"):
+        from services.agent.task_planner import create_plan
+
+        try:
+            steps = await create_plan(plan_prompt, task.user_id, task.course_id)
+        except Exception as exc:
+            logger.warning("Auto repair follow-up planning failed for task %s: %s", task.id, exc)
+            return None
+        input_json.update({
+            "course_id": str(task.course_id),
+            "steps": steps,
+            "plan_prompt": plan_prompt,
+        })
+
+    queued = await create_task(
+        db,
+        user_id=task.user_id,
+        course_id=task.course_id,
+        goal_id=task.goal_id,
+        task_type="multi_step",
+        title=str(follow_up.get("title") or f"Repair plan: {task.title}")[:200],
+        summary=str(follow_up.get("summary") or "Automatically queued repair plan.")[:300],
+        status="queued",
+        source="task_auto_repair",
+        input_json=input_json,
+        metadata_json={
+            "parent_task_id": str(task.id),
+            "parent_task_title": task.title,
+            "trigger": "auto_repair_follow_up",
+            "queue_label": follow_up.get("label"),
+        },
+        requires_approval=False,
+        max_attempts=2,
+    )
+    await _record_task_audit(
+        db,
+        queued,
+        action_kind="task_auto_follow_up_submit",
+        outcome="queued",
+        details={"parent_task_id": str(task.id)},
+    )
+    return str(queued.id)
 
 
 async def _mark_task_cancelled(
@@ -736,6 +852,22 @@ async def _dispatch_task(
 ) -> tuple[JsonObject, str | None]:
     with _force_container_sandbox():
         async with async_session() as db:
+            llm_task_labels = {
+                "semester_init": "Semester initialization",
+                "weekly_prep": "Weekly prep",
+                "assignment_analysis": "Assignment analysis",
+                "wrong_answer_review": "Wrong-answer review",
+                "exam_prep": "Exam prep",
+                "generate_quiz": "Quiz generation",
+                "create_flashcard": "Flashcard generation",
+                "create_flashcards": "Flashcard generation",
+                "agent_subtask": "Agent task execution",
+            }
+            if task_type in llm_task_labels:
+                from services.llm.readiness import ensure_llm_ready
+
+                await ensure_llm_ready(llm_task_labels[task_type])
+
             if task_type == "weekly_prep":
                 from services.workflow.weekly_prep import run_weekly_prep
 
@@ -849,6 +981,11 @@ async def _dispatch_task(
 
             if task_type == "multi_step":
                 return await _run_multi_step_plan(db, task_id, user_id, payload, async_session)
+
+            if task_type == "chat_post_process":
+                from services.agent.background_runtime import execute_post_process_task
+
+                return await execute_post_process_task(payload, async_session)
 
             if task_type == "code_execution":
                 from services.agent.code_execution import CodeExecutionAgent

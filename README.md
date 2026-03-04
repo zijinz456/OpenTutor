@@ -16,7 +16,7 @@ This repo is designed to run locally in `single_user` mode, in the same spirit a
 ```bash
 git clone https://github.com/zijinz456/OpenTutor.git && cd OpenTutor
 cp .env.example .env
-# Add at least one LLM API key to .env (OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.)
+# Optional: configure Ollama locally or add a cloud API key later
 bash scripts/check_local_mode.sh --skip-api
 bash scripts/dev_local.sh up --build
 ```
@@ -44,7 +44,7 @@ Copy-Item .env.example .env
 .\scripts\quickstart.ps1
 ```
 
-The script checks prerequisites, creates a virtualenv, sets up the database, runs migrations, installs frontend packages, and starts both servers. Works without an LLM API key (mock responses).
+The script checks prerequisites, creates a virtualenv, sets up the database, runs migrations, installs frontend packages, and starts both servers. By default the app prefers local Ollama; if no working provider is available it falls back to mock responses for development only.
 
 ### Platform-specific prerequisites
 
@@ -119,7 +119,7 @@ OpenTutor/
 |-------|-------------|
 | **Frontend** | Next.js 16, React 19, TypeScript, Tailwind CSS 4, Zustand, shadcn/ui, Radix UI |
 | **Backend** | FastAPI, Python 3.11, Pydantic 2, SQLAlchemy 2 (async), Alembic |
-| **Database** | PostgreSQL 17 + pgvector + Redis 7 |
+| **Database** | PostgreSQL 17 + pgvector, SQLite compatibility path, Redis 7 optional |
 | **LLM** | Multi-provider (OpenAI, Anthropic, DeepSeek, Ollama, OpenRouter, Gemini, Groq, vLLM, LM Studio, TextGen WebUI, or any OpenAI-compatible endpoint) |
 | **Agents** | 6 specialist agents (Teaching, Exercise, Planning, Review, Preference, Scene) + 2-stage intent routing + LangGraph workflows |
 | **Search** | Hybrid keyword + vector search, RAG Fusion |
@@ -154,7 +154,15 @@ A 2-stage router (keyword heuristic + LLM classifier) routes each user message t
 
 ## LLM Configuration
 
-Set `LLM_PROVIDER` and the corresponding API key in `.env`. Supports model size routing where agents automatically pick large or small models based on their role:
+Default local configuration prefers Ollama:
+
+```bash
+LLM_PROVIDER=ollama
+LLM_MODEL=llama3.2:3b
+OLLAMA_BASE_URL=http://localhost:11434
+```
+
+You can also point the app at a cloud provider. Supports model size routing where agents automatically pick large or small models based on their role:
 
 ```bash
 LLM_PROVIDER=openai
@@ -163,12 +171,14 @@ LLM_MODEL_LARGE=gpt-4o          # for teaching/planning agents
 LLM_MODEL_SMALL=gpt-4o-mini     # for preference/scene agents
 ```
 
-For local LLMs (no API key needed):
+If you do not configure a working provider, health will report `mock_fallback`. That mode is useful for UI development and smoke testing, but not for real tutoring output.
+
+For cloud LLMs:
 
 ```bash
-LLM_PROVIDER=ollama
-LLM_MODEL=qwen2.5
-OLLAMA_BASE_URL=http://localhost:11434
+LLM_PROVIDER=openai
+LLM_MODEL=gpt-4o-mini
+OPENAI_API_KEY=...
 ```
 
 ## Key Features
@@ -189,15 +199,17 @@ See [.env.example](.env.example) for the full list. Key variables:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `LLM_PROVIDER` | `openai` | LLM provider to use |
-| `LLM_MODEL` | `gpt-4o-mini` | Model name |
+| `LLM_PROVIDER` | `ollama` | LLM provider to use |
+| `LLM_MODEL` | `llama3.2:3b` | Model name |
 | `DATABASE_URL` | `postgresql+asyncpg://...` | PostgreSQL connection string |
 | `AUTH_ENABLED` | `false` | Keep `false` for the default local deployment path |
 | `DEPLOYMENT_MODE` | `single_user` | Keep `single_user` for this repo's intended local mode |
-| `APP_AUTO_CREATE_TABLES` | `false` | Auto-create DB tables on startup |
-| `APP_AUTO_SEED_SYSTEM` | `false` | Seed templates and preset scenes |
+| `APP_AUTO_CREATE_TABLES` | `true` | Auto-create DB tables on startup |
+| `APP_AUTO_SEED_SYSTEM` | `true` | Seed templates, preset scenes, and demo data on startup |
 | `APP_RUN_ACTIVITY_ENGINE` | `false` | Run the background durable-task worker in-process |
-| `CODE_SANDBOX_BACKEND` | `container` | Secure sandbox backend (`process` only for pytest or explicit local override) |
+| `CODE_SANDBOX_BACKEND` | `auto` | Prefer container sandbox when Docker/Podman is available, otherwise fail over according to runtime policy |
+| `MCP_ENABLED` | `false` | Enable external MCP server mounts and tool loading |
+| `PLUGIN_SYSTEM_ENABLED` | `false` | Enable the pluggy plugin system on startup |
 
 ## Scripts
 

@@ -6,7 +6,7 @@ import asyncio
 import logging
 import uuid
 
-from services.agent.state import AgentContext, TaskPhase
+from services.agent.state import AgentContext, IntentType, TaskPhase
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +108,56 @@ async def record_llm_usage(ctx: AgentContext, db_factory) -> None:
             )
     except Exception as exc:
         logger.debug("Usage recording failed (non-critical): %s", exc)
+
+
+async def run_post_process_bundle(ctx: AgentContext, db_factory) -> None:
+    """Execute usage tracking + post-processing for a completed agent turn."""
+    if ctx.input_tokens or ctx.output_tokens:
+        await record_llm_usage(ctx, db_factory)
+    if ctx.response:
+        await post_process(ctx, db_factory)
+
+
+async def enqueue_post_process_task(ctx: AgentContext) -> str:
+    """Persist post-processing work so it survives process restarts."""
+    from services.activity.engine import submit_task
+
+    task = await submit_task(
+        user_id=ctx.user_id,
+        course_id=ctx.course_id,
+        task_type="chat_post_process",
+        title="Post-process chat turn",
+        summary="Finalize chat analytics, memory, and study signals.",
+        source="agent",
+        input_json={"context": ctx.to_postprocess_payload()},
+        metadata_json={
+            "session_id": str(ctx.session_id),
+            "conversation_id": str(ctx.conversation_id) if ctx.conversation_id else None,
+            "intent": ctx.intent.value if ctx.intent else None,
+            "agent": ctx.delegated_agent,
+        },
+        max_attempts=3,
+    )
+    return str(task.id)
+
+
+async def execute_post_process_task(payload: dict, db_factory) -> tuple[dict, str]:
+    """Run durable chat post-processing from a task payload."""
+    context_payload = payload.get("context")
+    if not isinstance(context_payload, dict):
+        raise ValueError("chat_post_process requires a serialized context payload")
+
+    ctx = AgentContext.from_postprocess_payload(context_payload)
+    await run_post_process_bundle(ctx, db_factory)
+    return {
+        "post_processed": True,
+        "session_id": str(ctx.session_id),
+        "course_id": str(ctx.course_id),
+        "intent": ctx.intent.value if ctx.intent else None,
+        "agent": ctx.delegated_agent,
+        "tool_call_count": len(ctx.tool_calls),
+        "provenance": ctx.metadata.get("provenance"),
+    }, "Completed chat post-processing."
 
 
 async def post_process(ctx: AgentContext, db_factory) -> None:
@@ -275,6 +325,46 @@ async def post_process(ctx: AgentContext, db_factory) -> None:
                     await reset_turn_counter(notes_db, ctx.user_id, ctx.course_id)
     except Exception as exc:
         logger.warning("Tutor notes update failed (non-critical): %s", exc)
+
+    # ── Teaching strategy extraction (Claudeception pattern, throttled) ──
+    try:
+        if ctx.response and ctx.user_message and ctx.intent in (
+            IntentType.LEARN, IntentType.QUIZ, IntentType.REVIEW,
+        ):
+            from services.agent.teaching_strategies import (
+                check_and_increment_strategy_turn,
+                extract_teaching_strategies,
+                reset_strategy_counter,
+                save_teaching_strategies,
+            )
+
+            async with db_factory() as strategy_db:
+                do_extract = await check_and_increment_strategy_turn(
+                    strategy_db, ctx.user_id, ctx.course_id,
+                )
+                if do_extract:
+                    new_strategies = await extract_teaching_strategies(
+                        strategy_db,
+                        ctx.user_id,
+                        ctx.course_id,
+                        ctx.user_message,
+                        ctx.response,
+                        intent=ctx.intent.value if ctx.intent else None,
+                    )
+                    if new_strategies:
+                        await save_teaching_strategies(
+                            strategy_db, ctx.user_id, ctx.course_id, new_strategies,
+                        )
+                        await reset_strategy_counter(
+                            strategy_db, ctx.user_id, ctx.course_id,
+                        )
+                        logger.info(
+                            "Extracted %d teaching strategies for user %s",
+                            len(new_strategies), ctx.user_id,
+                        )
+                await strategy_db.commit()
+    except Exception as exc:
+        logger.warning("Teaching strategy extraction failed (non-critical): %s", exc)
 
     failures = [result for result in pp_results if not result.get("success")]
     if failures:

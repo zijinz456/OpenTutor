@@ -635,6 +635,15 @@ async def load_context(
     except Exception as exc:
         logger.warning("Tutor notes loading failed: %s", exc)
 
+    # Load teaching strategies (auto-extracted, Claudeception pattern)
+    try:
+        from services.agent.teaching_strategies import get_teaching_strategies
+        strategies = await get_teaching_strategies(db, ctx.user_id, ctx.course_id)
+        if strategies:
+            ctx.metadata["teaching_strategies"] = strategies
+    except Exception as exc:
+        logger.warning("Teaching strategies loading failed: %s", exc)
+
     # Adaptive difficulty guidance for QUIZ intent
     if ctx.intent == IntentType.QUIZ:
         try:

@@ -16,6 +16,7 @@ from models.content import CourseContentTree
 from models.user import User
 from services.auth.dependency import get_current_user
 from services.course_access import get_course_or_404
+from services.llm.readiness import ensure_llm_ready
 from services.parser.notes import restructure_notes
 from services.preference.engine import resolve_preferences
 
@@ -60,6 +61,7 @@ async def restructure_content(body: RestructureRequest, user: User = Depends(get
     note_format = body.format_override or resolved.preferences.get("note_format", "bullet_point")
     visual_pref = resolved.preferences.get("visual_preference", "auto")
 
+    await ensure_llm_ready("Notes restructuring")
     try:
         ai_content = await restructure_notes(
             node.content, node.title, note_format, visual_pref

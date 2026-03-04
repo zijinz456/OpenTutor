@@ -15,7 +15,7 @@ from typing import AsyncIterator
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.agent.state import AgentContext, TaskPhase
+from services.agent.state import AgentContext, InputRequirement, TaskPhase
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +33,10 @@ class BaseAgent(ABC):
     name: str = "base"
     profile: str = "A generic learning assistant agent."
     model_preference: str | None = None  # None = use default, "small" / "large"
+
+    def get_required_inputs(self) -> list[InputRequirement]:
+        """Return input requirements for pre-task questioning. Override in subclasses."""
+        return []
 
     def get_llm_client(self, ctx: AgentContext | None = None):
         """Get LLM client with 3-tier complexity routing when context is available.
@@ -450,6 +454,24 @@ class BaseAgent(ABC):
         tutor_notes = ctx.metadata.get("tutor_notes")
         if tutor_notes:
             parts.append(f"\n## Tutor Notes (Your Private Observations)\n{tutor_notes}")
+
+        # Auto-learned teaching strategies (Claudeception pattern)
+        teaching_strategies = ctx.metadata.get("teaching_strategies")
+        if teaching_strategies:
+            strat_lines = ["## Personalized Teaching Strategies (auto-learned)"]
+            for s in teaching_strategies[:5]:
+                stype = s.get("type", "").replace("_", " ").title()
+                desc = s.get("description", "")
+                topic = s.get("topic", "")
+                strat_lines.append(f"- [{stype}] {desc}" + (f" (Topic: {topic})" if topic else ""))
+            parts.append("\n".join(strat_lines))
+
+        # Pre-task clarification context (OpenClaw Inputs pattern)
+        if ctx.clarify_inputs:
+            clarify_lines = ["## Student's Preferences for This Task"]
+            for k, v in ctx.clarify_inputs.items():
+                clarify_lines.append(f"- {k.replace('_', ' ').title()}: {v}")
+            parts.append("\n".join(clarify_lines))
 
         recent_task_context = ctx.metadata.get("recent_task_context") or ctx.metadata.get("plan_progress")
         if recent_task_context:

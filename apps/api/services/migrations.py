@@ -76,13 +76,19 @@ def summarize_migration_state(
 def inspect_database_migrations(connection) -> MigrationState:
     dialect = connection.dialect.name
     if dialect == "sqlite":
-        # SQLite: check sqlite_master for table existence
+        # SQLite uses create_all(), not Alembic migrations.
+        # Check if schema exists via presence of core tables.
         users_table = connection.execute(
             sa.text("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
         ).scalar()
-        version_table = connection.execute(
-            sa.text("SELECT name FROM sqlite_master WHERE type='table' AND name='alembic_version'")
-        ).scalar()
+        return MigrationState(
+            migration_status="ready" if users_table else "schema_missing",
+            schema_ready=bool(users_table),
+            migration_required=False,  # SQLite never needs Alembic
+            alembic_version_present=False,
+            current_revisions=[],
+            expected_revisions=[],
+        )
     else:
         # PostgreSQL: use to_regclass for table existence
         users_table = connection.execute(sa.text("SELECT to_regclass('users')")).scalar()

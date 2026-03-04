@@ -90,6 +90,14 @@ def consume_oauth_state(state: str, max_age_seconds: int = 900) -> uuid.UUID:
         padding = "=" * (-len(value) % 4)
         return base64.urlsafe_b64decode(f"{value}{padding}")
 
+    def _canonical(value: str) -> str:
+        return base64.urlsafe_b64encode(_decode(value)).decode("ascii").rstrip("=")
+
+    # Reject non-canonical base64url encodings so single-character tampering
+    # cannot slip through when it only mutates unused padding bits.
+    if _canonical(encoded_payload) != encoded_payload or _canonical(encoded_sig) != encoded_sig:
+        raise ValueError("Invalid OAuth state")
+
     payload_bytes = _decode(encoded_payload)
     expected_sig = hmac.new(_state_secret(), payload_bytes, hashlib.sha256).digest()
     actual_sig = _decode(encoded_sig)

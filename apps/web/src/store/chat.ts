@@ -15,6 +15,7 @@ import {
   type ChatHistoryMessage,
   type ChatMessageMetadata,
   type ChatSessionSummary,
+  type ClarifyOption,
   type ImageAttachment,
 } from "@/lib/api";
 import { ttlCache } from "@/lib/cache";
@@ -61,6 +62,11 @@ interface ChatState {
   /** Active tool status from ReAct agent loop (null when no tool running). */
   toolStatus: { tool: string; status: "running" | "complete"; explanation?: string } | null;
 
+  /** Active clarification options from the agent (null when none pending). */
+  clarifyOptions: ClarifyOption | null;
+  /** Send a clarification response by clicking an option button. */
+  sendClarifyResponse: (courseId: string, key: string, value: string) => void;
+
   /** Callback for NL actions (layout changes and preference updates). Set by CoursePage. */
   onAction: ((action: ChatAction) => void) | null;
   setOnAction: (cb: (action: ChatAction) => void) => void;
@@ -106,6 +112,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
   error: null,
   errorCategory: null,
   toolStatus: null,
+  clarifyOptions: null,
+  sendClarifyResponse: (courseId, key, value) => {
+    // Don't clear clarifyOptions here — sendMessage already clears it.
+    // Keeping it until sendMessage runs ensures retry is possible if the call fails.
+    get().sendMessage(courseId, `[CLARIFY:${key}:${value}]`);
+  },
   onAction: null,
   _abortController: null,
   abortStream: () => {
@@ -260,6 +272,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ...deriveActive({ ...s, messagesByCourse: nextMBC }),
         isStreaming: true,
         error: null,
+        clarifyOptions: null,
       };
     });
 
@@ -309,6 +322,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
           // Show write-tool progress as a tool_status with the progress message
           const pct = event.total > 0 ? ` (${event.step}/${event.total})` : "";
           set({ toolStatus: { tool: event.tool, status: "running", explanation: `${event.message}${pct}` } });
+        } else if (event.type === "clarify") {
+          set({ clarifyOptions: event.clarify });
         } else if (event.type === "replace") {
           set((s) => {
             const nextMBC = {

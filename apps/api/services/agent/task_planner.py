@@ -10,6 +10,7 @@ Example: "Help me prepare for my exam next week"
 
 import json
 import logging
+import re
 import uuid
 from dataclasses import dataclass
 
@@ -31,6 +32,58 @@ STEP_TYPES = {
     "review_wrong_answers": "Analyse error patterns from wrong answers",
     "assess_readiness": "Evaluate overall exam readiness",
 }
+
+_ACTION_ITEM_RE = re.compile(r"(^|\n)([-*]|\d+\.)\s+\S+")
+_TIME_BUCKET_RE = re.compile(r"\b(today|tomorrow|tonight|this week|next week|monday|tuesday|wednesday|thursday|friday|saturday|sunday|daily|weekly)\b", re.IGNORECASE)
+
+
+def _verifier_allows_step(verifier: dict | None) -> tuple[bool, str | None]:
+    if not isinstance(verifier, dict):
+        return True, None
+    if verifier.get("status") == "failed":
+        code = str(verifier.get("code") or "verifier_failed")
+        message = str(verifier.get("message") or "The verifier rejected this step output.")
+        return False, f"{code}: {message}"
+    return True, None
+
+
+def _step_completion_issue(
+    step: dict,
+    response: str,
+    *,
+    tool_calls: list[dict],
+    provenance: dict | None,
+) -> str | None:
+    """Apply lightweight completion checks tailored to the step type."""
+    step_type = str(step.get("step_type") or "")
+    normalized = (response or "").strip()
+    lowered = normalized.lower()
+    has_tools = bool(tool_calls)
+    content_count = int((provenance or {}).get("content_count") or 0)
+
+    if not normalized:
+        return "The step produced no usable output."
+
+    if step_type in {"build_study_plan", "schedule_reviews"}:
+        has_actions = bool(_ACTION_ITEM_RE.search(normalized))
+        has_time_structure = bool(_TIME_BUCKET_RE.search(lowered))
+        if not has_tools and (not has_actions or not has_time_structure):
+            return "The step did not produce a time-structured actionable plan."
+
+    if step_type == "generate_exercises":
+        mentions_exercises = any(token in lowered for token in ("question", "exercise", "problem", "quiz"))
+        if not has_tools and not mentions_exercises:
+            return "The step did not produce targeted practice problems."
+
+    if step_type == "create_flashcards":
+        mentions_flashcards = any(token in lowered for token in ("flashcard", "flash card", "card"))
+        if not has_tools and not mentions_flashcards:
+            return "The step did not produce flashcards or a saved flashcard set."
+
+    if step_type == "summarize_content" and len(normalized) < 80:
+        return "The summary is too short to be reliable."
+
+    return None
 
 
 @dataclass
@@ -188,11 +241,29 @@ async def execute_plan_step(
             db_factory=db_factory,
             history=history,
         )
-        success = ctx.phase.value != "failed" and not ctx.error and bool(ctx.response.strip())
         envelope = ctx.metadata.get("turn_envelope") if isinstance(ctx.metadata.get("turn_envelope"), dict) else None
         verifier = envelope.get("verifier") if envelope else ctx.metadata.get("verifier")
+        verifier_diagnostics = envelope.get("verifier_diagnostics") if envelope else ctx.metadata.get("verifier_diagnostics")
         provenance = envelope.get("provenance") if envelope else ctx.metadata.get("provenance")
         tool_calls = envelope.get("tool_calls") if envelope else ctx.tool_calls
+        verifier_ok, verifier_issue = _verifier_allows_step(verifier if isinstance(verifier, dict) else None)
+        completion_issue = _step_completion_issue(
+            step,
+            ctx.response,
+            tool_calls=tool_calls if isinstance(tool_calls, list) else [],
+            provenance=provenance if isinstance(provenance, dict) else None,
+        )
+        success = (
+            ctx.phase.value != "failed"
+            and not ctx.error
+            and bool(ctx.response.strip())
+            and verifier_ok
+            and completion_issue is None
+        )
+        error_message = ctx.error or verifier_issue or completion_issue
+        summary = (ctx.response or error_message or "Step completed.")[:300]
+        if not success and error_message:
+            summary = f"Step failed quality gate: {error_message}"[:300]
         return {
             "step_index": step["step_index"],
             "step_type": step_type,
@@ -204,9 +275,10 @@ async def execute_plan_step(
             "tool_calls": tool_calls if isinstance(tool_calls, list) else [],
             "output": ctx.response[:2000],
             "raw_output": ctx.response,
-            "summary": (ctx.response or ctx.error or "Step completed.")[:300],
-            "error": ctx.error,
+            "summary": summary,
+            "error": error_message,
             "verifier": verifier if isinstance(verifier, dict) else None,
+            "verifier_diagnostics": verifier_diagnostics if isinstance(verifier_diagnostics, dict) else None,
             "provenance": provenance if isinstance(provenance, dict) else None,
         }
     except Exception as e:
@@ -223,6 +295,7 @@ async def execute_plan_step(
             "summary": f"Step failed: {e}",
             "error": str(e),
             "verifier": None,
+            "verifier_diagnostics": None,
             "provenance": None,
         }
 

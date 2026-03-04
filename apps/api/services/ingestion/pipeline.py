@@ -568,7 +568,32 @@ async def _dispatch_content(db: AsyncSession, job: IngestionJob) -> dict:
     ):
         # Build content tree using PageIndex pattern
         from services.parser.pdf import _markdown_to_tree
+        from models.content import CourseContentTree
         source_label = job.original_filename or job.url or "Untitled"
+
+        # Dedup: remove existing content tree nodes from the same source
+        # before inserting new ones (prevents duplicates on re-ingestion)
+        existing = await db.execute(
+            select(CourseContentTree).where(
+                CourseContentTree.course_id == job.course_id,
+                CourseContentTree.source_file == source_label,
+            )
+        )
+        old_nodes = existing.scalars().all()
+        if old_nodes:
+            old_ids = [n.id for n in old_nodes]
+            # Nullify FK references from practice_problems before deleting
+            from models.practice import PracticeProblem
+            await db.execute(
+                PracticeProblem.__table__.update()
+                .where(PracticeProblem.content_node_id.in_(old_ids))
+                .values(content_node_id=None)
+            )
+            for old_node in old_nodes:
+                await db.delete(old_node)
+            await db.flush()
+            logger.info("Dedup: removed %d existing nodes for source %s", len(old_nodes), source_label)
+
         nodes = _markdown_to_tree(
             markdown=job.extracted_markdown,
             course_id=job.course_id,

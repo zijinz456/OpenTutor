@@ -86,5 +86,11 @@ class ConversationMemory(Base):
     __table_args__ = (
         Index("ix_mem_user_type", "user_id", "memory_type"),
         Index("ix_mem_user_course", "user_id", "course_id"),
-        Index("ix_mem_search_vector", "search_vector", postgresql_using="gin"),
     )
+
+
+# GIN index for fast full-text search (PostgreSQL only; SQLite uses LIKE fallback)
+from database import is_sqlite
+
+if not is_sqlite():
+    Index("ix_mem_search_vector", ConversationMemory.search_vector, postgresql_using="gin")

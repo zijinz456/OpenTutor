@@ -1,5 +1,7 @@
 """Unit tests for service layer — no database or HTTP required."""
 
+import asyncio
+import json
 import math
 import uuid
 from datetime import datetime, timezone, timedelta
@@ -9,9 +11,10 @@ import pytest
 
 # ── Search: RRF scoring ──
 
-from services.search.hybrid import _tokenize_query, rrf_score, RRF_K
+from services.search.hybrid import _document_signal_score, _tokenize_query, hybrid_search, rrf_score, RRF_K
+from services.search.rag_fusion import rag_fusion_search
 from services.agent.task_planner import execute_plan_step
-from services.agent.state import AgentContext, TaskPhase
+from services.agent.state import AgentContext, IntentType, TaskPhase
 from models.agent_task import AgentTask
 from models.memory import ConversationMemory
 from models.preference import UserPreference
@@ -24,6 +27,8 @@ from services.activity.tasks import (
     CANCEL_REQUESTED_STATUS,
     infer_task_policy,
 )
+from services.agent.tools.mcp_client import MCPProvider
+from services.agent.verifier import verify_and_repair
 from services.audit import record_audit_log
 from services.scheduler import engine as scheduler_engine
 from routers.preferences import build_learning_profile_summary
@@ -50,6 +55,33 @@ def test_tokenize_query_handles_ascii_terms():
     assert "search" in tokens
     assert "invariant" in tokens
     assert "proof" in tokens
+
+
+def test_document_signal_score_prefers_phrase_and_title_matches():
+    stronger = _document_signal_score(
+        {
+            "title": "Common Pitfalls in Binary Search",
+            "content": "Off-by-one errors and sorted-array assumptions are common pitfalls in binary search.",
+            "level": 2,
+            "source": "keyword",
+            "score": 4.0,
+        },
+        "common pitfalls in binary search",
+        _tokenize_query("common pitfalls in binary search"),
+    )
+    weaker = _document_signal_score(
+        {
+            "title": "Algorithm Notes",
+            "content": "This section mentions binary search once.",
+            "level": 2,
+            "source": "vector",
+            "score": 1.0,
+        },
+        "common pitfalls in binary search",
+        _tokenize_query("common pitfalls in binary search"),
+    )
+
+    assert stronger > weaker
 
 
 # ── Preference: confidence calculation ──
@@ -733,3 +765,686 @@ async def test_execute_plan_step_marks_failed_context_as_unsuccessful(monkeypatc
     assert step_result["tool_calls"] == []
     assert step_result["verifier"] is None
     assert step_result["provenance"] is None
+
+
+@pytest.mark.asyncio
+async def test_execute_plan_step_fails_when_verifier_rejects_output(monkeypatch):
+    ctx = AgentContext(
+        user_id=uuid.uuid4(),
+        course_id=uuid.uuid4(),
+        user_message="review current progress",
+    )
+    ctx.response = "You are definitely ready. Trust me."
+    ctx.delegated_agent = "assessment"
+    ctx.metadata["verifier"] = {
+        "status": "failed",
+        "code": "assessment_overstates_memory_evidence",
+        "message": "Assessment answers must distinguish hard evidence from inference.",
+        "repair_attempted": True,
+    }
+
+    async def fake_run_agent_turn(**_kwargs):
+        return ctx
+
+    monkeypatch.setattr("services.agent.orchestrator.run_agent_turn", fake_run_agent_turn)
+
+    step_result = await execute_plan_step(
+        step={
+            "step_index": 0,
+            "step_type": "assess_readiness",
+            "title": "Assess readiness",
+            "description": "Assess readiness",
+            "depends_on": [],
+        },
+        previous_results=[],
+        user_id=uuid.uuid4(),
+        course_id=uuid.uuid4(),
+        db=MagicMock(),
+        db_factory=MagicMock(),
+    )
+
+    assert step_result["success"] is False
+    assert "assessment_overstates_memory_evidence" in (step_result["error"] or "")
+    assert step_result["verifier"]["status"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_execute_plan_step_carries_verifier_diagnostics(monkeypatch):
+    ctx = AgentContext(
+        user_id=uuid.uuid4(),
+        course_id=uuid.uuid4(),
+        user_message="explain binary search invariants",
+    )
+    ctx.response = "This answer is too generic."
+    ctx.delegated_agent = "teaching"
+    ctx.metadata["verifier"] = {
+        "status": "failed",
+        "code": "response_misses_requested_points",
+        "message": "The answer did not cover enough of the requested points.",
+        "repair_attempted": True,
+    }
+    ctx.metadata["verifier_diagnostics"] = {
+        "request_coverage": 0.2,
+        "evidence_coverage": 0.0,
+        "request_overlap_terms": ["binary"],
+        "evidence_overlap_terms": [],
+    }
+
+    async def fake_run_agent_turn(**_kwargs):
+        return ctx
+
+    monkeypatch.setattr("services.agent.orchestrator.run_agent_turn", fake_run_agent_turn)
+
+    step_result = await execute_plan_step(
+        step={
+            "step_index": 0,
+            "step_type": "summarize_content",
+            "title": "Explain invariants",
+            "description": "Explain invariants",
+            "depends_on": [],
+        },
+        previous_results=[],
+        user_id=uuid.uuid4(),
+        course_id=uuid.uuid4(),
+        db=MagicMock(),
+        db_factory=MagicMock(),
+    )
+
+    assert step_result["verifier_diagnostics"]["request_coverage"] == 0.2
+    assert step_result["verifier_diagnostics"]["request_overlap_terms"] == ["binary"]
+
+
+@pytest.mark.asyncio
+async def test_execute_plan_step_rejects_non_actionable_study_plan(monkeypatch):
+    ctx = AgentContext(
+        user_id=uuid.uuid4(),
+        course_id=uuid.uuid4(),
+        user_message="create study plan",
+    )
+    ctx.response = "You should probably study more and stay focused."
+    ctx.delegated_agent = "planning"
+    ctx.metadata["verifier"] = {
+        "status": "pass",
+        "code": "ok",
+        "message": "Response satisfied verifier checks.",
+        "repair_attempted": False,
+    }
+
+    async def fake_run_agent_turn(**_kwargs):
+        return ctx
+
+    monkeypatch.setattr("services.agent.orchestrator.run_agent_turn", fake_run_agent_turn)
+
+    step_result = await execute_plan_step(
+        step={
+            "step_index": 0,
+            "step_type": "build_study_plan",
+            "title": "Build study plan",
+            "description": "Create a study plan",
+            "depends_on": [],
+        },
+        previous_results=[],
+        user_id=uuid.uuid4(),
+        course_id=uuid.uuid4(),
+        db=MagicMock(),
+        db_factory=MagicMock(),
+    )
+
+    assert step_result["success"] is False
+    assert step_result["error"] == "The step did not produce a time-structured actionable plan."
+
+
+@pytest.mark.asyncio
+async def test_verifier_rejects_generic_nonanswer_for_learning_request():
+    class _Agent:
+        def get_llm_client(self):
+            raise AssertionError("repair should not run in this test")
+
+        def build_system_prompt(self, _ctx):
+            return "system"
+
+    ctx = AgentContext(
+        user_id=uuid.uuid4(),
+        course_id=uuid.uuid4(),
+        user_message="Explain binary search invariants",
+    )
+    ctx.intent = IntentType.LEARN
+    ctx.response = "I can help with that. Let's work through it together."
+
+    verified = await verify_and_repair(ctx, _Agent())
+
+    assert verified.metadata["verifier"]["status"] == "failed"
+    assert verified.metadata["verifier"]["code"] == "response_does_not_address_request"
+
+
+@pytest.mark.asyncio
+async def test_verifier_records_acceptance_diagnostics_for_grounded_answer():
+    class _Agent:
+        def get_llm_client(self):
+            raise AssertionError("repair should not run in this test")
+
+        def build_system_prompt(self, _ctx):
+            return "system"
+
+    ctx = AgentContext(
+        user_id=uuid.uuid4(),
+        course_id=uuid.uuid4(),
+        user_message="Explain binary search invariants and boundary updates",
+    )
+    ctx.intent = IntentType.LEARN
+    ctx.content_docs = [
+        {
+            "title": "Binary Search Invariants",
+            "content": "Keep the target inside the left/right bounds and update the boundaries after each comparison.",
+        }
+    ]
+    ctx.response = (
+        "The key invariant is that the target stays inside the current left/right boundary. "
+        "Each comparison updates the boundary while preserving that invariant."
+    )
+
+    verified = await verify_and_repair(ctx, _Agent())
+
+    assert verified.metadata["verifier"]["status"] == "pass"
+    assert verified.metadata["verifier_diagnostics"]["request_coverage"] >= 0.3
+    assert verified.metadata["verifier_diagnostics"]["evidence_coverage"] > 0
+
+
+@pytest.mark.asyncio
+async def test_hybrid_search_uses_signal_reranking(monkeypatch):
+    async def fake_keyword_search(_db, _course_id, _query, limit=10):
+        return [
+            {
+                "id": "generic",
+                "title": "Algorithms",
+                "content": "Binary search is mentioned briefly.",
+                "level": 1,
+                "score": 5.0,
+                "source": "keyword",
+            },
+            {
+                "id": "pitfalls",
+                "title": "Common Pitfalls in Binary Search",
+                "content": "Common pitfalls in binary search include off-by-one errors and unsorted arrays.",
+                "level": 2,
+                "score": 3.0,
+                "source": "keyword",
+            },
+        ]
+
+    async def fake_tree_search(_db, _course_id, _query, limit=5):
+        return []
+
+    async def fake_vector_search(_db, _course_id, _query, limit=10):
+        return []
+
+    monkeypatch.setattr("services.search.hybrid.keyword_search", fake_keyword_search)
+    monkeypatch.setattr("services.search.hybrid.tree_search", fake_tree_search)
+    monkeypatch.setattr("services.search.hybrid.vector_search", fake_vector_search)
+
+    results = await hybrid_search(None, uuid.uuid4(), "common pitfalls in binary search", limit=2)
+
+    assert results[0]["id"] == "pitfalls"
+    assert results[0]["hybrid_score"] > results[1]["hybrid_score"]
+
+
+@pytest.mark.asyncio
+async def test_hybrid_search_rewards_query_facet_coverage(monkeypatch):
+    async def fake_keyword_search(_db, _course_id, _query, limit=10):
+        return [
+            {
+                "id": "single-focus",
+                "title": "Binary Search Invariants",
+                "content": "Loop invariants keep the search interval valid.",
+                "level": 1,
+                "score": 5.0,
+                "source": "keyword",
+            },
+            {
+                "id": "two-facets",
+                "title": "Binary Search Invariants and Off-by-One Errors",
+                "content": "Track the invariant and watch off-by-one boundary updates.",
+                "level": 2,
+                "score": 4.0,
+                "source": "keyword",
+            },
+        ]
+
+    async def fake_tree_search(_db, _course_id, _query, limit=5):
+        return []
+
+    async def fake_vector_search(_db, _course_id, _query, limit=10):
+        return []
+
+    monkeypatch.setattr("services.search.hybrid.keyword_search", fake_keyword_search)
+    monkeypatch.setattr("services.search.hybrid.tree_search", fake_tree_search)
+    monkeypatch.setattr("services.search.hybrid.vector_search", fake_vector_search)
+
+    results = await hybrid_search(None, uuid.uuid4(), "binary search invariants and off-by-one errors", limit=2)
+
+    assert results[0]["id"] == "two-facets"
+    assert results[0]["facet_coverage"] > results[1]["facet_coverage"]
+    assert "off-by-one errors" in " ".join(results[0]["matched_facets"]).lower()
+
+
+@pytest.mark.asyncio
+async def test_hybrid_search_aggregates_duplicate_section_hits(monkeypatch):
+    async def fake_keyword_search(_db, _course_id, _query, limit=10):
+        return [
+            {
+                "id": "section-a-1",
+                "title": "Binary Search Invariants",
+                "content": "Invariant overview and left/right bounds.",
+                "level": 2,
+                "parent_id": "section-a",
+                "source_file": "week6.pdf",
+                "score": 5.0,
+                "source": "keyword",
+            },
+            {
+                "id": "section-a-2",
+                "title": "Binary Search Invariants",
+                "content": "Boundary updates and off-by-one checks.",
+                "level": 2,
+                "parent_id": "section-a",
+                "source_file": "week6.pdf",
+                "score": 4.5,
+                "source": "keyword",
+            },
+            {
+                "id": "section-b-1",
+                "title": "Merge Sort",
+                "content": "Different topic.",
+                "level": 2,
+                "parent_id": "section-b",
+                "source_file": "week6.pdf",
+                "score": 4.0,
+                "source": "keyword",
+            },
+        ]
+
+    async def fake_tree_search(_db, _course_id, _query, limit=5):
+        return []
+
+    async def fake_vector_search(_db, _course_id, _query, limit=10):
+        return []
+
+    monkeypatch.setattr("services.search.hybrid.keyword_search", fake_keyword_search)
+    monkeypatch.setattr("services.search.hybrid.tree_search", fake_tree_search)
+    monkeypatch.setattr("services.search.hybrid.vector_search", fake_vector_search)
+
+    results = await hybrid_search(None, uuid.uuid4(), "binary search invariants and boundary updates", limit=3)
+
+    assert len(results) == 2
+    assert results[0]["section_hit_count"] == 2
+    assert set(results[0]["supporting_hit_ids"]) == {"section-a-1"} or set(results[0]["supporting_hit_ids"]) == {"section-a-2"}
+    assert "evidence_summary" in results[0]
+    assert results[0]["evidence_summary"]
+
+
+@pytest.mark.asyncio
+async def test_rag_fusion_rewards_results_seen_across_multiple_queries(monkeypatch):
+    async def fake_generate_query_variants(_query, n=3, course_context=""):
+        return ["binary search mistakes", "sorted array requirement"]
+
+    async def fake_hybrid_search(_db, _course_id, query, limit=5):
+        if query == "binary search basics":
+            return [
+                {"id": "shared", "title": "Binary Search Basics", "content": "sorted array requirement", "hybrid_score": 0.06},
+                {"id": "single", "title": "Single Hit", "content": "misc", "hybrid_score": 0.08},
+            ]
+        if query == "binary search mistakes":
+            return [
+                {"id": "shared", "title": "Binary Search Basics", "content": "mistakes", "hybrid_score": 0.05},
+            ]
+        return [
+            {"id": "shared", "title": "Binary Search Basics", "content": "sorted", "hybrid_score": 0.05},
+        ]
+
+    monkeypatch.setattr("services.search.rag_fusion.generate_query_variants", fake_generate_query_variants)
+    monkeypatch.setattr("services.search.rag_fusion.hybrid_search", fake_hybrid_search)
+
+    results = await rag_fusion_search(None, uuid.uuid4(), "binary search basics", limit=2)
+
+    assert results[0]["id"] == "shared"
+    assert results[0]["query_count"] == 3
+
+
+@pytest.mark.asyncio
+async def test_rag_fusion_uses_query_decomposition_without_llm_variants(monkeypatch):
+    async def fake_generate_query_variants(_query, n=3, course_context=""):
+        return []
+
+    async def fake_hybrid_search(_db, _course_id, query, limit=5):
+        if query == "binary search invariants and off-by-one errors":
+            return [
+                {"id": "generic", "title": "Binary Search", "content": "binary search overview", "hybrid_score": 0.09, "coverage_score": 0.0},
+            ]
+        if "invariants" in query:
+            return [
+                {"id": "shared-facet", "title": "Binary Search Invariants", "content": "invariant details", "hybrid_score": 0.05, "coverage_score": 0.02},
+            ]
+        return [
+            {"id": "shared-facet", "title": "Binary Search Invariants", "content": "off-by-one details", "hybrid_score": 0.05, "coverage_score": 0.02},
+        ]
+
+    monkeypatch.setattr("services.search.rag_fusion.generate_query_variants", fake_generate_query_variants)
+    monkeypatch.setattr("services.search.rag_fusion.hybrid_search", fake_hybrid_search)
+
+    results = await rag_fusion_search(None, uuid.uuid4(), "binary search invariants and off-by-one errors", limit=2)
+
+    assert results[0]["id"] == "shared-facet"
+    assert results[0]["query_variant_total"] >= 2
+
+
+class _FakeSSEStreamResponse:
+    def __init__(self, url: str, lines: list[str], headers: dict[str, str] | None = None):
+        self.url = url
+        self._lines = lines
+        self.status_code = 200
+        self.headers = headers or {"content-type": "text/event-stream"}
+
+    def raise_for_status(self):
+        return None
+
+    async def aiter_lines(self):
+        for line in self._lines:
+            yield line
+        while True:
+            await asyncio.sleep(3600)
+
+
+class _FakeJSONResponse:
+    def __init__(self, payload: dict | None = None, status_code: int = 200, headers: dict[str, str] | None = None):
+        self._payload = payload
+        self.status_code = status_code
+        self.headers = headers or {"content-type": "application/json"}
+        if payload is None:
+            self.content = b""
+            self.text = ""
+        else:
+            body = json.dumps(payload)
+            self.content = body.encode("utf-8")
+            self.text = body
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        if self._payload is None:
+            raise ValueError("No JSON payload")
+        return self._payload
+
+
+class _FakeStreamContext:
+    def __init__(self, response):
+        self._response = response
+
+    async def __aenter__(self):
+        return self._response
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+
+@pytest.mark.asyncio
+async def test_mcp_provider_connects_over_sse_with_message_endpoint(monkeypatch):
+    class _FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            self.posts: list[tuple[str, dict]] = []
+
+        def stream(self, method, url, headers=None):
+            assert method == "GET"
+            assert url == "http://mcp.local/sse"
+            return _FakeStreamContext(
+                _FakeSSEStreamResponse(
+                    url,
+                    ["event: endpoint", "data: /messages", ""],
+                )
+            )
+
+        async def post(self, url, json=None, headers=None):
+            self.posts.append((url, json))
+            if json["method"] == "initialize":
+                return _FakeJSONResponse({"jsonrpc": "2.0", "id": json["id"], "result": {"serverInfo": {"name": "fake"}}})
+            if json["method"] == "tools/list":
+                return _FakeJSONResponse(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": json["id"],
+                        "result": {
+                            "tools": [
+                                {
+                                    "name": "web_search",
+                                    "description": "Search the web",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {"query": {"type": "string", "description": "Search query"}},
+                                        "required": ["query"],
+                                    },
+                                }
+                            ]
+                        },
+                    }
+                )
+            if json["method"] == "notifications/initialized":
+                return _FakeJSONResponse(None, status_code=202, headers={"content-type": "text/plain"})
+            if json["method"] == "tools/call":
+                return _FakeJSONResponse(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": json["id"],
+                        "result": {"content": [{"type": "text", "text": "ok"}], "isError": False},
+                    }
+                )
+            raise AssertionError(f"Unexpected method {json['method']}")
+
+        async def aclose(self):
+            return None
+
+        async def delete(self, url, headers=None):
+            return _FakeJSONResponse(None, status_code=204, headers={"content-type": "text/plain"})
+
+    monkeypatch.setattr("httpx.AsyncClient", _FakeAsyncClient)
+
+    provider = MCPProvider(
+        "fake-sse",
+        {"transport": "sse", "url": "http://mcp.local/sse", "timeout": 2},
+    )
+    tools = await provider.connect()
+
+    assert [tool.name for tool in tools] == ["web_search"]
+    assert provider.is_connected is True
+    result = await provider.call_tool("web_search", {"query": "binary search"})
+    assert result.success is True
+    assert result.output == "ok"
+    provider.close()
+
+
+@pytest.mark.asyncio
+async def test_mcp_provider_resolves_sse_request_from_event_stream(monkeypatch):
+    class _FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            self.provider = None
+
+        def stream(self, method, url, headers=None):
+            return _FakeStreamContext(
+                _FakeSSEStreamResponse(
+                    url,
+                    ["event: endpoint", "data: /messages", ""],
+                )
+            )
+
+        async def post(self, url, json=None, headers=None):
+            if json["method"] == "notifications/initialized":
+                return _FakeJSONResponse(None, status_code=202, headers={"content-type": "text/plain"})
+
+            async def _emit(result_payload):
+                await asyncio.sleep(0)
+                await self.provider._handle_sse_event(
+                    "message",
+                    json_module.dumps({"jsonrpc": "2.0", "id": json["id"], "result": result_payload}),
+                    base_url="http://mcp.local/sse",
+                )
+
+            if json["method"] == "initialize":
+                asyncio.create_task(_emit({"serverInfo": {"name": "fake"}}))
+            elif json["method"] == "tools/list":
+                asyncio.create_task(
+                    _emit(
+                        {
+                            "tools": [
+                                {
+                                    "name": "course_lookup",
+                                    "description": "Lookup course data",
+                                    "inputSchema": {"type": "object", "properties": {}},
+                                }
+                            ]
+                        }
+                    )
+                )
+            return _FakeJSONResponse(None, status_code=202, headers={"content-type": "text/plain"})
+
+        async def aclose(self):
+            return None
+
+        async def delete(self, url, headers=None):
+            return _FakeJSONResponse(None, status_code=204, headers={"content-type": "text/plain"})
+
+    json_module = json
+    fake_client = _FakeAsyncClient()
+    monkeypatch.setattr("httpx.AsyncClient", lambda *args, **kwargs: fake_client)
+
+    provider = MCPProvider(
+        "fake-sse-events",
+        {"transport": "sse", "url": "http://mcp.local/sse", "timeout": 2},
+    )
+    fake_client.provider = provider
+
+    tools = await provider.connect()
+
+    assert [tool.name for tool in tools] == ["course_lookup"]
+    assert provider._message_url == "http://mcp.local/messages"
+    provider.close()
+
+
+@pytest.mark.asyncio
+async def test_mcp_provider_connects_over_streamable_http_json(monkeypatch):
+    class _FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            self.posts: list[dict] = []
+            self.deletes: list[tuple[str, dict | None]] = []
+
+        async def post(self, url, json=None, headers=None):
+            self.posts.append({"url": url, "json": json, "headers": headers})
+            response_headers = {"content-type": "application/json", "Mcp-Session-Id": "session-123"}
+            if json["method"] == "initialize":
+                return _FakeJSONResponse({"jsonrpc": "2.0", "id": json["id"], "result": {"serverInfo": {"name": "fake"}}}, headers=response_headers)
+            if json["method"] == "tools/list":
+                return _FakeJSONResponse(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": json["id"],
+                        "result": {
+                            "tools": [
+                                {
+                                    "name": "calendar_lookup",
+                                    "description": "Lookup events",
+                                    "inputSchema": {"type": "object", "properties": {}},
+                                }
+                            ]
+                        },
+                    },
+                    headers=response_headers,
+                )
+            if json["method"] == "notifications/initialized":
+                return _FakeJSONResponse(None, status_code=202, headers={"content-type": "text/plain", "Mcp-Session-Id": "session-123"})
+            if json["method"] == "tools/call":
+                return _FakeJSONResponse(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": json["id"],
+                        "result": {"content": [{"type": "text", "text": "streamable-ok"}], "isError": False},
+                    },
+                    headers=response_headers,
+                )
+            raise AssertionError(f"Unexpected method {json['method']}")
+
+        async def delete(self, url, headers=None):
+            self.deletes.append((url, headers))
+            return _FakeJSONResponse(None, status_code=204, headers={"content-type": "text/plain"})
+
+        async def aclose(self):
+            return None
+
+    fake_client = _FakeAsyncClient()
+    monkeypatch.setattr("httpx.AsyncClient", lambda *args, **kwargs: fake_client)
+
+    provider = MCPProvider(
+        "fake-streamable",
+        {"transport": "streamable-http", "url": "http://mcp.local/mcp", "timeout": 2},
+    )
+    tools = await provider.connect()
+
+    assert [tool.name for tool in tools] == ["calendar_lookup"]
+    assert provider._session_id == "session-123"
+
+    result = await provider.call_tool("calendar_lookup", {})
+    assert result.success is True
+    assert result.output == "streamable-ok"
+    provider.close()
+
+
+@pytest.mark.asyncio
+async def test_mcp_provider_parses_streamable_http_sse_response(monkeypatch):
+    class _FakeEventStreamResponse(_FakeSSEStreamResponse):
+        def __init__(self, url: str, request_id: int, result_payload: dict[str, object], headers: dict[str, str] | None = None):
+            lines = [
+                "event: message",
+                f"data: {json.dumps({'jsonrpc': '2.0', 'id': request_id, 'result': result_payload})}",
+                "",
+            ]
+            super().__init__(url, lines, headers=headers or {"content-type": "text/event-stream", "Mcp-Session-Id": "session-789"})
+
+    class _FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def post(self, url, json=None, headers=None):
+            if json["method"] == "notifications/initialized":
+                return _FakeJSONResponse(None, status_code=202, headers={"content-type": "text/plain", "Mcp-Session-Id": "session-789"})
+            if json["method"] == "initialize":
+                return _FakeEventStreamResponse(url, json["id"], {"serverInfo": {"name": "fake"}})
+            if json["method"] == "tools/list":
+                return _FakeEventStreamResponse(
+                    url,
+                    json["id"],
+                    {
+                        "tools": [
+                            {
+                                "name": "notes_lookup",
+                                "description": "Lookup notes",
+                                "inputSchema": {"type": "object", "properties": {}},
+                            }
+                        ]
+                    },
+                )
+            raise AssertionError(f"Unexpected method {json['method']}")
+
+        async def delete(self, url, headers=None):
+            return _FakeJSONResponse(None, status_code=204, headers={"content-type": "text/plain"})
+
+        async def aclose(self):
+            return None
+
+    monkeypatch.setattr("httpx.AsyncClient", lambda *args, **kwargs: _FakeAsyncClient())
+
+    provider = MCPProvider(
+        "fake-streamable-sse",
+        {"transport": "streamable_http", "url": "http://mcp.local/mcp", "timeout": 2},
+    )
+    tools = await provider.connect()
+
+    assert [tool.name for tool in tools] == ["notes_lookup"]
+    assert provider._session_id == "session-789"
+    provider.close()

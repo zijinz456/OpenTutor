@@ -33,6 +33,7 @@ from services.agent.orchestrator import orchestrate_stream
 from services.auth.dependency import get_current_user
 from services.auth.jwt import decode_token
 from services.course_access import get_course_or_404
+from services.llm.readiness import ensure_llm_ready
 
 logger = logging.getLogger(__name__)
 
@@ -126,10 +127,15 @@ async def voice_session(ws: WebSocket, course_id: str):
         async with async_session() as db:
             user = await _resolve_voice_user(db, ws)
             await get_course_or_404(db, course_uuid, user_id=user.id)
+            await ensure_llm_ready("Voice tutoring")
             user_id = user.id
     except HTTPException as exc:
         await ws.send_text(json.dumps({"type": "error", "message": exc.detail}))
         await ws.close(code=1008, reason=str(exc.detail))
+        return
+    except Exception as exc:
+        await ws.send_text(json.dumps({"type": "error", "message": str(exc)}))
+        await ws.close(code=1011, reason="LLM unavailable")
         return
 
     session_id: uuid.UUID | None = None
@@ -345,6 +351,7 @@ async def generate_podcast(
     from services.audio.podcast_assets import generate_and_store_podcast
 
     await get_course_or_404(db, course_id, user_id=user.id)
+    await ensure_llm_ready("Podcast generation")
 
     audio_bytes, dialogue, asset_id = await generate_and_store_podcast(
         db=db,

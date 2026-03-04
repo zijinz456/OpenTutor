@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useWorkspaceStore } from "@/store/workspace";
 import { TREE_WIDTH, TREE_COLLAPSED_WIDTH, CHAT_MIN_HEIGHT, CHAT_MAX_HEIGHT } from "@/lib/constants";
 
@@ -28,6 +28,7 @@ export function AppShell({ tree, children, chat }: AppShellProps) {
   const treeCollapsed = useWorkspaceStore((s) => s.treeCollapsed);
   const chatHeight = useWorkspaceStore((s) => s.chatHeight);
   const setChatHeight = useWorkspaceStore((s) => s.setChatHeight);
+  const [isMobile, setIsMobile] = useState(false);
 
   /* ---------- Resize drag logic ---------- */
   const dragging = useRef(false);
@@ -68,25 +69,42 @@ export function AppShell({ tree, children, chat }: AppShellProps) {
     return () => window.removeEventListener("pointerup", cancel);
   }, []);
 
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 767px)");
+    const sync = () => setIsMobile(media.matches);
+    sync();
+    media.addEventListener("change", sync);
+    return () => media.removeEventListener("change", sync);
+  }, []);
+
   const treeWidth = treeCollapsed ? TREE_COLLAPSED_WIDTH : TREE_WIDTH;
+  const treePanelStyle = isMobile
+    ? {
+        width: "100%",
+        maxHeight: treeCollapsed ? `${TREE_COLLAPSED_WIDTH}px` : "32vh",
+        transition: `max-height var(--duration-normal, 300ms) var(--ease-out-expo, cubic-bezier(0.16,1,0.3,1))`,
+        background: "var(--tree-bg)",
+      }
+    : {
+        width: treeWidth,
+        transition: `width var(--duration-normal, 300ms) var(--ease-out-expo, cubic-bezier(0.16,1,0.3,1))`,
+        background: "var(--tree-bg)",
+      };
+  const chatPanelStyle = isMobile ? { height: "38vh" } : { height: `${chatHeight * 100}%` };
 
   return (
     <div ref={shellRef} className="relative flex h-full flex-col overflow-hidden">
       {/* ── Top area: tree + section content ── */}
-      <div className="flex flex-1 min-h-0 overflow-hidden">
+      <div className={`flex flex-1 min-h-0 overflow-hidden ${isMobile ? "flex-col" : ""}`}>
         {/* Left: course tree */}
         <aside
-          className="shrink-0 overflow-hidden border-r border-border"
-          style={{
-            width: treeWidth,
-            transition: `width var(--duration-normal, 300ms) var(--ease-out-expo, cubic-bezier(0.16,1,0.3,1))`,
-            background: "var(--tree-bg)",
-          }}
+          className={`shrink-0 overflow-hidden border-border ${isMobile ? "border-b" : "border-r"}`}
+          style={treePanelStyle}
           aria-label="Course tree"
         >
           <div
             className="h-full overflow-y-auto overflow-x-hidden"
-            style={{ width: treeWidth }}
+            style={isMobile ? undefined : { width: treeWidth }}
           >
             {tree}
           </div>
@@ -107,17 +125,17 @@ export function AppShell({ tree, children, chat }: AppShellProps) {
             role="separator"
             aria-orientation="horizontal"
             aria-label="Resize chat panel"
-            onPointerDown={onPointerDown}
-            onPointerMove={onPointerMove}
-            onPointerUp={onPointerUp}
-            className="group relative z-10 flex h-1.5 shrink-0 cursor-row-resize items-center justify-center border-y border-border bg-muted/60 hover:bg-primary/10 active:bg-primary/20 select-none touch-none"
+            onPointerDown={isMobile ? undefined : onPointerDown}
+            onPointerMove={isMobile ? undefined : onPointerMove}
+            onPointerUp={isMobile ? undefined : onPointerUp}
+            className={`group relative z-10 flex shrink-0 items-center justify-center border-border bg-muted/60 select-none touch-none hover:bg-primary/10 active:bg-primary/20 ${isMobile ? "h-3 cursor-default border-y" : "h-1.5 cursor-row-resize border-y"}`}
           >
             <span className="h-0.5 w-8 rounded-full bg-muted-foreground/30 transition-colors group-hover:bg-primary/50" />
           </div>
 
           <section
             className="shrink-0 overflow-hidden"
-            style={{ height: `${chatHeight * 100}%` }}
+            style={chatPanelStyle}
             aria-label="Chat panel"
           >
             {chat}

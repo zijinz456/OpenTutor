@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.agent.base import BaseAgent
 from services.agent.react_mixin import ReActMixin
-from services.agent.state import AgentContext
+from services.agent.state import AgentContext, InputRequirement
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +38,33 @@ class PlanningAgent(ReActMixin, BaseAgent):
     )
     model_preference = "large"
     react_tools = ["lookup_progress", "get_mastery_report", "get_course_outline", "list_study_goals", "list_assignments", "create_study_plan", "export_calendar", "write_file", "list_files"]
+
+    def get_required_inputs(self) -> list[InputRequirement]:
+        return [
+            InputRequirement(
+                key="deadline",
+                question="When is your exam or assignment due?",
+                options=["Within 1 week", "Within 2 weeks", "Within 1 month", "End of semester"],
+                check=lambda ctx: (
+                    any(kw in ctx.user_message.lower() for kw in [
+                        "deadline", "due", "exam date", "by next", "week", "month",
+                        "截止", "考试", "期末", "ddl",
+                    ])
+                    or "deadline" in ctx.clarify_inputs
+                ),
+            ),
+            InputRequirement(
+                key="study_hours",
+                question="How many hours per day can you study?",
+                options=["1-2 hours", "3-4 hours", "5+ hours", "Weekends only"],
+                check=lambda ctx: (
+                    any(kw in ctx.user_message.lower() for kw in [
+                        "hour", "time", "available", "小时", "时间",
+                    ])
+                    or "study_hours" in ctx.clarify_inputs
+                ),
+            ),
+        ]
 
     def build_system_prompt(self, ctx: AgentContext) -> str:
         # Use base class for scene-aware prompt, then append planning-specific context
