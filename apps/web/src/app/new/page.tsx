@@ -1,30 +1,22 @@
 "use client";
 
 import { useNewProject } from "./use-new-project";
-import { ModeSelectionStep } from "./mode-selection-step";
 import { ContentUploadStep } from "./content-upload-step";
 import { ParsingProgressStep } from "./parsing-progress-step";
-import { FeatureConfigStep } from "./feature-config-step";
 import { CanvasLoginModal } from "./canvas-login-modal";
 
+/**
+ * Simplified "add another course" page for returning users.
+ * Skips mode selection and feature config — goes straight to upload → parse → workspace.
+ */
 export default function NewProjectPage() {
   const p = useNewProject();
 
   return (
     <div className="min-h-screen bg-background">
-      {p.step === "mode" && (
-        <ModeSelectionStep
-          mode={p.mode}
-          onModeChange={p.setMode}
-          onContinue={() => p.setStep("upload")}
-          onBack={() => p.router.push("/")}
-          t={p.t}
-        />
-      )}
-
-      {p.step === "upload" && (
+      {(p.step === "mode" || p.step === "upload") && (
         <ContentUploadStep
-          mode={p.mode}
+          mode="both"
           projectName={p.projectName}
           onProjectNameChange={p.setProjectName}
           nameError={p.nameError}
@@ -40,13 +32,13 @@ export default function NewProjectPage() {
           isCanvasDetected={p.isCanvasDetected}
           canvasSessionValid={p.canvasSessionValid}
           onAddUrl={p.handleAddUrl}
-          onBack={() => p.setStep("mode")}
+          onBack={() => p.router.push("/")}
           onStartParsing={p.startParsing}
           t={p.t}
         />
       )}
 
-      {p.step === "parsing" && (
+      {(p.step === "parsing" || p.step === "features") && (
         <ParsingProgressStep
           projectName={p.projectName}
           url={p.url}
@@ -58,20 +50,7 @@ export default function NewProjectPage() {
           allJobsFailed={p.allJobsFailed}
           createdCourseId={p.createdCourseId}
           onEnterWorkspace={p.enterWorkspace}
-          onContinueToFeatures={() => p.setStep("features")}
-          t={p.t}
-        />
-      )}
-
-      {p.step === "features" && (
-        <FeatureConfigStep
-          projectName={p.projectName}
-          features={p.features}
-          onToggleFeature={p.toggleFeature}
-          nlInput={p.nlInput}
-          onNlInputChange={p.setNlInput}
-          onBack={() => p.setStep("parsing")}
-          onEnterWorkspace={p.enterWorkspace}
+          onContinueToFeatures={p.enterWorkspace}
           t={p.t}
         />
       )}

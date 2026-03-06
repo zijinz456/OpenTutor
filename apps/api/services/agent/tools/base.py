@@ -467,9 +467,12 @@ def _register_mutation_tools(registry: ToolRegistry) -> None:
     try:
         from services.agent.tools.content_mutations import get_mutation_tools
 
-        for tool in get_mutation_tools():
+        tools = get_mutation_tools()
+        for tool in tools:
             registry.register(tool)
-        logger.info("Registered %d content mutation tools", len(get_mutation_tools()))
+        logger.info("Registered %d content mutation tools", len(tools))
+    except ImportError:
+        logger.debug("content_mutations module removed; skipping mutation tools")
     except Exception as e:
         logger.warning("Failed to load content mutation tools: %s", e)
 

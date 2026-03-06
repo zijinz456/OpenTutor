@@ -15,17 +15,13 @@ from routers.goals import get_next_action
 from routers.preferences import _normalize_preference_value
 from routers.upload import _validate_url
 from routers.wrong_answers import derive_question, diagnose_from_pair
-from routers.workflows import _raise_if_service_error
-from schemas.notification import NotificationSettingsUpdate
 from services.agent.agenda_ranking import AgendaDecision
 from services.agent.agenda_signals import AgendaSignal
 from services.auth.dependency import get_current_user
-from services.integrations import google_calendar
 from services.llm.local_config import get_llm_runtime_config, update_llm_runtime_config
 from services.llm import router as llm_router
 from services.health import _local_beta_readiness
 from services.migrations import bootstrap_alembic_version_table, summarize_migration_state
-from services.preference.scene import DEFAULT_SCENE, detect_scene
 
 
 def test_normalize_preference_value_basic_mappings():
@@ -33,24 +29,6 @@ def test_normalize_preference_value_basic_mappings():
     assert _normalize_preference_value("language", "zh-cn") == "zh"
     assert _normalize_preference_value("explanation_style", "analogy") == "example_heavy"
     assert _normalize_preference_value("note_format", "table") == "table"
-
-
-def test_detect_scene_supports_en_keywords():
-    assert detect_scene("help me review for the final exam") == "exam_prep"
-    assert detect_scene("homework problem set for chapter 3") == "assignment"
-    assert detect_scene("just chatting without task") == DEFAULT_SCENE
-
-
-def test_workflow_service_error_mapping():
-    _raise_if_service_error({})
-
-    with pytest.raises(NotFoundError) as not_found:
-        _raise_if_service_error({"error": "Assignment not found"})
-    assert not_found.value.status == 404
-
-    with pytest.raises(ValidationError) as bad_request:
-        _raise_if_service_error({"error": "Invalid input"})
-    assert bad_request.value.status == 422
 
 
 def test_llm_router_falls_back_to_mock_without_keys(monkeypatch):
@@ -298,28 +276,6 @@ def test_validate_url_allows_configured_scrape_fixture_host(monkeypatch):
     monkeypatch.setattr("routers.upload.settings.scrape_fixture_dir", "/tmp/scrape-fixtures", raising=False)
 
     assert _validate_url("https://opentutor-e2e.local/binary-search") == "https://opentutor-e2e.local/binary-search"
-
-
-def test_google_calendar_oauth_state_round_trip():
-    user_id = uuid.uuid4()
-
-    state = google_calendar.build_oauth_state(user_id)
-
-    assert google_calendar.consume_oauth_state(state) == user_id
-
-
-def test_google_calendar_oauth_state_rejects_tampering():
-    user_id = uuid.uuid4()
-    state = google_calendar.build_oauth_state(user_id)
-    tampered = f"{state[:-1]}{'A' if state[-1] != 'A' else 'B'}"
-
-    with pytest.raises(ValueError):
-        google_calendar.consume_oauth_state(tampered)
-
-
-def test_notification_settings_update_rejects_unknown_channels():
-    with pytest.raises(ValueError):
-        NotificationSettingsUpdate(channels_enabled=["email", "sse"])
 
 
 @pytest.mark.asyncio

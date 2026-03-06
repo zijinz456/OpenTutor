@@ -1,6 +1,7 @@
 "use client";
 
-import { AlertTriangle, Database, Wrench } from "lucide-react";
+import { useState } from "react";
+import { AlertTriangle, Database, X } from "lucide-react";
 import type { HealthStatus } from "@/lib/api";
 import { useT } from "@/lib/i18n-context";
 
@@ -11,6 +12,7 @@ interface RuntimeAlertProps {
 
 export function RuntimeAlert({ health, className }: RuntimeAlertProps) {
   const t = useT();
+  const [dismissed, setDismissed] = useState<Set<string>>(new Set());
 
   if (!health) {
     return null;
@@ -21,6 +23,7 @@ export function RuntimeAlert({ health, className }: RuntimeAlertProps) {
     title: string;
     body: string;
     Icon: typeof AlertTriangle;
+    dismissable: boolean;
   }> = [];
 
   if (health.migration_required) {
@@ -29,17 +32,12 @@ export function RuntimeAlert({ health, className }: RuntimeAlertProps) {
       title: t("runtimeAlert.schemaTitle"),
       body: t("runtimeAlert.schemaBody"),
       Icon: Database,
+      dismissable: false,
     });
   }
 
-  if (!health.code_sandbox_runtime_available) {
-    warnings.push({
-      key: "sandbox",
-      title: t("runtimeAlert.sandboxTitle"),
-      body: t("runtimeAlert.sandboxBody"),
-      Icon: Wrench,
-    });
-  }
+  // Sandbox warning removed — Docker/Podman is optional and most users don't need it.
+  // Code execution gracefully degrades with a per-action message when attempted.
 
   if (health.llm_status === "mock_fallback" || health.llm_status === "configuration_required") {
     warnings.push({
@@ -50,6 +48,7 @@ export function RuntimeAlert({ health, className }: RuntimeAlertProps) {
           ? t("runtimeAlert.llmConfigBody")
           : t("runtimeAlert.llmMockBody"),
       Icon: AlertTriangle,
+      dismissable: false,
     });
   } else if (health.llm_status === "degraded") {
     warnings.push({
@@ -57,27 +56,39 @@ export function RuntimeAlert({ health, className }: RuntimeAlertProps) {
       title: t("runtimeAlert.llmDegradedTitle"),
       body: t("runtimeAlert.llmDegradedBody"),
       Icon: AlertTriangle,
+      dismissable: true,
     });
   }
 
-  if (warnings.length === 0) {
+  const visible = warnings.filter((w) => !dismissed.has(w.key));
+  if (visible.length === 0) {
     return null;
   }
 
   return (
     <div className={className}>
       <div className="grid gap-3">
-        {warnings.map(({ key, title, body, Icon }) => (
+        {visible.map(({ key, title, body, Icon, dismissable }) => (
           <div
             key={key}
             className="rounded-xl border border-amber-300/60 bg-amber-50/80 px-4 py-3 text-amber-950 shadow-sm"
           >
             <div className="flex items-start gap-3">
               <Icon className="mt-0.5 size-4 shrink-0" />
-              <div className="min-w-0">
+              <div className="min-w-0 flex-1">
                 <p className="text-sm font-semibold">{title}</p>
                 <p className="text-sm text-amber-900/85">{body}</p>
               </div>
+              {dismissable && (
+                <button
+                  type="button"
+                  onClick={() => setDismissed((prev) => new Set(prev).add(key))}
+                  className="mt-0.5 shrink-0 text-amber-600 hover:text-amber-900 transition-colors"
+                  aria-label="Dismiss"
+                >
+                  <X className="size-4" />
+                </button>
+              )}
             </div>
           </div>
         ))}

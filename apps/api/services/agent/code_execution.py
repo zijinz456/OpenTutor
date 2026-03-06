@@ -265,10 +265,15 @@ class CodeExecutionAgent(BaseAgent):
 
     def _execute_safe(self, code: str) -> dict:
         """Execute code in the configured sandbox backend."""
-        from services.agent.container_sandbox import (
-            ContainerSandboxUnavailable,
-            execute_in_container,
-        )
+        try:
+            from services.agent.container_sandbox import (
+                ContainerSandboxUnavailable,
+                execute_in_container,
+            )
+        except ImportError:
+            # container_sandbox module removed — always use process fallback
+            logger.debug("container_sandbox module not available, using process sandbox")
+            return self._execute_in_process_sandbox(code)
 
         runner_path = Path(__file__).with_name("sandbox_runner.py")
         backend = get_effective_sandbox_backend()

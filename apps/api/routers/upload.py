@@ -160,8 +160,9 @@ async def _background_import_canvas_quizzes(
 
 
 async def _background_embed(course_id: uuid.UUID, job_id: uuid.UUID, user_id: uuid.UUID | None = None):
-    """Fire-and-forget: compute embeddings, then auto-generate starter assets."""
-    try:
+    """Fire-and-forget: compute embeddings + auto-generate assets in parallel."""
+
+    async def _do_embed():
         from services.embedding.content import embed_course_content
         async with async_session() as db:
             job = await db.get(IngestionJob, job_id)
@@ -184,6 +185,22 @@ async def _background_embed(course_id: uuid.UUID, job_id: uuid.UUID, user_id: uu
                     nodes_created=job.nodes_created,
                 )
             await db.commit()
+
+    async def _do_auto_generate():
+        if not user_id:
+            return
+        await _background_auto_generate(course_id, user_id)
+
+    # Run embedding and auto-generation in parallel for speed
+    try:
+        results = await asyncio.gather(
+            _do_embed(), _do_auto_generate(), return_exceptions=True,
+        )
+        # Check if embedding failed
+        if isinstance(results[0], Exception):
+            raise results[0]
+        if isinstance(results[1], Exception):
+            logger.debug("Auto-generate failed (non-critical): %s", results[1])
     except Exception as e:
         try:
             async with async_session() as db:
@@ -201,11 +218,6 @@ async def _background_embed(course_id: uuid.UUID, job_id: uuid.UUID, user_id: uu
         except Exception:
             logger.debug("Failed to persist embedding failure for job %s", job_id, exc_info=True)
         logger.debug(f"Background embedding failed: {e}")
-        return  # Don't auto-generate if embedding failed
-
-    # After successful embedding, auto-generate starter quiz + flashcards
-    if user_id:
-        track_background_task(asyncio.create_task(_background_auto_generate(course_id, user_id)))
 
 
 @router.post("/upload")
@@ -374,16 +386,9 @@ async def scrape_url(
         requires_auth = True
         logger.info("Canvas URL detected: %s (course_id=%s, page=%s)",
                      canvas_info.domain, canvas_info.course_id, canvas_info.page_type)
-        auth_html = await _fetch_canvas_with_auth(url, user.id, db)
-        if auth_html:
-            pre_fetched = auth_html
-            logger.info("Canvas auth fetch succeeded for %s", url)
-        else:
-            logger.warning(
-                "Canvas auth fetch failed for %s — no valid session found. "
-                "Falling back to unauthenticated scrape (will likely fail).",
-                url,
-            )
+        # Note: For Canvas, we skip _fetch_canvas_with_auth (Playwright HTML scrape)
+        # and rely on Canvas REST API extraction in the pipeline (via session cookies).
+        # The pipeline handles CanvasAuthExpiredError for expired sessions.
 
     filename = _derive_filename(url)
 

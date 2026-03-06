@@ -16,7 +16,6 @@ from config import settings
 from database import async_session
 from models.agent_task import AgentTask
 from models.study_goal import StudyGoal
-from services.agent.code_execution import pop_sandbox_backend_override, push_sandbox_backend_override
 from services.activity.tasks import (
     APPROVAL_APPROVED,
     APPROVAL_PENDING,
@@ -316,11 +315,8 @@ def _refresh_task_checkpoint(task: AgentTask, *, active_step_index: int | None =
 
 @contextmanager
 def _force_container_sandbox():
-    token = push_sandbox_backend_override("container")
-    try:
-        yield
-    finally:
-        pop_sandbox_backend_override(token)
+    """No-op context manager — container_sandbox module removed."""
+    yield
 
 
 async def submit_task(
@@ -845,51 +841,20 @@ async def _dispatch_task(
                 await ensure_llm_ready(llm_task_labels[task_type])
 
             if task_type == "weekly_prep":
-                from services.workflow.weekly_prep import run_weekly_prep
-
-                result = await run_weekly_prep(db, user_id)
-                result["provenance"] = merge_provenance(
-                    build_provenance(
-                        workflow="weekly_prep",
-                        generated=True,
-                        source_labels=["workflow", "generated"],
-                        scheduler_trigger=str(payload.get("trigger") or "") or None,
-                    ),
-                    result.get("provenance") if isinstance(result, dict) else None,
-                )
-                return result, (result.get("plan", "") or "Weekly plan generated.")[:300]
+                logger.warning("weekly_prep workflow module removed; skipping task")
+                return {"skipped": True, "reason": "weekly_prep workflow removed"}, "Weekly prep workflow unavailable."
 
             if task_type == "exam_prep":
-                from services.workflow.exam_prep import run_exam_prep
-
-                course_id = _normalize_uuid(payload.get("course_id"))
-                if not course_id:
-                    raise ValueError("exam_prep requires course_id")
-                result = await run_exam_prep(
-                    db,
-                    user_id,
-                    course_id,
-                    payload.get("exam_topic"),
-                    int(payload.get("days_until_exam") or 7),
-                )
-                return result, (result.get("plan", "") or "Exam prep plan generated.")[:300]
+                logger.warning("exam_prep workflow module removed; skipping task")
+                return {"skipped": True, "reason": "exam_prep workflow removed"}, "Exam prep workflow unavailable."
 
             if task_type == "wrong_answer_review":
-                from services.workflow.wrong_answer_review import run_wrong_answer_review
-
-                result = await run_wrong_answer_review(db, user_id, _normalize_uuid(payload.get("course_id")))
-                return result, (result.get("review", "") or "Wrong-answer review generated.")[:300]
+                logger.warning("wrong_answer_review workflow module removed; skipping task")
+                return {"skipped": True, "reason": "wrong_answer_review workflow removed"}, "Wrong-answer review workflow unavailable."
 
             if task_type == "assignment_analysis":
-                from services.workflow.assignment_analysis import run_assignment_analysis
-
-                assignment_id = _normalize_uuid(payload.get("assignment_id"))
-                if not assignment_id:
-                    raise ValueError("assignment_analysis requires assignment_id")
-                result = await run_assignment_analysis(db, user_id, assignment_id)
-                if result.get("error"):
-                    raise ValueError(str(result["error"]))
-                return result, (result.get("analysis", "") or "Assignment analysis generated.")[:300]
+                logger.warning("assignment_analysis workflow module removed; skipping task")
+                return {"skipped": True, "reason": "assignment_analysis workflow removed"}, "Assignment analysis workflow unavailable."
 
             if task_type == "generate_quiz":
                 from services.course_access import get_course_or_404

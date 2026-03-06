@@ -475,9 +475,11 @@ async def get_knowledge_graph(
     db: AsyncSession = Depends(get_db),
 ):
     """Get knowledge graph for a course (D3-compatible format)."""
-    from services.knowledge.graph import build_knowledge_graph
-
-    return await build_knowledge_graph(db, course_id, user.id)
+    try:
+        from services.knowledge.graph import build_knowledge_graph
+        return await build_knowledge_graph(db, course_id, user.id)
+    except ImportError:
+        return {"nodes": [], "edges": [], "course_id": str(course_id)}
 
 
 # ── Learning Path Optimization Endpoint ──
@@ -502,6 +504,187 @@ async def get_learning_path(
     return {"course_id": str(course_id), "recommendations": recommendations}
 
 
+@router.get("/courses/{course_id}/misconceptions")
+async def get_misconception_dashboard(
+    course_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get misconception dashboard: things you think you understand but don't.
+
+    Aggregates WrongAnswer diagnosis, LearningProgress gap types, and
+    comprehension probe results into a prioritized list of misconceptions
+    ranked by exam relevance and recency.
+    """
+    from datetime import datetime, timezone
+    from models.practice import PracticeResult
+
+    # 1. Wrong answers with diagnosis (unmastered = active misconceptions)
+    wrong_result = await db.execute(
+        select(WrongAnswer, PracticeProblem)
+        .join(PracticeProblem, WrongAnswer.problem_id == PracticeProblem.id)
+        .where(
+            WrongAnswer.course_id == course_id,
+            WrongAnswer.user_id == user.id,
+        )
+        .order_by(WrongAnswer.created_at.desc())
+    )
+    wrong_rows = wrong_result.all()
+
+    # 2. Learning progress with gap types
+    progress_result = await db.execute(
+        select(LearningProgress).where(
+            LearningProgress.user_id == user.id,
+            LearningProgress.course_id == course_id,
+            LearningProgress.gap_type.isnot(None),
+            LearningProgress.gap_type != "mastered",
+        )
+    )
+    gap_rows = progress_result.scalars().all()
+
+    # 3. Group wrong answers by core concept
+    concept_map: dict[str, dict] = {}
+    for wa, prob in wrong_rows:
+        metadata = prob.problem_metadata or {}
+        concept = metadata.get("core_concept") or metadata.get("topic") or "Unknown"
+        key = concept.lower().strip()
+
+        if key not in concept_map:
+            concept_map[key] = {
+                "concept": concept,
+                "total_errors": 0,
+                "mastered_errors": 0,
+                "error_categories": {},
+                "diagnoses": {},
+                "latest_error_at": None,
+                "sample_questions": [],
+                "misconception_types": [],
+            }
+
+        entry = concept_map[key]
+        entry["total_errors"] += 1
+        if wa.mastered:
+            entry["mastered_errors"] += 1
+
+        cat = wa.error_category or "uncategorized"
+        entry["error_categories"][cat] = entry["error_categories"].get(cat, 0) + 1
+
+        if wa.diagnosis:
+            entry["diagnoses"][wa.diagnosis] = entry["diagnoses"].get(wa.diagnosis, 0) + 1
+
+        # Track latest error time
+        if wa.created_at:
+            if entry["latest_error_at"] is None or wa.created_at > entry["latest_error_at"]:
+                entry["latest_error_at"] = wa.created_at
+
+        # Collect sample questions (max 3)
+        if len(entry["sample_questions"]) < 3:
+            entry["sample_questions"].append({
+                "question": prob.question[:200] if prob.question else "",
+                "user_answer": wa.user_answer[:100] if wa.user_answer else "",
+                "correct_answer": wa.correct_answer[:100] if wa.correct_answer else "",
+                "error_category": wa.error_category,
+                "diagnosis": wa.diagnosis,
+            })
+
+        # Collect misconception types from comprehension probes
+        detail = wa.error_detail or {}
+        if detail.get("misconception_type"):
+            entry["misconception_types"].append(detail["misconception_type"])
+
+    # 4. Enrich with comprehension probe data from LearningProgress metadata
+    for prog in gap_rows:
+        meta = prog.metadata_json or {}
+        probes = meta.get("comprehension_probes") or []
+        for probe in probes:
+            if not probe.get("understood") and probe.get("concept"):
+                key = probe["concept"].lower().strip()
+                if key not in concept_map:
+                    concept_map[key] = {
+                        "concept": probe["concept"],
+                        "total_errors": 0,
+                        "mastered_errors": 0,
+                        "error_categories": {},
+                        "diagnoses": {},
+                        "latest_error_at": None,
+                        "sample_questions": [],
+                        "misconception_types": [],
+                    }
+                mt = probe.get("misconception_type")
+                if mt:
+                    concept_map[key]["misconception_types"].append(mt)
+
+    # 5. Build ranked misconception list
+    now = datetime.now(timezone.utc)
+    misconceptions = []
+    for key, entry in concept_map.items():
+        active_errors = entry["total_errors"] - entry["mastered_errors"]
+        if active_errors <= 0 and not entry["misconception_types"]:
+            continue  # Skip fully mastered concepts
+
+        # Priority score: more active errors + more recent = higher priority
+        recency_days = 999
+        if entry["latest_error_at"]:
+            try:
+                delta = now - entry["latest_error_at"]
+                recency_days = max(delta.days, 0)
+            except TypeError:
+                pass
+        recency_boost = max(0, 30 - recency_days) / 30  # 1.0 if today, 0.0 if 30+ days ago
+
+        # Dominant diagnosis
+        diagnoses = entry["diagnoses"]
+        dominant_diagnosis = max(diagnoses, key=diagnoses.get) if diagnoses else None
+
+        # Dominant misconception type from probes
+        mt_list = entry["misconception_types"]
+        dominant_misconception = max(set(mt_list), key=mt_list.count) if mt_list else None
+
+        priority_score = round(active_errors * 0.6 + recency_boost * 0.4, 2)
+
+        misconceptions.append({
+            "concept": entry["concept"],
+            "active_errors": active_errors,
+            "total_errors": entry["total_errors"],
+            "mastered_errors": entry["mastered_errors"],
+            "resolution_rate": round(
+                entry["mastered_errors"] / max(entry["total_errors"], 1) * 100, 1
+            ),
+            "dominant_diagnosis": dominant_diagnosis,
+            "dominant_misconception_type": dominant_misconception,
+            "error_categories": entry["error_categories"],
+            "priority_score": priority_score,
+            "sample_questions": entry["sample_questions"],
+        })
+
+    # Sort by priority (highest first)
+    misconceptions.sort(key=lambda x: x["priority_score"], reverse=True)
+
+    # 6. Summary stats
+    total_active = sum(m["active_errors"] for m in misconceptions)
+    total_resolved = sum(m["mastered_errors"] for m in misconceptions)
+
+    diagnosis_summary: dict[str, int] = {}
+    for m in misconceptions:
+        if m["dominant_diagnosis"]:
+            d = m["dominant_diagnosis"]
+            diagnosis_summary[d] = diagnosis_summary.get(d, 0) + 1
+
+    return {
+        "course_id": str(course_id),
+        "misconceptions": misconceptions[:20],  # Top 20
+        "summary": {
+            "total_concepts_with_issues": len(misconceptions),
+            "total_active_errors": total_active,
+            "total_resolved": total_resolved,
+            "resolution_rate": round(
+                total_resolved / max(total_active + total_resolved, 1) * 100, 1
+            ),
+            "diagnosis_breakdown": diagnosis_summary,
+        },
+    }
+
+
 @router.get("/courses/{course_id}/knowledge-graph-mastery")
 async def get_knowledge_graph_mastery(
     course_id: uuid.UUID,
@@ -520,3 +703,35 @@ async def get_knowledge_graph_mastery(
 
     nodes = await get_mastery_colored_graph(db, user.id, course_id)
     return {"course_id": str(course_id), "nodes": nodes}
+
+
+@router.get("/courses/{course_id}/review-session")
+async def get_review_session(
+    course_id: uuid.UUID,
+    max_items: int = 10,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get LECTOR smart review session — semantically clustered concepts to review."""
+    from services.lector import get_smart_review_session
+    from dataclasses import asdict
+
+    items = await get_smart_review_session(db, user.id, course_id, max_items=max_items)
+    return {
+        "course_id": str(course_id),
+        "items": [asdict(i) for i in items],
+        "count": len(items),
+    }
+
+
+@router.get("/courses/{course_id}/loom")
+async def get_loom_graph(
+    course_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get LOOM concept mastery graph with nodes, edges, and recommendations."""
+    from services.loom import get_mastery_graph
+
+    graph = await get_mastery_graph(db, user.id, course_id)
+    return {"course_id": str(course_id), **graph}

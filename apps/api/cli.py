@@ -114,9 +114,71 @@ def _cmd_init(_args):
     print("  Setup complete! Run 'opentutor' to start.\n")
 
 
+def _auto_init_if_needed(data_dir: Path) -> None:
+    """Auto-run first-time setup if no config exists (zero-friction start)."""
+    config_file = data_dir / "config.env"
+    if config_file.exists():
+        return
+
+    print("\n  First run detected — auto-configuring...\n")
+
+    # Detect Ollama
+    ollama = _detect_ollama()
+    llm_status = ""
+
+    if ollama:
+        models = ollama["models"]
+        if models:
+            model = "llama3.2:3b" if "llama3.2:3b" in models else models[0]
+            config_lines = [f"LLM_PROVIDER=ollama", f"LLM_MODEL={model}"]
+            llm_status = f"  LLM:       Ollama ({model})"
+        else:
+            # Ollama installed, no models — try to pull one
+            print("  Ollama found but no models. Pulling llama3.2:3b...")
+            try:
+                subprocess.run(
+                    ["ollama", "pull", "llama3.2:3b"],
+                    check=True,
+                    timeout=300,
+                )
+                config_lines = ["LLM_PROVIDER=ollama", "LLM_MODEL=llama3.2:3b"]
+                llm_status = "  LLM:       Ollama (llama3.2:3b)"
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+                config_lines = ["LLM_PROVIDER=ollama", "LLM_MODEL=llama3.2:3b"]
+                llm_status = "  LLM:       Ollama (model pull failed — run: ollama pull llama3.2:3b)"
+    else:
+        # Check for cloud API keys in environment
+        for provider, key_name in [
+            ("openai", "OPENAI_API_KEY"),
+            ("anthropic", "ANTHROPIC_API_KEY"),
+            ("deepseek", "DEEPSEEK_API_KEY"),
+        ]:
+            if os.environ.get(key_name):
+                config_lines = [f"LLM_PROVIDER={provider}"]
+                llm_status = f"  LLM:       {provider} (from {key_name})"
+                break
+        else:
+            # No LLM found — start anyway with mock fallback
+            config_lines = [
+                "# No LLM detected. Install Ollama (https://ollama.com) or set an API key.",
+                "# LLM_PROVIDER=ollama",
+                "# LLM_MODEL=llama3.2:3b",
+            ]
+            llm_status = "  LLM:       None (install Ollama: https://ollama.com)"
+
+    config_file.write_text("\n".join(config_lines) + "\n")
+    if llm_status:
+        print(llm_status)
+    print(f"  Config:    {config_file}")
+    print()
+
+
 def _cmd_start(args):
     """Start the OpenTutor server."""
     data_dir = _ensure_data_dir()
+
+    # Auto-init on first run (no separate 'opentutor init' needed)
+    _auto_init_if_needed(data_dir)
 
     # Default DATABASE_URL to SQLite in ~/.opentutor/ if not set
     if not os.environ.get("DATABASE_URL"):
@@ -153,11 +215,10 @@ def _cmd_start(args):
 
     print()
     print("  ╔══════════════════════════════════════════╗")
-    print("  ║   OpenTutor Zenus — AI Learning Agent    ║")
+    print("  ║   OpenTutor Zenus — Your Learning Site    ║")
     print("  ╚══════════════════════════════════════════╝")
     print()
     print(f"  Web UI:    {url}")
-    print(f"  API Docs:  {url}/docs")
     print(f"  Database:  {db_display}")
     print(f"  Data dir:  {data_dir}")
     print()

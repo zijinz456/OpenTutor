@@ -291,3 +291,89 @@ async def chat_stream(
             yield {"event": "error", "data": json.dumps({"error": "An internal error occurred. Please try again."})}
 
     return EventSourceResponse(event_generator())
+
+
+@router.get("/greeting/{course_id}")
+async def get_greeting(
+    course_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Generate a personalized AI greeting when entering a course.
+
+    Uses LOOM mastery graph and LECTOR review state to craft a context-aware
+    greeting that tells the student what to focus on.
+    """
+    from models.course import Course
+
+    course = await get_course_or_404(db, course_id, user_id=user.id)
+
+    # Gather learning state
+    greeting_parts = [f"Welcome back to **{course.name}**!"]
+
+    try:
+        from services.lector import get_review_summary
+        review = await get_review_summary(db, user.id, course_id)
+
+        if review["needs_review"] and review["urgent_count"] > 0:
+            concepts = review["concepts_at_risk"][:3]
+            if concepts:
+                concept_list = ", ".join(f"**{c}**" for c in concepts)
+                greeting_parts.append(
+                    f"You have {review['urgent_count']} concept(s) that could use a review: {concept_list}."
+                )
+            greeting_parts.append("Want me to start a quick review session?")
+        else:
+            greeting_parts.append("You're all caught up on reviews!")
+    except Exception:
+        pass
+
+    try:
+        from services.loom import get_mastery_graph
+        graph = await get_mastery_graph(db, user.id, course_id)
+
+        if graph.get("weak_concepts"):
+            weak = [c["name"] for c in graph["weak_concepts"][:2]]
+            greeting_parts.append(
+                f"Areas to strengthen: {', '.join(weak)}."
+            )
+        elif graph.get("nodes"):
+            mastered = sum(1 for n in graph["nodes"] if n.get("mastery", 0) >= 0.8)
+            total = len(graph["nodes"])
+            if total > 0:
+                greeting_parts.append(
+                    f"You've mastered {mastered}/{total} concepts so far."
+                )
+    except Exception:
+        pass
+
+    # Check for upcoming deadlines
+    try:
+        from models.ingestion import Assignment
+        now = datetime.now(timezone.utc)
+        result = await db.execute(
+            select(Assignment)
+            .where(
+                Assignment.course_id == course_id,
+                Assignment.user_id == user.id,
+                Assignment.due_date >= now,
+            )
+            .order_by(Assignment.due_date.asc())
+            .limit(1)
+        )
+        upcoming = result.scalar_one_or_none()
+        if upcoming:
+            days_until = (upcoming.due_date - now).days
+            if days_until <= 3:
+                greeting_parts.append(
+                    f"Heads up: **{upcoming.title}** is due in {days_until} day(s)!"
+                )
+    except Exception:
+        pass
+
+    greeting_parts.append("What would you like to work on?")
+
+    return {
+        "greeting": " ".join(greeting_parts),
+        "course_name": course.name,
+    }

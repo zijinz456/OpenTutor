@@ -15,7 +15,7 @@ from services.embedding.registry import get_embedding_provider
 
 logger = logging.getLogger(__name__)
 
-BATCH_SIZE = 50
+BATCH_SIZE = 200
 
 
 async def embed_course_content(db: AsyncSession, course_id: uuid.UUID) -> int:

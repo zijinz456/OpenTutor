@@ -371,6 +371,10 @@ export async function* streamChat(
   }
 }
 
+export async function getChatGreeting(courseId: string): Promise<{ greeting: string; course_name: string }> {
+  return request(`/chat/greeting/${courseId}`);
+}
+
 export async function listChatSessions(courseId: string): Promise<ChatSessionSummary[]> {
   return request(`/chat/courses/${courseId}/sessions`);
 }

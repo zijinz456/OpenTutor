@@ -47,17 +47,20 @@ class BaseAgent(ABC):
         from services.llm.router import get_llm_client
 
         if ctx is not None:
-            from services.llm.complexity import resolve_tier
+            try:
+                from services.llm.complexity import resolve_tier
 
-            tier = resolve_tier(
-                agent_name=self.name,
-                message=ctx.user_message,
-                intent=ctx.intent.value if ctx.intent else "general",
-                scene=ctx.scene or "study_session",
-                history_length=len(ctx.conversation_history),
-                has_rag_context=bool(ctx.content_docs),
-            )
-            return get_llm_client(tier.value)
+                tier = resolve_tier(
+                    agent_name=self.name,
+                    message=ctx.user_message,
+                    intent=ctx.intent.value if ctx.intent else "general",
+                    scene=ctx.scene or "study_session",
+                    history_length=len(ctx.conversation_history),
+                    has_rag_context=bool(ctx.content_docs),
+                )
+                return get_llm_client(tier.value)
+            except ImportError:
+                logger.debug("llm.complexity module not available, using model_preference fallback")
 
         # Legacy fallback
         return get_llm_client(self.model_preference)
@@ -398,12 +401,20 @@ class BaseAgent(ABC):
             pref_lines = [f"- {k}: {v}" for k, v in ctx.preferences.items()]
             parts.append(f"\n## Preferences\n" + "\n".join(pref_lines))
 
-        # RAG context
+        # RAG context with source metadata for citations
         if ctx.content_docs:
             parts.append("\n## Course Materials\n")
-            parts.append("These sections were auto-retrieved. Use search_content only if you need different material.\n")
-            for doc in ctx.content_docs:
-                parts.append(f"### {doc.get('title', '')}\n{doc.get('content', '')[:1500]}\n")
+            parts.append(
+                "These sections were auto-retrieved. Use search_content only if you need different material.\n"
+                "IMPORTANT: When using information from these materials, cite the source using the format "
+                "[Source: <source_file>] or [Source: <title>]. Include citations inline in your response.\n"
+            )
+            for i, doc in enumerate(ctx.content_docs, 1):
+                source = doc.get("source_file") or "course material"
+                title = doc.get("title", "")
+                parts.append(f"### [{i}] {title}")
+                parts.append(f"**Source:** {source}")
+                parts.append(f"{doc.get('content', '')[:1500]}\n")
 
         # Memory context — organized by type for clarity
         if ctx.memories:

@@ -286,6 +286,11 @@ def _load_session_cookies(
         return {}
 
 
+class CanvasAuthExpiredError(Exception):
+    """Raised when Canvas API returns 401 — session cookies are stale."""
+    pass
+
+
 @dataclass
 class CanvasExtraction:
     """Result of deep Canvas API extraction."""
@@ -536,6 +541,11 @@ async def _try_canvas_api_deep(
                     f"{api_base}/courses/{course_id}",
                     params={"include[]": "syllabus_body"},
                 )
+                if resp.status_code == 401:
+                    raise CanvasAuthExpiredError(
+                        f"Canvas API returned 401 for {canvas_info.domain}. "
+                        f"Session cookies are expired — please re-login to Canvas."
+                    )
                 if resp.status_code == 200:
                     data = resp.json()
                     course_title = _clean(data.get("name", course_title))
@@ -551,6 +561,8 @@ async def _try_canvas_api_deep(
                         all_file_urls.extend(file_urls)
                 else:
                     return None
+            except CanvasAuthExpiredError:
+                raise  # Let auth errors propagate
             except Exception:
                 return None
 
@@ -798,6 +810,8 @@ async def _try_canvas_api_deep(
 
     except ImportError:
         logger.debug("Canvas API extraction skipped: missing dependencies")
+    except CanvasAuthExpiredError:
+        raise  # Let auth errors propagate to caller
     except Exception as e:
         logger.debug("Canvas deep API extraction failed for %s: %s", url, e)
 

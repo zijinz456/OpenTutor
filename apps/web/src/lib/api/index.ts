@@ -106,10 +106,13 @@ export {
   listTemplates,
   applyTemplate,
   getForgettingForecast,
+  getMisconceptionDashboard,
 } from "./progress";
 
 export type {
   CourseProgress,
+  MisconceptionItem,
+  MisconceptionDashboard,
   LearningOverview,
   LearningTrends,
   MemoryStats,

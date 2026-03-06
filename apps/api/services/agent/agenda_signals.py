@@ -301,75 +301,8 @@ async def _collect_content_stale(
     course_id: uuid.UUID | None,
     db: AsyncSession,
 ) -> list[AgendaSignal]:
-    """Content nodes with high error rates but no recent agent updates.
-
-    Fires when a node has ≥3 wrong answers AND no ContentMutation in the last 7 days.
-    This signals the agent to proactively improve the content.
-    """
-    from models.content import CourseContentTree
-    from models.content_mutation import ContentMutation
-    from models.course import Course
-
-    now = datetime.now(timezone.utc)
-    stale_threshold = now - timedelta(days=7)
-
-    # Find content nodes with ≥3 wrong answers
-    wrong_by_node = (
-        select(
-            WrongAnswer.content_node_id,
-            func.count(WrongAnswer.id).label("cnt"),
-        )
-        .where(
-            WrongAnswer.user_id == user_id,
-            WrongAnswer.mastered.is_(False),
-            WrongAnswer.content_node_id.isnot(None),
-        )
-    )
-    if course_id:
-        wrong_by_node = wrong_by_node.where(WrongAnswer.course_id == course_id)
-    wrong_by_node = wrong_by_node.group_by(WrongAnswer.content_node_id)
-    result = await db.execute(wrong_by_node)
-
-    signals: list[AgendaSignal] = []
-    for node_id, cnt in result.all():
-        if cnt < 3:
-            continue
-
-        # Check if this node had a recent mutation
-        recent_mutation = await db.execute(
-            select(func.count(ContentMutation.id))
-            .where(
-                ContentMutation.node_id == node_id,
-                ContentMutation.created_at >= stale_threshold,
-            )
-        )
-        if (recent_mutation.scalar() or 0) > 0:
-            continue
-
-        # Get node info for the signal
-        node = await db.get(CourseContentTree, node_id)
-        if not node:
-            continue
-
-        urgency = min(40.0 + cnt * 3, 55.0)
-        signals.append(AgendaSignal(
-            signal_type="content_stale",
-            user_id=user_id,
-            course_id=node.course_id,
-            entity_id=str(node_id),
-            title=f"Content needs update: {node.title} ({cnt} errors)",
-            urgency=urgency,
-            detail={
-                "wrong_answer_count": cnt,
-                "node_title": node.title,
-                "content_mutation_hint": {
-                    "tool": "update_section_notes",
-                    "reason": f"Student has {cnt} errors on this topic with no recent content updates",
-                },
-            },
-        ))
-
-    return signals[:5]  # Limit to 5 stale signals
+    """Content stale signal — disabled (ContentMutation model removed)."""
+    return []
 
 
 async def _collect_inactivity(

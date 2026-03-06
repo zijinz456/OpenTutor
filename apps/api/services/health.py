@@ -9,7 +9,10 @@ from sqlalchemy import text
 
 from config import settings
 import database as database_module
-from services.agent.container_sandbox import container_runtime_available
+try:
+    from services.agent.container_sandbox import container_runtime_available
+except ImportError:
+    container_runtime_available = lambda: False  # Module removed
 from services.llm.readiness import get_llm_runtime_status
 from services.migrations import MigrationState, inspect_database_migrations
 

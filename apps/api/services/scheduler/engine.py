@@ -87,8 +87,23 @@ async def _push_notification(
     category: str = "reminder",
     **kwargs,
 ):
-    """No-op stub — notification system removed in Phase 1.1 refactor."""
-    logger.debug("Notification skipped (removed): [%s] %s", category, title)
+    """Store an in-app notification for the user."""
+    try:
+        from models.notification import Notification
+
+        async with async_session() as db:
+            notif = Notification(
+                user_id=user_id,
+                title=title,
+                body=body,
+                category=category,
+                metadata_json=kwargs.get("data"),
+            )
+            db.add(notif)
+            await db.commit()
+            logger.debug("Notification stored: [%s] %s for user %s", category, title, user_id)
+    except Exception as e:
+        logger.error("Failed to store notification for user %s: %s", user_id, e)
 
 
 async def weekly_prep_job():
@@ -566,15 +581,11 @@ async def smart_review_trigger_job():
     logger.info("Smart review trigger complete: triggered for %d users", triggered)
 
 
-async def bkt_score_training_job():
-    """Weekly job: retrain BKT parameters and score prediction models.
-
-    Phase 4: runs pyBKT EM fitting + GradientBoosting training per user.
-    """
-    logger.info("Running BKT + score prediction training job...")
+async def bkt_training_job():
+    """Weekly job: retrain BKT parameters per user."""
+    logger.info("Running BKT training job...")
     user_ids = await _get_user_ids()
     trained_bkt = 0
-    trained_score = 0
 
     for user_id in user_ids:
         try:
@@ -586,7 +597,6 @@ async def bkt_score_training_job():
                 course_ids = [row[0] for row in course_result.all()]
 
                 for course_id in course_ids:
-                    # BKT training
                     try:
                         from services.learning_science.bkt_trainer import train_bkt_params
                         fitted = await train_bkt_params(db, user_id, course_id)
@@ -595,22 +605,10 @@ async def bkt_score_training_job():
                     except Exception as e:
                         logger.debug("BKT training skipped for user=%s course=%s: %s", user_id, course_id, e)
 
-                    # Score prediction training
-                    try:
-                        from services.prediction.score_predictor import train_model
-                        success = await train_model(db, user_id, course_id)
-                        if success:
-                            trained_score += 1
-                    except Exception as e:
-                        logger.debug("Score prediction training skipped: %s", e)
-
         except Exception as e:
-            logger.error("BKT/Score training failed for user %s: %s", user_id, e)
+            logger.error("BKT training failed for user %s: %s", user_id, e)
 
-    logger.info(
-        "BKT + score prediction training complete: bkt_fitted=%d score_models=%d",
-        trained_bkt, trained_score,
-    )
+    logger.info("BKT training complete: bkt_fitted=%d", trained_bkt)
 
 
 async def cross_course_linking_job():
@@ -730,6 +728,55 @@ async def cross_course_linking_job():
     logger.info("Cross-course linking complete: links_found=%d", links_found)
 
 
+async def heartbeat_review_job():
+    """Heartbeat — LECTOR-powered proactive review reminders.
+
+    Checks each user's courses for concepts at risk of being forgotten.
+    Uses LECTOR's semantic review summary (prerequisite decay, confusion pairs,
+    stability-based forgetting) to create targeted review notifications.
+
+    Runs every 6 hours.
+    """
+    logger.info("Running heartbeat review job...")
+    from models.course import Course
+    from services.lector import get_review_summary
+
+    notified = 0
+
+    async def _check_user(user_id, db):
+        course_result = await db.execute(
+            select(Course.id, Course.name).where(Course.user_id == user_id)
+        )
+        courses = course_result.all()
+        user_notified = False
+
+        for course_id, course_name in courses:
+            try:
+                summary = await get_review_summary(db, user_id, course_id)
+                if not summary["needs_review"] or summary["urgent_count"] < 2:
+                    continue
+
+                await _push_notification(
+                    user_id,
+                    title=f"Review needed: {course_name}",
+                    body=summary["recommendation"],
+                    category="review_reminder",
+                    data={
+                        "course_id": str(course_id),
+                        "urgent_count": summary["urgent_count"],
+                        "concepts_at_risk": summary["concepts_at_risk"],
+                    },
+                )
+                user_notified = True
+            except Exception as e:
+                logger.debug("Heartbeat check failed for course %s: %s", course_id, e)
+
+        return user_notified
+
+    notified = await _for_each_user(_check_user, "Heartbeat review")
+    logger.info("Heartbeat review complete: notified %d users", notified)
+
+
 _SCHEDULED_JOBS: list[tuple] = [
     # (func, trigger, job_id, name)
     # Core agent loop
@@ -745,8 +792,10 @@ _SCHEDULED_JOBS: list[tuple] = [
     (weekly_report_job, CronTrigger(day_of_week="sun", hour=20, minute=0), "weekly_report", "Weekly Learning Report"),
     (smart_review_trigger_job, IntervalTrigger(hours=4), "smart_review_trigger", "Smart Review Trigger (forgetting cost)"),
     # Phase 4: Training + linking
-    (bkt_score_training_job, CronTrigger(day_of_week="sat", hour=3, minute=0), "bkt_score_training", "BKT + Score Prediction Training"),
+    (bkt_training_job, CronTrigger(day_of_week="sat", hour=3, minute=0), "bkt_training", "BKT Training"),
     (cross_course_linking_job, IntervalTrigger(hours=12), "cross_course_linking", "Cross-Course Knowledge Linking"),
+    # Phase 2: Heartbeat — LECTOR-powered review reminders
+    (heartbeat_review_job, IntervalTrigger(hours=6), "heartbeat_review", "Heartbeat Review (LECTOR semantic reminders)"),
 ]
 
 

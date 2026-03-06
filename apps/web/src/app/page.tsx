@@ -3,17 +3,10 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useCourseStore } from "@/store/course";
-import { getHealthStatus, getLearningProfile, type HealthStatus } from "@/lib/api";
+import { getHealthStatus, type HealthStatus } from "@/lib/api";
 import { ttlCache } from "@/lib/cache";
 import { useLocale, useT } from "@/lib/i18n-context";
 import { RuntimeAlert } from "@/components/shared/runtime-alert";
-
-const REQUIRED_ONBOARDING_DIMENSIONS = [
-  "language",
-  "learning_mode",
-  "detail_level",
-  "layout_preset",
-] as const;
 
 const CARD_COLORS = [
   { bg: "bg-brand-muted", text: "text-brand" },
@@ -57,7 +50,7 @@ function CourseCardsSkeleton() {
 export default function DashboardPage() {
   const router = useRouter();
   const t = useT();
-  const { locale, setLocale } = useLocale();
+  const { locale } = useLocale();
   const { courses, loading, error } = useCourseStore();
   const totalActiveGoals = courses.reduce((sum, c) => sum + (c.active_goal_count ?? 0), 0);
   const totalPendingApprovals = courses.reduce((sum, c) => sum + (c.pending_approval_count ?? 0), 0);
@@ -67,28 +60,20 @@ export default function DashboardPage() {
     () => ttlCache.get<HealthStatus>("dash:health") ?? null,
   );
 
-  // Onboarding check
+  // Onboarding + single-course redirect
   useEffect(() => {
     if (typeof window === "undefined") return;
-    if (window.localStorage.getItem("opentutor_onboarded")) return;
-
-    getLearningProfile()
-      .then((profile) => {
-        const completed = REQUIRED_ONBOARDING_DIMENSIONS.every((dim) =>
-          profile.preferences.some((p) => p.scope === "global" && p.dimension === dim),
-        );
-        if (completed) {
-          window.localStorage.setItem("opentutor_onboarded", "true");
-          const langPref = profile.preferences.find(
-            (p) => p.scope === "global" && p.dimension === "language" && (p.value === "en" || p.value === "zh"),
-          );
-          if (langPref?.value === "en" || langPref?.value === "zh") setLocale(langPref.value);
-        } else {
-          router.replace("/onboarding");
-        }
-      })
-      .catch(() => router.replace("/onboarding"));
-  }, [router, setLocale]);
+    const onboarded = window.localStorage.getItem("opentutor_onboarded");
+    if (!onboarded) {
+      router.replace("/setup");
+      return;
+    }
+    // Single-course shortcut: skip dashboard, go straight to workspace
+    const state = useCourseStore.getState();
+    if (!state.loading && state.courses.length === 1) {
+      router.replace(`/course/${state.courses[0].id}`);
+    }
+  }, [router, courses, loading]);
 
   // Load courses and health (poll every 30s for live status)
   useEffect(() => {
@@ -232,7 +217,8 @@ export default function DashboardPage() {
                   {t("dashboard.emptyDescription")}
                 </p>
                 <button
-                  onClick={() => router.push("/new")}
+                  type="button"
+                  onClick={() => router.push("/setup?step=content")}
                   className="h-10 px-6 bg-brand text-brand-foreground rounded-lg text-sm font-medium hover:opacity-90 transition-opacity"
                 >
                   {t("dashboard.create")}

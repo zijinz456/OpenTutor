@@ -386,19 +386,48 @@ async def run_ingestion_pipeline(
             from services.scraper.canvas_detector import detect_canvas_url as _detect
             _cinfo = _detect(url)
             if _cinfo.is_canvas:
-                from services.ingestion.document_loader import _try_canvas_api_deep
-                deep_result = await _try_canvas_api_deep(url, session_name=session_name)
-                if deep_result:
-                    extracted = deep_result.content
-                    canvas_file_urls = deep_result.file_urls
-                    canvas_quiz_questions = deep_result.quiz_questions
-                    canvas_assignments_data = deep_result.assignments_data
-                    logger.info(
-                        "Canvas deep extraction: %d chars, %d pages, %d modules, %d files, %d quiz questions",
-                        len(extracted), deep_result.pages_fetched,
-                        deep_result.modules_found, len(canvas_file_urls),
-                        len(canvas_quiz_questions),
+                from services.ingestion.document_loader import (
+                    _try_canvas_api_deep, CanvasAuthExpiredError,
+                )
+                try:
+                    deep_result = await _try_canvas_api_deep(url, session_name=session_name)
+                except CanvasAuthExpiredError as auth_err:
+                    # Mark auth session invalid in DB
+                    try:
+                        from models.scrape import AuthSession
+                        auth_result = await db.execute(
+                            select(AuthSession).where(
+                                AuthSession.session_name == session_name,
+                                AuthSession.is_valid == True,  # noqa: E712
+                            )
+                        )
+                        auth_session = auth_result.scalar_one_or_none()
+                        if auth_session:
+                            auth_session.is_valid = False
+                            logger.info("Marked auth session %s as invalid", session_name)
+                    except Exception:
+                        pass
+                    _set_job_phase(
+                        job,
+                        status="failed",
+                        progress_percent=20,
+                        embedding_status="failed",
+                        error_message=str(auth_err),
                     )
+                    await db.commit()
+                    return job
+                else:
+                    if deep_result:
+                        extracted = deep_result.content
+                        canvas_file_urls = deep_result.file_urls
+                        canvas_quiz_questions = deep_result.quiz_questions
+                        canvas_assignments_data = deep_result.assignments_data
+                        logger.info(
+                            "Canvas deep extraction: %d chars, %d pages, %d modules, %d files, %d quiz questions",
+                            len(extracted), deep_result.pages_fetched,
+                            deep_result.modules_found, len(canvas_file_urls),
+                            len(canvas_quiz_questions),
+                        )
 
         if not extracted and pre_fetched_html:
             # Authenticated scraping: content already fetched, parse HTML to text
@@ -467,18 +496,27 @@ async def run_ingestion_pipeline(
                 embedding_status="completed",
                 nodes_created=nodes_created,
             )
+        await db.commit()
 
     except Exception as e:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
         _set_job_phase(
             job,
             status="failed",
             progress_percent=job.progress_percent or 0,
             embedding_status="failed",
             nodes_created=job.nodes_created,
-            error_message=str(e),
+            error_message=str(e)[:500],
         )
         logger.error(f"Ingestion pipeline failed: {e}")
-        await db.commit()
+        try:
+            db.add(job)
+            await db.commit()
+        except Exception as commit_err:
+            logger.error(f"Failed to persist ingestion failure: {commit_err}")
 
     await db.flush()
     # Attach discovered Canvas file URLs and quiz questions for the caller to process
@@ -785,11 +823,11 @@ async def auto_generate_notes(
         if not eligible:
             return 0
 
-        # Process nodes — cap at 30 to avoid excessive API calls
+        # Process top 5 nodes in parallel for speed (30s target)
         import asyncio as _asyncio
-        for node in eligible[:30]:
+
+        async def _gen_one(node):
             try:
-                # Trim content to avoid very long API calls; add per-node timeout
                 content_trimmed = node.content[:4000] if node.content else ""
                 ai_content = await _asyncio.wait_for(
                     restructure_notes(
@@ -797,26 +835,33 @@ async def auto_generate_notes(
                         node.title,
                         note_format="bullet_point",
                     ),
-                    timeout=60,
+                    timeout=20,
                 )
                 if ai_content and len(ai_content) > 50:
-                    await save_generated_asset(
-                        db,
-                        user_id=user_id,
-                        course_id=course_id,
-                        asset_type="notes",
-                        title=node.title,
-                        content={"markdown": ai_content},
-                        metadata={
-                            "source_node_id": str(node.id),
-                            "auto_generated": True,
-                            "format": "bullet_point",
-                        },
-                    )
-                    generated += 1
-                    logger.info("Auto-generated notes for node '%s'", node.title)
+                    return (node, ai_content)
             except Exception as e:
                 logger.debug("Auto-generate notes failed for '%s': %s", node.title, e)
+            return None
+
+        results = await _asyncio.gather(*[_gen_one(n) for n in eligible[:5]])
+        for res in results:
+            if res:
+                node, ai_content = res
+                await save_generated_asset(
+                    db,
+                    user_id=user_id,
+                    course_id=course_id,
+                    asset_type="notes",
+                    title=node.title,
+                    content={"markdown": ai_content},
+                    metadata={
+                        "source_node_id": str(node.id),
+                        "auto_generated": True,
+                        "format": "bullet_point",
+                    },
+                )
+                generated += 1
+                logger.info("Auto-generated notes for node '%s'", node.title)
 
         await db.commit()
 
@@ -871,7 +916,7 @@ async def auto_generate_flashcards(
 async def auto_generate_quiz(
     db_factory,
     course_id: uuid.UUID,
-    question_count: int = 5,
+    question_count: int = 3,
 ) -> int:
     """Auto-generate quiz questions for a course after ingestion.
 
@@ -905,7 +950,7 @@ async def auto_generate_quiz(
             nodes = result.scalars().all()
 
             problems: list[PracticeProblem] = []
-            for node in nodes[:10]:
+            for node in nodes[:3]:
                 if node.content and len(node.content) > 100:
                     node_problems = await extract_questions(
                         node.content, node.title, course_id, node.id,
@@ -931,29 +976,42 @@ async def auto_prepare(
     course_id: uuid.UUID,
     user_id: uuid.UUID,
 ) -> dict:
-    """Orchestrate full auto-preparation: notes → flashcards → quiz.
+    """Orchestrate full auto-preparation: notes + flashcards + quiz in parallel.
 
     Each step is independent — one failure doesn't block the others.
+    Runs all three concurrently for speed (30-second target).
     """
-    summary: dict[str, int] = {}
+    import asyncio as _asyncio
 
-    try:
-        summary["notes"] = await auto_generate_notes(db_factory, course_id, user_id)
-    except Exception as e:
-        logger.warning("auto_prepare: notes step failed: %s", e)
-        summary["notes"] = 0
+    async def _safe_notes():
+        try:
+            return await auto_generate_notes(db_factory, course_id, user_id)
+        except Exception as e:
+            logger.warning("auto_prepare: notes step failed: %s", e)
+            return 0
 
-    try:
-        summary["flashcards"] = await auto_generate_flashcards(db_factory, course_id, user_id)
-    except Exception as e:
-        logger.warning("auto_prepare: flashcards step failed: %s", e)
-        summary["flashcards"] = 0
+    async def _safe_flashcards():
+        try:
+            return await auto_generate_flashcards(db_factory, course_id, user_id)
+        except Exception as e:
+            logger.warning("auto_prepare: flashcards step failed: %s", e)
+            return 0
 
-    try:
-        summary["quiz"] = await auto_generate_quiz(db_factory, course_id)
-    except Exception as e:
-        logger.warning("auto_prepare: quiz step failed: %s", e)
-        summary["quiz"] = 0
+    async def _safe_quiz():
+        try:
+            return await auto_generate_quiz(db_factory, course_id)
+        except Exception as e:
+            logger.warning("auto_prepare: quiz step failed: %s", e)
+            return 0
+
+    notes_count, flashcards_count, quiz_count = await _asyncio.gather(
+        _safe_notes(), _safe_flashcards(), _safe_quiz(),
+    )
+    summary: dict[str, int] = {
+        "notes": notes_count,
+        "flashcards": flashcards_count,
+        "quiz": quiz_count,
+    }
 
     # Auto-configure: analyze content → select layout → generate welcome message
     try:
@@ -962,6 +1020,14 @@ async def auto_prepare(
     except Exception as e:
         logger.warning("auto_prepare: auto-configure step failed: %s", e)
         summary["auto_configured"] = False
+
+    # LOOM: Build knowledge concept graph from content
+    try:
+        from services.loom import build_course_graph
+        summary["loom_concepts"] = await build_course_graph(db_factory, course_id)
+    except Exception as e:
+        logger.warning("auto_prepare: LOOM graph building failed: %s", e)
+        summary["loom_concepts"] = 0
 
     logger.info("auto_prepare complete for course %s: %s", course_id, summary)
     return summary
@@ -973,6 +1039,17 @@ async def auto_prepare(
 
 # Layout presets (mirror frontend LAYOUT_PRESETS)
 _LAYOUT_PRESETS = {
+    "focused": {
+        "preset": "focused",
+        "sections": [
+            {"type": "notes", "position": 0, "visible": False},
+            {"type": "practice", "position": 1, "visible": False},
+            {"type": "analytics", "position": 2, "visible": False},
+            {"type": "plan", "position": 3, "visible": False},
+        ],
+        "chat_visible": True, "chat_height": 0.65,
+        "tree_visible": True, "tree_width": 260,
+    },
     "daily_study": {
         "preset": "daily_study",
         "sections": [
@@ -1066,7 +1143,7 @@ async def auto_configure_course(
         elif exam_cat_count >= 2 or (deadline_count >= 1 and exam_cat_count >= 1):
             preset_id = "exam_prep"
         else:
-            preset_id = "daily_study"
+            preset_id = "focused"
 
         layout = _LAYOUT_PRESETS[preset_id]
 
@@ -1112,8 +1189,8 @@ async def auto_configure_course(
             )
         else:
             parts.append(
-                "I've set up your workspace in **Daily Study Mode**. "
-                "Ask me to explain any topic, generate practice questions, or create a study plan."
+                "Your workspace is ready. "
+                "Ask me anything about your materials — I'll explain, quiz you, or help you review."
             )
 
         welcome_message = "\n".join(parts)
@@ -1151,7 +1228,6 @@ async def _auto_generate_learning_content(
     Only processes nodes with >300 chars of content.
     """
     from models.practice import PracticeProblem
-    from services.content.block_utils import markdown_to_blocks, ensure_block_metadata
 
     eligible = [n for n in nodes if n.content and len(n.content) > 300]
     if not eligible:
@@ -1159,12 +1235,8 @@ async def _auto_generate_learning_content(
 
     for node in eligible[:20]:  # Cap to avoid excessive processing
         try:
-            # Convert content to blocks_json if not already set
-            if not node.blocks_json and node.content:
-                blocks = markdown_to_blocks(node.content)
-                for block in blocks:
-                    ensure_block_metadata(block)
-                node.blocks_json = blocks
+            # block_utils module removed — skip block conversion
+            pass
 
             # Generate 2-3 practice problems per node
             content_preview = (node.content or "")[:3000]
