@@ -261,13 +261,12 @@ def _load_session_cookies(
         return {}
     try:
         from services.browser.session_manager import SessionManager
-        import json
 
         state_path = SessionManager.state_file(session_name)
         if not state_path.exists():
             return {}
 
-        state = json.loads(state_path.read_text())
+        state = SessionManager._load_state_json(state_path)
         cookies = {}
         for cookie in state.get("cookies", []):
             cookie_domain = cookie.get("domain", "").lstrip(".")
@@ -443,6 +442,24 @@ def _extract_file_urls_from_html(
     return files
 
 
+# Canvas API concurrency limiter — prevents rate limit hits (700 req/10min)
+_canvas_api_semaphore = asyncio.Semaphore(5)
+
+
+async def _canvas_api_request_with_backoff(client, url: str, params: dict | None = None, max_retries: int = 3):
+    """Make a Canvas API request with exponential backoff on rate limits."""
+    async with _canvas_api_semaphore:
+        for attempt in range(max_retries):
+            resp = await client.get(url, params=params)
+            if resp.status_code == 429:
+                retry_after = float(resp.headers.get("Retry-After", 2 ** (attempt + 1)))
+                logger.warning("Canvas API rate limited, retrying after %.1fs (attempt %d/%d)", retry_after, attempt + 1, max_retries)
+                await asyncio.sleep(min(retry_after, 30))
+                continue
+            return resp
+        return resp  # Return last response even if still 429
+
+
 async def _canvas_api_paginate(
     client,
     url: str,
@@ -454,7 +471,7 @@ async def _canvas_api_paginate(
     next_url = url
     page_count = 0
     while next_url and page_count < max_pages:
-        resp = await client.get(next_url, params=params if page_count == 0 else None)
+        resp = await _canvas_api_request_with_backoff(client, next_url, params=params if page_count == 0 else None)
         if resp.status_code != 200:
             break
         data = resp.json()
@@ -488,27 +505,206 @@ async def _try_canvas_api(
     return None
 
 
+def _canvas_clean_text(text: str) -> str:
+    """Strip newlines and collapse whitespace in Canvas API text."""
+    return re.sub(r"\s{2,}", " ", text.replace("\n", " ").replace("\r", " ")).strip()
+
+
+def _html_to_text(html: str) -> str:
+    """Convert HTML to plain text using BeautifulSoup."""
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(html, "lxml")
+    return soup.get_text(strip=True, separator="\n")
+
+
+async def _canvas_fetch_course_info(client, api_base: str, course_id: str, base_url: str, domain: str) -> tuple[str, list[str], list[dict]] | None:
+    """Fetch course info + syllabus. Returns (title, parts, file_urls) or None."""
+    resp = await _canvas_api_request_with_backoff(client, f"{api_base}/courses/{course_id}", params={"include[]": "syllabus_body"})
+    if resp.status_code == 401:
+        raise CanvasAuthExpiredError(f"Canvas API returned 401 for {domain}. Session cookies are expired — please re-login to Canvas.")
+    if resp.status_code != 200:
+        return None
+    data = resp.json()
+    title = _canvas_clean_text(data.get("name", f"Course {course_id}"))
+    parts = [f"# {title}\n"]
+    file_urls = []
+    if data.get("syllabus_body"):
+        syllabus_text = _html_to_text(data["syllabus_body"])
+        if syllabus_text:
+            parts.append(f"## Syllabus\n{syllabus_text}\n")
+        file_urls.extend(_extract_file_urls_from_html(data["syllabus_body"], base_url))
+    return title, parts, file_urls
+
+
+async def _canvas_fetch_modules(client, api_base: str, course_id: str, base_url: str, seen_page_slugs: set) -> tuple[int, int, list[str], list[dict]]:
+    """Fetch modules with deep item content. Returns (modules_found, pages_fetched, parts, file_urls)."""
+    parts: list[str] = []
+    file_urls: list[dict] = []
+    pages_fetched = 0
+    modules = await _canvas_api_paginate(client, f"{api_base}/courses/{course_id}/modules", params={"include[]": "items", "per_page": "100"})
+    if not modules:
+        return 0, 0, parts, file_urls
+
+    parts.append("## Modules\n")
+    for mod in modules:
+        mod_name = _canvas_clean_text(mod.get("name", "Module"))
+        parts.append(f"### {mod_name}")
+        for item in mod.get("items", []):
+            item_type = item.get("type", "")
+            item_title = _canvas_clean_text(item.get("title", "Item"))
+            if item_type == "Page":
+                page_url = item.get("page_url", "")
+                if page_url and page_url not in seen_page_slugs:
+                    seen_page_slugs.add(page_url)
+                    try:
+                        page_resp = await _canvas_api_request_with_backoff(client, f"{api_base}/courses/{course_id}/pages/{page_url}")
+                        if page_resp.status_code == 200:
+                            body = page_resp.json().get("body", "")
+                            parts.append(f"#### {item_title}")
+                            if body:
+                                page_text = _html_to_text(body)
+                                if page_text:
+                                    parts.append(page_text)
+                                file_urls.extend(_extract_file_urls_from_html(body, base_url, module_name=mod_name, item_title=item_title))
+                            pages_fetched += 1
+                    except Exception as e:
+                        logger.debug("Failed to fetch page %s: %s", page_url, e)
+                        parts.append(f"#### {item_title}")
+            elif item_type == "File":
+                content_id = item.get("content_id")
+                if content_id:
+                    file_urls.append({
+                        "url": f"{base_url}/courses/{course_id}/files/{content_id}/download?verifier=",
+                        "display_url": f"{base_url}/courses/{course_id}/files/{content_id}",
+                        "filename": f"{item_title}.pdf",
+                        "content_type": "application/pdf",
+                        "module_name": mod_name,
+                        "item_title": item_title,
+                    })
+                parts.append(f"#### {item_title} (File)")
+            elif item_type == "ExternalUrl":
+                parts.append(f"#### {item_title}")
+                parts.append(f"Link: {item.get('external_url', '')}")
+            elif item_type in ("Assignment", "Quiz"):
+                parts.append(f"#### {item_title} ({item_type})")
+            else:
+                parts.append(f"#### {item_title}")
+    parts.append("")
+    return len(modules), pages_fetched, parts, file_urls
+
+
+async def _canvas_fetch_assignments(client, api_base: str, course_id: str, base_url: str) -> tuple[list[dict], list[str], list[dict]]:
+    """Fetch assignments with descriptions. Returns (assignments_data, parts, file_urls)."""
+    parts: list[str] = []
+    file_urls: list[dict] = []
+    assignments = await _canvas_api_paginate(client, f"{api_base}/courses/{course_id}/assignments", params={"per_page": "100"})
+    if not assignments:
+        return [], parts, file_urls
+    assignments_data = [
+        {"name": a.get("name"), "due_at": a.get("due_at"), "points_possible": a.get("points_possible"), "canvas_id": a.get("id")}
+        for a in assignments if a.get("name")
+    ]
+    parts.append("## Assignments\n")
+    for a in assignments:
+        line = f"- **{a.get('name', 'Assignment')}**"
+        if a.get("due_at"):
+            line += f" (due: {a['due_at'][:10]})"
+        if a.get("points_possible"):
+            line += f" [{a['points_possible']} pts]"
+        parts.append(line)
+        desc = a.get("description")
+        if desc:
+            desc_text = _html_to_text(desc)[:500]
+            if desc_text:
+                parts.append(f"  {desc_text}")
+            file_urls.extend(_extract_file_urls_from_html(desc, base_url))
+    parts.append("")
+    return assignments_data, parts, file_urls
+
+
+async def _canvas_fetch_additional_pages(client, api_base: str, course_id: str, base_url: str, seen_page_slugs: set) -> tuple[int, list[str], list[dict]]:
+    """Fetch pages not already fetched via modules. Returns (pages_fetched, parts, file_urls)."""
+    parts: list[str] = []
+    file_urls: list[dict] = []
+    pages_fetched = 0
+    pages = await _canvas_api_paginate(client, f"{api_base}/courses/{course_id}/pages", params={"per_page": "50"})
+    unfetched = [p for p in pages if p.get("url", "") not in seen_page_slugs]
+    if not unfetched:
+        return 0, parts, file_urls
+    parts.append("## Additional Pages\n")
+    for p in unfetched[:30]:
+        slug = p.get("url", "")
+        title_text = _canvas_clean_text(p.get("title", "Page"))
+        seen_page_slugs.add(slug)
+        try:
+            page_resp = await _canvas_api_request_with_backoff(client, f"{api_base}/courses/{course_id}/pages/{slug}")
+            if page_resp.status_code == 200:
+                body = page_resp.json().get("body", "")
+                parts.append(f"### {title_text}")
+                if body:
+                    page_text = _html_to_text(body)
+                    if page_text:
+                        parts.append(page_text)
+                    file_urls.extend(_extract_file_urls_from_html(body, base_url))
+                pages_fetched += 1
+        except Exception as e:
+            logger.warning("Failed to fetch additional page %s: %s", slug, e)
+            parts.append(f"### {title_text}")
+    parts.append("")
+    return pages_fetched, parts, file_urls
+
+
+async def _canvas_fetch_quizzes(client, api_base: str, course_id: str) -> tuple[list[dict], list[str]]:
+    """Fetch quizzes with questions. Returns (quiz_questions, parts)."""
+    parts: list[str] = []
+    quiz_questions: list[dict] = []
+    quizzes = await _canvas_api_paginate(client, f"{api_base}/courses/{course_id}/quizzes", params={"per_page": "50"})
+    if not quizzes:
+        return quiz_questions, parts
+    parts.append("## Quizzes\n")
+    for q in quizzes:
+        q_title = _canvas_clean_text(q.get("title", "Quiz"))
+        q_desc = q.get("description", "")
+        q_points = q.get("points_possible", "")
+        parts.append(f"### {q_title}")
+        if q_points:
+            parts.append(f"Points: {q_points} | Questions: {q.get('question_count', 0)}")
+        if q_desc:
+            desc_text = _html_to_text(q_desc)
+            if desc_text:
+                parts.append(desc_text[:1000])
+        quiz_id = q.get("id")
+        if quiz_id:
+            try:
+                qq_resp = await _canvas_api_request_with_backoff(client, f"{api_base}/courses/{course_id}/quizzes/{quiz_id}/questions", params={"per_page": "50"})
+                if qq_resp.status_code == 200:
+                    for qi, question in enumerate(qq_resp.json(), 1):
+                        q_text = question.get("question_text", "")
+                        if q_text:
+                            parts.append(f"Q{qi}: {_html_to_text(q_text)}")
+                        for ans in question.get("answers", []):
+                            ans_text = ans.get("text", "") or ans.get("html", "")
+                            if ans_text:
+                                parts.append(f"  - {ans_text}")
+                        parsed = _parse_canvas_quiz_question(question, q_title)
+                        if parsed:
+                            quiz_questions.append(parsed)
+            except Exception as e:
+                logger.warning("Failed to fetch quiz questions for quiz %s: %s", quiz_id, e)
+    parts.append("")
+    return quiz_questions, parts
+
+
 async def _try_canvas_api_deep(
     url: str,
     session_name: str | None = None,
 ) -> CanvasExtraction | None:
     """Deep Canvas REST API extraction — full course content + file discovery.
 
-    Fetches:
-    1. Course info + syllabus
-    2. All modules with deep item content (page bodies, not just titles)
-    3. Assignments with descriptions
-    4. All pages with full body content
-    5. Quiz titles and questions (for study material)
-    6. Discovered PDF/document file URLs from all page bodies
-
-    Uses saved Playwright session cookies for authenticated API access.
-    Ported from learning-agent-extension canvas.js API fetcher pattern.
+    Fetches course info, modules, assignments, pages, and quizzes via
+    extracted helper functions. Uses saved Playwright session cookies
+    for authenticated API access.
     """
-    def _clean(text: str) -> str:
-        """Strip newlines and collapse whitespace in Canvas API text."""
-        return re.sub(r"\s{2,}", " ", text.replace("\n", " ").replace("\r", " ")).strip()
-
     try:
         from services.scraper.canvas_detector import detect_canvas_url
 
@@ -522,266 +718,63 @@ async def _try_canvas_api_deep(
 
         import httpx
 
-        # Load session cookies for authenticated API access (domain-filtered)
         cookies = _load_session_cookies(session_name, target_domain=canvas_info.domain) if session_name else {}
         if session_name:
             logger.info("Canvas deep API using %d cookies from session %s for %s", len(cookies), session_name, canvas_info.domain)
 
         all_file_urls: list[dict] = []
         seen_page_slugs: set[str] = set()
-        pages_fetched = 0
 
         async with httpx.AsyncClient(follow_redirects=True, timeout=20, cookies=cookies) as client:
-            parts: list[str] = []
-            course_title = f"Course {course_id}"
-
-            # ── 1. Course info + syllabus ──
+            # 1. Course info + syllabus
             try:
-                resp = await client.get(
-                    f"{api_base}/courses/{course_id}",
-                    params={"include[]": "syllabus_body"},
-                )
-                if resp.status_code == 401:
-                    raise CanvasAuthExpiredError(
-                        f"Canvas API returned 401 for {canvas_info.domain}. "
-                        f"Session cookies are expired — please re-login to Canvas."
-                    )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    course_title = _clean(data.get("name", course_title))
-                    parts.append(f"# {course_title}\n")
-                    if data.get("syllabus_body"):
-                        from bs4 import BeautifulSoup
-                        soup = BeautifulSoup(data["syllabus_body"], "lxml")
-                        syllabus_text = soup.get_text(strip=True, separator="\n")
-                        if syllabus_text:
-                            parts.append(f"## Syllabus\n{syllabus_text}\n")
-                        # Discover files in syllabus HTML
-                        file_urls = _extract_file_urls_from_html(data["syllabus_body"], base_url)
-                        all_file_urls.extend(file_urls)
-                else:
-                    return None
+                course_result = await _canvas_fetch_course_info(client, api_base, course_id, base_url, canvas_info.domain)
             except CanvasAuthExpiredError:
-                raise  # Let auth errors propagate
-            except Exception:
-                return None
-
-            # ── 2. Modules with DEEP item content ──
-            modules_found = 0
-            try:
-                modules = await _canvas_api_paginate(
-                    client,
-                    f"{api_base}/courses/{course_id}/modules",
-                    params={"include[]": "items", "per_page": "100"},
-                )
-                if modules:
-                    modules_found = len(modules)
-                    parts.append("## Modules\n")
-                    for mod in modules:
-                        mod_name = _clean(mod.get("name", "Module"))
-                        parts.append(f"### {mod_name}")
-                        items = mod.get("items", [])
-
-                        for item in items:
-                            item_type = item.get("type", "")
-                            item_title = _clean(item.get("title", "Item"))
-
-                            if item_type == "Page":
-                                # Deep fetch: get full page body via API
-                                page_url = item.get("page_url", "")
-                                if page_url and page_url not in seen_page_slugs:
-                                    seen_page_slugs.add(page_url)
-                                    try:
-                                        page_resp = await client.get(
-                                            f"{api_base}/courses/{course_id}/pages/{page_url}",
-                                        )
-                                        if page_resp.status_code == 200:
-                                            page_data = page_resp.json()
-                                            body = page_data.get("body", "")
-                                            parts.append(f"#### {item_title}")
-                                            if body:
-                                                from bs4 import BeautifulSoup
-                                                soup = BeautifulSoup(body, "lxml")
-                                                page_text = soup.get_text(strip=True, separator="\n")
-                                                if page_text:
-                                                    parts.append(page_text)
-                                                # Discover files in page HTML (with module context)
-                                                file_urls = _extract_file_urls_from_html(
-                                                    body, base_url,
-                                                    module_name=mod_name,
-                                                    item_title=item_title,
-                                                )
-                                                all_file_urls.extend(file_urls)
-                                            pages_fetched += 1
-                                    except Exception as e:
-                                        logger.debug("Failed to fetch page %s: %s", page_url, e)
-                                        parts.append(f"#### {item_title}")
-
-                            elif item_type == "File":
-                                # Direct file attachment in module
-                                content_id = item.get("content_id")
-                                if content_id:
-                                    file_url = f"{base_url}/courses/{course_id}/files/{content_id}/download?verifier="
-                                    all_file_urls.append({
-                                        "url": file_url,
-                                        "display_url": f"{base_url}/courses/{course_id}/files/{content_id}",
-                                        "filename": f"{item_title}.pdf",
-                                        "content_type": "application/pdf",
-                                        "module_name": mod_name,
-                                        "item_title": item_title,
-                                    })
-                                parts.append(f"#### {item_title} (File)")
-
-                            elif item_type == "Assignment":
-                                parts.append(f"#### {item_title} (Assignment)")
-
-                            elif item_type == "Quiz":
-                                parts.append(f"#### {item_title} (Quiz)")
-
-                            elif item_type == "ExternalUrl":
-                                ext_url = item.get("external_url", "")
-                                parts.append(f"#### {item_title}")
-                                parts.append(f"Link: {ext_url}")
-
-                            elif item_type == "SubHeader":
-                                parts.append(f"#### {item_title}")
-
-                            else:
-                                parts.append(f"#### {item_title}")
-
-                    parts.append("")
+                raise
             except Exception as e:
-                logger.debug("Modules deep fetch failed: %s", e)
+                logger.warning("Canvas course info fetch failed for %s: %s", url, e)
+                return None
+            if not course_result:
+                return None
+            course_title, parts, syllabus_files = course_result
+            all_file_urls.extend(syllabus_files)
 
-            # ── 3. Assignments with descriptions ──
-            all_assignments_data: list[dict] = []
+            # 2. Modules with deep item content
             try:
-                assignments = await _canvas_api_paginate(
-                    client,
-                    f"{api_base}/courses/{course_id}/assignments",
-                    params={"per_page": "100"},
-                )
-                if assignments:
-                    # Capture raw assignment data for deadline extraction
-                    all_assignments_data = [
-                        {"name": a.get("name"), "due_at": a.get("due_at"),
-                         "points_possible": a.get("points_possible"),
-                         "canvas_id": a.get("id")}
-                        for a in assignments if a.get("name")
-                    ]
-                    parts.append("## Assignments\n")
-                    for a in assignments:
-                        line = f"- **{a.get('name', 'Assignment')}**"
-                        if a.get("due_at"):
-                            line += f" (due: {a['due_at'][:10]})"
-                        if a.get("points_possible"):
-                            line += f" [{a['points_possible']} pts]"
-                        parts.append(line)
-                        desc = a.get("description")
-                        if desc:
-                            from bs4 import BeautifulSoup
-                            soup = BeautifulSoup(desc, "lxml")
-                            desc_text = soup.get_text(strip=True, separator=" ")[:500]
-                            if desc_text:
-                                parts.append(f"  {desc_text}")
-                            # Discover files in assignment descriptions
-                            file_urls = _extract_file_urls_from_html(desc, base_url)
-                            all_file_urls.extend(file_urls)
-                    parts.append("")
-            except Exception:
-                pass
+                modules_found, mod_pages, mod_parts, mod_files = await _canvas_fetch_modules(client, api_base, course_id, base_url, seen_page_slugs)
+                parts.extend(mod_parts)
+                all_file_urls.extend(mod_files)
+            except Exception as e:
+                logger.warning("Modules deep fetch failed: %s", e)
+                modules_found, mod_pages = 0, 0
 
-            # ── 4. Pages not already fetched via modules ──
+            # 3. Assignments with descriptions
             try:
-                pages = await _canvas_api_paginate(
-                    client,
-                    f"{api_base}/courses/{course_id}/pages",
-                    params={"per_page": "50"},
-                )
-                unfetched = [p for p in pages if p.get("url", "") not in seen_page_slugs]
-                if unfetched:
-                    parts.append("## Additional Pages\n")
-                    for p in unfetched[:30]:
-                        slug = p.get("url", "")
-                        title_text = _clean(p.get("title", "Page"))
-                        seen_page_slugs.add(slug)
-                        try:
-                            page_resp = await client.get(
-                                f"{api_base}/courses/{course_id}/pages/{slug}",
-                            )
-                            if page_resp.status_code == 200:
-                                page_data = page_resp.json()
-                                body = page_data.get("body", "")
-                                parts.append(f"### {title_text}")
-                                if body:
-                                    from bs4 import BeautifulSoup
-                                    soup = BeautifulSoup(body, "lxml")
-                                    page_text = soup.get_text(strip=True, separator="\n")
-                                    if page_text:
-                                        parts.append(page_text)
-                                    file_urls = _extract_file_urls_from_html(body, base_url)
-                                    all_file_urls.extend(file_urls)
-                                pages_fetched += 1
-                        except Exception:
-                            parts.append(f"### {title_text}")
-                    parts.append("")
-            except Exception:
-                pass
+                all_assignments_data, assign_parts, assign_files = await _canvas_fetch_assignments(client, api_base, course_id, base_url)
+                parts.extend(assign_parts)
+                all_file_urls.extend(assign_files)
+            except Exception as e:
+                logger.warning("Canvas assignments fetch failed: %s", e)
+                all_assignments_data = []
 
-            # ── 5. Quizzes (titles + questions → PracticeProblem-ready dicts) ──
-            all_quiz_questions: list[dict] = []
+            # 4. Additional pages
             try:
-                quizzes = await _canvas_api_paginate(
-                    client,
-                    f"{api_base}/courses/{course_id}/quizzes",
-                    params={"per_page": "50"},
-                )
-                if quizzes:
-                    parts.append("## Quizzes\n")
-                    for q in quizzes:
-                        q_title = _clean(q.get("title", "Quiz"))
-                        q_desc = q.get("description", "")
-                        q_count = q.get("question_count", 0)
-                        q_points = q.get("points_possible", "")
-                        parts.append(f"### {q_title}")
-                        if q_points:
-                            parts.append(f"Points: {q_points} | Questions: {q_count}")
-                        if q_desc:
-                            from bs4 import BeautifulSoup
-                            soup = BeautifulSoup(q_desc, "lxml")
-                            desc_text = soup.get_text(strip=True, separator="\n")
-                            if desc_text:
-                                parts.append(desc_text[:1000])
-                        # Try to fetch quiz questions (may be restricted)
-                        quiz_id = q.get("id")
-                        if quiz_id:
-                            try:
-                                qq_resp = await client.get(
-                                    f"{api_base}/courses/{course_id}/quizzes/{quiz_id}/questions",
-                                    params={"per_page": "50"},
-                                )
-                                if qq_resp.status_code == 200:
-                                    questions = qq_resp.json()
-                                    for qi, question in enumerate(questions, 1):
-                                        q_text = question.get("question_text", "")
-                                        if q_text:
-                                            from bs4 import BeautifulSoup
-                                            soup = BeautifulSoup(q_text, "lxml")
-                                            parts.append(f"Q{qi}: {soup.get_text(strip=True)}")
-                                        answers = question.get("answers", [])
-                                        for ans in answers:
-                                            ans_text = ans.get("text", "") or ans.get("html", "")
-                                            if ans_text:
-                                                parts.append(f"  - {ans_text}")
-                                        # Parse into structured PracticeProblem dict
-                                        parsed = _parse_canvas_quiz_question(question, q_title)
-                                        if parsed:
-                                            all_quiz_questions.append(parsed)
-                            except Exception:
-                                pass
-                    parts.append("")
-            except Exception:
-                pass
+                extra_pages, page_parts, page_files = await _canvas_fetch_additional_pages(client, api_base, course_id, base_url, seen_page_slugs)
+                parts.extend(page_parts)
+                all_file_urls.extend(page_files)
+            except Exception as e:
+                logger.warning("Canvas additional pages fetch failed: %s", e)
+                extra_pages = 0
+
+            # 5. Quizzes
+            try:
+                all_quiz_questions, quiz_parts = await _canvas_fetch_quizzes(client, api_base, course_id)
+                parts.extend(quiz_parts)
+            except Exception as e:
+                logger.warning("Canvas quizzes fetch failed: %s", e)
+                all_quiz_questions = []
+
+            pages_fetched = mod_pages + extra_pages
 
             # Deduplicate file URLs
             seen_file_urls: set[str] = set()
@@ -1131,13 +1124,14 @@ def _extract_html_fallback(file_path: str) -> tuple[str, str]:
         content = trafilatura.extract(html, include_tables=True) or ""
         if content:
             return Path(file_path).stem, content
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("trafilatura HTML extraction failed for %s: %s", file_path, e)
 
     # Raw text fallback
     try:
         return Path(file_path).stem, Path(file_path).read_text(errors="ignore")
-    except Exception:
+    except Exception as e:
+        logger.warning("Failed to read file %s: %s", file_path, e)
         return Path(file_path).stem, ""
 
 
@@ -1197,8 +1191,8 @@ def _extract_office_fallback(file_path: str, ext: str) -> tuple[str, str]:
             doc = Document(file_path)
             content = "\n\n".join(p.text for p in doc.paragraphs if p.text)
             return Path(file_path).stem, content
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("DOCX fallback extraction failed for %s: %s", file_path, e)
 
     if ext in ("pptx",):
         try:
@@ -1212,8 +1206,8 @@ def _extract_office_fallback(file_path: str, ext: str) -> tuple[str, str]:
                     if shape.has_text_frame:
                         texts.append(shape.text_frame.text)
             return Path(file_path).stem, "\n\n".join(texts)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("PPTX fallback extraction failed for %s: %s", file_path, e)
 
     return Path(file_path).stem, ""
 
@@ -1226,7 +1220,8 @@ def _extract_plain_text(file_path: str) -> tuple[str, str]:
     try:
         content = Path(file_path).read_text(errors="ignore")
         return Path(file_path).stem, content
-    except Exception:
+    except Exception as e:
+        logger.warning("Failed to read plain text file %s: %s", file_path, e)
         return Path(file_path).stem, ""
 
 

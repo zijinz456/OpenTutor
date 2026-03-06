@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config import settings
 from models.knowledge_graph import KnowledgeNode, KnowledgeEdge, ConceptMastery
 
 logger = logging.getLogger(__name__)
@@ -107,15 +108,15 @@ async def get_smart_review_session(
         priority = 0.0
         reason_parts = []
 
-        # Factor 1: Low mastery (0.0-0.4 contribution)
-        if mastery_score < 0.8:
-            priority += (0.8 - mastery_score) * 0.5
+        # Factor 1: Low mastery
+        if mastery_score < settings.lector_mastery_threshold:
+            priority += (settings.lector_mastery_threshold - mastery_score) * settings.lector_factor_low_mastery
             if mastery_score < 0.3:
                 reason_parts.append("low mastery")
 
-        # Factor 2: Never practiced (0.3 contribution)
+        # Factor 2: Never practiced
         if practice_count == 0:
-            priority += 0.3
+            priority += settings.lector_factor_never_practiced
             reason_parts.append("not yet practiced")
 
         # Factor 3: Time decay — stability check
@@ -124,15 +125,15 @@ async def get_smart_review_session(
             stability = mastery.stability_days or 1.0
             if days_since > stability:
                 decay = min((days_since - stability) / stability, 1.0)
-                priority += decay * 0.3
+                priority += decay * settings.lector_factor_time_decay
                 reason_parts.append("memory decaying")
 
         # Factor 4: Prerequisite at risk (LECTOR key insight)
         # If this concept's prerequisites are weak, boost this concept's priority
         for prereq_id in prereqs_of.get(node.id, []):
             prereq_mastery = mastery_map.get(prereq_id)
-            if prereq_mastery and prereq_mastery.mastery_score < 0.5:
-                priority += 0.2
+            if prereq_mastery and prereq_mastery.mastery_score < settings.lector_prerequisite_threshold:
+                priority += settings.lector_factor_prerequisite
                 prereq_node = node_map.get(prereq_id)
                 if prereq_node:
                     reason_parts.append(f"prerequisite '{prereq_node.name}' is weak")
@@ -142,8 +143,8 @@ async def get_smart_review_session(
         # If concepts are often confused, review them together
         for confused_id in confused_with.get(node.id, []):
             confused_mastery = mastery_map.get(confused_id)
-            if confused_mastery and confused_mastery.mastery_score < 0.6:
-                priority += 0.1
+            if confused_mastery and confused_mastery.mastery_score < settings.lector_confusion_threshold:
+                priority += settings.lector_factor_confusion
                 break
 
         if priority < 0.1:

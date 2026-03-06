@@ -16,7 +16,7 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
@@ -120,8 +120,8 @@ def _serialize_session(session: ChatSession, message_count: int) -> dict:
 @router.get("/courses/{course_id}/sessions")
 async def list_chat_sessions(
     course_id: uuid.UUID,
-    limit: int = 20,
-    offset: int = 0,
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -150,8 +150,8 @@ async def list_chat_sessions(
 @router.get("/sessions/{session_id}/messages")
 async def get_chat_session_messages(
     session_id: uuid.UUID,
-    limit: int = 50,
-    offset: int = 0,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -249,6 +249,10 @@ async def chat_stream(
                 scene=resolved_scene,
                 images=[img.model_dump() for img in body.images] if body.images else None,
             ):
+                # Stop streaming if client disconnected (saves LLM cost)
+                if await request.is_disconnected():
+                    logger.info("Client disconnected during SSE stream for session %s", session.id)
+                    break
                 if event.get("event") == "message":
                     try:
                         payload = json.loads(event["data"])
@@ -325,8 +329,8 @@ async def get_greeting(
             greeting_parts.append("Want me to start a quick review session?")
         else:
             greeting_parts.append("You're all caught up on reviews!")
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("Failed to fetch review summary for greeting: %s", e)
 
     try:
         from services.loom import get_mastery_graph
@@ -344,8 +348,8 @@ async def get_greeting(
                 greeting_parts.append(
                     f"You've mastered {mastered}/{total} concepts so far."
                 )
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("Failed to fetch mastery graph for greeting: %s", e)
 
     # Check for upcoming deadlines
     try:
@@ -368,8 +372,8 @@ async def get_greeting(
                 greeting_parts.append(
                     f"Heads up: **{upcoming.title}** is due in {days_until} day(s)!"
                 )
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("Failed to fetch upcoming deadlines for greeting: %s", e)
 
     greeting_parts.append("What would you like to work on?")
 

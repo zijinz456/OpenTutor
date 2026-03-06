@@ -143,6 +143,27 @@ class Settings(BaseSettings):
     # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
     encryption_key: str = ""
 
+    # Cognitive load signal weights (sum should = 1.0)
+    # Source: "Cognitive Load Theory meets Deep Knowledge Tracing" (Nature, 2025)
+    cognitive_load_weight_fatigue: float = 0.25
+    cognitive_load_weight_session_length: float = 0.15
+    cognitive_load_weight_errors: float = 0.20
+    cognitive_load_weight_brevity: float = 0.10
+    cognitive_load_weight_help_seeking: float = 0.15
+    cognitive_load_weight_quiz_performance: float = 0.15
+    cognitive_load_threshold_high: float = 0.6
+    cognitive_load_threshold_medium: float = 0.3
+
+    # LECTOR review priority factors
+    lector_factor_low_mastery: float = 0.5       # Multiplier for (0.8 - mastery)
+    lector_factor_never_practiced: float = 0.3   # Bonus for unpracticed concepts
+    lector_factor_time_decay: float = 0.3        # Memory decay weight
+    lector_factor_prerequisite: float = 0.2      # Weak prerequisite boost
+    lector_factor_confusion: float = 0.1         # Confusion pair boost
+    lector_mastery_threshold: float = 0.8        # Below this = needs review
+    lector_prerequisite_threshold: float = 0.5   # Prereq mastery alert level
+    lector_confusion_threshold: float = 0.6      # Confusion pair mastery alert
+
     # Logging
     log_file: str = ""  # Path to log file; empty = stdout only
     log_max_bytes: int = 10_485_760  # 10 MB

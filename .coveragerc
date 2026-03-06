@@ -1,0 +1,19 @@
+[run]
+source = apps/api
+omit =
+    apps/api/alembic/*
+    apps/api/tests/*
+    apps/api/uploads/*
+    apps/api/sessions/*
+    apps/api/plugins/*
+
+[report]
+exclude_lines =
+    pragma: no cover
+    def __repr__
+    if __name__ == .__main__
+    raise NotImplementedError
+    pass
+    except ImportError
+show_missing = true
+precision = 1

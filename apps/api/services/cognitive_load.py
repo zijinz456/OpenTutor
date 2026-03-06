@@ -19,6 +19,8 @@ from datetime import datetime, timezone
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config import settings
+
 logger = logging.getLogger(__name__)
 
 
@@ -43,13 +45,13 @@ async def compute_cognitive_load(
 
     # ── Signal 1: Text-based fatigue (already computed) ──
     signals["fatigue"] = fatigue_score
-    load += fatigue_score * 0.25  # Max contribution: 0.25
+    load += fatigue_score * settings.cognitive_load_weight_fatigue
 
     # ── Signal 2: Session length fatigue ──
     # Cognitive performance degrades after ~45 min of focused study
     session_fatigue = min(session_messages / 40.0, 1.0)  # ~40 messages ≈ 45 min
     signals["session_length"] = session_fatigue
-    load += session_fatigue * 0.15  # Max contribution: 0.15
+    load += session_fatigue * settings.cognitive_load_weight_session_length
 
     # ── Signal 3: Recent error rate ──
     try:
@@ -69,7 +71,7 @@ async def compute_cognitive_load(
         # Normalize: 5+ unmastered errors = high load signal
         error_signal = min(recent_errors / 5.0, 1.0)
         signals["unmastered_errors"] = error_signal
-        load += error_signal * 0.20  # Max contribution: 0.20
+        load += error_signal * settings.cognitive_load_weight_errors
     except Exception:
         signals["unmastered_errors"] = 0.0
 
@@ -81,7 +83,7 @@ async def compute_cognitive_load(
         # Only count if we have session context (student was writing longer before)
         if session_messages > 3:
             signals["message_brevity"] = brevity_signal
-            load += brevity_signal * 0.10  # Max contribution: 0.10
+            load += brevity_signal * settings.cognitive_load_weight_brevity
         else:
             signals["message_brevity"] = 0.0
     else:
@@ -92,7 +94,7 @@ async def compute_cognitive_load(
     help_keywords = ["help", "hint", "explain", "don't understand", "confused", "stuck", "how do i"]
     help_signal = 1.0 if any(kw in user_message.lower() for kw in help_keywords) else 0.0
     signals["help_seeking"] = help_signal
-    load += help_signal * 0.15  # Max contribution: 0.15
+    load += help_signal * settings.cognitive_load_weight_help_seeking
 
     # ── Signal 6: Recent quiz performance ──
     try:
@@ -111,7 +113,7 @@ async def compute_cognitive_load(
             # Low accuracy = high cognitive load
             perf_signal = max(0.0, 1.0 - (accuracy / 0.7))  # Below 70% = signal
             signals["quiz_performance"] = perf_signal
-            load += perf_signal * 0.15  # Max contribution: 0.15
+            load += perf_signal * settings.cognitive_load_weight_quiz_performance
         else:
             signals["quiz_performance"] = 0.0
     except Exception:
@@ -121,9 +123,9 @@ async def compute_cognitive_load(
     score = max(0.0, min(load, 1.0))
 
     # Determine level
-    if score > 0.6:
+    if score > settings.cognitive_load_threshold_high:
         level = "high"
-    elif score > 0.3:
+    elif score > settings.cognitive_load_threshold_medium:
         level = "medium"
     else:
         level = "low"
