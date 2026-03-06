@@ -7,6 +7,12 @@ OpenTutor is intended to run locally in the same style as OpenClaw:
 - no end-user sign-in UI
 - one local owner profile auto-bound on the backend
 
+For the current local beta target, a "ready" stack also means:
+
+- the schema is ready
+- a real LLM provider is reachable (`llm_status=ready`)
+- sandbox availability is optional, but code execution features stay disabled without Docker or Podman
+
 ## What this means
 
 - You do not need `login/register/refresh` to use the app locally.
@@ -45,6 +51,8 @@ bash scripts/check_local_mode.sh --skip-api
 bash scripts/quickstart.sh
 ```
 
+If you leave `DATABASE_URL` blank, the host quickstart uses SQLite lite mode at `~/.opentutor/data.db`.
+
 Or with Docker:
 
 ```bash
@@ -52,6 +60,29 @@ cp .env.example .env
 bash scripts/check_local_mode.sh --skip-api
 bash scripts/dev_local.sh up --build
 ```
+
+If `8000` or `3000` is already in use, publish the Docker stack on alternate ports:
+
+```bash
+API_PORT=38000 WEB_PORT=33000 bash scripts/dev_local.sh up --build
+API_PORT=38000 WEB_PORT=33000 bash scripts/dev_local.sh beta-check
+```
+
+## Local beta gate
+
+Run this before calling a build "ready" for the technical-user local beta:
+
+```bash
+bash scripts/dev_local.sh beta-check
+```
+
+It fails if:
+
+- local single-user mode drifted
+- the schema is not ready
+- the running stack cannot reach a real LLM provider
+
+When Docker is running, the script resolves the compose-published API and web ports automatically before it runs checks.
 
 ## Common mistakes
 
@@ -72,3 +103,12 @@ If auth/deployment flags drift, the symptoms often look unrelated:
 - settings pages partially load
 
 Run `bash scripts/check_local_mode.sh` first.
+The Docker-based local stack now installs the lighter core Python dependency set
+by default. If you need the full integration/tooling surface inside containers,
+set `API_PYTHON_REQUIREMENTS=requirements-full.txt` before running
+`bash scripts/dev_local.sh up --build`.
+
+For host-run local inference backends, the Docker API container uses
+`host.docker.internal` automatically. Override with
+`DOCKER_OLLAMA_BASE_URL`, `DOCKER_LMSTUDIO_BASE_URL`,
+`DOCKER_VLLM_BASE_URL`, or `DOCKER_TEXTGENWEBUI_BASE_URL` if needed.

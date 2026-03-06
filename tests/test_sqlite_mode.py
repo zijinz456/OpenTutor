@@ -102,9 +102,13 @@ async def test_health_endpoint(client):
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] == "ok", f"Health not ok: {data}"
+    assert data["database_backend"] == "sqlite"
     assert data["schema"] == "ready"
     assert data["migration_required"] is False
     assert data["database"] == "connected"
+    assert isinstance(data["local_beta_ready"], bool)
+    assert isinstance(data["local_beta_blockers"], list)
+    assert isinstance(data["local_beta_warnings"], list)
 
 
 @pytest.mark.anyio

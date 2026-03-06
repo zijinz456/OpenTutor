@@ -3,7 +3,11 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useT } from "@/lib/i18n-context";
-import { getLlmStatusMeta, type HealthStatus } from "./types";
+import {
+  getLlmStatusMeta,
+  getLocalBetaIssueMeta,
+  type HealthStatus,
+} from "./types";
 
 interface RuntimeStatusSectionProps {
   health: HealthStatus | null;
@@ -18,7 +22,13 @@ export function RuntimeStatusSection({
 }: RuntimeStatusSectionProps) {
   const t = useT();
   const llmStatusMeta = getLlmStatusMeta(t);
+  const localBetaIssueMeta = getLocalBetaIssueMeta(t);
   const statusMeta = health ? llmStatusMeta[health.llm_status] : null;
+  const blockers = health?.local_beta_blockers ?? [];
+  const warnings = health?.local_beta_warnings ?? [];
+  const databaseBackend = health?.database_backend ?? t("settings.unknown");
+  const getIssueLabel = (item: string) =>
+    localBetaIssueMeta[item as keyof typeof localBetaIssueMeta] ?? item;
 
   return (
     <section data-testid="settings-llm-status">
@@ -88,6 +98,14 @@ export function RuntimeStatusSection({
                   ? t("settings.sandboxReady")
                   : t("settings.sandboxUnavailable")}
               </Badge>
+              <Badge variant="outline">
+                {t("settings.databaseBackend")}:{" "}
+                {databaseBackend === "sqlite"
+                  ? t("settings.databaseBackendSqlite")
+                  : databaseBackend === "postgresql"
+                    ? t("settings.databaseBackendPostgres")
+                    : databaseBackend}
+              </Badge>
             </div>
             <div className="flex items-center gap-2">
               <span className="text-sm font-medium text-foreground">
@@ -147,6 +165,51 @@ export function RuntimeStatusSection({
                   {t("settings.noProvidersConfigured")}
                 </span>
               )}
+            </div>
+            <div className="rounded-md border border-border bg-muted/20 p-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-sm font-medium text-foreground">
+                  {t("settings.localBetaTitle")}
+                </p>
+                <Badge
+                  variant={health.local_beta_ready ? "secondary" : "destructive"}
+                >
+                  {health.local_beta_ready
+                    ? t("settings.localBetaReady")
+                    : t("settings.localBetaBlocked")}
+                </Badge>
+              </div>
+              <p className="mt-2 text-xs text-muted-foreground">
+                {t("settings.localBetaDescription")}
+              </p>
+              {blockers.length > 0 ? (
+                <div className="mt-3 space-y-1">
+                  <p className="text-xs font-medium text-foreground">
+                    {t("settings.localBetaBlockers")}
+                  </p>
+                  <ul className="list-disc space-y-1 pl-4 text-xs text-muted-foreground">
+                    {blockers.map((item) => (
+                      <li key={item}>
+                        {getIssueLabel(item)}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              {warnings.length > 0 ? (
+                <div className="mt-3 space-y-1">
+                  <p className="text-xs font-medium text-foreground">
+                    {t("settings.localBetaWarnings")}
+                  </p>
+                  <ul className="list-disc space-y-1 pl-4 text-xs text-muted-foreground">
+                    {warnings.map((item) => (
+                      <li key={item}>
+                        {getIssueLabel(item)}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
             </div>
           </>
         ) : (

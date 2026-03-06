@@ -15,13 +15,18 @@ import {
   submitAnswer,
   type WrongAnswer,
 } from "@/lib/api";
+import { AiFeatureBlocked } from "@/components/shared/ai-feature-blocked";
 import { toast } from "sonner";
 
 interface ReviewViewProps {
   courseId: string;
+  aiActionsEnabled?: boolean;
 }
 
-export function ReviewView({ courseId }: ReviewViewProps) {
+export function ReviewView({
+  courseId,
+  aiActionsEnabled = true,
+}: ReviewViewProps) {
   const t = useT();
   const [wrongAnswers, setWrongAnswers] = useState<WrongAnswer[]>([]);
   const [reviewMarkdown, setReviewMarkdown] = useState("");
@@ -176,13 +181,14 @@ export function ReviewView({ courseId }: ReviewViewProps) {
     <div className="flex-1 flex flex-col overflow-hidden" data-testid="review-panel">
       <div className="px-3 py-2 border-b flex items-center justify-between text-xs text-muted-foreground">
         <span>{wrongAnswers.length} mistakes ready for review</span>
-        <Button size="sm" onClick={() => void handleGenerateReview()} disabled={generating}>
+        <Button size="sm" onClick={() => void handleGenerateReview()} disabled={!aiActionsEnabled || generating}>
           {generating ? <span className="mr-1 animate-pulse">...</span> : null}
           Generate Review
         </Button>
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        {!aiActionsEnabled ? <AiFeatureBlocked compact /> : null}
         {stats ? (
           <div className="rounded-lg border bg-card p-4 space-y-3" data-testid="review-stats">
             <div className="flex flex-wrap gap-2">
@@ -241,7 +247,7 @@ export function ReviewView({ courseId }: ReviewViewProps) {
                     size="sm"
                     variant="outline"
                     onClick={() => void handleDerive(item.id)}
-                    disabled={derivingId === item.id}
+                    disabled={!aiActionsEnabled || derivingId === item.id}
                   >
                     {derivingId === item.id ? "..." : "Derive"}
                   </Button>
@@ -258,7 +264,7 @@ export function ReviewView({ courseId }: ReviewViewProps) {
                       data-testid={`diagnostic-${item.id}-${key}`}
                       className="w-full rounded-md border px-3 py-2 text-left text-sm hover:border-primary/50"
                       onClick={() => void handleDiagnosticAnswer(item.id, key)}
-                      disabled={draft.pending}
+                      disabled={!aiActionsEnabled || draft.pending}
                     >
                       <span className="mr-2 font-medium">{key}.</span>
                       {draft.options?.[key]}

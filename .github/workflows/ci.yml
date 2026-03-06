@@ -22,12 +22,14 @@ jobs:
         with:
           python-version: "3.11"
           cache: "pip"
-          cache-dependency-path: apps/api/requirements.txt
+          cache-dependency-path: |
+            apps/api/requirements-core.txt
+            apps/api/requirements-full.txt
 
       - name: Install API dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r apps/api/requirements.txt
+          pip install -r apps/api/requirements-full.txt
           pip install pytest
 
       - name: Audit Python dependencies
@@ -133,12 +135,14 @@ jobs:
         with:
           python-version: "3.11"
           cache: "pip"
-          cache-dependency-path: apps/api/requirements.txt
+          cache-dependency-path: |
+            apps/api/requirements-core.txt
+            apps/api/requirements-full.txt
 
       - name: Install API dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r apps/api/requirements.txt
+          pip install -r apps/api/requirements-full.txt
           pip install pytest pytest-timeout
 
       - name: Prepare database
@@ -258,12 +262,14 @@ jobs:
         with:
           python-version: "3.11"
           cache: "pip"
-          cache-dependency-path: apps/api/requirements.txt
+          cache-dependency-path: |
+            apps/api/requirements-core.txt
+            apps/api/requirements-full.txt
 
       - name: Install API dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r apps/api/requirements.txt
+          pip install -r apps/api/requirements-full.txt
 
       - name: Prepare database
         run: python scripts/setup_ci_db.py
@@ -343,12 +349,14 @@ jobs:
         with:
           python-version: "3.11"
           cache: "pip"
-          cache-dependency-path: apps/api/requirements.txt
+          cache-dependency-path: |
+            apps/api/requirements-core.txt
+            apps/api/requirements-full.txt
 
       - name: Install API dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r apps/api/requirements.txt
+          pip install -r apps/api/requirements-full.txt
 
       - name: Setup Node
         uses: actions/setup-node@v6

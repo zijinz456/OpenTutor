@@ -55,6 +55,7 @@ export interface CourseOverviewCard extends Course {
 export interface HealthStatus {
   status: string;
   version: string;
+  database_backend?: string;
   database: string;
   schema?: "ready" | "missing" | "unknown" | string;
   migration_required?: boolean;
@@ -73,6 +74,9 @@ export interface HealthStatus {
   code_sandbox_backend: string;
   code_sandbox_runtime: string;
   code_sandbox_runtime_available: boolean;
+  local_beta_ready?: boolean;
+  local_beta_blockers?: string[];
+  local_beta_warnings?: string[];
 }
 
 export async function listCourseOverview(): Promise<CourseOverviewCard[]> {
@@ -171,6 +175,22 @@ export async function saveGeneratedNotes(
 
 export async function listGeneratedNoteBatches(courseId: string): Promise<GeneratedAssetBatchSummary[]> {
   return request(`/notes/generated/${courseId}`);
+}
+
+export interface AiNoteForNode {
+  id: string;
+  title: string;
+  markdown: string;
+  format: string;
+  auto_generated: boolean;
+  version: number;
+}
+
+export async function getAiNoteForNode(
+  courseId: string,
+  nodeId: string,
+): Promise<AiNoteForNode | null> {
+  return request(`/notes/generated/${courseId}/by-node/${nodeId}`);
 }
 
 export async function uploadFile(

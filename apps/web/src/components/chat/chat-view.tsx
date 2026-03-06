@@ -7,10 +7,12 @@ import { ChatHeader } from "@/components/chat/chat-header";
 import { MessageList } from "@/components/chat/message-list";
 import { ChatInput } from "@/components/chat/chat-input";
 import { ToolStatus } from "@/components/chat/tool-status";
+import { AiFeatureBlocked } from "@/components/shared/ai-feature-blocked";
 import type { ChatAction } from "@/lib/api";
 
 interface ChatViewProps {
   courseId: string;
+  aiActionsEnabled?: boolean;
 }
 
 /**
@@ -19,7 +21,7 @@ interface ChatViewProps {
  * Sits at the bottom of the workspace (full width, like a VS Code terminal
  * panel). Layout: header + message list + tool-status bar + input bar.
  */
-export function ChatView({ courseId }: ChatViewProps) {
+export function ChatView({ courseId, aiActionsEnabled = true }: ChatViewProps) {
   const messages = useChatStore((s) => s.messages);
   const toolStatus = useChatStore((s) => s.toolStatus);
   const setCourseContext = useChatStore((s) => s.setCourseContext);
@@ -85,7 +87,9 @@ export function ChatView({ courseId }: ChatViewProps) {
 
       <ToolStatus status={toolStatus} />
 
-      <ChatInput courseId={courseId} />
+      {!aiActionsEnabled ? <AiFeatureBlocked compact className="mx-3 mb-2" /> : null}
+
+      <ChatInput courseId={courseId} disabled={!aiActionsEnabled} />
     </div>
   );
 }

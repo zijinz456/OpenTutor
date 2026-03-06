@@ -1,0 +1,40 @@
+-r requirements-core.txt
+
+# OpenTutor full dependency set for Docker, CI, and optional integrations.
+
+# Redis / background infra
+redis==5.2.1
+apscheduler>=3.10.0
+
+# Heavier extraction and browser automation
+crawl4ai==0.4.0
+python-magic==0.4.27
+scrapling>=0.2
+playwright>=1.49.0
+canvasapi>=3.3.0
+
+# Push notifications
+pywebpush>=2.0.0
+py-vapid>=1.9.0
+
+# MCP / plugin ecosystem
+mcp>=1.0.0
+fastapi-mcp>=0.1.0
+pluggy>=1.5.0
+
+# Action-space integrations
+tavily-python>=0.5.0
+genanki>=0.13.0
+icalendar>=6.0.0
+google-auth-oauthlib>=1.2.0
+google-api-python-client>=2.100.0
+notion-client>=2.0.0
+
+# Advanced multimodal / experimentation
+pix2tex>=0.1.2
+contextualbandits>=0.3.20
+scikit-learn>=1.4.0
+pyBKT>=1.4
+
+# Testing support used in CI
+pytest-asyncio>=0.23.0

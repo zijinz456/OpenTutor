@@ -12,12 +12,14 @@ import {
 import { useWorkspaceStore } from "@/store/workspace";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { AiFeatureBlocked } from "@/components/shared/ai-feature-blocked";
 
 interface QuizViewProps {
   courseId: string;
+  aiActionsEnabled?: boolean;
 }
 
-export function QuizView({ courseId }: QuizViewProps) {
+export function QuizView({ courseId, aiActionsEnabled = true }: QuizViewProps) {
   const t = useT();
   const refreshKey = useWorkspaceStore((s) => s.sectionRefreshKey["practice"]);
   const [problems, setProblems] = useState<QuizProblem[]>([]);
@@ -96,7 +98,8 @@ export function QuizView({ courseId }: QuizViewProps) {
       <div className="flex-1 flex flex-col items-center justify-center p-8 text-center" data-testid="quiz-panel">
         <h3 className="text-sm font-medium mb-1">{t("quiz.title")}</h3>
         <p className="text-xs text-muted-foreground max-w-xs">{t("quiz.empty")}</p>
-        <Button className="mt-3" size="sm" onClick={() => void handleExtract()} disabled={extracting}>
+        {!aiActionsEnabled ? <AiFeatureBlocked compact className="mt-3 w-full max-w-sm text-left" /> : null}
+        <Button className="mt-3" size="sm" onClick={() => void handleExtract()} disabled={!aiActionsEnabled || extracting}>
           {extracting ? `${t("quiz.generating")}...` : t("quiz.generate")}
         </Button>
         {extractStatus ? (

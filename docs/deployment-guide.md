@@ -143,7 +143,7 @@ ANTHROPIC_API_KEY=sk-ant-...
 cd apps/api
 python3.11 -m venv .venv
 source .venv/bin/activate         # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -r requirements-full.txt
 ```
 
 ### Step 3: Database

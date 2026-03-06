@@ -1,0 +1,59 @@
+# OpenTutor core runtime dependencies for host/local single-user beta.
+# Prioritizes the default SQLite lite path while still supporting optional
+# PostgreSQL mode during host installs.
+
+# Core
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.19
+pydantic>=2.11.0,<3.0.0
+pydantic-settings>=2.7.1,<3.0.0
+
+# Database
+sqlalchemy[asyncio]==2.0.47
+asyncpg==0.30.0
+aiosqlite>=0.20.0
+alembic==1.14.1
+pgvector==0.3.6
+
+# LLM Providers
+openai==1.65.2
+anthropic==0.46.0
+
+# File Parsing — host-safe baseline
+lxml>=5.3,<6.0
+beautifulsoup4==4.12.3
+trafilatura==2.0.0
+python-pptx==1.0.2
+python-docx==1.1.2
+filetype==1.2.0
+
+# Token counting & content trimming
+tiktoken==0.7.0
+
+# Content dedup
+xxhash==3.6.0
+
+# PDF extraction
+pypdf>=6.0.0
+
+# Content Classification
+thefuzz==0.22.1
+
+# Workflow Engine
+langgraph>=0.2.0
+langgraph-checkpoint-postgres>=3.0.0
+langgraph-checkpoint-sqlite>=2.0.0
+
+# Authentication
+bcrypt>=4.0.0
+python-jose[cryptography]>=3.3.0
+
+# YAML parsing
+pyyaml>=6.0
+
+# Utilities
+tenacity==9.0.0
+httpx==0.28.1
+python-dotenv==1.0.1
+sse-starlette==2.2.1

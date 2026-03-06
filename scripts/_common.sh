@@ -239,6 +239,18 @@ else:
 PY
 }
 
+is_url_ready() {
+  local url="$1"
+  local status
+
+  status="$(curl -sS -o /dev/null -w '%{http_code}' "$url" || true)"
+  [[ "$status" =~ ^(2|3) ]]
+}
+
+fetch_api_health_json() {
+  curl -fsS "${API_BASE}/health" 2>/dev/null
+}
+
 load_env_file() {
   local env_file="$1"
   [[ -f "${env_file}" ]] || return 1

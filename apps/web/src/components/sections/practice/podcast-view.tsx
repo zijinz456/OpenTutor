@@ -4,9 +4,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { buildAuthHeaders } from "@/lib/auth";
 import { PodcastPlayer } from "@/components/audio/podcast-player";
+import { AiFeatureBlocked } from "@/components/shared/ai-feature-blocked";
 
 interface PodcastViewProps {
   courseId: string;
+  aiActionsEnabled?: boolean;
 }
 
 type PodcastStyle = "review" | "deep_dive" | "exam_prep";
@@ -29,7 +31,10 @@ const STYLE_OPTIONS: { value: PodcastStyle; label: string }[] = [
   { value: "exam_prep", label: "Exam Prep" },
 ];
 
-export function PodcastView({ courseId }: PodcastViewProps) {
+export function PodcastView({
+  courseId,
+  aiActionsEnabled = true,
+}: PodcastViewProps) {
   const [topic, setTopic] = useState("");
   const [style, setStyle] = useState<PodcastStyle>("review");
   const [generating, setGenerating] = useState(false);
@@ -130,6 +135,7 @@ export function PodcastView({ courseId }: PodcastViewProps) {
   return (
     <div className="flex-1 flex flex-col p-4 gap-4 overflow-y-auto">
       <div className="space-y-3">
+        {!aiActionsEnabled ? <AiFeatureBlocked compact /> : null}
         <div>
           <label htmlFor="podcast-topic" className="text-sm font-medium block mb-1">
             Topic
@@ -144,7 +150,7 @@ export function PodcastView({ courseId }: PodcastViewProps) {
             onKeyDown={(e) => {
               if (e.key === "Enter") void handleGenerate();
             }}
-            disabled={generating}
+            disabled={!aiActionsEnabled || generating}
           />
         </div>
 
@@ -158,7 +164,7 @@ export function PodcastView({ courseId }: PodcastViewProps) {
               variant={style === opt.value ? "secondary" : "ghost"}
               className="h-6 px-2 text-xs"
               onClick={() => setStyle(opt.value)}
-              disabled={generating}
+              disabled={!aiActionsEnabled || generating}
             >
               {opt.label}
             </Button>
@@ -167,7 +173,7 @@ export function PodcastView({ courseId }: PodcastViewProps) {
 
         <Button
           size="sm"
-          disabled={!topic.trim() || generating}
+          disabled={!aiActionsEnabled || !topic.trim() || generating}
           onClick={() => void handleGenerate()}
         >
           {generating ? "Generating..." : "Generate Podcast"}

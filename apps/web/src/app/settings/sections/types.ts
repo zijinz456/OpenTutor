@@ -71,6 +71,16 @@ export function getLlmStatusMeta(t: (key: string) => string) {
   };
 }
 
+export function getLocalBetaIssueMeta(t: (key: string) => string) {
+  return {
+    database_unreachable: t("settings.localBeta.databaseUnreachable"),
+    schema_not_ready: t("settings.localBeta.schemaNotReady"),
+    llm_not_ready: t("settings.localBeta.llmNotReady"),
+    llm_degraded: t("settings.localBeta.llmDegraded"),
+    sandbox_runtime_unavailable: t("settings.localBeta.sandboxUnavailable"),
+  } satisfies Record<string, string>;
+}
+
 export type {
   HealthStatus,
   LlmConnectionTestResult,

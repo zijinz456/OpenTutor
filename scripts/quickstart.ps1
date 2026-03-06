@@ -40,6 +40,48 @@ function Write-Fail($msg) {
     Write-Host "ERROR: $msg" -ForegroundColor Red
     exit 1
 }
+function Get-DotEnvValue {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Name
+    )
+
+    if (-not (Test-Path $Path)) {
+        return ""
+    }
+
+    foreach ($line in Get-Content $Path) {
+        if ($line -match "^\s*#") {
+            continue
+        }
+        if ($line -match "^\s*$Name\s*=\s*(.*)\s*$") {
+            return $matches[1].Trim().Trim("'`"")
+        }
+    }
+    return ""
+}
+function Resolve-SqlitePath {
+    param([string]$DatabaseUrl)
+
+    if ([string]::IsNullOrWhiteSpace($DatabaseUrl)) {
+        return Join-Path $HOME ".opentutor\data.db"
+    }
+
+    $path = $DatabaseUrl
+    foreach ($prefix in @("sqlite+aiosqlite:///", "sqlite:///")) {
+        if ($path.StartsWith($prefix)) {
+            $path = $path.Substring($prefix.Length)
+            break
+        }
+    }
+    if ($path.StartsWith("~/")) {
+        $path = Join-Path $HOME $path.Substring(2)
+    } elseif ($path -match "^/[A-Za-z]:/") {
+        $path = $path.Substring(1)
+    }
+    $nativePath = $path -replace "/", [IO.Path]::DirectorySeparatorChar
+    return [IO.Path]::GetFullPath($nativePath)
+}
 
 # ---------------------------------------------------------------------------
 # 0. WSL2 hint
@@ -73,12 +115,6 @@ Write-Log "  Node $(node --version)"
 if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
     Write-Fail "npm not found. Install Node.js from https://nodejs.org/"
 }
-
-# PostgreSQL
-if (-not (Get-Command psql -ErrorAction SilentlyContinue)) {
-    Write-Fail "PostgreSQL (psql) not found. Download from https://www.postgresql.org/download/windows/"
-}
-Write-Log "  psql found"
 
 # Python 3.11 — try several candidate commands
 $PyBin = $null
@@ -133,11 +169,25 @@ Write-Step "Environment configuration"
 if (-not (Test-Path $EnvFile)) {
     Copy-Item (Join-Path $RootDir ".env.example") $EnvFile
     Write-Log "  .env created from .env.example"
-    Write-Log "  You can add your LLM API key later for full functionality."
-    Write-Log "  (The app will use mock responses until an API key is configured.)"
+    Write-Log "  Connect Ollama or add an API key for AI features."
 } else {
     Write-Log "  .env already exists"
 }
+
+$DatabaseUrl = Get-DotEnvValue -Path $EnvFile -Name "DATABASE_URL"
+if (-not [string]::IsNullOrWhiteSpace($DatabaseUrl) -and -not $DatabaseUrl.StartsWith("sqlite")) {
+    $DbMode = "postgresql"
+    $DbDisplay = $DatabaseUrl
+} else {
+    $DbMode = "sqlite"
+    if ([string]::IsNullOrWhiteSpace($DatabaseUrl)) {
+        $DbDisplay = "sqlite+aiosqlite:///$HOME/.opentutor/data.db"
+    } else {
+        $DbDisplay = $DatabaseUrl
+    }
+}
+Write-Log "  Database mode: $DbMode"
+Write-Log "  Database URL:  $DbDisplay"
 
 # ---------------------------------------------------------------------------
 # 3. Python virtual environment
@@ -153,67 +203,86 @@ if (-not (Test-Path $VenvPython)) {
 }
 
 Write-Log "  Installing Python dependencies ..."
-& $VenvPip install -q -r (Join-Path $ApiDir "requirements.txt")
+& $VenvPip install -q -r (Join-Path $ApiDir "requirements-core.txt")
 Write-Log "  Done"
+Write-Log "  Optional integrations remain available via requirements-full.txt"
 
 # ---------------------------------------------------------------------------
 # 4. Database setup
 # ---------------------------------------------------------------------------
 Write-Step "Database"
 
-$DbName = "opentutor"
+if ($DbMode -eq "postgresql") {
+    if (-not (Get-Command psql -ErrorAction SilentlyContinue)) {
+        Write-Fail "PostgreSQL (psql) not found. Download from https://www.postgresql.org/download/windows/"
+    }
+    Write-Log "  psql found"
 
-# Check if PostgreSQL is running
-$pgReady = $false
-try {
-    pg_isready -q 2>$null | Out-Null
-    if ($LASTEXITCODE -eq 0) { $pgReady = $true }
-} catch { }
-
-if (-not $pgReady) {
-    Write-Log "  PostgreSQL is not running. Attempting to start ..."
+    $DbName = "opentutor"
     try {
-        $pgService = Get-Service -Name "postgresql*" -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($pgService -and $pgService.Status -ne "Running") {
-            Start-Service $pgService.Name -ErrorAction SilentlyContinue
-            Start-Sleep -Seconds 3
+        $uri = [Uri]$DatabaseUrl
+        if ($uri.AbsolutePath) {
+            $DbName = $uri.AbsolutePath.Trim("/")
         }
     } catch { }
-    # Re-check
+
+    $pgReady = $false
     try {
         pg_isready -q 2>$null | Out-Null
         if ($LASTEXITCODE -eq 0) { $pgReady = $true }
     } catch { }
     if (-not $pgReady) {
-        Write-Fail "PostgreSQL is not running. Start it via Services (services.msc), pg_ctl, or: Start-Service postgresql-x64-16"
+        Write-Log "  PostgreSQL is not running. Attempting to start ..."
+        try {
+            $pgService = Get-Service -Name "postgresql*" -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($pgService -and $pgService.Status -ne "Running") {
+                Start-Service $pgService.Name -ErrorAction SilentlyContinue
+                Start-Sleep -Seconds 3
+            }
+        } catch { }
+        try {
+            pg_isready -q 2>$null | Out-Null
+            if ($LASTEXITCODE -eq 0) { $pgReady = $true }
+        } catch { }
+        if (-not $pgReady) {
+            Write-Fail "PostgreSQL is not running. Start it via Services (services.msc), pg_ctl, or: Start-Service postgresql-x64-16"
+        }
     }
-}
-Write-Log "  PostgreSQL is running"
+    Write-Log "  PostgreSQL is running"
 
-# Create database if it doesn't exist
-$dbList = psql -lqt 2>$null
-if ($dbList -and ($dbList | Select-String -Pattern "\b$DbName\b" -Quiet)) {
-    Write-Log "  Database '$DbName' already exists"
+    $dbList = psql -lqt 2>$null
+    if ($dbList -and ($dbList | Select-String -Pattern "\b$DbName\b" -Quiet)) {
+        Write-Log "  Database '$DbName' already exists"
+    } else {
+        Write-Log "  Creating database '$DbName' ..."
+        createdb $DbName 2>$null
+    }
+
+    psql -d $DbName -c "CREATE EXTENSION IF NOT EXISTS vector;" 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Log "  Warning: Could not create pgvector extension. See https://github.com/pgvector/pgvector#windows"
+    }
 } else {
-    Write-Log "  Creating database '$DbName' ..."
-    createdb $DbName 2>$null
-}
-
-# Enable pgvector extension
-psql -d $DbName -c "CREATE EXTENSION IF NOT EXISTS vector;" 2>$null
-if ($LASTEXITCODE -ne 0) {
-    Write-Log "  Warning: Could not create pgvector extension. See https://github.com/pgvector/pgvector#windows"
+    $sqlitePath = Resolve-SqlitePath -DatabaseUrl $DatabaseUrl
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $sqlitePath) | Out-Null
+    Write-Log "  Using SQLite lite mode at $sqlitePath"
+    Write-Log "  PostgreSQL is not required for this quickstart."
 }
 
 # ---------------------------------------------------------------------------
 # 5. Database migrations
 # ---------------------------------------------------------------------------
-Write-Step "Running database migrations"
+if ($DbMode -eq "postgresql") {
+    Write-Step "Running database migrations"
 
-Push-Location $ApiDir
-& $VenvPython -m alembic upgrade head
-Pop-Location
-Write-Log "  Migrations complete"
+    Push-Location $ApiDir
+    & $VenvPython -m alembic upgrade head
+    Pop-Location
+    Write-Log "  Migrations complete"
+} else {
+    Write-Step "Database bootstrap"
+    Write-Log "  SQLite mode uses the app startup hooks to create tables and seed built-in data."
+}
 
 # ---------------------------------------------------------------------------
 # 6. Frontend dependencies
@@ -292,11 +361,23 @@ while ($true) {
 }
 Write-Log "  Web ready"
 
-# Check LLM status
+# Check local beta readiness
 $llmStatus = "unknown"
+$databaseBackend = "unknown"
+$localBetaReady = $false
+$localBetaBlockers = @()
 try {
     $health = Invoke-RestMethod -Uri "http://localhost:8000/api/health" -ErrorAction SilentlyContinue
     $llmStatus = $health.llm_status
+    if ($health.database_backend) {
+        $databaseBackend = $health.database_backend
+    }
+    if ($null -ne $health.local_beta_ready) {
+        $localBetaReady = [bool]$health.local_beta_ready
+    }
+    if ($health.local_beta_blockers) {
+        $localBetaBlockers = @($health.local_beta_blockers)
+    }
 } catch { }
 
 Write-Host ""
@@ -305,13 +386,21 @@ Write-Host "  OpenTutor is running!"
 Write-Host "  Web:    http://localhost:3000"
 Write-Host "  API:    http://localhost:8000/api"
 Write-Host "  Health: http://localhost:8000/api/health"
+Write-Host "  DB:     $databaseBackend"
 Write-Host ""
 if ($llmStatus -eq "ready") {
     Write-Host "  LLM: ready"
 } elseif ($llmStatus -eq "mock_fallback") {
-    Write-Host "  LLM: mock mode (add an API key to .env for real responses)"
+    Write-Host "  LLM: not ready for beta (connect Ollama or add an API key)"
 } else {
     Write-Host "  LLM: $llmStatus"
+}
+if ($localBetaReady) {
+    Write-Host "  Local beta readiness: ready"
+} else {
+    $blockers = if ($localBetaBlockers.Count -gt 0) { $localBetaBlockers -join ", " } else { "unknown" }
+    Write-Host "  Local beta readiness: blocked ($blockers)"
+    Write-Host "  Tip: open Settings in the app and connect a real LLM provider."
 }
 Write-Host ""
 Write-Host "  Press Ctrl+C to stop all services."

@@ -19,6 +19,8 @@ depends_on = None
 def upgrade() -> None:
     bind = op.get_bind()
     inspector = sa.inspect(bind)
+    if not inspector.has_table("scrape_sources"):
+        return
     columns = {c["name"] for c in inspector.get_columns("scrape_sources")}
 
     if "source_type" not in columns:
@@ -44,6 +46,8 @@ def upgrade() -> None:
 def downgrade() -> None:
     bind = op.get_bind()
     inspector = sa.inspect(bind)
+    if not inspector.has_table("scrape_sources"):
+        return
     constraints = {c["name"] for c in inspector.get_check_constraints("scrape_sources") if c.get("name")}
     if "ck_scrape_sources_source_type" in constraints:
         op.drop_constraint("ck_scrape_sources_source_type", "scrape_sources", type_="check")

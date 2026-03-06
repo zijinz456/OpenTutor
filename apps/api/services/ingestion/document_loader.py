@@ -295,9 +295,89 @@ class CanvasExtraction:
     """List of discovered file dicts: {"url": str, "filename": str, "content_type": str}"""
     pages_fetched: int = 0
     modules_found: int = 0
+    quiz_questions: list[dict] = field(default_factory=list)
+    """Parsed quiz questions with correct answers mapped from Canvas API weight field."""
 
 
-def _extract_file_urls_from_html(html: str, base_url: str) -> list[dict]:
+def _parse_canvas_quiz_question(question: dict, quiz_title: str) -> dict | None:
+    """Parse a Canvas API quiz question into a PracticeProblem-compatible dict.
+
+    Canvas answer objects include a `weight` field (100 = correct, 0 = wrong).
+    """
+    from bs4 import BeautifulSoup
+
+    q_text = question.get("question_text", "")
+    if not q_text:
+        return None
+    soup = BeautifulSoup(q_text, "lxml")
+    clean_text = soup.get_text(strip=True)
+    if not clean_text:
+        return None
+
+    canvas_type = question.get("question_type", "")
+    TYPE_MAP = {
+        "multiple_choice_question": "mc",
+        "true_false_question": "tf",
+        "short_answer_question": "short_answer",
+        "multiple_answers_question": "select_all",
+        "fill_in_multiple_blanks_question": "fill_blank",
+        "essay_question": "free_response",
+        "matching_question": "matching",
+    }
+    question_type = TYPE_MAP.get(canvas_type, "mc")
+
+    answers = question.get("answers", [])
+    options = None
+    correct_answer = None
+
+    if question_type in ("mc", "tf", "select_all"):
+        options = {}
+        correct_keys = []
+        for i, ans in enumerate(answers):
+            key = chr(ord("A") + i) if i < 26 else str(i + 1)
+            ans_text = ans.get("text", "") or ans.get("html", "")
+            if ans_text:
+                if not ans.get("text") and ans.get("html"):
+                    s = BeautifulSoup(ans_text, "lxml")
+                    ans_text = s.get_text(strip=True)
+                options[key] = ans_text
+                weight = ans.get("weight", 0)
+                if weight and float(weight) > 0:
+                    correct_keys.append(key)
+        correct_answer = ",".join(correct_keys) if correct_keys else None
+    elif question_type == "short_answer":
+        for ans in answers:
+            ans_text = ans.get("text", "")
+            weight = ans.get("weight", 0)
+            if ans_text and weight and float(weight) > 0:
+                correct_answer = ans_text
+                break
+
+    return {
+        "question_type": question_type,
+        "question": clean_text,
+        "options": options,
+        "correct_answer": correct_answer,
+        "explanation": None,
+        "difficulty_layer": 2,
+        "problem_metadata": {
+            "core_concept": quiz_title,
+            "bloom_level": "understand",
+            "potential_traps": [],
+            "layer_justification": "Imported from Canvas quiz",
+            "skill_focus": "concept check",
+            "source_section": quiz_title,
+            "source_kind": "canvas_import",
+        },
+    }
+
+
+def _extract_file_urls_from_html(
+    html: str,
+    base_url: str,
+    module_name: str | None = None,
+    item_title: str | None = None,
+) -> list[dict]:
     """Extract PDF and document file URLs from Canvas page HTML body.
 
     Finds links to files hosted on Canvas (course files, module attachments)
@@ -341,12 +421,17 @@ def _extract_file_urls_from_html(html: str, base_url: str) -> list[dict]:
                 filename = f"{link_text}{ext}" if ext else f"{link_text}.pdf"
 
             content_type = "application/pdf" if ext == ".pdf" or not ext else f"application/{ext.lstrip('.')}"
-            files.append({
+            entry = {
                 "url": download_url,
                 "display_url": full_url,
                 "filename": filename,
                 "content_type": content_type,
-            })
+            }
+            if module_name:
+                entry["module_name"] = module_name
+            if item_title:
+                entry["item_title"] = item_title
+            files.append(entry)
 
     return files
 
@@ -506,8 +591,12 @@ async def _try_canvas_api_deep(
                                                 page_text = soup.get_text(strip=True, separator="\n")
                                                 if page_text:
                                                     parts.append(page_text)
-                                                # Discover files in page HTML
-                                                file_urls = _extract_file_urls_from_html(body, base_url)
+                                                # Discover files in page HTML (with module context)
+                                                file_urls = _extract_file_urls_from_html(
+                                                    body, base_url,
+                                                    module_name=mod_name,
+                                                    item_title=item_title,
+                                                )
                                                 all_file_urls.extend(file_urls)
                                             pages_fetched += 1
                                     except Exception as e:
@@ -524,6 +613,8 @@ async def _try_canvas_api_deep(
                                         "display_url": f"{base_url}/courses/{course_id}/files/{content_id}",
                                         "filename": f"{item_title}.pdf",
                                         "content_type": "application/pdf",
+                                        "module_name": mod_name,
+                                        "item_title": item_title,
                                     })
                                 parts.append(f"#### {item_title} (File)")
 
@@ -615,7 +706,8 @@ async def _try_canvas_api_deep(
             except Exception:
                 pass
 
-            # ── 5. Quizzes (titles + questions for study material) ──
+            # ── 5. Quizzes (titles + questions → PracticeProblem-ready dicts) ──
+            all_quiz_questions: list[dict] = []
             try:
                 quizzes = await _canvas_api_paginate(
                     client,
@@ -659,6 +751,10 @@ async def _try_canvas_api_deep(
                                             ans_text = ans.get("text", "") or ans.get("html", "")
                                             if ans_text:
                                                 parts.append(f"  - {ans_text}")
+                                        # Parse into structured PracticeProblem dict
+                                        parsed = _parse_canvas_quiz_question(question, q_title)
+                                        if parsed:
+                                            all_quiz_questions.append(parsed)
                             except Exception:
                                 pass
                     parts.append("")
@@ -686,6 +782,7 @@ async def _try_canvas_api_deep(
                     file_urls=unique_files,
                     pages_fetched=pages_fetched,
                     modules_found=modules_found,
+                    quiz_questions=all_quiz_questions,
                 )
 
     except ImportError:

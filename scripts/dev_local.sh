@@ -4,9 +4,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/_common.sh"
 
-API_HOST="${API_HOST:-http://localhost:8000}"
+API_PORT="${API_PORT:-8000}"
+WEB_PORT="${WEB_PORT:-3000}"
+API_HOST="${API_HOST:-http://localhost:${API_PORT}}"
 API_BASE="${API_BASE:-${API_HOST}/api}"
-WEB_BASE_URL="${WEB_BASE_URL:-http://localhost:3000}"
+WEB_BASE_URL="${WEB_BASE_URL:-http://localhost:${WEB_PORT}}"
 UPLOAD_FILE="${UPLOAD_FILE:-${ROOT_DIR}/tests/e2e/fixtures/sample-course.md}"
 SCRAPE_URL="${SCRAPE_URL:-https://opentutor-e2e.local/binary-search}"
 WAIT_TIMEOUT_SECONDS="${WAIT_TIMEOUT_SECONDS:-240}"
@@ -22,6 +24,7 @@ usage() {
 Usage:
   scripts/dev_local.sh up [--build]
   scripts/dev_local.sh check-local-mode
+  scripts/dev_local.sh beta-check
   scripts/dev_local.sh migrate-host
   scripts/dev_local.sh preflight
   scripts/dev_local.sh verify-host
@@ -34,6 +37,7 @@ Usage:
 Commands:
   up              Start db, redis, api, and web with Docker Compose and wait for readiness.
   check-local-mode Validate that .env and the running API are both using local single-user mode.
+  beta-check      Fail unless the running local stack is ready for the technical-user single-user beta.
   migrate-host    Run Alembic migrations with the resolved host Python interpreter.
   preflight       Check local prerequisites and stack readiness before running full verification.
   verify-host     Run all checks that can execute on the current host, and mark stack-gated checks as skipped.
@@ -48,8 +52,10 @@ Flags for verify:
   --with-real-llm Also run the real-provider API and browser validation checks.
 
 Important environment variables:
-  API_HOST=http://localhost:8000
-  WEB_BASE_URL=http://localhost:3000
+  API_PORT=8000
+  WEB_PORT=3000
+  API_HOST=http://localhost:${API_PORT}
+  WEB_BASE_URL=http://localhost:${WEB_PORT}
   UPLOAD_FILE=tests/e2e/fixtures/sample-course.md
   SCRAPE_URL=https://opentutor-e2e.local/binary-search
   PLAYWRIGHT_PROJECT=chromium
@@ -162,6 +168,44 @@ is_url_ready() {
 
 fetch_api_health_json() {
   curl -fsS "${API_BASE}/health" 2>/dev/null
+}
+
+compose_service_url() {
+  local service="$1"
+  local container_port="$2"
+  local mapping
+  local host
+  local port
+
+  has_compose || return 1
+  mapping="$(compose port "${service}" "${container_port}" 2>/dev/null | tail -n 1)"
+  [[ -n "${mapping}" ]] || return 1
+
+  host="${mapping%:*}"
+  port="${mapping##*:}"
+  host="${host#[}"
+  host="${host%]}"
+  if [[ "${host}" == "0.0.0.0" || "${host}" == "::" || -z "${host}" ]]; then
+    host="localhost"
+  fi
+
+  printf 'http://%s:%s\n' "${host}" "${port}"
+}
+
+refresh_stack_endpoints_from_compose() {
+  local compose_api_host
+  local compose_web_base
+
+  compose_api_host="$(compose_service_url api 8000 || true)"
+  if [[ -n "${compose_api_host}" ]]; then
+    API_HOST="${compose_api_host}"
+    API_BASE="${API_HOST}/api"
+  fi
+
+  compose_web_base="$(compose_service_url web 3000 || true)"
+  if [[ -n "${compose_web_base}" ]]; then
+    WEB_BASE_URL="${compose_web_base}"
+  fi
 }
 
 set_mock_llm_runtime() {
@@ -339,6 +383,29 @@ print(f"{status}\t{'; '.join(notes)}")
 PY
 }
 
+inspect_local_beta_health() {
+  local health_json="$1"
+
+  [[ -n "${PY_BIN}" ]] || fail "Python interpreter not found for health JSON inspection."
+
+  HEALTH_JSON="${health_json}" "${PY_BIN}" - <<'PY'
+import json
+import os
+
+data = json.loads(os.environ["HEALTH_JSON"])
+print(
+    "|".join(
+        [
+            "ready" if data.get("local_beta_ready") else "blocked",
+            ", ".join(data.get("local_beta_blockers") or []),
+            ", ".join(data.get("local_beta_warnings") or []),
+            data.get("database_backend", "unknown"),
+        ]
+    )
+)
+PY
+}
+
 guard_stack_health() {
   local health_json
   local diagnosis
@@ -466,6 +533,7 @@ run_preflight() {
 
   CURRENT_CHECK="Stack readiness"
   step "Stack readiness"
+  refresh_stack_endpoints_from_compose
   if is_url_ready "${API_BASE}/health"; then
     api_ready=1
     record_ok "api reachable: ${API_BASE}/health"
@@ -507,6 +575,7 @@ run_host_verify() {
   require_python_311 "${PY_BIN}"
   [[ -f "${UPLOAD_FILE}" ]] || fail "Upload fixture not found: ${UPLOAD_FILE}"
   init_report
+  refresh_stack_endpoints_from_compose
 
   run_reported "Service-layer tests" "${PY_BIN}" -m pytest tests/test_services.py -q
   run_reported "Agent regression tests" "${PY_BIN}" -m pytest tests/test_eval_regressions.py tests/test_agent_runtime_regressions.py -q
@@ -541,6 +610,59 @@ run_host_verify() {
   log "JSON report written to ${REPORT_JSON_FILE}"
 }
 
+run_beta_check() {
+  require_cmd curl
+  [[ -n "${PY_BIN}" ]] || fail "Python interpreter not found. Expected apps/api/.venv/bin/python or python3.11."
+  require_python_311 "${PY_BIN}"
+  [[ -f "${UPLOAD_FILE}" ]] || fail "Upload fixture not found: ${UPLOAD_FILE}"
+  init_report
+  refresh_stack_endpoints_from_compose
+
+  CURRENT_CHECK="Local deployment mode"
+  step "Local deployment mode"
+  bash "${ROOT_DIR}/scripts/check_local_mode.sh" --env-file "${ROOT_DIR}/.env"
+  record_ok "single-user local mode confirmed"
+
+  CURRENT_CHECK="Stack readiness"
+  step "Stack readiness"
+  wait_for_url "API health" "${API_BASE}/health" "${WAIT_TIMEOUT_SECONDS}"
+  wait_for_url "Web app" "${WEB_BASE_URL}" "${WAIT_TIMEOUT_SECONDS}"
+  record_ok "API and web became ready"
+  guard_stack_health
+
+  local health_json
+  local beta_state
+  local beta_blockers
+  local beta_warnings
+  local beta_backend
+  local beta_diag
+  local llm_primary
+  local llm_status
+
+  health_json="$(fetch_api_health_json)"
+  beta_diag="$(inspect_local_beta_health "${health_json}")"
+  IFS='|' read -r beta_state beta_blockers beta_warnings beta_backend <<< "${beta_diag}"
+  llm_primary="$(json_get_field "${health_json}" "llm_primary")"
+  llm_status="$(json_get_field "${health_json}" "llm_status")"
+
+  CURRENT_CHECK="Local beta readiness"
+  step "Local beta readiness"
+  if [[ "${beta_state}" != "ready" ]]; then
+    record_result "FAIL" "Local beta blockers: ${beta_blockers:-unknown} (llm=${llm_primary:-unknown}/${llm_status:-unknown})"
+    fail "Local beta blockers detected: ${beta_blockers:-unknown} (llm=${llm_primary:-unknown}/${llm_status:-unknown})"
+  fi
+  record_ok "Running stack is ready for the local single-user beta (${beta_backend})"
+  if [[ -n "${beta_warnings}" ]]; then
+    record_warn "Non-blocking warnings: ${beta_warnings}"
+  fi
+
+  run_reported "Strict smoke test" bash -lc "API_BASE='${API_HOST}' UPLOAD_FILE='${UPLOAD_FILE}' SCRAPE_URL='${SCRAPE_URL}' STRICT_LLM='1' bash '${ROOT_DIR}/scripts/smoke_test.sh'"
+
+  log ""
+  log "Report written to ${REPORT_FILE}"
+  log "JSON report written to ${REPORT_JSON_FILE}"
+}
+
 run_verify() {
   local run_all_e2e=0
   local run_real_llm=0
@@ -566,6 +688,7 @@ run_verify() {
   [[ -n "${PY_BIN}" ]] || fail "Python interpreter not found. Expected apps/api/.venv/bin/python or python3.11."
   require_python_311 "${PY_BIN}"
   [[ -f "${UPLOAD_FILE}" ]] || fail "Upload fixture not found: ${UPLOAD_FILE}"
+  refresh_stack_endpoints_from_compose
 
   CURRENT_CHECK="Stack readiness wait"
   step "Waiting for local stack"
@@ -616,8 +739,11 @@ case "${command}" in
     else
       compose up -d db redis api web
     fi
+    refresh_stack_endpoints_from_compose
     wait_for_url "API health" "${API_BASE}/health" "${WAIT_TIMEOUT_SECONDS}"
     wait_for_url "Web app" "${WEB_BASE_URL}" "${WAIT_TIMEOUT_SECONDS}"
+    log "  API_HOST=${API_HOST}"
+    log "  WEB_BASE_URL=${WEB_BASE_URL}"
     compose ps
     ;;
   migrate-host)
@@ -625,6 +751,9 @@ case "${command}" in
     ;;
   check-local-mode)
     bash "${ROOT_DIR}/scripts/check_local_mode.sh" --env-file "${ROOT_DIR}/.env"
+    ;;
+  beta-check)
+    run_beta_check
     ;;
   preflight)
     run_preflight

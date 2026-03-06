@@ -3,10 +3,10 @@ import uuid
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
-from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
+import sqlalchemy as sa
 from sqlalchemy.exc import ProgrammingError
 
 from libs.exceptions import NotFoundError, ValidationError
@@ -23,7 +23,8 @@ from services.auth.dependency import get_current_user
 from services.integrations import google_calendar
 from services.llm.local_config import get_llm_runtime_config, update_llm_runtime_config
 from services.llm import router as llm_router
-from services.migrations import summarize_migration_state
+from services.health import _local_beta_readiness
+from services.migrations import bootstrap_alembic_version_table, summarize_migration_state
 from services.preference.scene import DEFAULT_SCENE, detect_scene
 
 
@@ -162,6 +163,38 @@ def test_summarize_migration_state_accepts_current_head():
     assert state.migration_required is False
     assert state.migration_status == "ready"
     assert state.alembic_version_present is True
+
+
+def test_bootstrap_alembic_version_table_stamps_when_schema_exists(monkeypatch):
+    monkeypatch.setattr("services.migrations.get_expected_migration_heads", lambda: ["20260307_0019"])
+    engine = sa.create_engine("sqlite:///:memory:")
+
+    with engine.begin() as conn:
+        conn.execute(sa.text("CREATE TABLE users (id INTEGER PRIMARY KEY)"))
+
+        stamped = bootstrap_alembic_version_table(conn)
+        versions = conn.execute(sa.text("SELECT version_num FROM alembic_version")).fetchall()
+
+    assert stamped == ["20260307_0019"]
+    assert versions == [("20260307_0019",)]
+
+
+def test_local_beta_readiness_blocks_degraded_llm():
+    migration_state = summarize_migration_state(
+        table_names={"users", "alembic_version"},
+        current_heads=["20260306_0017"],
+        expected_heads=["20260306_0017"],
+    )
+
+    blockers, warnings = _local_beta_readiness(
+        db_ok=True,
+        migration_state=migration_state,
+        llm_status="degraded",
+        sandbox_available=True,
+    )
+
+    assert blockers == ["llm_unhealthy"]
+    assert warnings == []
 
 
 class _ScalarResult:
