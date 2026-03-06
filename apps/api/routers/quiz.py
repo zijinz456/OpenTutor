@@ -5,7 +5,7 @@ import uuid
 
 logger = logging.getLogger(__name__)
 
-from fastapi import APIRouter, BackgroundTasks, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -369,7 +369,7 @@ async def submit_answer(
 async def mastery_history(
     course_id: uuid.UUID,
     content_node_id: uuid.UUID | None = None,
-    limit: int = 50,
+    limit: int = Query(default=50, ge=1, le=200),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):

@@ -55,6 +55,38 @@ def _resolve_actions(actions: list[dict]) -> list[dict]:
     return resolved
 
 
+def _get_fernet():
+    """Get Fernet cipher from encryption_key config. Returns None if unavailable."""
+    try:
+        from config import settings
+        if settings.encryption_key:
+            from cryptography.fernet import Fernet
+            return Fernet(settings.encryption_key.encode() if isinstance(settings.encryption_key, str) else settings.encryption_key)
+    except (ImportError, Exception) as e:
+        logger.debug("Fernet encryption unavailable: %s", e)
+    return None
+
+
+def _encrypt_data(data: str) -> str:
+    """Encrypt JSON string if encryption key is configured."""
+    fernet = _get_fernet()
+    if fernet:
+        return fernet.encrypt(data.encode()).decode()
+    return data
+
+
+def _decrypt_data(data: str) -> str:
+    """Decrypt data if encrypted, otherwise return as-is (backward compat)."""
+    fernet = _get_fernet()
+    if fernet:
+        try:
+            return fernet.decrypt(data.encode()).decode()
+        except Exception:
+            # Data is not encrypted (legacy file) — return as-is
+            return data
+    return data
+
+
 class SessionManager:
     """Manages Playwright browser sessions with storageState persistence."""
 
@@ -77,24 +109,38 @@ class SessionManager:
 
     @staticmethod
     async def save_state(context, session_name: str) -> Path:
-        """Save browser context state (cookies + localStorage) to disk."""
+        """Save browser context state (cookies + localStorage) to disk.
+
+        Encrypts with Fernet if ENCRYPTION_KEY is configured.
+        """
         path = SessionManager.state_file(session_name)
         state = await context.storage_state()
-        path.write_text(json.dumps(state, indent=2))
-        logger.info("Session state saved: %s", session_name)
+        raw_json = json.dumps(state, indent=2)
+        path.write_text(_encrypt_data(raw_json))
+        # Restrict file permissions to owner-only (rwx------)
+        path.chmod(0o600)
+        logger.info("Session state saved: %s (encrypted=%s)", session_name, _get_fernet() is not None)
         return path
+
+    @staticmethod
+    def _load_state_json(path: Path) -> dict:
+        """Load and decrypt a state file."""
+        raw = path.read_text()
+        decrypted = _decrypt_data(raw)
+        return json.loads(decrypted)
 
     @staticmethod
     async def create_context_with_state(browser, session_name: str):
         """Create a Playwright browser context with saved state.
 
         Falls back to loading legacy _cookies.json if no _state.json exists.
+        Decrypts state files automatically if encrypted.
         """
         state_path = SessionManager.state_file(session_name)
         legacy_path = SessionManager._legacy_cookie_file(session_name)
 
         if state_path.exists():
-            state = json.loads(state_path.read_text())
+            state = SessionManager._load_state_json(state_path)
             context = await browser.new_context(storage_state=state)
             logger.info("Loaded session state: %s", session_name)
             return context
@@ -105,7 +151,7 @@ class SessionManager:
             context = await browser.new_context()
             await context.add_cookies(cookies)
             logger.info("Loaded legacy cookies for %s, will upgrade to storageState", session_name)
-            # Save as full storageState for future runs
+            # Save as full storageState for future runs (now encrypted)
             await SessionManager.save_state(context, session_name)
             return context
 

@@ -178,10 +178,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     # ── Dispatch ──
 
     async def dispatch(self, request: Request, call_next):
-        if (
-            os.environ.get("DISABLE_RATE_LIMIT") == "1"
-            or (settings.environment != "production" and settings.deployment_mode == "single_user")
-        ):
+        if os.environ.get("DISABLE_RATE_LIMIT") == "1":
             return await call_next(request)
 
         path = request.url.path

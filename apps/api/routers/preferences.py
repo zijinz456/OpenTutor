@@ -5,7 +5,7 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from libs.exceptions import AppError, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -122,7 +122,7 @@ async def list_preferences(
 @router.get("/signals", response_model=list[PreferenceSignalResponse])
 async def list_preference_signals(
     course_id: uuid.UUID | None = None,
-    limit: int = 20,
+    limit: int = Query(default=20, ge=1, le=100),
     include_dismissed: bool = False,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -140,7 +140,7 @@ async def list_preference_signals(
 @router.get("/profile", response_model=LearningProfileResponse)
 async def get_learning_profile(
     course_id: uuid.UUID | None = None,
-    limit: int = 20,
+    limit: int = Query(default=20, ge=1, le=100),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
