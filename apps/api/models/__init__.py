@@ -20,8 +20,8 @@ from models.agenda_run import AgendaRun
 from models.agent_kv import AgentKV
 from models.mastery_snapshot import MasterySnapshot
 from models.integration_credential import IntegrationCredential
-from models.content_snapshot import ContentSnapshot
-from models.content_mutation import ContentMutation
+from models.knowledge_graph import KnowledgeNode, KnowledgeEdge, ConceptMastery
+from models.notification import Notification
 
 __all__ = [
     "User",
@@ -51,6 +51,8 @@ __all__ = [
     "AgentKV",
     "MasterySnapshot",
     "IntegrationCredential",
-    "ContentSnapshot",
-    "ContentMutation",
+    "KnowledgeNode",
+    "KnowledgeEdge",
+    "ConceptMastery",
+    "Notification",
 ]

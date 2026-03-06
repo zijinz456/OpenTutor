@@ -85,6 +85,23 @@ export async function submitSources(args: SubmitSourcesArgs): Promise<boolean> {
       }
     }
 
+    // Create scrape source FIRST so periodic retry works even if initial scrape fails
+    if (autoScrape) {
+      try {
+        await createScrapeSource({
+          course_id: course.id,
+          url: url.trim(),
+          label: projectName.trim() || t("new.untitledSource"),
+          source_type: urlIsCanvas ? "canvas" : "generic",
+          requires_auth: urlIsCanvas,
+          interval_hours: 24,
+        });
+        addLog(`${new Date().toLocaleTimeString()}  ${t("new.logAutoScrapeEnabled")}`, "text-success");
+      } catch (scrapeSourceErr) {
+        addLog(`${new Date().toLocaleTimeString()}  Auto-scrape setup: ${(scrapeSourceErr as Error).message}`, "text-warning");
+      }
+    }
+
     addLog(
       `${new Date().toLocaleTimeString()}  ${t("new.logFetching")} ${url}${urlIsCanvas ? ` (${t("new.logCanvasDetected")})` : ""}...`,
       "text-muted-foreground",
@@ -95,17 +112,6 @@ export async function submitSources(args: SubmitSourcesArgs): Promise<boolean> {
         `${new Date().toLocaleTimeString()}  ${t("new.logUrlAccepted")}: ${result.nodes_created} ${t("new.logNodesQueued")}`,
         "text-success",
       );
-      if (autoScrape) {
-        await createScrapeSource({
-          course_id: course.id,
-          url: url.trim(),
-          label: projectName.trim() || t("new.untitledSource"),
-          source_type: urlIsCanvas ? "canvas" : "generic",
-          requires_auth: urlIsCanvas,
-          interval_hours: 24,
-        });
-        addLog(`${new Date().toLocaleTimeString()}  ${t("new.logAutoScrapeEnabled")}`, "text-success");
-      }
     } catch (err) {
       const errMsg = (err as Error).message;
       addLog(`${new Date().toLocaleTimeString()}  ${t("new.logScrapeFailed")}: ${errMsg}`, "text-destructive");

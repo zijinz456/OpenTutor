@@ -27,8 +27,7 @@ AGENT_CAPABILITIES: dict[str, set[str]] = {
         "generate_quiz", "export_anki", "derive_diagnostic",
         "list_recent_tasks", "list_study_goals", "list_assignments",
         "create_study_plan", "export_calendar", "list_files",
-        "run_code", "update_section_notes", "annotate_section",
-        "lock_content", "unlock_content", "add_targeted_practice",
+        "run_code", "record_comprehension",
     },
     "planner": {
         "lookup_progress", "get_mastery_report", "get_course_outline",

@@ -116,6 +116,45 @@ export async function getForgettingForecast(courseId: string): Promise<Forgettin
   return request(`/progress/courses/${courseId}/forgetting-forecast`);
 }
 
+// ── Misconception Dashboard ──
+
+export interface MisconceptionSample {
+  question: string;
+  user_answer: string;
+  correct_answer: string;
+  error_category: string | null;
+  diagnosis: string | null;
+}
+
+export interface MisconceptionItem {
+  concept: string;
+  active_errors: number;
+  total_errors: number;
+  mastered_errors: number;
+  resolution_rate: number;
+  dominant_diagnosis: string | null;
+  dominant_misconception_type: string | null;
+  error_categories: Record<string, number>;
+  priority_score: number;
+  sample_questions: MisconceptionSample[];
+}
+
+export interface MisconceptionDashboard {
+  course_id: string;
+  misconceptions: MisconceptionItem[];
+  summary: {
+    total_concepts_with_issues: number;
+    total_active_errors: number;
+    total_resolved: number;
+    resolution_rate: number;
+    diagnosis_breakdown: Record<string, number>;
+  };
+}
+
+export async function getMisconceptionDashboard(courseId: string): Promise<MisconceptionDashboard> {
+  return request(`/progress/courses/${courseId}/misconceptions`);
+}
+
 // ── Knowledge Graph ──
 
 export interface KnowledgeGraphNode {

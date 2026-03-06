@@ -26,6 +26,40 @@ _GENERIC_NONANSWER_PATTERNS = (
     "let me know if you'd like",
     "i'd be happy to help",
 )
+
+# Patterns that indicate the tutor gave a direct answer instead of guiding discovery.
+# These fire when the response hands over the solution without asking the student to think.
+_DIRECT_ANSWER_PATTERNS = (
+    "the answer is",
+    "the correct answer is",
+    "the solution is",
+    "here is the answer",
+    "here's the answer",
+    "the result is",
+    "this equals",
+    "this gives us",
+    "therefore the answer",
+    "so the answer is",
+    "which gives us the final answer",
+)
+
+# Counter-patterns: if these appear alongside a direct-answer pattern, the tutor
+# is likely still guiding (e.g. "what do you think the answer is?")
+_SOCRATIC_COUNTER_PATTERNS = (
+    "what do you think",
+    "can you explain",
+    "why do you think",
+    "how would you",
+    "what would happen",
+    "try to",
+    "let's think about",
+    "does that make sense",
+    "what if",
+    "how does this relate",
+    "can you see why",
+    "before i reveal",
+    "take a moment",
+)
 _STOPWORDS = {
     "a", "an", "and", "are", "be", "can", "do", "for", "from", "help", "how", "i",
     "explain", "in", "is", "it", "me", "my", "of", "on", "or", "please", "review",
@@ -165,6 +199,28 @@ def _find_issue(ctx: AgentContext, signals: dict[str, object]) -> VerificationIs
             return VerificationIssue(
                 code="answer_lacks_evidence_coverage",
                 message="The answer does not clearly use the retrieved course evidence needed for the student's request.",
+            )
+
+    # Socratic violation: tutor gives direct answers instead of guiding discovery.
+    # Only triggers for learning-intent responses that are explanatory (not quiz JSON,
+    # not assessment reports, not tool-heavy responses).
+    if (
+        ctx.intent == IntentType.LEARN
+        and response
+        and not _looks_like_question_array(response)
+        and not any(kw in ctx.user_message.lower() for kw in ("assessment", "progress report", "how am i doing", "mastery"))
+    ):
+        lowered_resp = response.lower()
+        has_direct_answer = any(p in lowered_resp for p in _DIRECT_ANSWER_PATTERNS)
+        has_socratic_counter = any(p in lowered_resp for p in _SOCRATIC_COUNTER_PATTERNS)
+        # Only flag if the tutor gives a direct answer WITHOUT any Socratic follow-up
+        if has_direct_answer and not has_socratic_counter:
+            return VerificationIssue(
+                code="socratic_violation_direct_answer",
+                message=(
+                    "The tutor gave a direct answer instead of guiding the student to discover it. "
+                    "Rephrase to ask a leading question that helps the student reach the answer themselves."
+                ),
             )
 
     if ctx.intent == IntentType.LEARN and _looks_like_question_array(response):

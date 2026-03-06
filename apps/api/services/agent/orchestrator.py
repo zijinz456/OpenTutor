@@ -65,6 +65,21 @@ async def prepare_agent_turn(
     fatigue = _detect_fatigue(ctx.user_message)
     ctx.metadata["fatigue_score"] = fatigue
 
+    # Cognitive load detection — multi-signal analysis for adaptive difficulty
+    try:
+        from services.cognitive_load import compute_cognitive_load
+        cl = await compute_cognitive_load(
+            db,
+            user_id=ctx.user_id,
+            course_id=ctx.course_id,
+            fatigue_score=fatigue,
+            session_messages=len(ctx.metadata.get("history", [])),
+            user_message=ctx.user_message,
+        )
+        ctx.metadata["cognitive_load"] = cl
+    except Exception as e:
+        logger.debug("Cognitive load detection skipped: %s", e)
+
     agent = get_agent(ctx.intent)
     ctx.delegated_agent = agent.name
     return ctx, agent
@@ -339,6 +354,21 @@ async def orchestrate_stream(
     # Fatigue detection (metadata only — TutorAgent handles response adaptation)
     fatigue = _detect_fatigue(ctx.user_message)
     ctx.metadata["fatigue_score"] = fatigue
+
+    # Cognitive load detection — multi-signal analysis for adaptive difficulty
+    try:
+        from services.cognitive_load import compute_cognitive_load
+        cl = await compute_cognitive_load(
+            db,
+            user_id=ctx.user_id,
+            course_id=ctx.course_id,
+            fatigue_score=fatigue,
+            session_messages=len(ctx.metadata.get("history", [])),
+            user_message=ctx.user_message,
+        )
+        ctx.metadata["cognitive_load"] = cl
+    except Exception as e:
+        logger.debug("Cognitive load detection skipped: %s", e)
 
     agent = get_agent(ctx.intent)
     ctx.delegated_agent = agent.name

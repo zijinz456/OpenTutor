@@ -106,34 +106,6 @@ async def _maybe_stop_activity_engine() -> None:
     logger.info("Activity engine stopped")
 
 
-async def _maybe_connect_mcp_servers() -> None:
-    """Connect to MCP servers and register their tools."""
-    if not settings.mcp_enabled:
-        logger.info("MCP tool loading disabled by configuration")
-        return
-
-    try:
-        from services.agent.tools.mcp_client import load_mcp_tools
-
-        count = await load_mcp_tools()
-        if count:
-            logger.info("Registered %d MCP tools", count)
-        else:
-            logger.info("No MCP tools registered (none configured or all servers unavailable)")
-    except Exception as exc:
-        logger.warning("MCP subsystem initialization failed (graceful degradation): %s", exc)
-
-
-async def _maybe_disconnect_mcp_servers() -> None:
-    if not settings.mcp_enabled:
-        return
-
-    try:
-        from services.agent.tools.mcp_client import shutdown_mcp_providers
-
-        await shutdown_mcp_providers()
-    except Exception as exc:
-        logger.debug("MCP disconnect: %s", exc)
 
 
 async def _detect_local_llm() -> None:
@@ -213,28 +185,6 @@ async def _stop_health_monitor() -> None:
     await registry.stop_health_monitor()
 
 
-async def _maybe_setup_checkpointer() -> None:
-    """Initialise LangGraph checkpoint persistence (PostgreSQL-backed).
-
-    After setup, invalidates cached graph singletons so they re-compile
-    with the now-available checkpointer.
-    """
-    try:
-        from services.workflow.checkpoint import setup_checkpointer
-        await setup_checkpointer()
-        # Invalidate any graphs that were compiled before the checkpointer was ready
-        from services.workflow.graph import invalidate_graph_singletons
-        invalidate_graph_singletons()
-    except Exception as exc:
-        logger.warning("Checkpoint setup failed (workflows will run without persistence): %s", exc)
-
-
-async def _maybe_teardown_checkpointer() -> None:
-    try:
-        from services.workflow.checkpoint import teardown_checkpointer
-        await teardown_checkpointer()
-    except Exception:
-        pass
 
 
 async def _start_plugin_system() -> None:
@@ -276,8 +226,6 @@ async def run_startup_hooks() -> None:
     await _maybe_bootstrap_migration_tracking()
     await _maybe_seed_system_data()
     await _detect_local_llm()
-    await _maybe_setup_checkpointer()
-    await _maybe_connect_mcp_servers()
     await _start_plugin_system()
     _maybe_start_scheduler()
     _maybe_start_activity_engine()
@@ -292,8 +240,6 @@ async def run_shutdown_hooks() -> None:
     _maybe_stop_scheduler()
     await wait_for_background_tasks()
     await _stop_plugin_system()
-    await _maybe_disconnect_mcp_servers()
-    await _maybe_teardown_checkpointer()
     await engine.dispose()
 
 

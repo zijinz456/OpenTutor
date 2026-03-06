@@ -16,9 +16,22 @@ export interface WorkspaceLayout {
   tree_width: number;
 }
 
-export type PresetId = "daily_study" | "exam_prep" | "assignment" | "minimal";
+export type PresetId = "focused" | "daily_study" | "exam_prep" | "assignment" | "minimal";
 
 export const LAYOUT_PRESETS: Record<PresetId, WorkspaceLayout> = {
+  focused: {
+    preset: "focused",
+    sections: [
+      { type: "notes", position: 0, visible: false },
+      { type: "practice", position: 1, visible: false },
+      { type: "analytics", position: 2, visible: false },
+      { type: "plan", position: 3, visible: false },
+    ],
+    chat_visible: true,
+    chat_height: 0.65,
+    tree_visible: true,
+    tree_width: 260,
+  },
   daily_study: {
     preset: "daily_study",
     sections: [
@@ -74,13 +87,14 @@ export const LAYOUT_PRESETS: Record<PresetId, WorkspaceLayout> = {
 };
 
 export const PRESET_LABELS: Record<PresetId, { label: string; labelZh: string; description: string }> = {
+  focused: { label: "Focused", labelZh: "专注模式", description: "Chat + content tree" },
   daily_study: { label: "Daily Study", labelZh: "日常学习", description: "Notes + chat focused" },
   exam_prep: { label: "Exam Prep", labelZh: "考试复习", description: "Practice + analytics focused" },
   assignment: { label: "Assignment", labelZh: "作业模式", description: "Plan + notes focused" },
   minimal: { label: "Minimal", labelZh: "极简模式", description: "Chat only" },
 };
 
-export const DEFAULT_LAYOUT: WorkspaceLayout = LAYOUT_PRESETS.daily_study;
+export const DEFAULT_LAYOUT: WorkspaceLayout = LAYOUT_PRESETS.focused;
 
 export function getVisibleSections(layout: WorkspaceLayout): SectionId[] {
   return layout.sections

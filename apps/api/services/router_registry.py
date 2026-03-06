@@ -10,13 +10,13 @@ from routers import (
     auth,
     canvas,
     chat,
-    content_mutations,
     courses,
     flashcards,
     goals,
     health,
     integrations,
     notes,
+    notifications,  # noqa: F401
     preferences,
     progress,
     quiz,
@@ -24,8 +24,6 @@ from routers import (
     tasks,
     upload,
     usage,
-    voice,
-    workflows,
     workspace,
     wrong_answers,
 )
@@ -39,7 +37,6 @@ CORE_ROUTERS = (
     (preferences.router, "/api/preferences", ["preferences"]),
     (quiz.router, "/api/quiz", ["quiz"]),
     (notes.router, "/api/notes", ["notes"]),
-    (workflows.router, "/api/workflows", ["workflows"]),
     (progress.router, "/api/progress", ["progress"]),
     (flashcards.router, "/api/flashcards", ["flashcards"]),
     (canvas.router, "/api/canvas", ["canvas"]),
@@ -49,10 +46,9 @@ CORE_ROUTERS = (
     (goals.router, "/api/goals", ["goals"]),
     (agenda.router, "/api/agent", ["agenda"]),
     (usage.router, None, None),
-    (voice.router, "/api/voice", ["voice"]),
-    (content_mutations.router, "/api/content", ["content-mutations"]),
     (workspace.router, "/api", ["workspace"]),
     (integrations.router, "/api", ["integrations"]),
+    (notifications.router, "/api", ["notifications"]),
 )
 
 

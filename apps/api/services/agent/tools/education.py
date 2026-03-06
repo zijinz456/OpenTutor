@@ -440,42 +440,33 @@ async def list_assignments(parameters: dict[str, Any], ctx: Any, db: AsyncSessio
 
 @tool(
     name="sync_deadlines_to_calendar",
-    description=(
-        "Sync upcoming assignment deadlines to the student's Google Calendar. "
-        "Only works if Google Calendar is connected. Creates reminder events for each deadline."
-    ),
+    description="Export assignment deadlines as .ics calendar file.",
     category=ToolCategory.WRITE,
     params=[],
 )
 async def sync_deadlines_to_calendar_tool(parameters: dict[str, Any], ctx: Any, db: AsyncSession) -> ToolResult:
     from models.ingestion import Assignment
-    from models.integration_credential import IntegrationCredential
 
     try:
-        # Check for Google Calendar credentials
-        cred_result = await db.execute(
-            select(IntegrationCredential).where(
-                IntegrationCredential.user_id == ctx.user_id,
-                IntegrationCredential.integration_name == "google_calendar",
-            )
-        )
-        credential = cred_result.scalar_one_or_none()
-        if not credential:
-            return ToolResult(success=False, output="", error="Google Calendar is not connected. Please connect it first in Settings.")
-
-        # Get assignments with due dates
         result = await db.execute(
             select(Assignment)
             .where(Assignment.course_id == ctx.course_id, Assignment.due_date.isnot(None), Assignment.status == "active")
         )
         assignments = result.scalars().all()
         if not assignments:
-            return ToolResult(success=True, output="No assignments with deadlines to sync.")
+            return ToolResult(success=True, output="No assignments with deadlines to export.")
 
-        from services.integrations.google_calendar import sync_deadlines_to_calendar
-        count = await sync_deadlines_to_calendar(credential, assignments)
-        await db.commit()
-        return ToolResult(success=True, output=f"Synced {count} deadline(s) to Google Calendar.")
+        lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//OpenTutor//EN"]
+        for a in assignments:
+            lines.extend([
+                "BEGIN:VEVENT",
+                f"SUMMARY:{a.title}",
+                f"DTSTART;VALUE=DATE:{a.due_date.strftime('%Y%m%d')}",
+                f"DESCRIPTION:{a.title}",
+                "END:VEVENT",
+            ])
+        lines.append("END:VCALENDAR")
+        return ToolResult(success=True, output=f"Generated .ics calendar for {len(assignments)} deadline(s).")
     except Exception as e:
         logger.error("sync_deadlines_to_calendar failed: %s", e)
         return ToolResult(success=False, output="", error=str(e))
@@ -660,15 +651,12 @@ async def create_study_plan_tool(parameters: dict[str, Any], ctx: Any, db: Async
 
         ctx.emit_progress("create_study_plan", "Assessing readiness...", step=1, total=3)
 
-        from services.workflow.exam_prep import run_exam_prep
-
-        result = await run_exam_prep(
-            db, ctx.user_id, ctx.course_id, exam_topic=exam_topic, days_until_exam=days,
-        )
-
-        plan_md = result.get("plan", "")
+        # exam_prep workflow module removed — return graceful message
+        logger.warning("exam_prep workflow module removed; create_study_plan returning no-op")
+        plan_md = ""
+        result = {}
         if not plan_md:
-            return ToolResult(success=True, output="Could not generate a study plan.")
+            return ToolResult(success=True, output="Study plan generation is currently unavailable (workflow module removed).")
 
         ctx.emit_progress("create_study_plan", "Saving study plan...", step=2, total=3)
 
@@ -793,6 +781,159 @@ async def update_workspace_layout(parameters: dict[str, Any], ctx: Any, db: Asyn
         return ToolResult(success=False, output="", error="Provide either 'preset' or 'toggle_section' parameter.")
 
 
+# ── Comprehension Probing ──
+
+
+@tool(
+    name="record_comprehension",
+    description=(
+        "Record the result of a comprehension probe. Call this after asking the student "
+        "a transfer question, misconception probe, or Feynman explanation and evaluating "
+        "their response. This updates the student's mastery tracking and FSRS schedule."
+    ),
+    category=ToolCategory.WRITE,
+    params=[
+        param("topic", "str", "The concept/topic being probed", required=True),
+        param("understood", "bool", "Whether the student demonstrated true understanding", required=True),
+        param("probe_type", "str", "Type of probe: transfer | misconception | feynman", required=True),
+        param("misconception_type", "str", "If understood=false: surface_memorization | confused_similar | missing_prerequisite | procedural_only | partial_understanding", required=False),
+        param("notes", "str", "Brief notes on what the student got right or wrong", required=False),
+    ],
+)
+async def record_comprehension_tool(parameters: dict[str, Any], ctx: Any, db: AsyncSession) -> ToolResult:
+    """Record comprehension probe result and update mastery/FSRS."""
+    from models.progress import LearningProgress
+    from models.content import CourseContentTree
+
+    topic = parameters.get("topic", "").strip()
+    understood = parameters.get("understood", False)
+    probe_type = parameters.get("probe_type", "transfer")
+    misconception_type = parameters.get("misconception_type")
+    notes = parameters.get("notes", "")
+
+    if not topic:
+        return ToolResult(success=False, output="", error="topic is required")
+
+    try:
+        # Find matching content node by title (fuzzy)
+        from sqlalchemy import or_
+        result = await db.execute(
+            select(CourseContentTree).where(
+                CourseContentTree.course_id == ctx.course_id,
+                or_(
+                    CourseContentTree.title.ilike(f"%{topic}%"),
+                    CourseContentTree.content.ilike(f"%{topic}%"),
+                ),
+            ).limit(1)
+        )
+        content_node = result.scalar_one_or_none()
+        node_id = content_node.id if content_node else None
+        node_title = content_node.title if content_node else topic
+
+        # Find or create LearningProgress entry
+        progress_result = await db.execute(
+            select(LearningProgress).where(
+                LearningProgress.user_id == ctx.user_id,
+                LearningProgress.course_id == ctx.course_id,
+                LearningProgress.content_node_title == node_title,
+            )
+        )
+        progress = progress_result.scalar_one_or_none()
+
+        if not progress:
+            progress = LearningProgress(
+                user_id=ctx.user_id,
+                course_id=ctx.course_id,
+                content_node_id=node_id,
+                content_node_title=node_title,
+                mastery_score=0.0,
+                quiz_attempts=0,
+                quiz_correct=0,
+                time_spent_minutes=0,
+            )
+            db.add(progress)
+
+        # Update mastery based on comprehension probe result
+        # Comprehension probes are weighted more heavily than quiz answers
+        # because they test true understanding, not just recall
+        probe_weight = {"transfer": 0.15, "misconception": 0.12, "feynman": 0.10}.get(probe_type, 0.10)
+
+        if understood:
+            # Boost mastery toward 1.0
+            progress.mastery_score = min(1.0, progress.mastery_score + probe_weight)
+            progress.quiz_attempts += 1
+            progress.quiz_correct += 1
+        else:
+            # Reduce mastery — misconception detected
+            penalty = probe_weight * 1.5  # Wrong comprehension is worse than wrong quiz
+            progress.mastery_score = max(0.0, progress.mastery_score - penalty)
+            progress.quiz_attempts += 1
+
+            # Record gap type based on misconception
+            if misconception_type:
+                gap_map = {
+                    "surface_memorization": "layer1_fail",
+                    "confused_similar": "conceptual",
+                    "missing_prerequisite": "prerequisite",
+                    "procedural_only": "procedural",
+                    "partial_understanding": "layer2_fail",
+                }
+                progress.gap_type = gap_map.get(misconception_type, "conceptual")
+
+        # Update FSRS scheduling based on probe result
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        progress.last_activity_at = now
+
+        if understood:
+            # Good recall — extend review interval
+            current_stability = float(progress.fsrs_stability or 1.0)
+            progress.fsrs_stability = current_stability * 1.5
+            from datetime import timedelta
+            progress.next_review_at = now + timedelta(days=current_stability * 1.5)
+        else:
+            # Failed probe — reset to short interval for re-review
+            progress.fsrs_stability = 0.5
+            from datetime import timedelta
+            progress.next_review_at = now + timedelta(hours=4)
+
+        # Store probe metadata in the metadata field
+        probe_record = {
+            "type": probe_type,
+            "understood": understood,
+            "misconception_type": misconception_type,
+            "notes": notes,
+            "timestamp": now.isoformat(),
+        }
+        existing_probes = (progress.metadata_json or {}).get("comprehension_probes", [])
+        existing_probes.append(probe_record)
+        # Keep last 50 probes
+        existing_probes = existing_probes[-50:]
+        if progress.metadata_json is None:
+            progress.metadata_json = {}
+        progress.metadata_json["comprehension_probes"] = existing_probes
+
+        await db.flush()
+
+        if understood:
+            return ToolResult(
+                success=True,
+                output=f"Comprehension confirmed for '{node_title}' ({probe_type} probe). "
+                       f"Mastery: {progress.mastery_score:.0%}. Next review scheduled.",
+            )
+        else:
+            return ToolResult(
+                success=True,
+                output=f"Misconception detected for '{node_title}': {misconception_type or 'unspecified'}. "
+                       f"Mastery adjusted to {progress.mastery_score:.0%}. "
+                       f"Re-review scheduled in 4 hours. Notes: {notes}",
+            )
+
+    except Exception as e:
+        logger.error("record_comprehension failed: %s", e)
+        return ToolResult(success=False, output="", error=str(e))
+
+
 # ── Registry Helper ──
 
 
@@ -807,4 +948,6 @@ def get_builtin_tools() -> list[Tool]:
         generate_flashcards_tool, generate_quiz_tool, generate_notes_tool,
         create_study_plan_tool, derive_diagnostic_tool,
         sync_deadlines_to_calendar_tool, update_workspace_layout,
+        # Comprehension probing
+        record_comprehension_tool,
     ]

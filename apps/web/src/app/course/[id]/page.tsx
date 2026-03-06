@@ -172,43 +172,66 @@ export default function CoursePage() {
     }
   }, [courseId]);
 
-  // Show auto-generated welcome message (from auto_configure_course)
+  // AI proactive greeting — dynamic, context-aware (LOOM + LECTOR state)
   useEffect(() => {
     if (!course) return;
-    const welcomeKey = `welcome_shown_${courseId}`;
-    if (sessionStorage.getItem(welcomeKey) === "true") return;
+    const greetingKey = `greeting_shown_${courseId}`;
+    if (sessionStorage.getItem(greetingKey) === "true") return;
 
-    const welcome = (course.metadata as Record<string, unknown> | undefined)
-      ?.welcome_message as string | undefined;
-    if (!welcome) return;
-
-    // Only show if chat has no messages yet for this course
     const chatState = useChatStore.getState();
     const existing = chatState.messagesByCourse[courseId];
     if (existing && existing.length > 0) return;
 
-    sessionStorage.setItem(welcomeKey, "true");
-    const timer = setTimeout(() => {
-      const store = useChatStore.getState();
-      const msgs = store.messagesByCourse[courseId] || [];
-      if (msgs.length === 0) {
-        // Inject welcome as an assistant message (no API call needed)
-        const welcomeMsg = {
-          id: `welcome-${courseId}`,
-          role: "assistant" as const,
-          content: welcome,
-          timestamp: new Date(),
-        };
-        useChatStore.setState((s) => ({
-          messagesByCourse: {
-            ...s.messagesByCourse,
-            [courseId]: [welcomeMsg],
-          },
-          messages: s.activeCourseId === courseId ? [welcomeMsg] : s.messages,
-        }));
-      }
-    }, 300);
-    return () => clearTimeout(timer);
+    sessionStorage.setItem(greetingKey, "true");
+
+    // Fetch dynamic greeting from backend (uses LOOM mastery + LECTOR review state)
+    import("@/lib/api/chat").then(({ getChatGreeting }) => {
+      getChatGreeting(courseId)
+        .then((result) => {
+          const store = useChatStore.getState();
+          const msgs = store.messagesByCourse[courseId] || [];
+          if (msgs.length === 0) {
+            const greetingMsg = {
+              id: `greeting-${courseId}`,
+              role: "assistant" as const,
+              content: result.greeting,
+              timestamp: new Date(),
+            };
+            useChatStore.setState((s) => ({
+              messagesByCourse: {
+                ...s.messagesByCourse,
+                [courseId]: [greetingMsg],
+              },
+              messages:
+                s.activeCourseId === courseId ? [greetingMsg] : s.messages,
+            }));
+          }
+        })
+        .catch(() => {
+          // Fallback to static welcome_message if greeting endpoint fails
+          const welcome = (course.metadata as Record<string, unknown> | undefined)
+            ?.welcome_message as string | undefined;
+          if (!welcome) return;
+          const store = useChatStore.getState();
+          const msgs = store.messagesByCourse[courseId] || [];
+          if (msgs.length === 0) {
+            const welcomeMsg = {
+              id: `welcome-${courseId}`,
+              role: "assistant" as const,
+              content: welcome,
+              timestamp: new Date(),
+            };
+            useChatStore.setState((s) => ({
+              messagesByCourse: {
+                ...s.messagesByCourse,
+                [courseId]: [welcomeMsg],
+              },
+              messages:
+                s.activeCourseId === courseId ? [welcomeMsg] : s.messages,
+            }));
+          }
+        });
+    });
   }, [course, courseId]);
 
   const chatVisible = layout.chat_visible;

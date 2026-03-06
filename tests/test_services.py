@@ -29,11 +29,9 @@ from services.activity.tasks import (
 )
 from services.agent.tools.mcp_client import MCPProvider
 from services.agent.verifier import verify_and_repair
-from services.audit import record_audit_log
 from services.scheduler import engine as scheduler_engine
 from routers.preferences import build_learning_profile_summary
 from services.preference.engine import resolve_preferences
-from services.scene.policy import decide_scene_policy_from_features
 
 
 def test_rrf_score_formula():
@@ -110,31 +108,6 @@ def test_base_scores_all_types_defined():
     for signal_type in ("explicit", "modification", "behavior", "negative"):
         assert signal_type in BASE_SCORES
         assert BASE_SCORES[signal_type] > 0
-
-
-# ── Scene detection: all patterns ──
-
-from services.preference.scene import detect_scene, DEFAULT_SCENE, SCENE_PATTERNS
-
-
-def test_detect_scene_all_defined_patterns():
-    """Each scene regex should match at least one example."""
-    examples = {
-        "exam_prep": "help me prepare for the final exam",
-        "review_drill": "review my wrong answers",
-        "assignment": "homework problem",
-        "note_organize": "help me organize my notes",
-        "study_session": "please explain this concept",
-    }
-    supported_scenes = {scene_name for scene_name, _ in SCENE_PATTERNS}
-    for scene, text in examples.items():
-        assert scene in supported_scenes, f"Example uses unknown scene={scene}"
-        assert detect_scene(text) == scene, f"Failed for scene={scene}, text={text}"
-
-
-def test_detect_scene_default_for_random_text():
-    assert detect_scene("hello how are you doing") == DEFAULT_SCENE
-    assert detect_scene("") == DEFAULT_SCENE
 
 
 # ── Ingestion: filename classification ──
@@ -227,42 +200,6 @@ async def test_resolve_preferences_skips_dismissed_entries():
     assert resolved.sources["note_format"] == "system_default"
 
 
-def test_scene_policy_decision_exposes_strategy_bundle():
-    features = {
-        "matched_cues": {
-            "study_session": [],
-            "exam_prep": ["final"],
-            "assignment": [],
-            "review_drill": ["wrong answers"],
-            "note_organize": [],
-        },
-        "upcoming_assignments": 1,
-        "unmastered_wrong_answers": 4,
-        "low_mastery_count": 3,
-        "content_nodes": 12,
-        "active_tab": "review",
-        "course_active_scene": "study_session",
-        "active_goal_title": "Ace the final",
-        "active_goal_next_action": "Review wrong answers tonight",
-        "active_goal_target_days": 4,
-        "nearest_deadline_days": 2,
-        "recent_failed_tasks": 1,
-        "pending_approval_count": 0,
-        "running_task_count": 0,
-        "urgent_forgetting_count": 2,
-        "warning_forgetting_count": 1,
-    }
-
-    decision = decide_scene_policy_from_features(features=features, current_scene="study_session")
-
-    assert decision.scene_id in {"review_drill", "exam_prep", "assignment"}
-    assert decision.expected_benefit
-    assert decision.reversible_action
-    assert decision.layout_policy
-    assert decision.reasoning_policy
-    assert decision.workflow_policy
-
-
 def test_task_policy_requires_approval_for_persistent_code_execution():
     policy = infer_task_policy(
         "code_execution",
@@ -290,43 +227,6 @@ def test_task_policy_keeps_read_only_code_execution_without_approval():
     assert policy.task_kind == "read_only"
     assert policy.risk_level == "low"
     assert policy.approval_reason is None
-
-
-class _AuditSession:
-    def __init__(self):
-        self.added = []
-        self.flushes = 0
-
-    def add(self, obj):
-        self.added.append(obj)
-
-    async def flush(self):
-        self.flushes += 1
-
-
-@pytest.mark.asyncio
-async def test_record_audit_log_creates_row():
-    session = _AuditSession()
-    actor_user_id = uuid.uuid4()
-    task_id = uuid.uuid4()
-
-    row = await record_audit_log(
-        session,
-        actor_user_id=actor_user_id,
-        task_id=task_id,
-        tool_name="run_code",
-        action_kind="task_execute_complete",
-        approval_status="approved",
-        outcome="completed",
-        details_json={"backend": "container"},
-    )
-
-    assert row.actor_user_id == actor_user_id
-    assert row.task_id == task_id
-    assert row.tool_name == "run_code"
-    assert row.action_kind == "task_execute_complete"
-    assert session.flushes == 1
-    assert session.added and session.added[0] is row
 
 
 class _ScalarResult:
@@ -664,71 +564,6 @@ def test_jwt_refresh_token_roundtrip():
     assert payload["type"] == "refresh"
 
 
-def test_scene_policy_prefers_review_drill_for_wrong_answer_recovery():
-    features = {
-        "matched_cues": {
-            "study_session": [],
-            "exam_prep": [],
-            "assignment": [],
-            "review_drill": ["wrong answers"],
-            "note_organize": [],
-        },
-        "upcoming_assignments": 0,
-        "unmastered_wrong_answers": 5,
-        "low_mastery_count": 2,
-        "content_nodes": 3,
-        "active_tab": "review",
-        "course_active_scene": "study_session",
-        "active_goal_title": None,
-        "active_goal_next_action": None,
-        "active_goal_target_days": None,
-        "nearest_deadline_days": None,
-        "recent_failed_tasks": 0,
-        "pending_approval_count": 0,
-        "running_task_count": 0,
-        "urgent_forgetting_count": 2,
-        "warning_forgetting_count": 0,
-    }
-
-    decision = decide_scene_policy_from_features(features=features, current_scene="study_session")
-
-    assert decision.scene_id == "review_drill"
-    assert decision.switch_recommended is True
-    assert "wrong answers" in decision.reason
-
-
-def test_scene_policy_stays_put_when_running_task_exists():
-    features = {
-        "matched_cues": {
-            "study_session": [],
-            "exam_prep": [],
-            "assignment": [],
-            "review_drill": [],
-            "note_organize": [],
-        },
-        "upcoming_assignments": 0,
-        "unmastered_wrong_answers": 0,
-        "low_mastery_count": 0,
-        "content_nodes": 2,
-        "active_tab": "activity",
-        "course_active_scene": "study_session",
-        "active_goal_title": None,
-        "active_goal_next_action": None,
-        "active_goal_target_days": None,
-        "nearest_deadline_days": None,
-        "recent_failed_tasks": 0,
-        "pending_approval_count": 0,
-        "running_task_count": 1,
-        "urgent_forgetting_count": 0,
-        "warning_forgetting_count": 0,
-    }
-
-    decision = decide_scene_policy_from_features(features=features, current_scene="study_session")
-
-    assert decision.scene_id == "study_session"
-    assert decision.switch_recommended is False
-
-
 @pytest.mark.asyncio
 async def test_execute_plan_step_marks_failed_context_as_unsuccessful(monkeypatch):
     failed_ctx = AgentContext(
@@ -948,6 +783,66 @@ async def test_verifier_records_acceptance_diagnostics_for_grounded_answer():
     assert verified.metadata["verifier"]["status"] == "pass"
     assert verified.metadata["verifier_diagnostics"]["request_coverage"] >= 0.3
     assert verified.metadata["verifier_diagnostics"]["evidence_coverage"] > 0
+
+
+@pytest.mark.asyncio
+async def test_verifier_catches_socratic_violation_direct_answer():
+    """Tutor gives 'the answer is X' without guiding the student → flagged."""
+
+    class _Agent:
+        def get_llm_client(self):
+            raise AssertionError("should not repair in this test")
+
+        def build_system_prompt(self, _ctx):
+            return "system"
+
+    ctx = AgentContext(
+        user_id=uuid.uuid4(),
+        course_id=uuid.uuid4(),
+        user_message="What is the present value formula?",
+    )
+    ctx.intent = IntentType.LEARN
+    ctx.content_docs = [{"title": "Present Value", "content": "PV = FV / (1+r)^n"}]
+    ctx.response = (
+        "The answer is PV = FV / (1+r)^n. You divide the future value by "
+        "the discount factor raised to the number of periods."
+    )
+
+    verified = await verify_and_repair(ctx, _Agent())
+    assert verified.metadata["verifier"]["code"] == "socratic_violation_direct_answer"
+
+
+@pytest.mark.asyncio
+async def test_verifier_allows_socratic_answer_with_followup():
+    """Tutor mentions 'the answer is' but follows up with a Socratic question → allowed."""
+
+    class _Agent:
+        def get_llm_client(self):
+            raise AssertionError("should not repair in this test")
+
+        def build_system_prompt(self, _ctx):
+            return "system"
+
+    ctx = AgentContext(
+        user_id=uuid.uuid4(),
+        course_id=uuid.uuid4(),
+        user_message="What is the present value formula?",
+    )
+    ctx.intent = IntentType.LEARN
+    ctx.content_docs = [{"title": "Present Value", "content": "PV = FV / (1+r)^n"}]
+    ctx.response = (
+        "Great question about the present value formula! Before I reveal it, "
+        "let's think about what present value means conceptually. If you have a "
+        "future value of money and you know the interest rate, what do you think "
+        "you'd need to do to find its value today? Think about how the discount "
+        "rate and the number of periods affect the formula. How would you approach "
+        "discounting a future cash flow back to today's terms? The relationship "
+        "between present value, future value, and the discount factor is the key."
+    )
+
+    verified = await verify_and_repair(ctx, _Agent())
+    # Should pass because the response contains Socratic counter-patterns
+    assert verified.metadata["verifier"]["code"] != "socratic_violation_direct_answer"
 
 
 @pytest.mark.asyncio

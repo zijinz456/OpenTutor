@@ -95,39 +95,6 @@ def _register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(Exception, generic_error_handler)
 
 
-def _mount_mcp(app: FastAPI) -> None:
-    """Mount MCP servers for external AI agent access.
-
-    1. FastApiMCP at ``/mcp`` — auto-exposes all FastAPI routes.
-    2. Education MCP at ``/mcp/education`` — curated high-level learning tools.
-    """
-    if not settings.mcp_enabled:
-        logger.info("MCP mounts disabled by configuration")
-        return
-
-    # 1. Auto-expose all routes
-    try:
-        from fastapi_mcp import FastApiMCP
-
-        mcp_server = FastApiMCP(
-            app,
-            name="OpenTutor Agent",
-            description="Personal Learning Agent — education tools accessible via MCP",
-        )
-        mcp_server.mount()
-        logger.info("FastApiMCP mounted at /mcp (all routes exposed)")
-    except Exception as exc:
-        logger.warning("FastApiMCP mount failed: %s", exc)
-
-    # 2. Curated education tools
-    try:
-        from services.mcp.server import mount_education_mcp
-
-        mount_education_mcp(app)
-    except Exception as exc:
-        logger.warning("Education MCP mount failed: %s", exc)
-
-
 def create_app() -> FastAPI:
     app = FastAPI(
         title="OpenTutor Zenus API",
@@ -138,7 +105,6 @@ def create_app() -> FastAPI:
     _configure_middleware(app)
     _register_exception_handlers(app)
     register_routers(app)
-    _mount_mcp(app)
     return app
 
 
