@@ -12,6 +12,8 @@ ENV_FILE="${ROOT_DIR}/.env"
 VENV_DIR="${API_DIR}/.venv"
 API_PID=""
 WEB_PID=""
+DB_MODE="sqlite"
+DB_DISPLAY=""
 
 # ---------------------------------------------------------------------------
 # Cleanup on exit
@@ -40,12 +42,6 @@ if ! command -v npm >/dev/null 2>&1; then
   fail "npm not found."
 fi
 
-# PostgreSQL
-if ! command -v psql >/dev/null 2>&1; then
-  fail "PostgreSQL client (psql) not found. Install: $(install_hint postgresql)"
-fi
-log "  psql found"
-
 # Python 3.11
 PY_BIN="$(resolve_python_bin || true)"
 if [[ -z "${PY_BIN}" ]]; then
@@ -67,8 +63,7 @@ step "Environment configuration"
 if [[ ! -f "${ENV_FILE}" ]]; then
   log "  Creating .env from .env.example ..."
   cp "${ROOT_DIR}/.env.example" "${ENV_FILE}"
-  log "  .env created. You can add your LLM API key later for full functionality."
-  log "  (The app will use mock responses until an API key is configured.)"
+  log "  .env created. Connect Ollama or add an API key for AI features."
 else
   log "  .env already exists"
 fi
@@ -76,6 +71,21 @@ fi
 # Source .env for this script
 load_env_file "${ENV_FILE}"
 bash "${ROOT_DIR}/scripts/check_local_mode.sh" --env-file "${ENV_FILE}" --skip-api
+
+if [[ -n "${DATABASE_URL:-}" && "${DATABASE_URL}" != sqlite* ]]; then
+  DB_MODE="postgresql"
+  DB_DISPLAY="${DATABASE_URL}"
+else
+  DB_MODE="sqlite"
+  if [[ -n "${DATABASE_URL:-}" ]]; then
+    DB_DISPLAY="${DATABASE_URL}"
+  else
+    DB_DISPLAY="sqlite+aiosqlite:///${HOME}/.opentutor/data.db"
+  fi
+fi
+
+log "  Database mode: ${DB_MODE}"
+log "  Database URL:  ${DB_DISPLAY}"
 
 # ---------------------------------------------------------------------------
 # 3. Auto-detect Ollama
@@ -104,50 +114,93 @@ PY_BIN="${VENV_PY}"
 PIP_BIN="${VENV_PIP}"
 
 log "  Installing Python dependencies ..."
-"${PIP_BIN}" install -q -r "${API_DIR}/requirements.txt"
+"${PIP_BIN}" install -q -r "${API_DIR}/requirements-core.txt"
 log "  Done"
+log "  Optional integrations remain available via requirements-full.txt"
 
 # ---------------------------------------------------------------------------
 # 5. Database setup
 # ---------------------------------------------------------------------------
 step "Database"
 
-DB_NAME="opentutor"
-DB_USER="${DATABASE_URL##*://}"
-DB_USER="${DB_USER%%:*}"
+if [[ "${DB_MODE}" == "postgresql" ]]; then
+  if ! command -v psql >/dev/null 2>&1; then
+    fail "PostgreSQL client (psql) not found. Install: $(install_hint postgresql)"
+  fi
+  log "  psql found"
 
-# Check if PostgreSQL is running
-if ! pg_isready -q 2>/dev/null; then
-  log "  PostgreSQL is not running. Attempting to start ..."
-  start_postgresql
+  DB_NAME="$(
+    DATABASE_URL="${DATABASE_URL}" "${PY_BIN}" - <<'PY'
+from urllib.parse import urlparse
+import os
+
+parsed = urlparse(os.environ["DATABASE_URL"])
+path = (parsed.path or "/opentutor").lstrip("/") or "opentutor"
+print(path)
+PY
+  )"
+
+  # Check if PostgreSQL is running
   if ! pg_isready -q 2>/dev/null; then
-    fail "PostgreSQL is not running. Start it manually:
+    log "  PostgreSQL is not running. Attempting to start ..."
+    start_postgresql
+    if ! pg_isready -q 2>/dev/null; then
+      fail "PostgreSQL is not running. Start it manually:
   macOS:   brew services start postgresql@16
   Linux:   sudo systemctl start postgresql
   Windows: Start-Service postgresql-x64-16  (run as admin)"
+    fi
   fi
-fi
 
-# Create database if it doesn't exist
-if psql -lqt 2>/dev/null | cut -d \| -f 1 | grep -qw "${DB_NAME}"; then
-  log "  Database '${DB_NAME}' already exists"
+  # Create database if it doesn't exist
+  if psql -lqt 2>/dev/null | cut -d \| -f 1 | grep -qw "${DB_NAME}"; then
+    log "  Database '${DB_NAME}' already exists"
+  else
+    log "  Creating database '${DB_NAME}' ..."
+    createdb "${DB_NAME}" 2>/dev/null || true
+  fi
+
+  # Enable pgvector extension
+  psql -d "${DB_NAME}" -c "CREATE EXTENSION IF NOT EXISTS vector;" 2>/dev/null || \
+    log "  Warning: Could not create pgvector extension. Install: $(install_hint pgvector)"
 else
-  log "  Creating database '${DB_NAME}' ..."
-  createdb "${DB_NAME}" 2>/dev/null || true
-fi
+  sqlite_path="$(
+    DATABASE_URL="${DATABASE_URL:-}" "${PY_BIN}" - <<'PY'
+from pathlib import Path
+import os
 
-# Enable pgvector extension
-psql -d "${DB_NAME}" -c "CREATE EXTENSION IF NOT EXISTS vector;" 2>/dev/null || \
-  log "  Warning: Could not create pgvector extension. Install: $(install_hint pgvector)"
+database_url = os.environ.get("DATABASE_URL", "").strip()
+if not database_url:
+    print((Path.home() / ".opentutor" / "data.db").expanduser())
+elif database_url.startswith("sqlite"):
+    path = database_url
+    for prefix in ("sqlite+aiosqlite:///", "sqlite:///"):
+        if path.startswith(prefix):
+            path = path[len(prefix):]
+            break
+    print((Path(path or (Path.home() / ".opentutor" / "data.db"))).expanduser())
+else:
+    raise SystemExit("Expected SQLite URL")
+PY
+  )"
+  mkdir -p "$(dirname "${sqlite_path}")"
+  log "  Using SQLite lite mode at ${sqlite_path}"
+  log "  PostgreSQL is not required for this quickstart."
+fi
 
 # ---------------------------------------------------------------------------
 # 6. Database migrations
 # ---------------------------------------------------------------------------
-step "Running database migrations"
+if [[ "${DB_MODE}" == "postgresql" ]]; then
+  step "Running database migrations"
 
-cd "${API_DIR}"
-"${PY_BIN}" -m alembic upgrade head
-log "  Migrations complete"
+  cd "${API_DIR}"
+  "${PY_BIN}" -m alembic upgrade head
+  log "  Migrations complete"
+else
+  step "Database bootstrap"
+  log "  SQLite mode uses the app startup hooks to create tables and seed built-in data."
+fi
 
 # ---------------------------------------------------------------------------
 # 7. Frontend dependencies
@@ -197,7 +250,26 @@ wait_for_url "Web" "http://localhost:3000" 60
 
 # Show health status
 health="$(curl -sS http://localhost:8000/api/health 2>/dev/null || echo '{}')"
-llm_status="$(echo "${health}" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("llm_status","unknown"))' 2>/dev/null || echo "unknown")"
+health_lines="$(
+  HEALTH_JSON="${health}" "${PY_BIN}" - <<'PY'
+import json
+import os
+
+try:
+    payload = json.loads(os.environ.get("HEALTH_JSON", "{}"))
+except Exception:
+    payload = {}
+
+print(payload.get("llm_status", "unknown"))
+print(payload.get("database_backend", "unknown"))
+print("true" if payload.get("local_beta_ready") else "false")
+print(", ".join(payload.get("local_beta_blockers") or []))
+PY
+)"
+llm_status="$(printf '%s\n' "${health_lines}" | sed -n '1p')"
+database_backend="$(printf '%s\n' "${health_lines}" | sed -n '2p')"
+local_beta_ready="$(printf '%s\n' "${health_lines}" | sed -n '3p')"
+local_beta_blockers="$(printf '%s\n' "${health_lines}" | sed -n '4p')"
 
 log ""
 log "============================================"
@@ -205,13 +277,20 @@ log "  OpenTutor is running!"
 log "  Web:    http://localhost:3000"
 log "  API:    http://localhost:8000/api"
 log "  Health: http://localhost:8000/api/health"
+log "  DB:     ${database_backend}"
 log ""
 if [[ "${llm_status}" == "ready" ]]; then
   log "  LLM: ready"
 elif [[ "${llm_status}" == "mock_fallback" ]]; then
-  log "  LLM: mock mode (add an API key to .env for real responses)"
+  log "  LLM: not ready for beta (connect Ollama or add an API key)"
 else
   log "  LLM: ${llm_status}"
+fi
+if [[ "${local_beta_ready}" == "true" ]]; then
+  log "  Local beta readiness: ready"
+else
+  log "  Local beta readiness: blocked (${local_beta_blockers:-unknown})"
+  log "  Tip: open Settings in the app and connect a real LLM provider."
 fi
 log ""
 log "  Press Ctrl+C to stop all services."

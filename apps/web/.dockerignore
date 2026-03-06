@@ -1,0 +1,20 @@
+# Node / Next build outputs
+node_modules/
+.next/
+out/
+
+# Test / debug artifacts
+playwright-report/
+test-results/
+coverage/
+
+# Git / editor metadata
+.git/
+.gitignore
+.DS_Store
+.idea/
+.vscode/
+
+# Local configuration
+.env
+.env.local

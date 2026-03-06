@@ -379,6 +379,7 @@ async def run_ingestion_pipeline(
         # For Canvas URLs with auth, prefer deep Canvas REST API extraction
         extracted = ""
         canvas_file_urls: list[dict] = []
+        canvas_quiz_questions: list[dict] = []
         if url and session_name:
             from services.scraper.canvas_detector import detect_canvas_url as _detect
             _cinfo = _detect(url)
@@ -388,10 +389,12 @@ async def run_ingestion_pipeline(
                 if deep_result:
                     extracted = deep_result.content
                     canvas_file_urls = deep_result.file_urls
+                    canvas_quiz_questions = deep_result.quiz_questions
                     logger.info(
-                        "Canvas deep extraction: %d chars, %d pages, %d modules, %d files discovered",
+                        "Canvas deep extraction: %d chars, %d pages, %d modules, %d files, %d quiz questions",
                         len(extracted), deep_result.pages_fetched,
                         deep_result.modules_found, len(canvas_file_urls),
+                        len(canvas_quiz_questions),
                     )
 
         if not extracted and pre_fetched_html:
@@ -475,8 +478,9 @@ async def run_ingestion_pipeline(
         await db.commit()
 
     await db.flush()
-    # Attach discovered Canvas file URLs for the caller to process
+    # Attach discovered Canvas file URLs and quiz questions for the caller to process
     job._canvas_file_urls = canvas_file_urls if canvas_file_urls else []
+    job._canvas_quiz_questions = canvas_quiz_questions if canvas_quiz_questions else []
     return job
 
 
@@ -546,6 +550,273 @@ async def ingest_canvas_files(
 
     logger.info("Canvas file ingestion complete: %d/%d files ingested", ingested, len(file_urls))
     return ingested
+
+
+async def link_pdfs_to_canvas_topics(
+    db_factory,
+    course_id: uuid.UUID,
+    file_urls: list[dict],
+) -> int:
+    """Phase 2: Reparent PDF root nodes under their matching Canvas topic nodes.
+
+    Each file_url dict carries module_name + item_title metadata from Canvas.
+    We find the content tree root node whose source_file matches the filename,
+    then find/create a topic parent node matching module_name, and reparent.
+    """
+    from models.content import CourseContentTree
+
+    linked = 0
+    async with db_factory() as db:
+        # Get all root nodes (parent_id IS NULL) for this course
+        result = await db.execute(
+            select(CourseContentTree).where(
+                CourseContentTree.course_id == course_id,
+                CourseContentTree.parent_id.is_(None),
+            )
+        )
+        root_nodes = result.scalars().all()
+        if not root_nodes:
+            return 0
+
+        # Build lookup: source_file → root node
+        root_by_source: dict[str, CourseContentTree] = {}
+        for node in root_nodes:
+            if node.source_file:
+                root_by_source[node.source_file] = node
+
+        # Cache for topic parent nodes (module_name → node)
+        topic_cache: dict[str, CourseContentTree] = {}
+
+        # Get existing topic nodes — search all url/canvas_module nodes in tree
+        # (they may be nested under a "Modules" parent from HTML scraping)
+        existing_topics = await db.execute(
+            select(CourseContentTree).where(
+                CourseContentTree.course_id == course_id,
+                CourseContentTree.source_type.in_(["url", "canvas_module"]),
+            )
+        )
+        for topic_node in existing_topics.scalars().all():
+            topic_cache[topic_node.title] = topic_node
+
+        # Get max order_index for new topic nodes
+        from sqlalchemy import func
+        max_order = await db.execute(
+            select(func.max(CourseContentTree.order_index)).where(
+                CourseContentTree.course_id == course_id,
+                CourseContentTree.parent_id.is_(None),
+            )
+        )
+        next_order = (max_order.scalar() or 0) + 1
+
+        already_linked: set[uuid.UUID] = set()
+
+        for file_info in file_urls:
+            module_name = file_info.get("module_name")
+            filename = file_info.get("filename", "")
+            if not module_name:
+                continue
+
+            # Try multiple matching strategies
+            matched_root = None
+
+            # Strategy 1: exact source_file match
+            matched_root = root_by_source.get(filename)
+
+            # Strategy 2: fuzzy match on filename stem
+            if not matched_root:
+                fn_stem = re.sub(r'\.pdf$', '', filename, flags=re.IGNORECASE).lower().strip()
+                for source, node in root_by_source.items():
+                    if node.id in already_linked:
+                        continue
+                    src_stem = re.sub(r'\.pdf$', '', source, flags=re.IGNORECASE).lower().strip()
+                    if fn_stem and src_stem and (
+                        fn_stem in src_stem
+                        or src_stem in fn_stem
+                        or (len(fn_stem) > 10 and fn_stem[:15] == src_stem[:15])
+                    ):
+                        matched_root = node
+                        break
+
+            if not matched_root or matched_root.parent_id is not None or matched_root.id in already_linked:
+                continue
+            already_linked.add(matched_root.id)
+
+            # Find or create the topic parent node
+            if module_name not in topic_cache:
+                topic_node = CourseContentTree(
+                    course_id=course_id,
+                    title=module_name,
+                    level=0,
+                    order_index=next_order,
+                    source_type="canvas_module",
+                    source_file="canvas_structure",
+                )
+                db.add(topic_node)
+                await db.flush()
+                topic_cache[module_name] = topic_node
+                next_order += 1
+
+            parent_node = topic_cache[module_name]
+            matched_root.parent_id = parent_node.id
+            matched_root.level = 1
+            linked += 1
+            logger.info("Linked PDF '%s' under topic '%s'", filename, module_name)
+
+        await db.commit()
+
+    logger.info("PDF-topic linking: %d/%d files linked", linked, len(file_urls))
+    return linked
+
+
+async def auto_summarize_titles(
+    db_factory,
+    course_id: uuid.UUID,
+) -> int:
+    """Phase 3: Use AI to generate clean titles for content nodes with meaningless filenames."""
+    from models.content import CourseContentTree
+
+    def _is_meaningless_title(title: str) -> bool:
+        """Check if a title is meaningless and needs AI renaming."""
+        t = title.strip()
+        if not t:
+            return True
+        # Filename-like meaningless patterns
+        if re.match(
+            r'^(\d+\.pdf|here\.+pdf|download\.pdf|file\.pdf|document\.pdf|'
+            r'[a-f0-9]{8,}\.pdf|unnamed\.pdf|untitled\.pdf)$',
+            t, re.IGNORECASE,
+        ):
+            return True
+        # Title is just a sentence fragment (starts with bullet, lowercase, or short number)
+        if t.startswith(('•', '-', '–', '—')) and len(t) < 80:
+            return True
+        # Pure number titles
+        if re.match(r'^\d+\s', t) and len(t) < 30:
+            return True
+        return False
+
+    updated = 0
+    async with db_factory() as db:
+        # Get all root/level-0 nodes that might have bad titles
+        result = await db.execute(
+            select(CourseContentTree).where(
+                CourseContentTree.course_id == course_id,
+                CourseContentTree.level.in_([0, 1]),
+            )
+        )
+        nodes = result.scalars().all()
+
+        for node in nodes:
+            title = node.title or ""
+            if not _is_meaningless_title(title):
+                continue
+
+            # Get content preview: use node's own content or first child's content
+            content_preview = (node.content or "")[:500]
+            if not content_preview:
+                # Try to get content from first child
+                child_result = await db.execute(
+                    select(CourseContentTree).where(
+                        CourseContentTree.parent_id == node.id,
+                        CourseContentTree.content.isnot(None),
+                    ).limit(1)
+                )
+                child = child_result.scalar_one_or_none()
+                if child:
+                    content_preview = (child.content or "")[:500]
+
+            if not content_preview or len(content_preview) < 30:
+                continue
+
+            try:
+                client = get_llm_client("fast")
+                prompt = (
+                    f"Based on this document content, generate a short descriptive title "
+                    f"(max 60 chars). Just output the title, nothing else.\n\n"
+                    f"Original filename: {title}\n"
+                    f"Content preview:\n{content_preview}"
+                )
+                new_title, _ = await client.extract(
+                    "You are a document title generator. Output only the title.",
+                    prompt,
+                )
+                new_title = new_title.strip().strip('"\'')
+                if new_title and 5 < len(new_title) < 100:
+                    node.title = new_title
+                    updated += 1
+                    logger.info("Renamed '%s' → '%s'", title, new_title)
+            except Exception as e:
+                logger.debug("AI title generation failed for '%s': %s", title, e)
+
+        await db.commit()
+
+    logger.info("AI title summarization: %d nodes renamed", updated)
+    return updated
+
+
+async def auto_generate_notes(
+    db_factory,
+    course_id: uuid.UUID,
+    user_id: uuid.UUID,
+) -> int:
+    """Phase 4: Auto-generate AI notes for content nodes after ingestion."""
+    from models.content import CourseContentTree
+    from services.parser.notes import restructure_notes
+    from services.generated_assets import save_generated_asset
+
+    generated = 0
+    async with db_factory() as db:
+        # Get content nodes with substantial content
+        result = await db.execute(
+            select(CourseContentTree).where(
+                CourseContentTree.course_id == course_id,
+                CourseContentTree.content.isnot(None),
+            )
+        )
+        nodes = result.scalars().all()
+
+        # Filter to nodes with meaningful content (>200 chars)
+        eligible = [n for n in nodes if n.content and len(n.content) > 200]
+        if not eligible:
+            return 0
+
+        # Process nodes — cap at 30 to avoid excessive API calls
+        import asyncio as _asyncio
+        for node in eligible[:30]:
+            try:
+                # Trim content to avoid very long API calls; add per-node timeout
+                content_trimmed = node.content[:4000] if node.content else ""
+                ai_content = await _asyncio.wait_for(
+                    restructure_notes(
+                        content_trimmed,
+                        node.title,
+                        note_format="bullet_point",
+                    ),
+                    timeout=60,
+                )
+                if ai_content and len(ai_content) > 50:
+                    await save_generated_asset(
+                        db,
+                        user_id=user_id,
+                        course_id=course_id,
+                        asset_type="notes",
+                        title=node.title,
+                        content={"markdown": ai_content},
+                        metadata={
+                            "source_node_id": str(node.id),
+                            "auto_generated": True,
+                            "format": "bullet_point",
+                        },
+                    )
+                    generated += 1
+                    logger.info("Auto-generated notes for node '%s'", node.title)
+            except Exception as e:
+                logger.debug("Auto-generate notes failed for '%s': %s", node.title, e)
+
+        await db.commit()
+
+    logger.info("Auto-generated notes: %d/%d nodes processed", generated, len(eligible))
+    return generated
 
 
 async def _dispatch_content(db: AsyncSession, job: IngestionJob) -> dict:

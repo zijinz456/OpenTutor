@@ -109,11 +109,15 @@ async def test_health_endpoint(client):
     data = resp.json()
     assert data["status"] in ("ok", "degraded")
     assert "version" in data
+    assert data["database_backend"] == "postgresql"
     assert data["deployment_mode"] == "single_user"
     assert "code_sandbox_backend" in data
     assert data["migration_required"] is False
     assert data["migration_status"] == "ready"
     assert data["alembic_version_present"] is True
+    assert isinstance(data["local_beta_ready"], bool)
+    assert isinstance(data["local_beta_blockers"], list)
+    assert isinstance(data["local_beta_warnings"], list)
 
 
 # ── Course CRUD ──
@@ -290,6 +294,46 @@ async def test_upload_same_markdown_to_two_courses_creates_nodes_in_both(client)
     assert second_tree.status_code == 200
     assert len(first_tree.json()) >= 1
     assert len(second_tree.json()) >= 1
+
+
+@pytest.mark.asyncio
+async def test_scrape_fixture_host_uses_local_fixture_without_dns(client, monkeypatch, tmp_path):
+    fixture_dir = tmp_path / "scrape"
+    fixture_dir.mkdir()
+    (fixture_dir / "binary-search.html").write_text(
+        """
+        <html>
+          <body>
+            <main>
+              <h1>Binary Search Basics</h1>
+              <p>Binary search halves a sorted search space each step.</p>
+            </main>
+          </body>
+        </html>
+        """,
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("routers.upload.settings.scrape_fixture_dir", str(fixture_dir), raising=False)
+
+    create_resp = await client.post("/api/courses/", json={"name": "Scrape Fixture Course", "description": "fixture"})
+    assert create_resp.status_code == 201
+    course_id = create_resp.json()["id"]
+
+    resp = await client.post(
+        "/api/content/url",
+        data={"course_id": course_id, "url": "https://opentutor-e2e.local/binary-search"},
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["course_id"] == course_id
+    assert payload["nodes_created"] >= 1
+
+    tree_resp = await client.get(f"/api/courses/{course_id}/content-tree")
+    assert tree_resp.status_code == 200
+    tree = tree_resp.json()
+    assert len(tree) >= 1
+    flattened = json.dumps(tree)
+    assert "Binary Search Basics" in flattened
 
 
 @pytest.mark.asyncio

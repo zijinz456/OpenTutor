@@ -12,6 +12,7 @@ import {
   submitAgentTask,
   type StudyGoal,
 } from "@/lib/api";
+import { AiFeatureBlocked } from "@/components/shared/ai-feature-blocked";
 import { useBatchManager } from "@/hooks/use-batch-manager";
 import { toast } from "sonner";
 
@@ -79,9 +80,13 @@ function ExamCountdown({ courseId }: { courseId: string }) {
 
 interface PlanViewProps {
   courseId: string;
+  aiActionsEnabled?: boolean;
 }
 
-export function PlanView({ courseId }: PlanViewProps) {
+export function PlanView({
+  courseId,
+  aiActionsEnabled = true,
+}: PlanViewProps) {
   const { saving, latestBatch, wrapSave } = useBatchManager({
     courseId,
     refreshSection: "plan",
@@ -171,12 +176,13 @@ export function PlanView({ courseId }: PlanViewProps) {
             className="h-8 w-20 text-xs"
             inputMode="numeric"
             placeholder="days"
+            disabled={!aiActionsEnabled || loading || queueing}
           />
           <Button
             size="sm"
             variant="outline"
             onClick={handleQueue}
-            disabled={queueing || loading}
+            disabled={!aiActionsEnabled || queueing || loading}
           >
             {queueing ? <span className="mr-1 animate-pulse">...</span> : null}
             Queue
@@ -185,7 +191,7 @@ export function PlanView({ courseId }: PlanViewProps) {
             data-testid="study-plan-generate"
             size="sm"
             onClick={handleGenerate}
-            disabled={loading}
+            disabled={!aiActionsEnabled || loading}
           >
             {loading ? <span className="mr-1 animate-pulse">...</span> : null}
             Generate
@@ -194,6 +200,7 @@ export function PlanView({ courseId }: PlanViewProps) {
       </div>
 
       <div className="flex-1 overflow-y-auto p-4">
+        {!aiActionsEnabled ? <AiFeatureBlocked compact className="mb-4" /> : null}
         {planMarkdown ? (
           <div
             className="prose prose-sm max-w-none"
@@ -211,7 +218,7 @@ export function PlanView({ courseId }: PlanViewProps) {
                 size="sm"
                 variant="outline"
                 onClick={handleGenerate}
-                disabled={loading}
+                disabled={!aiActionsEnabled || loading}
               >
                 {loading ? <span className="mr-1 animate-pulse">...</span> : null}
                 Create Plan

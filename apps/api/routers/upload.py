@@ -26,6 +26,7 @@ from libs.url_validation import validate_url, validate_url_dns
 from database import get_db, async_session
 from models.content import CourseContentTree
 from models.ingestion import IngestionJob
+from models.practice import PracticeProblem
 from models import scrape as models_scrape
 from models.user import User
 from services.ingestion.pipeline import _set_job_phase
@@ -50,21 +51,51 @@ _validate_url = validate_url
 _validate_url_dns = validate_url_dns
 
 
+def _normalize_scrape_url(url: str) -> str:
+    return url.strip()
+
+
+def _candidate_scrape_fixture_dirs() -> list[Path]:
+    candidates = []
+    if settings.scrape_fixture_dir:
+        candidates.append(Path(settings.scrape_fixture_dir).expanduser())
+    for parent in Path(__file__).resolve().parents:
+        candidate = parent / "tests" / "e2e" / "fixtures" / "scrape"
+        if candidate.exists():
+            candidates.append(candidate)
+            break
+    candidates.append(Path("/fixtures/e2e/scrape"))
+
+    unique_paths: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = str(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_paths.append(candidate)
+    return unique_paths
+
+
 def _load_scrape_fixture_html(url: str) -> str | None:
     """Load deterministic HTML fixtures for local E2E scrape flows."""
-    if not settings.scrape_fixture_dir:
-        return None
-
-    parsed = urlparse(url)
-    if parsed.hostname != "opentutor-e2e.local":
+    normalized_url = _normalize_scrape_url(url)
+    parsed = urlparse(normalized_url)
+    if (parsed.hostname or "").lower() != "opentutor-e2e.local":
         return None
 
     slug = (parsed.path or "/").strip("/") or "index"
     safe_slug = re.sub(r"[^a-zA-Z0-9/_-]", "", slug)
-    fixture_path = Path(settings.scrape_fixture_dir, f"{safe_slug}.html")
-    if not fixture_path.exists():
+    searched_dirs = []
+    for fixture_dir in _candidate_scrape_fixture_dirs():
+        searched_dirs.append(str(fixture_dir))
+        fixture_path = fixture_dir / f"{safe_slug}.html"
+        if fixture_path.exists():
+            return fixture_path.read_text(encoding="utf-8")
+
+    if any(Path(path).exists() for path in searched_dirs):
         raise NotFoundError(f"Scrape fixture for {parsed.path or '/'}")
-    return fixture_path.read_text(encoding="utf-8")
+    return None
 
 
 router = APIRouter()
@@ -124,6 +155,48 @@ async def _background_auto_generate(course_id: uuid.UUID, user_id: uuid.UUID):
                 logger.info("Auto-generated %d starter flashcards for course %s", len(cards), course_id)
     except Exception as e:
         logger.debug("Auto-generate flashcards failed (best-effort): %s", e)
+
+
+async def _background_import_canvas_quizzes(
+    course_id: uuid.UUID,
+    quiz_questions: list[dict],
+) -> int:
+    """Import parsed Canvas quiz questions as PracticeProblem records."""
+    try:
+        from services.practice.annotation import build_practice_problem
+        from sqlalchemy import func
+
+        async with async_session() as db:
+            max_order_result = await db.execute(
+                select(func.max(PracticeProblem.order_index)).where(
+                    PracticeProblem.course_id == course_id,
+                    PracticeProblem.is_archived == False,
+                )
+            )
+            start_order = (max_order_result.scalar() or 0) + 1
+
+            batch_id = uuid.uuid4()
+            created = 0
+            for i, q in enumerate(quiz_questions):
+                if not q.get("question"):
+                    continue
+                problem = build_practice_problem(
+                    course_id=course_id,
+                    content_node_id=None,
+                    title=q.get("problem_metadata", {}).get("source_section", "Canvas Quiz"),
+                    question=q,
+                    order_index=start_order + i,
+                    source="canvas_import",
+                    source_batch_id=batch_id,
+                )
+                db.add(problem)
+                created += 1
+            await db.commit()
+            logger.info("Imported %d Canvas quiz questions for course %s", created, course_id)
+            return created
+    except Exception as e:
+        logger.warning("Canvas quiz import failed (best-effort): %s", e)
+        return 0
 
 
 async def _background_embed(course_id: uuid.UUID, job_id: uuid.UUID, user_id: uuid.UUID | None = None):
@@ -317,7 +390,10 @@ async def scrape_url(
     db: AsyncSession = Depends(get_db),
 ):
     """Scrape a URL → ingestion pipeline → content tree."""
+    url = _normalize_scrape_url(url)
     fixture_html = _load_scrape_fixture_html(url)
+    if fixture_html is not None:
+        logger.info("Using local scrape fixture for %s", url)
     if fixture_html is None:
         validate_url(url)
         await validate_url_dns(url)
@@ -382,13 +458,19 @@ async def scrape_url(
     if (job.nodes_created or 0) > 0 and not is_test_request:
         track_background_task(asyncio.create_task(_background_embed(cid, job.id, user_id=user.id)))
 
-    # Auto-ingest discovered Canvas files (PDFs, docs) in background
+    # Auto-ingest discovered Canvas files (PDFs, docs) in background,
+    # then link PDFs to topics, summarize titles, and auto-generate notes.
     canvas_file_urls = getattr(job, "_canvas_file_urls", [])
     files_discovered = len(canvas_file_urls)
     if canvas_file_urls and canvas_info.is_canvas and scrape_session_name and not is_test_request:
-        from services.ingestion.pipeline import ingest_canvas_files
-        track_background_task(asyncio.create_task(
-            ingest_canvas_files(
+        from services.ingestion.pipeline import (
+            ingest_canvas_files, link_pdfs_to_canvas_topics,
+            auto_summarize_titles, auto_generate_notes,
+        )
+
+        async def _background_canvas_pipeline():
+            """Chain: ingest files → link to topics → summarize titles → generate notes."""
+            await ingest_canvas_files(
                 db_factory=async_session,
                 user_id=user.id,
                 course_id=cid,
@@ -396,8 +478,37 @@ async def scrape_url(
                 session_name=scrape_session_name,
                 canvas_domain=canvas_info.domain,
             )
+            # Phase 2: Link PDFs to Canvas topic nodes
+            await link_pdfs_to_canvas_topics(
+                db_factory=async_session,
+                course_id=cid,
+                file_urls=canvas_file_urls,
+            )
+            # Phase 3: AI-summarize meaningless file titles
+            await auto_summarize_titles(
+                db_factory=async_session,
+                course_id=cid,
+            )
+            # Phase 4: Auto-generate notes for content nodes
+            await auto_generate_notes(
+                db_factory=async_session,
+                course_id=cid,
+                user_id=user.id,
+            )
+
+        track_background_task(asyncio.create_task(_background_canvas_pipeline()))
+        logger.info("Queued %d Canvas files for background ingestion + auto-processing", files_discovered)
+
+    # Auto-import Canvas quiz questions as PracticeProblem records
+    canvas_quiz_questions = getattr(job, "_canvas_quiz_questions", [])
+    if canvas_quiz_questions and not is_test_request:
+        track_background_task(asyncio.create_task(
+            _background_import_canvas_quizzes(
+                course_id=cid,
+                quiz_questions=canvas_quiz_questions,
+            )
         ))
-        logger.info("Queued %d Canvas files for background ingestion", files_discovered)
+        logger.info("Queued %d Canvas quiz questions for import", len(canvas_quiz_questions))
 
     return {
         "status": "ok",
@@ -409,6 +520,7 @@ async def scrape_url(
         "is_canvas": canvas_info.is_canvas,
         "canvas_auth_used": requires_auth and pre_fetched is not None,
         "files_discovered": files_discovered,
+        "quiz_questions_queued": len(canvas_quiz_questions),
     }
 
 

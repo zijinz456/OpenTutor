@@ -7,9 +7,12 @@ import os
 from contextlib import asynccontextmanager
 
 import httpx
+from sqlalchemy import text
 
 from config import settings
+import database as database_module
 from database import Base, engine
+from services.migrations import bootstrap_alembic_version_table
 
 logger = logging.getLogger(__name__)
 
@@ -19,8 +22,25 @@ async def _maybe_create_tables() -> None:
         return
 
     async with engine.begin() as conn:
+        if not database_module.is_sqlite():
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pgcrypto"))
         await conn.run_sync(Base.metadata.create_all)
     logger.info("Ensured database tables exist via Base.metadata.create_all()")
+
+
+async def _maybe_bootstrap_migration_tracking() -> None:
+    if not settings.app_auto_create_tables or database_module.is_sqlite():
+        return
+
+    async with engine.begin() as conn:
+        stamped_heads = await conn.run_sync(bootstrap_alembic_version_table)
+
+    if stamped_heads:
+        logger.info(
+            "Stamped alembic_version after local schema bootstrap (%s)",
+            ", ".join(stamped_heads),
+        )
 
 
 async def _maybe_seed_system_data() -> None:
@@ -255,6 +275,7 @@ async def _stop_plugin_system() -> None:
 
 async def run_startup_hooks() -> None:
     await _maybe_create_tables()
+    await _maybe_bootstrap_migration_tracking()
     await _maybe_seed_system_data()
     await _detect_local_llm()
     await _maybe_setup_checkpointer()

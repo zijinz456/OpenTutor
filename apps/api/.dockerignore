@@ -1,0 +1,34 @@
+# Python build/runtime noise
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local runtime data
+uploads/
+sessions/
+tmp/
+logs/
+
+# Git / editor metadata
+.git/
+.gitignore
+.DS_Store
+.idea/
+.vscode/
+
+# Test and doc content not needed in the API image
+tests/
+playwright-report/
+test-results/
+docs/
+*.md
+
+# Local configuration
+.env
+.env.local

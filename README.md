@@ -23,9 +23,16 @@ bash scripts/dev_local.sh up --build
 
 Open [http://localhost:3000](http://localhost:3000) once all services are healthy.
 
+If `8000` or `3000` is already occupied on your machine, publish the stack on alternate ports:
+
+```bash
+API_PORT=38000 WEB_PORT=33000 bash scripts/dev_local.sh up --build
+API_PORT=38000 WEB_PORT=33000 bash scripts/dev_local.sh beta-check
+```
+
 ## Quick Start (Local Development)
 
-> **Prerequisites:** Python 3.11, Node 20+, PostgreSQL 16+ with pgvector extension, Redis 7+ (optional).
+> **Prerequisites:** Python 3.11 and Node 20+. PostgreSQL is optional now: the default host quickstart uses SQLite lite mode unless you explicitly set `DATABASE_URL` to PostgreSQL.
 
 ### One-command setup
 
@@ -44,7 +51,13 @@ Copy-Item .env.example .env
 .\scripts\quickstart.ps1
 ```
 
-The script checks prerequisites, creates a virtualenv, sets up the database, runs migrations, installs frontend packages, and starts both servers. By default the app prefers local Ollama; if no working provider is available it falls back to mock responses for development only.
+The script checks prerequisites, creates a virtualenv, bootstraps the configured local database, installs frontend packages, and starts both servers. By default the app prefers local Ollama; if no working provider is available it falls back to mock responses for development only.
+
+Host quickstart behavior:
+
+- Leave `DATABASE_URL` blank to use SQLite at `~/.opentutor/data.db`.
+- Set `DATABASE_URL=postgresql+asyncpg://...` only if you want host PostgreSQL mode.
+- For the most stable first run, prefer Docker or SQLite lite mode.
 
 ### Platform-specific prerequisites
 
@@ -52,29 +65,43 @@ The script checks prerequisites, creates a virtualenv, sets up the database, run
 |------|-------|-----------------|--------|---------|
 | Python 3.11 | `brew install python@3.11` | `sudo apt install python3.11 python3.11-venv` | `sudo dnf install python3.11` | [python.org](https://www.python.org/downloads/) |
 | Node.js 20+ | `brew install node` | [nodesource.com](https://nodesource.com/) | `sudo dnf install nodejs` | [nodejs.org](https://nodejs.org/) |
-| PostgreSQL 16+ | `brew install postgresql@16` | `sudo apt install postgresql` | `sudo dnf install postgresql-server` | [postgresql.org](https://www.postgresql.org/download/windows/) |
-| pgvector | `brew install pgvector` | [build from source](https://github.com/pgvector/pgvector#linux) | [build from source](https://github.com/pgvector/pgvector#linux) | [pgvector Windows](https://github.com/pgvector/pgvector#windows) |
+| PostgreSQL 16+ (optional) | `brew install postgresql@16` | `sudo apt install postgresql` | `sudo dnf install postgresql-server` | [postgresql.org](https://www.postgresql.org/download/windows/) |
+| pgvector (optional) | `brew install pgvector` | [build from source](https://github.com/pgvector/pgvector#linux) | [build from source](https://github.com/pgvector/pgvector#linux) | [pgvector Windows](https://github.com/pgvector/pgvector#windows) |
 
 ### Manual setup (any platform)
 
 ```bash
-# Database
-createdb opentutor
-psql opentutor -c "CREATE EXTENSION IF NOT EXISTS vector;"
-
 # API
 cd apps/api
 python3.11 -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -r requirements-core.txt
 cp ../../.env.example .env       # edit .env with your API keys
-python -m alembic upgrade head
 uvicorn main:app --reload --port 8000
 
 # Web (separate terminal)
 cd apps/web
 npm install
 npm run dev
+```
+
+Install `requirements-full.txt` when you need browser-based Canvas login/scraping,
+Google or Notion integrations, MCP, Anki/Calendar export, or CI/Docker parity.
+`requirements.txt` remains as a backward-compatible alias to the full dependency set.
+The Docker local stack also defaults to the core layer; set
+`API_PYTHON_REQUIREMENTS=requirements-full.txt` if you want full container parity.
+When the Docker API uses a host-run Ollama or LM Studio server, compose now routes
+to `host.docker.internal` automatically. Override with `DOCKER_OLLAMA_BASE_URL`,
+`DOCKER_LMSTUDIO_BASE_URL`, `DOCKER_VLLM_BASE_URL`, or
+`DOCKER_TEXTGENWEBUI_BASE_URL` if your local runtime lives elsewhere.
+
+If you want PostgreSQL instead of the default SQLite lite mode:
+
+```bash
+createdb opentutor
+psql opentutor -c "CREATE EXTENSION IF NOT EXISTS vector;"
+cd apps/api
+python -m alembic upgrade head
 ```
 
 Open [http://localhost:3000](http://localhost:3000).
@@ -171,7 +198,7 @@ LLM_MODEL_LARGE=gpt-4o          # for teaching/planning agents
 LLM_MODEL_SMALL=gpt-4o-mini     # for preference/scene agents
 ```
 
-If you do not configure a working provider, health will report `mock_fallback`. That mode is useful for UI development and smoke testing, but not for real tutoring output.
+If you do not configure a working provider, health will report `mock_fallback`. That mode is useful for UI development and smoke testing, but not for a local beta where chat, notes, quiz generation, flashcards, and planning should actually work.
 
 For cloud LLMs:
 
@@ -201,7 +228,7 @@ See [.env.example](.env.example) for the full list. Key variables:
 |----------|---------|-------------|
 | `LLM_PROVIDER` | `ollama` | LLM provider to use |
 | `LLM_MODEL` | `llama3.2:3b` | Model name |
-| `DATABASE_URL` | `postgresql+asyncpg://...` | PostgreSQL connection string |
+| `DATABASE_URL` | empty (`SQLite` fallback) | Leave blank for SQLite lite mode, or set a PostgreSQL connection string |
 | `AUTH_ENABLED` | `false` | Keep `false` for the default local deployment path |
 | `DEPLOYMENT_MODE` | `single_user` | Keep `single_user` for this repo's intended local mode |
 | `APP_AUTO_CREATE_TABLES` | `true` | Auto-create DB tables on startup |
@@ -216,6 +243,7 @@ See [.env.example](.env.example) for the full list. Key variables:
 ```bash
 scripts/dev_local.sh up          # Start the full stack with docker compose or docker-compose
 scripts/dev_local.sh check-local-mode  # Verify .env and the running API are still in local single-user mode
+scripts/dev_local.sh beta-check  # Verify the running stack is ready for the local single-user beta
 scripts/dev_local.sh verify      # Run smoke + integration + E2E tests
 scripts/dev_local.sh down        # Stop the stack
 scripts/dev_local.sh reset       # Stop and remove volumes
@@ -224,6 +252,19 @@ scripts/smoke_test.sh            # Quick API smoke test
 ```
 
 See [docs/local-single-user.md](docs/local-single-user.md) for the local-only deployment contract and common failure modes.
+
+## Local Beta Gate
+
+For the technical-user local single-user beta, the minimum release gate is:
+
+```bash
+bash scripts/check_local_mode.sh --skip-api
+bash scripts/dev_local.sh up --build
+bash scripts/dev_local.sh beta-check
+```
+
+`beta-check` fails unless the running stack is in local single-user mode, the schema is ready, and a real LLM provider is reachable.
+When Docker is running, the verification scripts now auto-detect the compose-published API and web ports.
 
 ## Testing
 

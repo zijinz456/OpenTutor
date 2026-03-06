@@ -120,6 +120,42 @@ async def save_generated_notes(
     return result
 
 
+@router.get("/generated/{course_id}/by-node/{node_id}")
+async def get_generated_note_for_node(
+    course_id: uuid.UUID,
+    node_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get auto-generated AI note for a specific content node."""
+    await get_course_or_404(db, course_id, user_id=user.id)
+
+    from models.generated_asset import GeneratedAsset
+    result = await db.execute(
+        select(GeneratedAsset)
+        .where(
+            GeneratedAsset.user_id == user.id,
+            GeneratedAsset.course_id == course_id,
+            GeneratedAsset.asset_type == "notes",
+            GeneratedAsset.is_archived == False,
+        )
+        .order_by(GeneratedAsset.version.desc())
+    )
+    assets = result.scalars().all()
+    for asset in assets:
+        meta = asset.metadata_ or {}
+        if meta.get("source_node_id") == str(node_id):
+            return {
+                "id": str(asset.id),
+                "title": asset.title,
+                "markdown": asset.content.get("markdown", "") if asset.content else "",
+                "format": (meta.get("format") or "bullet_point"),
+                "auto_generated": meta.get("auto_generated", False),
+                "version": asset.version,
+            }
+    return None
+
+
 @router.get("/generated/{course_id}")
 async def list_generated_notes(
     course_id: uuid.UUID,

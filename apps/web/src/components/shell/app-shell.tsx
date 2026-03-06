@@ -2,69 +2,67 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useWorkspaceStore } from "@/store/workspace";
-import { TREE_WIDTH, TREE_COLLAPSED_WIDTH, CHAT_MIN_HEIGHT, CHAT_MAX_HEIGHT } from "@/lib/constants";
+import { TREE_COLLAPSED_WIDTH, CHAT_MIN_HEIGHT, CHAT_MAX_HEIGHT } from "@/lib/constants";
 
 interface AppShellProps {
   courseId: string;
-  /** Left panel: course content tree. */
   tree: ReactNode;
-  /** Right area: active section content. */
   children: ReactNode;
-  /** Bottom panel: chat input + messages. */
   chat?: ReactNode;
 }
 
 /**
- * VS Code-style workspace shell.
+ * VS Code-style shell using CSS Grid.
  *
- * ┌──────────┬──────────────────────┐
- * │  tree    │  section content     │
- * │  panel   │  (children)          │
- * ├──────────┴──────────────────────┤  ← drag handle
- * │  chat panel (full width)        │
- * └─────────────────────────────────┘
+ * Grid layout (desktop):
+ *   columns: [sidebar] [v-sep] [content]
+ *   rows:    [top]     [h-sep] [chat]
+ *
+ * Sidebar spans row 1 only.
+ * Chat spans all columns (full width).
+ * Both separators are draggable.
  */
 export function AppShell({ tree, children, chat }: AppShellProps) {
   const treeCollapsed = useWorkspaceStore((s) => s.treeCollapsed);
+  const treeWidth = useWorkspaceStore((s) => s.treeWidth);
+  const setTreeWidth = useWorkspaceStore((s) => s.setTreeWidth);
   const chatHeight = useWorkspaceStore((s) => s.chatHeight);
   const setChatHeight = useWorkspaceStore((s) => s.setChatHeight);
   const [isMobile, setIsMobile] = useState(false);
 
-  /* ---------- Resize drag logic ---------- */
-  const dragging = useRef(false);
   const shellRef = useRef<HTMLDivElement>(null);
+  const dragAxis = useRef<"x" | "y" | null>(null);
 
-  const onPointerDown = useCallback(
-    (e: React.PointerEvent) => {
-      e.preventDefault();
-      dragging.current = true;
-      (e.target as HTMLElement).setPointerCapture(e.pointerId);
-    },
-    [],
-  );
+  const onTreeDown = useCallback((e: React.PointerEvent) => {
+    e.preventDefault();
+    dragAxis.current = "x";
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+  }, []);
+
+  const onChatDown = useCallback((e: React.PointerEvent) => {
+    e.preventDefault();
+    dragAxis.current = "y";
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+  }, []);
 
   const onPointerMove = useCallback(
     (e: React.PointerEvent) => {
-      if (!dragging.current || !shellRef.current) return;
+      if (!dragAxis.current || !shellRef.current) return;
       const rect = shellRef.current.getBoundingClientRect();
-      const totalHeight = rect.height;
-      /* Distance from bottom of the shell to the pointer position gives chat height. */
-      const chatPx = rect.bottom - e.clientY;
-      const ratio = chatPx / totalHeight;
-      setChatHeight(Math.max(CHAT_MIN_HEIGHT, Math.min(CHAT_MAX_HEIGHT, ratio)));
+      if (dragAxis.current === "x") {
+        setTreeWidth(e.clientX - rect.left);
+      } else {
+        const ratio = (rect.bottom - e.clientY) / rect.height;
+        setChatHeight(Math.max(CHAT_MIN_HEIGHT, Math.min(CHAT_MAX_HEIGHT, ratio)));
+      }
     },
-    [setChatHeight],
+    [setChatHeight, setTreeWidth],
   );
 
-  const onPointerUp = useCallback(() => {
-    dragging.current = false;
-  }, []);
+  const onPointerUp = useCallback(() => { dragAxis.current = null; }, []);
 
-  /* Cancel drag if pointer leaves the window. */
   useEffect(() => {
-    const cancel = () => {
-      dragging.current = false;
-    };
+    const cancel = () => { dragAxis.current = null; };
     window.addEventListener("pointerup", cancel);
     return () => window.removeEventListener("pointerup", cancel);
   }, []);
@@ -77,69 +75,99 @@ export function AppShell({ tree, children, chat }: AppShellProps) {
     return () => media.removeEventListener("change", sync);
   }, []);
 
-  const treeWidth = treeCollapsed ? TREE_COLLAPSED_WIDTH : TREE_WIDTH;
-  const treePanelStyle = isMobile
-    ? {
-        width: "100%",
-        maxHeight: treeCollapsed ? `${TREE_COLLAPSED_WIDTH}px` : "32vh",
-        transition: `max-height var(--duration-normal, 300ms) var(--ease-out-expo, cubic-bezier(0.16,1,0.3,1))`,
-        background: "var(--tree-bg)",
-      }
+  const sidebarW = treeCollapsed ? TREE_COLLAPSED_WIDTH : treeWidth;
+  const showVSep = !isMobile && !treeCollapsed;
+
+  /* fr units: top area gets (1-chatHeight), chat gets chatHeight.
+     minmax(0, Xfr) ensures cells can shrink (like min-height: 0). */
+  const topFr = chat ? 1 - chatHeight : 1;
+  const chatFr = chatHeight;
+
+  const gridStyle: React.CSSProperties = isMobile
+    ? { display: "flex", flexDirection: "column" }
     : {
-        width: treeWidth,
-        transition: `width var(--duration-normal, 300ms) var(--ease-out-expo, cubic-bezier(0.16,1,0.3,1))`,
-        background: "var(--tree-bg)",
+        display: "grid",
+        gridTemplateColumns: `${sidebarW}px ${showVSep ? "4px" : "0px"} minmax(0, 1fr)`,
+        gridTemplateRows: chat
+          ? `minmax(0, ${topFr}fr) 6px minmax(0, ${chatFr}fr)`
+          : "minmax(0, 1fr)",
       };
-  const chatPanelStyle = isMobile ? { height: "38vh" } : { height: `${chatHeight * 100}%` };
+
+  if (isMobile) {
+    // Mobile: simple flex stack
+    return (
+      <div ref={shellRef} className="flex-1 flex flex-col min-h-0 overflow-hidden">
+        <aside className="shrink-0 overflow-auto border-b border-border" style={{ maxHeight: treeCollapsed ? TREE_COLLAPSED_WIDTH : "32vh", background: "var(--tree-bg)" }}>
+          {tree}
+        </aside>
+        <main className="flex-1 flex flex-col min-h-0 overflow-hidden">{children}</main>
+        {chat ? (
+          <>
+            <div className="shrink-0 h-3 border-y border-border bg-muted/60" />
+            <div className="shrink-0 overflow-hidden" style={{ height: "38vh" }}>{chat}</div>
+          </>
+        ) : null}
+      </div>
+    );
+  }
 
   return (
-    <div ref={shellRef} className="relative flex h-full flex-col overflow-hidden">
-      {/* ── Top area: tree + section content ── */}
-      <div className={`flex flex-1 min-h-0 overflow-hidden ${isMobile ? "flex-col" : ""}`}>
-        {/* Left: course tree */}
-        <aside
-          className={`shrink-0 overflow-hidden border-border ${isMobile ? "border-b" : "border-r"}`}
-          style={treePanelStyle}
-          aria-label="Course tree"
-        >
-          <div
-            className="h-full overflow-y-auto overflow-x-hidden"
-            style={isMobile ? undefined : { width: treeWidth }}
-          >
-            {tree}
-          </div>
-        </aside>
+    <div
+      ref={shellRef}
+      className="flex-1 min-h-0 overflow-hidden"
+      style={gridStyle}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+    >
+      {/* Row 1, Col 1: Sidebar */}
+      <aside
+        className="overflow-auto"
+        style={{ gridRow: 1, gridColumn: 1, background: "var(--tree-bg)" }}
+      >
+        {tree}
+      </aside>
 
-        {/* Right: active section content */}
-        <main
-          className="flex-1 min-w-0 overflow-hidden"
-          style={{ background: "var(--section-bg)" }}
-        >
-          {children}
-        </main>
-      </div>
+      {/* Row 1, Col 2: Vertical separator */}
+      {showVSep ? (
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize sidebar"
+          onPointerDown={onTreeDown}
+          className="cursor-col-resize bg-border hover:bg-primary/30 active:bg-primary/40 select-none touch-none"
+          style={{ gridRow: 1, gridColumn: 2 }}
+        />
+      ) : null}
+
+      {/* Row 1, Col 3: Main content */}
+      <main
+        className="flex flex-col min-w-0 min-h-0 overflow-hidden"
+        style={{ gridRow: 1, gridColumn: 3 }}
+      >
+        {children}
+      </main>
 
       {chat ? (
         <>
+          {/* Row 2, full width: Horizontal separator */}
           <div
             role="separator"
             aria-orientation="horizontal"
             aria-label="Resize chat panel"
-            onPointerDown={isMobile ? undefined : onPointerDown}
-            onPointerMove={isMobile ? undefined : onPointerMove}
-            onPointerUp={isMobile ? undefined : onPointerUp}
-            className={`group relative z-10 flex shrink-0 items-center justify-center border-border bg-muted/60 select-none touch-none hover:bg-primary/10 active:bg-primary/20 ${isMobile ? "h-3 cursor-default border-y" : "h-1.5 cursor-row-resize border-y"}`}
+            onPointerDown={onChatDown}
+            className="flex items-center justify-center border-y border-border bg-muted/60 cursor-row-resize select-none touch-none hover:bg-primary/20 active:bg-primary/30"
+            style={{ gridRow: 2, gridColumn: "1 / -1" }}
           >
-            <span className="h-0.5 w-8 rounded-full bg-muted-foreground/30 transition-colors group-hover:bg-primary/50" />
+            <span className="h-0.5 w-8 rounded-full bg-muted-foreground/30" />
           </div>
 
-          <section
-            className="shrink-0 overflow-hidden"
-            style={chatPanelStyle}
-            aria-label="Chat panel"
+          {/* Row 3, full width: Chat */}
+          <div
+            className="min-h-0 overflow-hidden"
+            style={{ gridRow: 3, gridColumn: "1 / -1" }}
           >
             {chat}
-          </section>
+          </div>
         </>
       ) : null}
     </div>

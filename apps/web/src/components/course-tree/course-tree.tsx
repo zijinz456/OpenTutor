@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { useCourseStore } from "@/store/course";
 import { useWorkspaceStore } from "@/store/workspace";
@@ -8,58 +8,9 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { UploadDialog } from "@/components/shared/upload-dialog";
 import { TreeNode } from "./tree-node";
-import { FileGroup } from "./file-group";
-import type { IngestionJobSummary } from "@/lib/api";
 
 interface CourseTreeProps {
   courseId: string;
-}
-
-/** Map backend content_category → display label + emoji. */
-const CATEGORY_META: Record<string, { label: string; icon: string }> = {
-  lecture_slides: { label: "Lecture Slides", icon: "📑" },
-  textbook: { label: "Textbook", icon: "📚" },
-  assignment: { label: "Assignments", icon: "📝" },
-  exam_schedule: { label: "Exam / Schedule", icon: "📅" },
-  syllabus: { label: "Syllabus", icon: "📋" },
-  notes: { label: "Notes", icon: "🗒️" },
-  other: { label: "Other Files", icon: "📄" },
-  url: { label: "URLs", icon: "🔗" },
-};
-
-/** Category display ordering. */
-const CATEGORY_ORDER = [
-  "lecture_slides",
-  "textbook",
-  "syllabus",
-  "assignment",
-  "exam_schedule",
-  "notes",
-  "url",
-  "other",
-];
-
-/** Group completed ingestion jobs by category. */
-function groupJobsByCategory(
-  jobs: IngestionJobSummary[],
-): { category: string; label: string; icon: string; jobs: IngestionJobSummary[] }[] {
-  const map = new Map<string, IngestionJobSummary[]>();
-
-  for (const job of jobs) {
-    // URL sources get their own category
-    let cat = job.source_type === "url" ? "url" : (job.category || "other");
-    if (!CATEGORY_META[cat]) cat = "other";
-    const arr = map.get(cat);
-    if (arr) arr.push(job);
-    else map.set(cat, [job]);
-  }
-
-  return CATEGORY_ORDER.filter((c) => map.has(c)).map((c) => ({
-    category: c,
-    label: CATEGORY_META[c]?.label ?? c,
-    icon: CATEGORY_META[c]?.icon ?? "📄",
-    jobs: map.get(c)!,
-  }));
 }
 
 /**
@@ -72,25 +23,10 @@ function groupJobsByCategory(
 export function CourseTree({ courseId }: CourseTreeProps) {
   const activeCourse = useCourseStore((s) => s.activeCourse);
   const contentTree = useCourseStore((s) => s.contentTree);
-  const ingestionJobs = useCourseStore((s) => s.ingestionJobs);
   const [uploadOpen, setUploadOpen] = useState(false);
 
   const treeCollapsed = useWorkspaceStore((s) => s.treeCollapsed);
   const toggleTree = useWorkspaceStore((s) => s.toggleTree);
-
-  // Only show completed/processing jobs (not failed)
-  const visibleJobs = useMemo(
-    () => ingestionJobs.filter((j) => j.status !== "failed"),
-    [ingestionJobs],
-  );
-
-  const fileGroups = useMemo(
-    () => groupJobsByCategory(visibleJobs),
-    [visibleJobs],
-  );
-
-  const hasFiles = fileGroups.length > 0;
-  const hasContent = contentTree.length > 0;
 
   if (treeCollapsed) {
     return (
@@ -112,7 +48,7 @@ export function CourseTree({ courseId }: CourseTreeProps) {
       {/* Header */}
       <div className="flex items-center gap-2 border-b px-3 py-2">
         <h2 className="flex-1 truncate text-sm font-semibold">
-          {activeCourse?.name ?? "Course Files"}
+          {activeCourse?.name ?? "Course"}
         </h2>
         <Button
           type="button"
@@ -126,51 +62,22 @@ export function CourseTree({ courseId }: CourseTreeProps) {
         </Button>
       </div>
 
-      {/* Scrollable tree content */}
+      {/* Content TOC */}
       <ScrollArea className="flex-1">
         <div className="py-1">
-          {!hasFiles && !hasContent && (
+          {contentTree.length === 0 ? (
             <p className="px-3 py-4 text-xs text-muted-foreground">
               No content yet. Upload files to get started.
             </p>
-          )}
-
-          {/* ── Source Files by Category ── */}
-          {hasFiles && (
-            <div>
-              {fileGroups.map((group) => (
-                <FileGroup
-                  key={group.category}
-                  label={group.label}
-                  icon={group.icon}
-                  jobs={group.jobs}
-                />
-              ))}
-            </div>
-          )}
-
-          {/* ── Separator ── */}
-          {hasFiles && hasContent && (
-            <div className="mx-3 my-1.5 border-t border-border/50" />
-          )}
-
-          {/* ── Content Outline ── */}
-          {hasContent && (
-            <div>
-              <div className="px-3 py-1">
-                <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-                  Content Outline
-                </span>
-              </div>
-              {contentTree.map((node) => (
-                <TreeNode
-                  key={node.id}
-                  node={node}
-                  depth={0}
-                  courseId={courseId}
-                />
-              ))}
-            </div>
+          ) : (
+            contentTree.map((node) => (
+              <TreeNode
+                key={node.id}
+                node={node}
+                depth={0}
+                courseId={courseId}
+              />
+            ))
           )}
         </div>
       </ScrollArea>

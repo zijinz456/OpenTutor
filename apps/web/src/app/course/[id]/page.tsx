@@ -62,6 +62,9 @@ export default function CoursePage() {
   }, []);
 
   const course = activeCourse ?? courses.find((item) => item.id === courseId) ?? null;
+  const aiActionsEnabled =
+    health?.llm_status !== "mock_fallback" &&
+    health?.llm_status !== "configuration_required";
 
   const features = useMemo(
     () => resolveWorkspaceFeatures(course?.metadata),
@@ -117,11 +120,13 @@ export default function CoursePage() {
       <AppShell
         courseId={courseId}
         tree={<CourseTree courseId={courseId} />}
-        chat={features.free_qa ? <ChatView courseId={courseId} /> : undefined}
+        chat={features.free_qa ? <ChatView courseId={courseId} aiActionsEnabled={aiActionsEnabled} /> : undefined}
       >
         <SectionContainer
           courseId={courseId}
           reviewEnabled={features.wrong_answer}
+          aiActionsEnabled={aiActionsEnabled}
+          visibleSections={visibleSections}
         />
       </AppShell>
     </div>

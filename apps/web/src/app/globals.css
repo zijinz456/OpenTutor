@@ -223,6 +223,15 @@
   }
 }
 
+/* Hide scrollbar but keep scrolling */
+.scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
 /* Flashcard flip animation */
 .flashcard-perspective {
   perspective: 800px;

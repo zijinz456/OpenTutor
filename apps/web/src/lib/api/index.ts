@@ -18,6 +18,7 @@ export {
   restructureNotes,
   saveGeneratedNotes,
   listGeneratedNoteBatches,
+  getAiNoteForNode,
   uploadFile,
   scrapeUrl,
   getFileUrl,
@@ -35,6 +36,7 @@ export type {
   ContentNode,
   RestructuredNotes,
   AuthSessionSummary,
+  AiNoteForNode,
 } from "./courses";
 
 export {

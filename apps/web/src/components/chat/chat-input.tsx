@@ -14,6 +14,7 @@ import { useCourseStore } from "@/store/course";
 import { getStoredAccessToken } from "@/lib/auth";
 import { useVoiceSession } from "@/hooks/use-voice-session";
 import { cn } from "@/lib/utils";
+import { useT } from "@/lib/i18n-context";
 import { useImageAttachments } from "@/components/chat/use-image-attachments";
 import { ImagePreviewStrip } from "@/components/chat/image-preview-strip";
 import { AttachmentButtons } from "@/components/chat/attachment-buttons";
@@ -34,6 +35,7 @@ interface ChatInputProps {
  * - Attachment buttons handle file upload, image attach, and URL scrape.
  */
 export function ChatInput({ courseId, disabled }: ChatInputProps) {
+  const t = useT();
   const [input, setInput] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [accessToken, setAccessToken] = useState<string | undefined>(undefined);
@@ -162,9 +164,11 @@ export function ChatInput({ courseId, disabled }: ChatInputProps) {
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
           placeholder={
-            pendingImages.length > 0
-              ? "Add a message about these images..."
-              : "Ask anything..."
+            isDisabled
+              ? t("chat.disabledNeedLlm")
+              : pendingImages.length > 0
+                ? "Add a message about these images..."
+                : "Ask anything..."
           }
           rows={1}
           disabled={isDisabled}

@@ -26,8 +26,13 @@ interface TreeNodeProps {
 export function TreeNode({ node, depth, courseId }: TreeNodeProps) {
   const [expanded, setExpanded] = useState(depth < 1);
   const openPdf = useWorkspaceStore((s) => s.openPdf);
+  const selectedNodeId = useWorkspaceStore((s) => s.selectedNodeId);
+  const setSelectedNodeId = useWorkspaceStore((s) => s.setSelectedNodeId);
+  const setActiveSection = useWorkspaceStore((s) => s.setActiveSection);
 
   const hasChildren = node.children && node.children.length > 0;
+  const hasContent = !!node.content?.trim();
+  const isSelected = selectedNodeId === node.id;
 
   // Detect PDF: source_type is "pdf" or title ends with .pdf
   const isPdf =
@@ -35,18 +40,36 @@ export function TreeNode({ node, depth, courseId }: TreeNodeProps) {
     node.file_type?.toLowerCase().includes("pdf") ||
     (!hasChildren && node.title?.toLowerCase().endsWith(".pdf"));
 
+  // Check if this node or any descendant has content
+  const hasContentInSubtree = useMemo(() => {
+    const check = (n: ContentNode): boolean => {
+      if (n.content?.trim()) return true;
+      return n.children?.some(check) ?? false;
+    };
+    return check(node);
+  }, [node]);
+
   const handleClick = useCallback(() => {
     if (hasChildren) {
       setExpanded((prev) => !prev);
+      // Also select this node to show its content in notes
+      setSelectedNodeId(node.id);
+      setActiveSection("notes");
       return;
     }
 
     if (isPdf) {
-      // Use file_id if available, otherwise use node.id as fallback
       const fileId = node.file_id || String(node.id);
       openPdf(fileId, node.title);
+      return;
     }
-  }, [hasChildren, isPdf, node.file_id, node.id, node.title, openPdf]);
+
+    // Select content node → switch to notes
+    if (hasContent) {
+      setSelectedNodeId(node.id);
+      setActiveSection("notes");
+    }
+  }, [hasChildren, hasContent, isPdf, node.file_id, node.id, node.title, openPdf, setSelectedNodeId, setActiveSection]);
 
   // Determine icon based on level, children, and source_type
   const icon = (() => {
@@ -76,6 +99,8 @@ export function TreeNode({ node, depth, courseId }: TreeNodeProps) {
           "flex w-full items-center gap-1.5 rounded-sm py-1 pr-2 text-sm leading-tight",
           "hover:bg-[var(--tree-hover)] active:bg-[var(--tree-active)]",
           "cursor-pointer select-none transition-colors",
+          isSelected && "bg-[var(--tree-active)] font-medium",
+          !hasContentInSubtree && "opacity-40",
         )}
       >
         {/* Expand/collapse chevron -- invisible spacer for leaf nodes */}

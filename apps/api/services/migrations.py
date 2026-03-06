@@ -123,3 +123,45 @@ def inspect_database_migrations(connection) -> MigrationState:
         current_heads=current_heads,
         expected_heads=expected_heads,
     )
+
+
+def bootstrap_alembic_version_table(connection) -> list[str]:
+    """Stamp current heads when a schema exists without Alembic tracking.
+
+    This is intended for local bootstrap flows that rely on ``create_all()``
+    to materialize the base schema before the app starts. If the core schema
+    exists and ``alembic_version`` is missing (or present but empty), the
+    current migration heads are written so health checks and later upgrades
+    can reason about the database consistently.
+    """
+
+    inspector = sa.inspect(connection)
+    table_names = set(inspector.get_table_names())
+    if "users" not in table_names:
+        return []
+
+    expected_heads = get_expected_migration_heads()
+    if not expected_heads:
+        return []
+
+    if "alembic_version" not in table_names:
+        connection.execute(
+            sa.text("CREATE TABLE alembic_version (version_num VARCHAR(64) NOT NULL PRIMARY KEY)")
+        )
+        existing_heads: set[str] = set()
+    else:
+        existing_heads = {
+            str(row[0])
+            for row in connection.execute(sa.text("SELECT version_num FROM alembic_version"))
+            if row[0]
+        }
+        if existing_heads:
+            return []
+
+    for head in expected_heads:
+        connection.execute(
+            sa.text("INSERT INTO alembic_version (version_num) VALUES (:head)"),
+            {"head": head},
+        )
+
+    return expected_heads

@@ -19,6 +19,7 @@ const PodcastView = lazy(() =>
 interface PracticeSectionProps {
   courseId: string;
   showReview?: boolean;
+  aiActionsEnabled?: boolean;
 }
 
 type PracticeTab = "quiz" | "flashcards" | "review" | "podcast";
@@ -33,6 +34,7 @@ const ALL_TABS: TabDef<PracticeTab>[] = [
 export function PracticeSection({
   courseId,
   showReview = true,
+  aiActionsEnabled = true,
 }: PracticeSectionProps) {
   const tabs = useMemo(
     () => (showReview ? ALL_TABS : ALL_TABS.filter((t) => t.id !== "review")),
@@ -43,10 +45,10 @@ export function PracticeSection({
     <TabbedSection tabs={tabs} defaultTab="quiz" testId="practice-section">
       {(activeTab) => (
         <>
-          {activeTab === "quiz" ? <QuizView courseId={courseId} /> : null}
-          {activeTab === "flashcards" ? <FlashcardView courseId={courseId} /> : null}
-          {activeTab === "review" && showReview ? <ReviewView courseId={courseId} /> : null}
-          {activeTab === "podcast" ? <PodcastView courseId={courseId} /> : null}
+          {activeTab === "quiz" ? <QuizView courseId={courseId} aiActionsEnabled={aiActionsEnabled} /> : null}
+          {activeTab === "flashcards" ? <FlashcardView courseId={courseId} aiActionsEnabled={aiActionsEnabled} /> : null}
+          {activeTab === "review" && showReview ? <ReviewView courseId={courseId} aiActionsEnabled={aiActionsEnabled} /> : null}
+          {activeTab === "podcast" ? <PodcastView courseId={courseId} aiActionsEnabled={aiActionsEnabled} /> : null}
         </>
       )}
     </TabbedSection>

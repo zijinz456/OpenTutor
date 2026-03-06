@@ -12,6 +12,7 @@ const ActivityView = lazy(() =>
 
 interface PlanSectionProps {
   courseId: string;
+  aiActionsEnabled?: boolean;
 }
 
 type PlanTab = "plan" | "tasks";
@@ -21,12 +22,12 @@ const TABS: TabDef<PlanTab>[] = [
   { id: "tasks", label: "Tasks" },
 ];
 
-export function PlanSection({ courseId }: PlanSectionProps) {
+export function PlanSection({ courseId, aiActionsEnabled = true }: PlanSectionProps) {
   return (
     <TabbedSection tabs={TABS} defaultTab="plan" testId="plan-section">
       {(activeTab) => (
         <>
-          {activeTab === "plan" ? <PlanView courseId={courseId} /> : null}
+          {activeTab === "plan" ? <PlanView courseId={courseId} aiActionsEnabled={aiActionsEnabled} /> : null}
           {activeTab === "tasks" ? <ActivityView courseId={courseId} /> : null}
         </>
       )}

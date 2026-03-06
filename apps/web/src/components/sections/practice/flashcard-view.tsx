@@ -14,10 +14,12 @@ import { useBatchManager } from "@/hooks/use-batch-manager";
 import { useWorkspaceStore } from "@/store/workspace";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { AiFeatureBlocked } from "@/components/shared/ai-feature-blocked";
 import { toast } from "sonner";
 
 interface FlashcardViewProps {
   courseId: string;
+  aiActionsEnabled?: boolean;
 }
 
 const RATINGS = [
@@ -27,7 +29,10 @@ const RATINGS = [
   { label: "Easy", value: 4, variant: "default" as const },
 ];
 
-export function FlashcardView({ courseId }: FlashcardViewProps) {
+export function FlashcardView({
+  courseId,
+  aiActionsEnabled = true,
+}: FlashcardViewProps) {
   const t = useT();
   const refreshKey = useWorkspaceStore((s) => s.sectionRefreshKey["practice"]);
   const { saving, latestBatch, wrapSave } = useBatchManager({
@@ -140,7 +145,8 @@ export function FlashcardView({ courseId }: FlashcardViewProps) {
         <p className="text-xs text-muted-foreground max-w-xs">
           {t("flashcard.empty")}
         </p>
-        <Button className="mt-3" size="sm" onClick={() => void handleGenerate()}>
+        {!aiActionsEnabled ? <AiFeatureBlocked compact className="mt-3 w-full max-w-sm text-left" /> : null}
+        <Button className="mt-3" size="sm" onClick={() => void handleGenerate()} disabled={!aiActionsEnabled}>
           {t("flashcard.generate")}
         </Button>
       </div>

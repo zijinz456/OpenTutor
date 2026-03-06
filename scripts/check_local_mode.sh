@@ -5,7 +5,8 @@ SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/_common.sh"
 
 ENV_FILE="${ENV_FILE:-${ROOT_DIR}/.env}"
-API_BASE="${API_BASE:-http://localhost:8000/api}"
+API_PORT="${API_PORT:-8000}"
+API_BASE="${API_BASE:-http://localhost:${API_PORT}/api}"
 CHECK_API=1
 
 usage() {
@@ -29,6 +30,26 @@ normalize_bool() {
     1|true|yes|on) printf 'true\n' ;;
     *) printf 'false\n' ;;
   esac
+}
+
+compose_api_base() {
+  local mapping
+  local host
+  local port
+
+  has_compose || return 1
+  mapping="$(compose port api 8000 2>/dev/null | tail -n 1)"
+  [[ -n "${mapping}" ]] || return 1
+
+  host="${mapping%:*}"
+  port="${mapping##*:}"
+  host="${host#[}"
+  host="${host%]}"
+  if [[ "${host}" == "0.0.0.0" || "${host}" == "::" || -z "${host}" ]]; then
+    host="localhost"
+  fi
+
+  printf 'http://%s:%s/api\n' "${host}" "${port}"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -60,6 +81,11 @@ if [[ ! -f "${ENV_FILE}" ]]; then
 fi
 
 load_env_file "${ENV_FILE}"
+
+compose_api_base_value="$(compose_api_base || true)"
+if [[ -n "${compose_api_base_value}" ]]; then
+  API_BASE="${compose_api_base_value}"
+fi
 
 auth_enabled="$(normalize_bool "${AUTH_ENABLED:-false}")"
 deployment_mode="${DEPLOYMENT_MODE:-single_user}"
