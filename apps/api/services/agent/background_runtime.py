@@ -51,28 +51,8 @@ async def _retry_async(coro_fn, name: str, max_retries: int = 2, base_delay: flo
 
 
 async def _persist_pp_failures(ctx: AgentContext, db_factory, failures: list[dict]) -> None:
-    """Record post-processing failures as a notification so the user can see them."""
-    from models.notification import Notification
-
-    failed_names = [f.get("name", "unknown") for f in failures]
-    errors_detail = "; ".join(
-        f"{f.get('name', '?')}: {f.get('error', 'unknown')[:120]}" for f in failures
-    )
-    async with db_factory() as db:
-        notification = Notification(
-            user_id=ctx.user_id,
-            course_id=ctx.course_id,
-            category="system",
-            priority="low",
-            title="Background processing partially failed",
-            body=(
-                "Some post-processing steps failed after your last chat message: "
-                f"{', '.join(failed_names)}. Details: {errors_detail[:300]}"
-            ),
-        )
-        db.add(notification)
-        await db.commit()
-    logger.info("Persisted %d post-processing failure(s) as notification: %s", len(failures), failed_names)
+    """Log post-processing failures (notification system removed)."""
+    logger.warning("Post-processing failures: %s", [f.get("name") for f in failures])
 
 
 async def record_llm_usage(ctx: AgentContext, db_factory) -> None:
@@ -199,46 +179,10 @@ async def post_process(ctx: AgentContext, db_factory) -> None:
             await encode_memory(db, ctx.user_id, ctx.course_id, ctx.user_message, ctx.response)
             await db.commit()
 
-    async def _graph_with_session():
-        async with db_factory() as db:
-            from services.knowledge.graph_memory import extract_graph_entities, store_graph_entities
-            extracted = await extract_graph_entities(ctx.user_message, ctx.response)
-            if extracted.get("entities") or extracted.get("relationships"):
-                await store_graph_entities(db, ctx.user_id, ctx.course_id, extracted)
-                await db.commit()
-
-    async def _experiment_metric_with_session():
-        exp_config = ctx.metadata.get("experiment_config")
-        if not exp_config:
-            return
-        async with db_factory() as db:
-            from services.experiment.engine import record_metric
-
-            response_score = min(1.0, len(ctx.response or "") / 1000.0)
-            tool_score = min(1.0, len(ctx.tool_calls) / 5.0)
-            metric_value = response_score * 0.7 + tool_score * 0.3
-            await record_metric(
-                db,
-                experiment_id=uuid.UUID(exp_config["experiment_id"]),
-                user_id=ctx.user_id,
-                variant_id=exp_config["variant_id"],
-                metric_name="engagement",
-                metric_value=metric_value,
-                metadata={
-                    "intent": ctx.intent.value if ctx.intent else None,
-                    "agent": ctx.delegated_agent,
-                    "response_len": len(ctx.response or ""),
-                    "tool_calls": len(ctx.tool_calls),
-                },
-            )
-            await db.commit()
-
     try:
         pp_results.extend(await asyncio.gather(
             _retry_async(_signal_with_session, "signal_extraction", max_retries=2),
             _retry_async(_memory_with_session, "memory_encoding", max_retries=2),
-            _retry_async(_graph_with_session, "graph_extraction", max_retries=1),
-            _retry_async(_experiment_metric_with_session, "experiment_metric", max_retries=1),
         ))
     except Exception as exc:
         logger.warning("Phase 1 post-processing failed: %s", exc, exc_info=True)
@@ -329,7 +273,7 @@ async def post_process(ctx: AgentContext, db_factory) -> None:
     # ── Teaching strategy extraction (Claudeception pattern, throttled) ──
     try:
         if ctx.response and ctx.user_message and ctx.intent in (
-            IntentType.LEARN, IntentType.QUIZ, IntentType.REVIEW,
+            IntentType.LEARN, IntentType.GENERAL, IntentType.PLAN,
         ):
             from services.agent.teaching_strategies import (
                 check_and_increment_strategy_turn,

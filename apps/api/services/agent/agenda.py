@@ -23,7 +23,6 @@ from models.agent_task import AgentTask
 from services.activity.engine import resume_task, retry_task, submit_task
 from services.agent.agenda_ranking import AgendaDecision, rank_signals
 from services.agent.agenda_signals import AgendaSignal, collect_signals
-from services.notification.dispatcher import dispatch as dispatch_notification
 
 logger = logging.getLogger(__name__)
 
@@ -106,22 +105,9 @@ async def run_agenda_tick(
                 run.status = "failed"
                 run.error_message = "queue_decision returned None"
 
-            # --- Notify ---
+            # --- Notify (removed in Phase 1.1 refactor) ---
             if notify and task and decision.action == "submit":
-                if not await _notification_on_cooldown(db, user_id, course_id):
-                    try:
-                        await dispatch_notification(
-                            user_id=user_id,
-                            title=decision.task_title or "Agent task queued",
-                            body=decision.task_summary or decision.reason,
-                            category="agenda",
-                            course_id=course_id,
-                            priority="normal",
-                            dedup_key=f"agenda_notify:{decision.dedup_key}",
-                            db=db,
-                        )
-                    except Exception:
-                        logger.exception("Notification dispatch failed for agenda tick")
+                logger.debug("Notification skipped (removed): %s", decision.task_title)
 
     except Exception as exc:
         logger.exception("Agenda tick failed for user=%s course=%s", user_id, course_id)

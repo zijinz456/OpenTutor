@@ -164,10 +164,10 @@ async def _extract_topic_summary(messages: list[dict]) -> str | None:
 
 # Phase 4: Intent-specific memory type priorities for retrieval
 INTENT_MEMORY_TYPES: dict[str, list[str] | None] = {
-    "review": ["error", "skill", "episode", "knowledge"],
-    "quiz": ["knowledge", "error", "skill"],
-    "learn": ["profile", "preference", "knowledge", "episode"],
-    "plan": ["profile", "episode", "skill"],
+    "review": ["knowledge", "profile"],
+    "quiz": ["knowledge"],
+    "learn": ["profile", "knowledge"],
+    "plan": ["profile", "plan"],
     "general": None,  # No filter, retrieve all types
 }
 
@@ -453,81 +453,8 @@ async def load_context(
     ctx.transition(TaskPhase.LOADING_CONTEXT)
 
     from services.preference.engine import resolve_preferences
-    from services.scene.policy import resolve_scene_policy
 
     _db_factory = db_factory or _default_db_factory
-
-    # ── Scene policy (always sequential — mutates ctx.scene early) ──
-    original_scene = ctx.scene
-    try:
-        scene_policy = await resolve_scene_policy(
-            db,
-            user_id=ctx.user_id,
-            course_id=ctx.course_id,
-            message=ctx.user_message,
-            current_scene=original_scene,
-            active_tab=ctx.active_tab,
-        )
-        ctx.metadata["scene_policy"] = {
-            "recommended_scene": scene_policy.scene_id,
-            "confidence": round(scene_policy.confidence, 3),
-            "scores": scene_policy.scores,
-            "features": scene_policy.features,
-            "reason": scene_policy.reason,
-            "switch_recommended": scene_policy.switch_recommended,
-            "expected_benefit": scene_policy.expected_benefit,
-            "reversible_action": scene_policy.reversible_action,
-            "layout_policy": scene_policy.layout_policy,
-            "reasoning_policy": scene_policy.reasoning_policy,
-            "workflow_policy": scene_policy.workflow_policy,
-        }
-        if original_scene == "study_session":
-            ctx.scene = scene_policy.scene_id
-            ctx.metadata["scene_resolution"] = {
-                "scene": scene_policy.scene_id,
-                "mode": "policy",
-                "matched_text": None,
-                "reason": scene_policy.reason,
-                "confidence": round(scene_policy.confidence, 3),
-                "expected_benefit": scene_policy.expected_benefit,
-                "layout_policy": scene_policy.layout_policy,
-                "reasoning_policy": scene_policy.reasoning_policy,
-                "workflow_policy": scene_policy.workflow_policy,
-            }
-        else:
-            ctx.metadata["scene_resolution"] = {
-                "scene": ctx.scene,
-                "mode": "explicit",
-                "matched_text": None,
-                "reason": "Scene provided by the caller or course context.",
-                "policy_recommendation": scene_policy.scene_id,
-                "policy_confidence": round(scene_policy.confidence, 3),
-                "expected_benefit": scene_policy.expected_benefit,
-                "layout_policy": scene_policy.layout_policy,
-                "reasoning_policy": scene_policy.reasoning_policy,
-                "workflow_policy": scene_policy.workflow_policy,
-            }
-        if scene_policy.switch_recommended:
-            ctx.metadata.setdefault(
-                "scene_switch",
-                {
-                    "current_scene": original_scene,
-                    "target_scene": scene_policy.scene_id,
-                    "reason": scene_policy.reason,
-                    "policy_confidence": round(scene_policy.confidence, 3),
-                    "expected_benefit": scene_policy.expected_benefit,
-                    "reversible_action": scene_policy.reversible_action,
-                },
-            )
-    except Exception as exc:
-        await db.rollback()
-        logger.warning("Scene policy resolution failed: %s", exc)
-        ctx.metadata["scene_resolution"] = {
-            "scene": ctx.scene,
-            "mode": "fallback",
-            "matched_text": None,
-            "reason": "Scene policy unavailable; keeping current scene.",
-        }
 
     # ── Preferences / Memories / RAG — parallel or sequential ──
 
@@ -558,7 +485,7 @@ async def load_context(
         async def _load_content():
             try:
                 async with _db_factory() as _db:
-                    if ctx.intent in (IntentType.LEARN, IntentType.REVIEW):
+                    if ctx.intent in (IntentType.LEARN, IntentType.GENERAL):
                         from services.search.rag_fusion import rag_fusion_search
                         return await rag_fusion_search(
                             _db, ctx.course_id, ctx.user_message, limit=5,
@@ -587,7 +514,7 @@ async def load_context(
     else:
         # Sequential loading
         async def search_content():
-            if ctx.intent in (IntentType.LEARN, IntentType.REVIEW):
+            if ctx.intent in (IntentType.LEARN, IntentType.GENERAL):
                 from services.search.rag_fusion import rag_fusion_search
                 return await rag_fusion_search(db, ctx.course_id, ctx.user_message, limit=5)
             else:
@@ -635,6 +562,32 @@ async def load_context(
     except Exception as exc:
         logger.warning("Tutor notes loading failed: %s", exc)
 
+    # Load upcoming assignments/deadlines for planner context
+    try:
+        from sqlalchemy import text as sa_text
+        result = await db.execute(
+            sa_text(
+                "SELECT title, due_date, assignment_type, status "
+                "FROM assignments WHERE course_id = :course_id AND status = 'active' "
+                "ORDER BY due_date ASC LIMIT 20"
+            ),
+            {"course_id": str(ctx.course_id)} if ctx.course_id else {},
+        )
+        if ctx.course_id:
+            rows = result.fetchall()
+            if rows:
+                ctx.metadata["assignments"] = [
+                    {
+                        "title": row.title,
+                        "due_date": row.due_date.isoformat() if row.due_date else None,
+                        "assignment_type": row.assignment_type,
+                        "status": row.status,
+                    }
+                    for row in rows
+                ]
+    except Exception as exc:
+        logger.warning("Assignment/deadline loading failed: %s", exc)
+
     # Load teaching strategies (auto-extracted, Claudeception pattern)
     try:
         from services.agent.teaching_strategies import get_teaching_strategies
@@ -645,7 +598,7 @@ async def load_context(
         logger.warning("Teaching strategies loading failed: %s", exc)
 
     # Adaptive difficulty guidance for QUIZ intent
-    if ctx.intent == IntentType.QUIZ:
+    if ctx.intent == IntentType.LEARN:
         try:
             from services.learning_science.difficulty_selector import (
                 get_recommendation_for_node,
@@ -658,18 +611,11 @@ async def load_context(
 
     # Phase 4-6: Run independent enrichment tasks concurrently
     async def _load_experiment_config() -> None:
-        if ctx.intent not in (IntentType.LEARN, IntentType.GENERAL, IntentType.QUIZ, IntentType.REVIEW):
-            return
-        try:
-            from services.experiment.engine import get_experiment_config
-            exp_config = await get_experiment_config(db, ctx.user_id, "strategy")
-            if exp_config:
-                ctx.metadata["experiment_config"] = exp_config
-        except Exception as exc:
-            logger.warning("Experiment config loading failed: %s", exc)
+        # Experiment system removed in Phase 1.3
+        pass
 
     async def _load_error_patterns() -> None:
-        if ctx.intent != IntentType.REVIEW:
+        if ctx.intent != IntentType.LEARN:
             return
         try:
             from services.progress.tracker import get_error_pattern_summary
@@ -680,7 +626,7 @@ async def load_context(
             logger.debug("Error pattern load failed: %s", exc)
 
     async def _load_cross_course_patterns() -> None:
-        if ctx.intent not in (IntentType.LEARN, IntentType.REVIEW, IntentType.GENERAL, IntentType.PLAN):
+        if ctx.intent not in (IntentType.LEARN, IntentType.GENERAL, IntentType.GENERAL, IntentType.PLAN):
             return
         try:
             from services.agent.kv_store import kv_get

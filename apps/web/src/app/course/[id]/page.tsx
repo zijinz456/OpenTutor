@@ -1,13 +1,20 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { useCourseStore } from "@/store/course";
 import { useChatStore } from "@/store/chat";
 import { useWorkspaceStore, type SectionId } from "@/store/workspace";
 import { resolveWorkspaceFeatures } from "@/lib/course-config";
-import { getHealthStatus, type HealthStatus } from "@/lib/api";
+import { getHealthStatus, updateCourseLayout, type ChatAction, type HealthStatus } from "@/lib/api";
 import { ttlCache } from "@/lib/cache";
+import {
+  DEFAULT_LAYOUT,
+  LAYOUT_PRESETS,
+  getVisibleSections,
+  type PresetId,
+  type WorkspaceLayout,
+} from "@/lib/layout-presets";
 import { AppShell } from "@/components/shell/app-shell";
 import { WorkspaceHeader } from "@/components/shell/workspace-header";
 import { CourseTree } from "@/components/course-tree/course-tree";
@@ -15,6 +22,7 @@ import { ChatView } from "@/components/chat/chat-view";
 import { SectionContainer } from "@/components/sections/section-container";
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
 import { RuntimeAlert } from "@/components/shared/runtime-alert";
+import { IngestionProgress } from "@/components/shared/ingestion-progress";
 
 export default function CoursePage() {
   const params = useParams();
@@ -30,8 +38,12 @@ export default function CoursePage() {
     fetchCourses,
     fetchIngestionJobs,
   } = useCourseStore();
-  const activeSection = useWorkspaceStore((s) => s.activeSection);
-  const setActiveSection = useWorkspaceStore((s) => s.setActiveSection);
+  const layout = useWorkspaceStore((s) => s.layout);
+  const setLayout = useWorkspaceStore((s) => s.setLayout);
+  const applyPreset = useWorkspaceStore((s) => s.applyPreset);
+  const toggleLayoutSection = useWorkspaceStore((s) => s.toggleLayoutSection);
+
+  const layoutInitialized = useRef(false);
 
   useKeyboardShortcuts();
 
@@ -66,35 +78,84 @@ export default function CoursePage() {
     health?.llm_status !== "mock_fallback" &&
     health?.llm_status !== "configuration_required";
 
-  const features = useMemo(
-    () => resolveWorkspaceFeatures(course?.metadata),
-    [course?.metadata],
-  );
+  // Load layout from course metadata (once per course)
+  useEffect(() => {
+    if (!course || layoutInitialized.current) return;
+    layoutInitialized.current = true;
+
+    const savedLayout = course.metadata?.layout as WorkspaceLayout | undefined;
+    if (savedLayout?.sections) {
+      setLayout(savedLayout);
+    } else {
+      // Fall back to feature flags for backward compatibility
+      const features = resolveWorkspaceFeatures(course.metadata);
+      const compat: WorkspaceLayout = {
+        ...DEFAULT_LAYOUT,
+        sections: DEFAULT_LAYOUT.sections.map((s) => {
+          if (s.type === "notes") return { ...s, visible: features.notes };
+          if (s.type === "practice") return { ...s, visible: features.practice };
+          if (s.type === "plan") return { ...s, visible: features.study_plan };
+          return s;
+        }),
+        chat_visible: features.free_qa,
+      };
+      setLayout(compat);
+    }
+  }, [course, setLayout]);
+
+  // Reset layout initialization when courseId changes
+  useEffect(() => {
+    layoutInitialized.current = false;
+  }, [courseId]);
 
   const visibleSections = useMemo<SectionId[]>(
-    () => [
-      ...(features.notes ? (["notes"] as const) : []),
-      ...(features.practice ? (["practice"] as const) : []),
-      "analytics",
-      ...(features.study_plan ? (["plan"] as const) : []),
-    ],
-    [features.notes, features.practice, features.study_plan],
+    () => getVisibleSections(layout),
+    [layout],
   );
 
+  // Persist layout changes to backend (debounced)
+  const persistTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => {
-    if (course && visibleSections.length > 0) {
-      setActiveSection(visibleSections[0]);
-    }
-  }, [course, courseId, setActiveSection, visibleSections]);
+    if (!course || !layoutInitialized.current) return;
+    clearTimeout(persistTimer.current);
+    persistTimer.current = setTimeout(() => {
+      void updateCourseLayout(courseId, layout as unknown as Record<string, unknown>);
+    }, 1000);
+    return () => clearTimeout(persistTimer.current);
+  }, [layout, courseId, course]);
 
+  // Handle chat actions (layout changes from AI)
+  const handleAction = useCallback(
+    (action: ChatAction) => {
+      if (action.action === "set_layout_preset") {
+        const presetId = action.value as PresetId;
+        if (LAYOUT_PRESETS[presetId]) {
+          applyPreset(presetId);
+        }
+      } else if (action.action === "toggle_section") {
+        const [sectionId, visibility] = (action.value ?? "").split(":");
+        if (sectionId) {
+          toggleLayoutSection(sectionId as SectionId, visibility !== "hide");
+        }
+      } else if (action.action === "data_updated") {
+        const section = action.value as SectionId;
+        if (section) {
+          useWorkspaceStore.getState().triggerRefresh(section);
+        }
+      } else if (action.action === "switch_tab") {
+        const tab = action.value as SectionId;
+        if (tab) {
+          useWorkspaceStore.getState().setActiveSection(tab);
+        }
+      }
+    },
+    [applyPreset, toggleLayoutSection],
+  );
+
+  // Register action handler with chat store
   useEffect(() => {
-    if (!course || visibleSections.length === 0) {
-      return;
-    }
-    if (!visibleSections.includes(activeSection)) {
-      setActiveSection(visibleSections[0]);
-    }
-  }, [activeSection, course, setActiveSection, visibleSections]);
+    useChatStore.getState().setOnAction(handleAction);
+  }, [handleAction]);
 
   useEffect(() => {
     const promptKey = `course_init_prompt_${courseId}`;
@@ -111,20 +172,62 @@ export default function CoursePage() {
     }
   }, [courseId]);
 
+  // Show auto-generated welcome message (from auto_configure_course)
+  useEffect(() => {
+    if (!course) return;
+    const welcomeKey = `welcome_shown_${courseId}`;
+    if (sessionStorage.getItem(welcomeKey) === "true") return;
+
+    const welcome = (course.metadata as Record<string, unknown> | undefined)
+      ?.welcome_message as string | undefined;
+    if (!welcome) return;
+
+    // Only show if chat has no messages yet for this course
+    const chatState = useChatStore.getState();
+    const existing = chatState.messagesByCourse[courseId];
+    if (existing && existing.length > 0) return;
+
+    sessionStorage.setItem(welcomeKey, "true");
+    const timer = setTimeout(() => {
+      const store = useChatStore.getState();
+      const msgs = store.messagesByCourse[courseId] || [];
+      if (msgs.length === 0) {
+        // Inject welcome as an assistant message (no API call needed)
+        const welcomeMsg = {
+          id: `welcome-${courseId}`,
+          role: "assistant" as const,
+          content: welcome,
+          timestamp: new Date(),
+        };
+        useChatStore.setState((s) => ({
+          messagesByCourse: {
+            ...s.messagesByCourse,
+            [courseId]: [welcomeMsg],
+          },
+          messages: s.activeCourseId === courseId ? [welcomeMsg] : s.messages,
+        }));
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [course, courseId]);
+
+  const chatVisible = layout.chat_visible;
+
   return (
     <div className="h-screen flex flex-col bg-background">
-      <WorkspaceHeader courseName={course?.name || "Course"} />
-      <div className="px-3 pt-3">
+      <WorkspaceHeader courseName={course?.name || "Course"} courseId={courseId} />
+      <div className="px-3 pt-3 space-y-2">
         <RuntimeAlert health={health} />
+        <IngestionProgress courseId={courseId} />
       </div>
       <AppShell
         courseId={courseId}
-        tree={<CourseTree courseId={courseId} />}
-        chat={features.free_qa ? <ChatView courseId={courseId} aiActionsEnabled={aiActionsEnabled} /> : undefined}
+        tree={layout.tree_visible ? <CourseTree courseId={courseId} /> : undefined}
+        chat={chatVisible ? <ChatView courseId={courseId} aiActionsEnabled={aiActionsEnabled} /> : undefined}
       >
         <SectionContainer
           courseId={courseId}
-          reviewEnabled={features.wrong_answer}
+          reviewEnabled={true}
           aiActionsEnabled={aiActionsEnabled}
           visibleSections={visibleSections}
         />

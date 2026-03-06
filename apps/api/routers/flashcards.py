@@ -27,6 +27,8 @@ class GenerateRequest(BaseModel):
 class ReviewRequest(BaseModel):
     card: dict
     rating: int  # 1=Again, 2=Hard, 3=Good, 4=Easy
+    batch_id: uuid.UUID | None = None
+    card_index: int | None = None
 
 
 class SaveGeneratedFlashcardsRequest(BaseModel):
@@ -62,6 +64,25 @@ async def review_flashcard_endpoint(
 
     updated_card = review_flashcard(body.card, body.rating)
 
+    # Persist FSRS state back to the GeneratedAsset in the database
+    if body.batch_id is not None and body.card_index is not None:
+        from models.generated_asset import GeneratedAsset
+
+        result = await db.execute(
+            select(GeneratedAsset).where(
+                GeneratedAsset.batch_id == body.batch_id,
+                GeneratedAsset.user_id == user.id,
+                GeneratedAsset.is_archived == False,  # noqa: E712
+            )
+        )
+        asset = result.scalar_one_or_none()
+        if asset and asset.content:
+            cards = asset.content.get("cards", [])
+            if 0 <= body.card_index < len(cards):
+                cards[body.card_index]["fsrs"] = updated_card.get("fsrs", {})
+                # SQLAlchemy needs the JSON column reassigned to detect the mutation
+                asset.content = {**asset.content, "cards": cards}
+
     # Emit standardized learning event for analytics + plugin hooks
     try:
         from services.analytics.events import emit_flashcard_reviewed
@@ -75,10 +96,12 @@ async def review_flashcard_endpoint(
                 card_id=str(card_id),
                 rating=body.rating,
             )
-            await db.commit()
     except Exception:
         import logging
         logging.getLogger(__name__).debug("Flashcard learning event emission failed (best-effort)")
+
+    # Single commit covers both the FSRS persistence and the analytics event
+    await db.commit()
 
     return {
         "card": updated_card,

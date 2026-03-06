@@ -130,12 +130,6 @@ async def update_quiz_result(
     if gap_type:
         progress.gap_type = gap_type
 
-    # Phase 4: Sync mastery to KnowledgePoint table
-    try:
-        await _sync_knowledge_point_mastery(db, course_id, content_node_id, progress.mastery_score)
-    except Exception as e:
-        logger.debug("KnowledgePoint mastery sync failed: %s", e)
-
     # Phase 4: Write mastery snapshot for time-series analytics
     try:
         from models.mastery_snapshot import MasterySnapshot
@@ -394,34 +388,6 @@ async def get_course_progress(
         "completion_percent": (mastered + reviewed) / max(total_nodes, 1) * 100,
         "gap_type_breakdown": gap_type_breakdown,
     }
-
-
-# ── Phase 4: KnowledgePoint mastery sync ──
-
-async def _sync_knowledge_point_mastery(
-    db: AsyncSession,
-    course_id: uuid.UUID,
-    content_node_id: uuid.UUID | None,
-    mastery_score: float,
-) -> None:
-    """Propagate LearningProgress mastery_score to linked KnowledgePoints.
-
-    KnowledgePoint.mastery_level uses 0-100 scale.
-    """
-    if not content_node_id:
-        return
-
-    from models.knowledge_graph import KnowledgePoint
-
-    mastery_100 = mastery_score * 100.0
-    result = await db.execute(
-        select(KnowledgePoint).where(
-            KnowledgePoint.course_id == course_id,
-            KnowledgePoint.source_content_node_id == content_node_id,
-        )
-    )
-    for kp in result.scalars().all():
-        kp.mastery_level = mastery_100
 
 
 # ── Phase 4: Error pattern analytics ──

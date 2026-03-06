@@ -28,6 +28,8 @@ _TYPE_PRECEDENCE: dict[str, int] = {
     "active_goal": 80,      # sub-ranked by urgency
     "forgetting_risk": 70,
     "weak_area": 50,
+    "content_stale": 48,
+    "guided_session_ready": 45,
     "inactivity": 30,
 }
 
@@ -157,6 +159,10 @@ def rank_signals(signals: list[AgendaSignal]) -> AgendaDecision:
             "trigger_signal": "forgetting_risk",
             "duration_minutes": 10,
             "items": items,
+            "content_mutation_hint": {
+                "tool": "update_section_notes",
+                "reason": "Student is forgetting this material — notes may need reinforcement",
+            },
         }
         decision.reason = "Forgetting forecast shows material close to slipping below retention threshold."
 
@@ -165,8 +171,38 @@ def rank_signals(signals: list[AgendaSignal]) -> AgendaDecision:
         decision.task_type = "wrong_answer_review"
         decision.task_title = f"Review {winner.detail.get('unmastered_count', 0)} weak areas"
         decision.task_summary = "Targeted exercises for unmastered wrong answers."
-        decision.input_json = {"course_id": str(winner.course_id) if winner.course_id else None}
+        decision.input_json = {
+            "course_id": str(winner.course_id) if winner.course_id else None,
+            "content_mutation_hint": {
+                "tool": "add_targeted_practice",
+                "reason": "High error rate on this topic — generate targeted practice",
+            },
+        }
         decision.reason = "Enough unmastered wrong answers to warrant a targeted review."
+
+    elif winner.signal_type == "content_stale":
+        decision.action = "submit"
+        decision.task_type = "content_update"
+        decision.task_title = f"Update content: {winner.title}"
+        decision.task_summary = "Content has high error rates and hasn't been updated recently."
+        decision.input_json = {
+            "course_id": str(winner.course_id) if winner.course_id else None,
+            "node_id": winner.entity_id,
+            "content_mutation_hint": winner.detail.get("content_mutation_hint"),
+        }
+        decision.reason = f"Content stale with {winner.detail.get('wrong_answer_count', 0)} errors."
+
+    elif winner.signal_type == "guided_session_ready":
+        decision.action = "submit"
+        decision.task_type = "guided_session"
+        decision.task_title = "Guided study session available"
+        decision.task_summary = "A personalized guided study session is ready."
+        decision.input_json = {
+            "course_id": str(winner.course_id) if winner.course_id else None,
+            "trigger_signal": "guided_session_ready",
+            "has_deadline": winner.detail.get("has_deadline", False),
+        }
+        decision.reason = "Student is active and has material to study. Guided session can help."
 
     elif winner.signal_type == "inactivity":
         decision.action = "submit"

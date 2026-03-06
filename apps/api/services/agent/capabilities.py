@@ -7,6 +7,8 @@ execution time.
 The ReActMixin already limits which tools are *offered* to the LLM via
 react_tools, but this module adds a second enforcement layer at the
 ToolRegistry.execute() level — defense in depth.
+
+Phase 2: Updated for 3-agent architecture (tutor, planner, layout).
 """
 
 import logging
@@ -18,17 +20,22 @@ logger = logging.getLogger(__name__)
 # source of truth for permission checks (including non-ReAct paths).
 
 AGENT_CAPABILITIES: dict[str, set[str]] = {
-    # Keep in sync with each agent's react_tools list
-    "teaching": {"search_content", "lookup_progress", "get_course_outline", "generate_notes", "web_search", "write_file"},
-    "exercise": {"search_content", "lookup_progress", "get_mastery_report", "list_wrong_answers", "generate_flashcards", "generate_quiz", "web_search", "export_anki"},
-    "planning": {"lookup_progress", "get_mastery_report", "get_course_outline", "list_study_goals", "list_assignments", "create_study_plan", "export_calendar", "write_file", "list_files"},
-    "review": {"list_wrong_answers", "search_content", "lookup_progress", "derive_diagnostic"},
-    "preference": set(),
-    "scene": set(),
-    "code_execution": {"run_code", "search_content"},
-    "curriculum": {"get_course_outline", "search_content"},
-    "assessment": {"get_mastery_report", "lookup_progress", "list_recent_tasks"},
-    "motivation": set(),
+    "tutor": {
+        "search_content", "lookup_progress", "get_course_outline",
+        "generate_notes", "web_search", "write_file", "update_workspace",
+        "get_mastery_report", "list_wrong_answers", "generate_flashcards",
+        "generate_quiz", "export_anki", "derive_diagnostic",
+        "list_recent_tasks", "list_study_goals", "list_assignments",
+        "create_study_plan", "export_calendar", "list_files",
+        "run_code", "update_section_notes", "annotate_section",
+        "lock_content", "unlock_content", "add_targeted_practice",
+    },
+    "planner": {
+        "lookup_progress", "get_mastery_report", "get_course_outline",
+        "list_study_goals", "list_assignments", "create_study_plan",
+        "export_calendar", "write_file", "list_files", "update_workspace",
+    },
+    "layout": set(),
 }
 
 

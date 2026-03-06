@@ -24,6 +24,7 @@ export {
   getFileUrl,
   listAuthSessions,
   canvasBrowserLogin,
+  updateCourseLayout,
 } from "./courses";
 
 export type {
@@ -104,6 +105,7 @@ export {
   getNextAction,
   listTemplates,
   applyTemplate,
+  getForgettingForecast,
 } from "./progress";
 
 export type {
@@ -111,6 +113,8 @@ export type {
   LearningOverview,
   LearningTrends,
   MemoryStats,
+  ForgettingPrediction,
+  ForgettingForecast,
   KnowledgeGraphNode,
   KnowledgeGraphEdge,
   AgentTask,
@@ -148,21 +152,6 @@ export type {
 } from "./preferences";
 
 export {
-  getVapidKey,
-  subscribePush,
-  unsubscribePush,
-  listNotifications,
-  markNotificationRead,
-  getNotificationSettings,
-  updateNotificationSettings,
-} from "./notifications";
-
-export type {
-  Notification,
-  NotificationSettings,
-} from "./notifications";
-
-export {
   getUsageSummary,
   getExportSessionUrl,
   getAnkiExportUrl,
@@ -175,10 +164,12 @@ export type {
 
 export {
   listIngestionJobs,
+  syncCourse,
   createScrapeSource,
 } from "./ingestion";
 
 export type {
   IngestionJobSummary,
+  SyncResult,
   ScrapeSource,
 } from "./ingestion";

@@ -872,29 +872,8 @@ async def _record_mcp_audit(
     outcome: str,
     details: dict[str, Any] | None = None,
 ) -> None:
-    """Persist an MCP-related event to the audit log.
-
-    Uses a short-lived session so audit writes don't interfere with the
-    caller's transaction.  Failures are swallowed and logged — audit
-    recording must never crash the startup path.
-    """
-    try:
-        from database import async_session
-        from services.audit import record_audit_log
-
-        async with async_session() as db:
-            await record_audit_log(
-                db,
-                actor_user_id=None,  # system-level event
-                tool_name=server_name,
-                action_kind="mcp_connection",
-                outcome=outcome,
-                details_json=details,
-            )
-            await db.commit()
-    except Exception as e:
-        # Never let audit failures break MCP loading
-        logger.debug("Failed to write MCP audit log: %s", e)
+    """Log an MCP-related event (audit DB persistence removed in Phase 1.3)."""
+    logger.debug("MCP audit: %s %s %s", server_name, outcome, details)
 
 
 async def load_mcp_tools(registry: ToolRegistry | None = None) -> int:

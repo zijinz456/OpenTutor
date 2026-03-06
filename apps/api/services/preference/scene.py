@@ -14,7 +14,7 @@ import re
 from services.agent.state import SceneName
 
 # v3 Scene patterns — ordered by specificity (most specific first)
-# Maps to canonical v3 scene IDs used by scene_behavior.py and tool_loader.py
+# Maps to canonical v3 scene IDs used by tool_loader.py
 SCENE_PATTERNS: list[tuple[str, re.Pattern]] = [
     (SceneName.EXAM_PREP, re.compile(
         r"(exam|test|midterm|final|quiz\s+prep|review\s+for|prepare\s+for|cram|last[-\s]?minute)", re.IGNORECASE

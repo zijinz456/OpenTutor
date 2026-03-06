@@ -6,7 +6,7 @@ import { TREE_COLLAPSED_WIDTH, CHAT_MIN_HEIGHT, CHAT_MAX_HEIGHT } from "@/lib/co
 
 interface AppShellProps {
   courseId: string;
-  tree: ReactNode;
+  tree?: ReactNode;
   children: ReactNode;
   chat?: ReactNode;
 }
@@ -75,8 +75,9 @@ export function AppShell({ tree, children, chat }: AppShellProps) {
     return () => media.removeEventListener("change", sync);
   }, []);
 
-  const sidebarW = treeCollapsed ? TREE_COLLAPSED_WIDTH : treeWidth;
-  const showVSep = !isMobile && !treeCollapsed;
+  const hasTree = !!tree;
+  const sidebarW = !hasTree ? 0 : treeCollapsed ? TREE_COLLAPSED_WIDTH : treeWidth;
+  const showVSep = !isMobile && !treeCollapsed && hasTree;
 
   /* fr units: top area gets (1-chatHeight), chat gets chatHeight.
      minmax(0, Xfr) ensures cells can shrink (like min-height: 0). */
@@ -87,7 +88,9 @@ export function AppShell({ tree, children, chat }: AppShellProps) {
     ? { display: "flex", flexDirection: "column" }
     : {
         display: "grid",
-        gridTemplateColumns: `${sidebarW}px ${showVSep ? "4px" : "0px"} minmax(0, 1fr)`,
+        gridTemplateColumns: hasTree
+          ? `${sidebarW}px ${showVSep ? "4px" : "0px"} minmax(0, 1fr)`
+          : "minmax(0, 1fr)",
         gridTemplateRows: chat
           ? `minmax(0, ${topFr}fr) 6px minmax(0, ${chatFr}fr)`
           : "minmax(0, 1fr)",
@@ -97,9 +100,11 @@ export function AppShell({ tree, children, chat }: AppShellProps) {
     // Mobile: simple flex stack
     return (
       <div ref={shellRef} className="flex-1 flex flex-col min-h-0 overflow-hidden">
-        <aside className="shrink-0 overflow-auto border-b border-border" style={{ maxHeight: treeCollapsed ? TREE_COLLAPSED_WIDTH : "32vh", background: "var(--tree-bg)" }}>
-          {tree}
-        </aside>
+        {hasTree && (
+          <aside className="shrink-0 overflow-auto border-b border-border" style={{ maxHeight: treeCollapsed ? TREE_COLLAPSED_WIDTH : "32vh", background: "var(--tree-bg)" }}>
+            {tree}
+          </aside>
+        )}
         <main className="flex-1 flex flex-col min-h-0 overflow-hidden">{children}</main>
         {chat ? (
           <>
@@ -119,13 +124,15 @@ export function AppShell({ tree, children, chat }: AppShellProps) {
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
     >
-      {/* Row 1, Col 1: Sidebar */}
-      <aside
-        className="overflow-auto"
-        style={{ gridRow: 1, gridColumn: 1, background: "var(--tree-bg)" }}
-      >
-        {tree}
-      </aside>
+      {/* Row 1, Col 1: Sidebar (hidden when tree is not provided) */}
+      {hasTree && (
+        <aside
+          className="overflow-auto"
+          style={{ gridRow: 1, gridColumn: 1, background: "var(--tree-bg)" }}
+        >
+          {tree}
+        </aside>
+      )}
 
       {/* Row 1, Col 2: Vertical separator */}
       {showVSep ? (
@@ -139,10 +146,10 @@ export function AppShell({ tree, children, chat }: AppShellProps) {
         />
       ) : null}
 
-      {/* Row 1, Col 3: Main content */}
+      {/* Row 1, Col 3 (or Col 1 when no tree): Main content */}
       <main
         className="flex flex-col min-w-0 min-h-0 overflow-hidden"
-        style={{ gridRow: 1, gridColumn: 3 }}
+        style={{ gridRow: 1, gridColumn: hasTree ? 3 : 1 }}
       >
         {children}
       </main>

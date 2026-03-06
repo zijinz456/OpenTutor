@@ -89,6 +89,33 @@ export async function triggerConsolidation(courseId?: string): Promise<Record<st
   return request(`/progress/memory-consolidate${params}`, { method: "POST" });
 }
 
+// ── Forgetting Forecast ──
+
+export interface ForgettingPrediction {
+  content_node_id: string | null;
+  title: string;
+  current_retrievability: number;
+  stability_days: number;
+  days_until_threshold: number;
+  predicted_drop_date: string;
+  urgency: "ok" | "warning" | "urgent" | "overdue";
+  last_reviewed: string | null;
+  mastery_score: number;
+}
+
+export interface ForgettingForecast {
+  course_id: string;
+  generated_at: string;
+  total_items: number;
+  urgent_count: number;
+  warning_count: number;
+  predictions: ForgettingPrediction[];
+}
+
+export async function getForgettingForecast(courseId: string): Promise<ForgettingForecast> {
+  return request(`/progress/courses/${courseId}/forgetting-forecast`);
+}
+
 // ── Knowledge Graph ──
 
 export interface KnowledgeGraphNode {

@@ -297,6 +297,8 @@ class CanvasExtraction:
     modules_found: int = 0
     quiz_questions: list[dict] = field(default_factory=list)
     """Parsed quiz questions with correct answers mapped from Canvas API weight field."""
+    assignments_data: list[dict] = field(default_factory=list)
+    """Raw Canvas API assignment objects with due_at, name, points_possible, etc."""
 
 
 def _parse_canvas_quiz_question(question: dict, quiz_title: str) -> dict | None:
@@ -640,6 +642,7 @@ async def _try_canvas_api_deep(
                 logger.debug("Modules deep fetch failed: %s", e)
 
             # ── 3. Assignments with descriptions ──
+            all_assignments_data: list[dict] = []
             try:
                 assignments = await _canvas_api_paginate(
                     client,
@@ -647,6 +650,13 @@ async def _try_canvas_api_deep(
                     params={"per_page": "100"},
                 )
                 if assignments:
+                    # Capture raw assignment data for deadline extraction
+                    all_assignments_data = [
+                        {"name": a.get("name"), "due_at": a.get("due_at"),
+                         "points_possible": a.get("points_possible"),
+                         "canvas_id": a.get("id")}
+                        for a in assignments if a.get("name")
+                    ]
                     parts.append("## Assignments\n")
                     for a in assignments:
                         line = f"- **{a.get('name', 'Assignment')}**"
@@ -783,6 +793,7 @@ async def _try_canvas_api_deep(
                     pages_fetched=pages_fetched,
                     modules_found=modules_found,
                     quiz_questions=all_quiz_questions,
+                    assignments_data=all_assignments_data,
                 )
 
     except ImportError:

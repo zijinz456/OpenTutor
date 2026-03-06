@@ -73,6 +73,42 @@ export function ChatView({ courseId, aiActionsEnabled = true }: ChatViewProps) {
         }
         return;
       }
+
+      // Agent directly sets node focus in the knowledge tree.
+      if (type === "focus_topic") {
+        const nodeId = action.value as string | undefined;
+        if (nodeId) {
+          useWorkspaceStore.getState().setSelectedNodeId(nodeId);
+        }
+        return;
+      }
+
+      // Agent adjusts workspace layout dimensions.
+      if (type === "set_layout") {
+        try {
+          const layout =
+            typeof action.value === "string"
+              ? (JSON.parse(action.value) as Record<string, unknown>)
+              : (action.value as Record<string, unknown> | undefined);
+          if (layout) {
+            const store = useWorkspaceStore.getState();
+            if (typeof layout.chat_height === "number") {
+              store.setChatHeight(layout.chat_height);
+            }
+            if (typeof layout.tree_collapsed === "boolean") {
+              if (layout.tree_collapsed !== useWorkspaceStore.getState().treeCollapsed) {
+                store.toggleTree();
+              }
+            }
+            if (typeof layout.tree_width === "number") {
+              store.setTreeWidth(layout.tree_width);
+            }
+          }
+        } catch {
+          // Ignore malformed layout payloads
+        }
+        return;
+      }
     };
 
     setOnAction(handleAction);

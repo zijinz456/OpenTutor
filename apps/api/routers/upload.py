@@ -102,57 +102,17 @@ router = APIRouter()
 
 
 async def _background_auto_generate(course_id: uuid.UUID, user_id: uuid.UUID):
-    """Fire-and-forget: auto-generate starter quiz + flashcards after ingestion."""
+    """Fire-and-forget: auto-generate starter quiz + flashcards + notes after ingestion."""
     try:
         await ensure_llm_ready("Auto-generated starter study assets")
     except Exception as exc:
         logger.debug("Skipping starter asset generation for course %s: %s", course_id, exc)
         return
 
-    # Quiz: extract up to 5 questions from course content
     try:
-        async with async_session() as db:
-            from services.parser.quiz import extract_questions
-            result = await db.execute(
-                select(CourseContentTree)
-                .where(CourseContentTree.course_id == course_id)
-                .where(CourseContentTree.content.isnot(None))
-            )
-            nodes = result.scalars().all()
-            problems = []
-            for node in nodes[:10]:
-                if node.content and len(node.content) > 100:
-                    node_problems = await extract_questions(
-                        node.content, node.title, course_id, node.id,
-                    )
-                    problems.extend(node_problems)
-                    if len(problems) >= 5:
-                        break
-            for p in problems[:5]:
-                db.add(p)
-            await db.commit()
-            logger.info("Auto-generated %d starter quiz questions for course %s", min(len(problems), 5), course_id)
-    except Exception as e:
-        logger.debug("Auto-generate quiz failed (best-effort): %s", e)
-
-    # Flashcards: generate 10 cards
-    try:
-        async with async_session() as db:
-            from services.spaced_repetition.flashcards import generate_flashcards
-            from services.generated_assets import save_generated_asset
-            cards = await generate_flashcards(db, course_id, None, 10)
-            if cards:
-                await save_generated_asset(
-                    db,
-                    user_id=user_id,
-                    course_id=course_id,
-                    asset_type="flashcards",
-                    title="Auto-generated starter set",
-                    content={"cards": cards},
-                    metadata={"count": len(cards), "auto_generated": True},
-                )
-                await db.commit()
-                logger.info("Auto-generated %d starter flashcards for course %s", len(cards), course_id)
+        from services.ingestion.pipeline import auto_prepare
+        summary = await auto_prepare(async_session, course_id, user_id)
+        logger.info("auto_prepare complete for course %s: %s", course_id, summary)
     except Exception as e:
         logger.debug("Auto-generate flashcards failed (best-effort): %s", e)
 
@@ -465,11 +425,11 @@ async def scrape_url(
     if canvas_file_urls and canvas_info.is_canvas and scrape_session_name and not is_test_request:
         from services.ingestion.pipeline import (
             ingest_canvas_files, link_pdfs_to_canvas_topics,
-            auto_summarize_titles, auto_generate_notes,
+            auto_summarize_titles, auto_prepare,
         )
 
         async def _background_canvas_pipeline():
-            """Chain: ingest files → link to topics → summarize titles → generate notes."""
+            """Chain: ingest files → link to topics → summarize titles → auto-prepare."""
             await ingest_canvas_files(
                 db_factory=async_session,
                 user_id=user.id,
@@ -489,8 +449,8 @@ async def scrape_url(
                 db_factory=async_session,
                 course_id=cid,
             )
-            # Phase 4: Auto-generate notes for content nodes
-            await auto_generate_notes(
+            # Phase 4: Auto-prepare notes + flashcards + quiz
+            await auto_prepare(
                 db_factory=async_session,
                 course_id=cid,
                 user_id=user.id,

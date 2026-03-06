@@ -48,18 +48,11 @@ class SceneName(str, Enum):
 
 
 class IntentType(str, Enum):
-    """Classified user intent (v3: 4 categories + layout + general + new agents)."""
-    LEARN = "learn"               # Knowledge question → TeachingAgent
-    QUIZ = "quiz"                 # Generate quiz → ExerciseAgent
-    PLAN = "plan"                 # Study plan → PlanningAgent
-    REVIEW = "review"             # Error analysis, review → ReviewAgent
-    PREFERENCE = "preference"     # Preference change → PreferenceAgent
-    GENERAL = "general"           # General chat → TeachingAgent (fallback)
-    LAYOUT = "layout"             # UI layout change → direct action
-    SCENE_SWITCH = "scene_switch" # v3: Scene change signal → SceneAgent
-    CODE = "code"                 # Code execution → CodeExecutionAgent
-    CURRICULUM = "curriculum"     # Course structure analysis → CurriculumAgent
-    ASSESS = "assess"             # Learning assessment → AssessmentAgent
+    """Classified user intent (Phase 2: consolidated to 4 categories)."""
+    LEARN = "learn"       # teach / quiz / review / assess / curriculum
+    PLAN = "plan"         # study plan, deadlines
+    LAYOUT = "layout"     # UI layout changes
+    GENERAL = "general"   # everything else
 
 
 @dataclass

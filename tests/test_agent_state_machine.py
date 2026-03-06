@@ -94,8 +94,8 @@ def test_context_metadata_is_mutable_dict():
 
 def test_intent_type_values():
     assert IntentType.LEARN.value == "learn"
-    assert IntentType.QUIZ.value == "quiz"
-    assert IntentType.REVIEW.value == "review"
+    assert IntentType.PLAN.value == "plan"
+    assert IntentType.LAYOUT.value == "layout"
     assert IntentType.GENERAL.value == "general"
 
 

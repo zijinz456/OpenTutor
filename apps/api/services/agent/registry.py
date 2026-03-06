@@ -1,4 +1,4 @@
-"""Agent registry — maps intents to specialist agents.
+"""Agent registry — maps intents to specialist agents (Phase 2: 3 agents).
 
 Extracted from orchestrator.py to break circular import risks and
 keep agent registration separate from orchestration logic.
@@ -8,50 +8,29 @@ import uuid
 
 from services.agent.state import AgentContext, IntentType
 from services.agent.base import BaseAgent
-from services.agent.teaching import TeachingAgent
-from services.agent.exercise import ExerciseAgent
-from services.agent.planning import PlanningAgent
-from services.agent.review import ReviewAgent
-from services.agent.preference_agent import PreferenceAgent
-from services.agent.scene_agent import SceneAgent
-from services.agent.code_execution import CodeExecutionAgent
-from services.agent.curriculum import CurriculumAgent
-from services.agent.assessment import AssessmentAgent
-from services.agent.motivation import MotivationAgent
+from services.agent.agents.tutor import TutorAgent
+from services.agent.agents.planner import PlanAgent
+from services.agent.agents.layout import LayoutAgent
 
 
 AGENT_REGISTRY: dict[str, BaseAgent] = {
-    "teaching": TeachingAgent(),
-    "exercise": ExerciseAgent(),
-    "planning": PlanningAgent(),
-    "review": ReviewAgent(),
-    "preference": PreferenceAgent(),
-    "scene": SceneAgent(),
-    "code_execution": CodeExecutionAgent(),
-    "curriculum": CurriculumAgent(),
-    "assessment": AssessmentAgent(),
-    "motivation": MotivationAgent(),
+    "tutor": TutorAgent(),
+    "planner": PlanAgent(),
+    "layout": LayoutAgent(),
 }
 
-# Intent → Agent mapping (OpenClaw binding pattern)
+# Intent -> Agent mapping (Phase 2: 4 intents -> 3 agents)
 INTENT_AGENT_MAP: dict[IntentType, str] = {
-    IntentType.LEARN: "teaching",
-    IntentType.QUIZ: "exercise",
-    IntentType.PLAN: "planning",
-    IntentType.REVIEW: "review",
-    IntentType.PREFERENCE: "preference",
-    IntentType.LAYOUT: "preference",
-    IntentType.GENERAL: "teaching",
-    IntentType.SCENE_SWITCH: "scene",
-    IntentType.CODE: "code_execution",
-    IntentType.CURRICULUM: "curriculum",
-    IntentType.ASSESS: "assessment",
+    IntentType.LEARN: "tutor",
+    IntentType.PLAN: "planner",
+    IntentType.LAYOUT: "layout",
+    IntentType.GENERAL: "tutor",
 }
 
 
 def get_agent(intent: IntentType) -> BaseAgent:
-    """Resolve intent to specialist agent (OpenClaw binding resolution)."""
-    agent_name = INTENT_AGENT_MAP.get(intent, "teaching")
+    """Resolve intent to specialist agent."""
+    agent_name = INTENT_AGENT_MAP.get(intent, "tutor")
     return AGENT_REGISTRY[agent_name]
 
 

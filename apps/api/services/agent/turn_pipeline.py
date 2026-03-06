@@ -223,7 +223,7 @@ def envelope_payload(ctx: AgentContext) -> dict:
 
 async def apply_verifier(ctx: AgentContext, agent: BaseAgent) -> AgentContext:
     """Run verifier/repair only for the intents that benefit from it."""
-    if ctx.intent not in (IntentType.LEARN, IntentType.REVIEW, IntentType.QUIZ, IntentType.PLAN, IntentType.ASSESS):
+    if ctx.intent not in (IntentType.LEARN, IntentType.PLAN, IntentType.GENERAL):
         return ctx
     try:
         from services.agent.verifier import verify_and_repair
@@ -243,7 +243,7 @@ async def apply_reflection(ctx: AgentContext) -> AgentContext:
     verifier_status = (ctx.metadata.get("verifier") or {}).get("status")
     if verifier_status == "failed":
         return ctx
-    if not ctx.response or ctx.intent not in (IntentType.LEARN, IntentType.REVIEW) or len(ctx.response) <= 100:
+    if not ctx.response or ctx.intent not in (IntentType.LEARN, IntentType.GENERAL) or len(ctx.response) <= 100:
         return ctx
     try:
         original_response = ctx.response

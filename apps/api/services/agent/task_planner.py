@@ -123,9 +123,9 @@ Student request: "{user_message}"
 
 Return ONLY a JSON array of step objects. Example:
 [
-  {{"step_type": "check_progress", "title": "Check current progress", "description": "Review mastery scores and identify gaps", "agent": "assessment", "depends_on": []}},
-  {{"step_type": "identify_weak_points", "title": "Find weak areas", "description": "Identify knowledge points below 50% mastery", "agent": "assessment", "depends_on": [0]}},
-  {{"step_type": "generate_exercises", "title": "Create practice set", "description": "Generate targeted exercises for weak areas", "agent": "exercise", "depends_on": [1]}}
+  {{"step_type": "check_progress", "title": "Check current progress", "description": "Review mastery scores and identify gaps", "agent": "tutor", "depends_on": []}},
+  {{"step_type": "identify_weak_points", "title": "Find weak areas", "description": "Identify knowledge points below 50% mastery", "agent": "tutor", "depends_on": [0]}},
+  {{"step_type": "generate_exercises", "title": "Create practice set", "description": "Generate targeted exercises for weak areas", "agent": "tutor", "depends_on": [1]}}
 ]"""
 
 
@@ -166,7 +166,7 @@ async def create_plan(
             "step_type": step.get("step_type", "check_progress"),
             "title": step.get("title", f"Step {i + 1}"),
             "description": step.get("description", ""),
-            "agent": step.get("agent", "teaching"),
+            "agent": step.get("agent", "tutor"),
             "depends_on": step.get("depends_on", []),
             "status": "pending",
             "input_params": {
@@ -185,21 +185,21 @@ def _fallback_plan(user_message: str) -> list[dict]:
             "step_type": "check_progress",
             "title": "Review current progress",
             "description": "Check mastery scores and study metrics",
-            "agent": "assessment",
+            "agent": "tutor",
             "depends_on": [],
         },
         {
             "step_type": "identify_weak_points",
             "title": "Identify areas for improvement",
             "description": "Find knowledge gaps based on quiz performance",
-            "agent": "assessment",
+            "agent": "tutor",
             "depends_on": [0],
         },
         {
             "step_type": "build_study_plan",
             "title": "Create study plan",
             "description": f"Build a plan addressing: {user_message[:200]}",
-            "agent": "planning",
+            "agent": "planner",
             "depends_on": [1],
         },
     ]

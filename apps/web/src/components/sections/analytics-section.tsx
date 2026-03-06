@@ -6,6 +6,9 @@ import { TabbedSection, type TabDef } from "./tabbed-section";
 const ProgressView = lazy(() =>
   import("./analytics/progress-view").then((m) => ({ default: m.ProgressView })),
 );
+const ForecastView = lazy(() =>
+  import("./analytics/forecast-view").then((m) => ({ default: m.ForecastView })),
+);
 const GraphView = lazy(() =>
   import("./analytics/graph-view").then((m) => ({ default: m.GraphView })),
 );
@@ -17,10 +20,11 @@ interface AnalyticsSectionProps {
   courseId: string;
 }
 
-type AnalyticsTab = "progress" | "graph" | "profile";
+type AnalyticsTab = "progress" | "forecast" | "graph" | "profile";
 
 const TABS: TabDef<AnalyticsTab>[] = [
   { id: "progress", label: "Stats", testId: "right-tab-progress" },
+  { id: "forecast", label: "Forecast", testId: "right-tab-forecast" },
   { id: "graph", label: "Graph", testId: "right-tab-graph" },
   { id: "profile", label: "Profile" },
 ];
@@ -31,6 +35,7 @@ export function AnalyticsSection({ courseId }: AnalyticsSectionProps) {
       {(activeTab) => (
         <>
           {activeTab === "progress" ? <ProgressView courseId={courseId} /> : null}
+          {activeTab === "forecast" ? <ForecastView courseId={courseId} /> : null}
           {activeTab === "graph" ? <GraphView courseId={courseId} /> : null}
           {activeTab === "profile" ? <ProfileView courseId={courseId} /> : null}
         </>

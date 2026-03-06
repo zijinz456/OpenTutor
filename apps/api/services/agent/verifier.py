@@ -120,7 +120,7 @@ def _find_issue(ctx: AgentContext, signals: dict[str, object]) -> VerificationIs
     evidence_overlap = set(signals.get("evidence_overlap_terms") or [])
     evidence_coverage = float(signals.get("evidence_coverage") or 0.0)
 
-    if ctx.intent in (IntentType.LEARN, IntentType.REVIEW):
+    if ctx.intent in (IntentType.LEARN, IntentType.GENERAL):
         if (
             response
             and len(response) < 220
@@ -167,7 +167,7 @@ def _find_issue(ctx: AgentContext, signals: dict[str, object]) -> VerificationIs
                 message="The answer does not clearly use the retrieved course evidence needed for the student's request.",
             )
 
-    if ctx.intent == IntentType.QUIZ and _looks_like_question_array(response):
+    if ctx.intent == IntentType.LEARN and _looks_like_question_array(response):
         try:
             parsed = json.loads(response)
         except json.JSONDecodeError:
@@ -220,7 +220,7 @@ def _find_issue(ctx: AgentContext, signals: dict[str, object]) -> VerificationIs
                 message="Study plans must include time buckets and actionable items.",
             )
 
-    if ctx.intent == IntentType.ASSESS:
+    if ctx.intent == IntentType.LEARN and any(kw in ctx.user_message.lower() for kw in ("assessment", "progress report", "how am i doing", "mastery")):
         lowered = response.lower()
         if "memory" in lowered and "inference" not in lowered and "guess" not in lowered and "speculation" not in lowered:
             return VerificationIssue(

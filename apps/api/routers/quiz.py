@@ -332,20 +332,7 @@ async def submit_answer(
     except Exception as e:
         logger.warning("Progress update failed (best-effort): %s", e)
 
-    try:
-        from services.experiment.engine import get_experiment_config, record_metric
-        exp_config = await get_experiment_config(db, user.id, "strategy")
-        if exp_config:
-            await record_metric(
-                db,
-                experiment_id=uuid.UUID(exp_config["experiment_id"]),
-                user_id=user.id,
-                variant_id=exp_config["variant_id"],
-                metric_name="quiz_accuracy",
-                metric_value=1.0 if is_correct else 0.0,
-            )
-    except Exception:
-        pass  # Best-effort, non-blocking
+    # Experiment system removed in Phase 1.3
 
     await db.commit()
 
@@ -364,27 +351,6 @@ async def submit_answer(
         await db.commit()
     except Exception:
         logger.debug("Learning event emission failed (best-effort)")
-
-    try:
-        from services.experiment.bandit import record_strategy_outcome
-        from services.agent.kv_store import kv_get, kv_delete
-
-        pending = await kv_get(
-            db, user.id, "bandit", "pending_reward",
-            course_id=problem.course_id,
-        )
-        if pending:
-            await record_strategy_outcome(
-                user_id=user.id,
-                strategy_idx=pending["strategy_idx"],
-                context_vector=pending["context_vector"],
-                correct=is_correct,
-            )
-            await kv_delete(db, user.id, "bandit", "pending_reward",
-                            course_id=problem.course_id)
-            await db.commit()
-    except Exception:
-        logger.debug("Bandit reward recording skipped (best-effort)")
 
     if not is_correct and wa:
         background_tasks.add_task(_auto_derive_diagnostic, wa.id, user.id)

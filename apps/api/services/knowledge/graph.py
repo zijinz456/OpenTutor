@@ -1,10 +1,11 @@
-"""Knowledge graph builder — content tree + prerequisite DAG + path recommendations.
+"""Knowledge graph builder — content tree + dynamic relationships.
 
 Builds D3-compatible graph format combining:
 1. Hierarchical content tree (parent-child "contains" edges)
-2. Prerequisite DAG from KnowledgePoints ("requires" edges)
-3. Dynamic relationships from graph_memory ("related_to", "confused_with", etc.)
-4. Path recommendations based on student's mastery gaps
+2. Dynamic relationships from graph_memory ("related_to", "confused_with", etc.)
+3. Progress-based mastery colouring
+
+KnowledgePoint model removed in Phase 1.3 refactor.
 """
 
 import uuid
@@ -14,7 +15,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.content import CourseContentTree
-from models.knowledge_graph import KnowledgePoint
 from models.memory import ConversationMemory
 from models.progress import LearningProgress
 
@@ -26,7 +26,7 @@ async def build_knowledge_graph(
     course_id: uuid.UUID,
     user_id: uuid.UUID | None = None,
 ) -> dict:
-    """Build a comprehensive knowledge graph combining content tree and prerequisites.
+    """Build a knowledge graph from content tree and dynamic relationships.
 
     Returns D3-compatible format: {nodes: [...], edges: [...], recommendations: [...]}.
     """
@@ -38,13 +38,7 @@ async def build_knowledge_graph(
     )
     tree_nodes = tree_result.scalars().all()
 
-    # 2. Fetch knowledge points (prerequisite DAG)
-    kp_result = await db.execute(
-        select(KnowledgePoint).where(KnowledgePoint.course_id == course_id)
-    )
-    knowledge_points = list(kp_result.scalars().all())
-
-    # 3. Fetch dynamic graph relationships from memory
+    # 2. Fetch dynamic graph relationships from memory
     dynamic_edges = []
     if user_id:
         mem_result = await db.execute(
@@ -65,7 +59,7 @@ async def build_knowledge_graph(
                     "type": meta.get("relation_type", "related_to"),
                 })
 
-    # 4. Fetch progress data
+    # 3. Fetch progress data
     progress_map: dict[str, dict] = {}
     if user_id:
         prog_result = await db.execute(
@@ -86,6 +80,7 @@ async def build_knowledge_graph(
     nodes = []
     edges = []
     node_ids = set()
+    node_name_to_id: dict[str, str] = {}
 
     # Content tree nodes
     for node in tree_nodes:
@@ -125,63 +120,12 @@ async def build_knowledge_graph(
                 "type": "contains",
             })
 
-    # Knowledge point nodes + prerequisite edges
-    kp_map = {str(kp.id): kp for kp in knowledge_points}
-    kp_name_to_id: dict[str, str] = {}
-
-    for kp in knowledge_points:
-        kp_id = str(kp.id)
-        if kp_id not in node_ids:
-            mastery = kp.mastery_level / 100.0
-
-            if mastery >= 0.8:
-                color = "#22c55e"
-            elif mastery >= 0.4:
-                color = "#3b82f6"
-            elif mastery > 0:
-                color = "#eab308"
-            else:
-                color = "#9ca3af"
-
-            nodes.append({
-                "id": kp_id,
-                "label": kp.name,
-                "type": "knowledge_point",
-                "level": -1,
-                "size": 12,
-                "color": color,
-                "status": "mastered" if mastery >= 0.7 else "in_progress" if mastery > 0 else "not_started",
-                "mastery": mastery,
-                "gap_type": None,
-            })
-            node_ids.add(kp_id)
-
-        kp_name_to_id[kp.name.lower()] = kp_id
-
-        # Prerequisite edges
-        for prereq_id in (kp.prerequisites or []):
-            prereq_id = str(prereq_id)
-            if prereq_id in kp_map:
-                edges.append({
-                    "source": prereq_id,
-                    "target": kp_id,
-                    "type": "requires",
-                })
-
-        # Link to source content node
-        if kp.source_content_node_id:
-            source_id = str(kp.source_content_node_id)
-            if source_id in node_ids:
-                edges.append({
-                    "source": source_id,
-                    "target": kp_id,
-                    "type": "defines",
-                })
+        node_name_to_id[node.title.lower()] = node_id
 
     # Dynamic relationship edges (from graph_memory)
     for de in dynamic_edges:
-        src = kp_name_to_id.get(de["source_name"].lower())
-        tgt = kp_name_to_id.get(de["target_name"].lower())
+        src = node_name_to_id.get(de["source_name"].lower())
+        tgt = node_name_to_id.get(de["target_name"].lower())
         if src and tgt:
             edges.append({
                 "source": src,
@@ -189,113 +133,16 @@ async def build_knowledge_graph(
                 "type": de["type"],
             })
 
-    # 5. Generate recommendations
-    recommendations = _generate_recommendations(knowledge_points, progress_map, kp_map)
-
     return {
         "nodes": nodes,
         "edges": edges,
-        "recommendations": recommendations,
+        "recommendations": [],
         "stats": {
             "total_nodes": len(nodes),
             "total_edges": len(edges),
             "content_nodes": len(tree_nodes),
-            "knowledge_points": len(knowledge_points),
+            "knowledge_points": 0,
             "dynamic_relations": len(dynamic_edges),
             "levels": max((n.level for n in tree_nodes), default=0) + 1 if tree_nodes else 0,
         },
     }
-
-
-def _generate_recommendations(
-    knowledge_points: list[KnowledgePoint],
-    progress_map: dict[str, dict],
-    kp_map: dict[str, KnowledgePoint],
-) -> list[dict]:
-    """Generate study recommendations based on knowledge graph gaps.
-
-    Prioritizes:
-    1. Unmastered prerequisites of topics the student is working on
-    2. Topics in the Zone of Proximal Development (partially mastered)
-    3. Topics with gap_type = "fundamental_gap" (highest priority)
-    """
-    recommendations = []
-
-    for kp in knowledge_points:
-        kp_id = str(kp.id)
-        mastery = kp.mastery_level / 100.0
-
-        if mastery >= 0.7:
-            continue  # Already mastered
-
-        # Check prerequisite readiness
-        unmet_prereqs = []
-        for prereq_id in (kp.prerequisites or []):
-            prereq_id = str(prereq_id)
-            prereq = kp_map.get(prereq_id)
-            if prereq and prereq.mastery_level < 70:
-                unmet_prereqs.append({
-                    "id": prereq_id,
-                    "name": prereq.name,
-                    "mastery": prereq.mastery_level / 100.0,
-                })
-
-        # Priority scoring
-        priority = 0.0
-
-        # Check if this is linked to a content node with a gap
-        if kp.source_content_node_id:
-            prog = progress_map.get(str(kp.source_content_node_id), {})
-            gap = prog.get("gap_type")
-            if gap == "fundamental_gap":
-                priority += 3.0
-            elif gap == "transfer_gap":
-                priority += 2.0
-            elif gap == "trap_vulnerability":
-                priority += 1.0
-
-        # ZPD bonus: partially mastered topics are easier to advance
-        if 0.2 <= mastery <= 0.6:
-            priority += 1.5
-
-        # Penalty if prerequisites not met
-        if unmet_prereqs:
-            priority -= 0.5
-
-        if priority > 0:
-            recommendations.append({
-                "id": kp_id,
-                "name": kp.name,
-                "mastery": mastery,
-                "priority": round(priority, 2),
-                "reason": _get_recommendation_reason(mastery, unmet_prereqs, progress_map, kp),
-                "unmet_prerequisites": unmet_prereqs,
-                "action": "review_prerequisites" if unmet_prereqs else "study",
-            })
-
-    # Sort by priority
-    recommendations.sort(key=lambda r: -r["priority"])
-    return recommendations[:10]
-
-
-def _get_recommendation_reason(
-    mastery: float,
-    unmet_prereqs: list[dict],
-    progress_map: dict[str, dict],
-    kp: KnowledgePoint,
-) -> str:
-    """Generate a human-readable reason for the recommendation."""
-    if unmet_prereqs:
-        names = ", ".join(p["name"] for p in unmet_prereqs[:3])
-        return f"Review prerequisites first: {names}"
-    if kp.source_content_node_id:
-        gap = progress_map.get(str(kp.source_content_node_id), {}).get("gap_type")
-        if gap == "fundamental_gap":
-            return "Fundamental knowledge gap detected — focus on core concepts"
-        if gap == "transfer_gap":
-            return "Can recall but struggles to apply — practice with varied problems"
-        if gap == "trap_vulnerability":
-            return "Vulnerable to common traps — review edge cases"
-    if 0.2 <= mastery <= 0.6:
-        return "In your Zone of Proximal Development — ready to advance with practice"
-    return "Not yet started — begin with foundational material"

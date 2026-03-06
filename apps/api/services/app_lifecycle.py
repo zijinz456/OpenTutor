@@ -48,16 +48,14 @@ async def _maybe_seed_system_data() -> None:
         return
 
     from database import async_session
-    from services.scene.seed import seed_preset_scenes
     from services.templates.system import seed_builtin_templates
     from services.templates.demo_course import seed_demo_course
 
     async with async_session() as db:
         await seed_builtin_templates(db)
-        await seed_preset_scenes(db)
         created = await seed_demo_course(db)
         await db.commit()
-    logger.info("Seeded built-in templates and preset scenes")
+    logger.info("Seeded built-in templates")
     if created:
         logger.info("Created demo course for first-time experience")
 

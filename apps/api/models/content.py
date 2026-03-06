@@ -36,6 +36,9 @@ class CourseContentTree(Base):
     source_file: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     source_type: Mapped[str] = mapped_column(String(20), default="pdf")  # pdf, url, manual
 
+    # Block editor content (source of truth when present; legacy nodes use `content`)
+    blocks_json: Mapped[Optional[dict]] = mapped_column(CompatJSONB, nullable=True)
+
     # Search & embedding
     search_vector: Mapped[Optional[str]] = mapped_column(CompatTSVECTOR, nullable=True)
     embedding: Mapped[Optional[list]] = mapped_column(CompatVector(1536), nullable=True)

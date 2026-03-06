@@ -2,7 +2,6 @@ import type {
   HealthStatus,
   LlmConnectionTestResult,
   LlmRuntimeConfig,
-  NotificationSettings,
   OllamaModel,
   UsageSummary,
 } from "@/lib/api";
@@ -85,7 +84,6 @@ export type {
   HealthStatus,
   LlmConnectionTestResult,
   LlmRuntimeConfig,
-  NotificationSettings,
   OllamaModel,
   UsageSummary,
 };

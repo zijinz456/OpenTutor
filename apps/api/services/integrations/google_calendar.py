@@ -437,3 +437,61 @@ async def scan_for_exams(credential, days: int = 30) -> list[dict]:
 
     logger.info("Found %d exam-related events in the next %d days", len(exam_events), days)
     return exam_events
+
+
+async def sync_deadlines_to_calendar(
+    credential,
+    assignments: list,
+) -> int:
+    """Sync Assignment deadlines to Google Calendar as all-day or timed events.
+
+    Creates calendar events for assignments with due_date set.
+    Skips assignments already synced (tracked via metadata_json.calendar_synced).
+
+    Args:
+        credential: An IntegrationCredential instance with valid tokens.
+        assignments: List of Assignment model instances with due_date.
+
+    Returns:
+        Number of events created.
+    """
+    unsynced = []
+    for a in assignments:
+        if not a.due_date:
+            continue
+        meta = a.metadata_json or {}
+        if meta.get("calendar_synced"):
+            continue
+        unsynced.append(a)
+
+    if not unsynced:
+        return 0
+
+    plan_events = []
+    for a in unsynced:
+        due = a.due_date
+        if due.tzinfo is None:
+            due = due.replace(tzinfo=timezone.utc)
+
+        # Create 30-min reminder event ending at the due time
+        start = (due - timedelta(minutes=30)).isoformat()
+        end = due.isoformat()
+
+        atype = (a.assignment_type or "assignment").title()
+        plan_events.append({
+            "title": f"[{atype}] {a.title}",
+            "start": start,
+            "end": end,
+            "description": f"OpenTutor deadline: {a.title}\nType: {atype}",
+        })
+
+    created = await sync_study_plan_to_calendar(credential, plan_events)
+
+    # Mark synced assignments
+    for i, a in enumerate(unsynced):
+        if i < created:
+            a.metadata_json = a.metadata_json or {}
+            a.metadata_json["calendar_synced"] = True
+
+    logger.info("Synced %d/%d deadlines to Google Calendar", created, len(unsynced))
+    return created

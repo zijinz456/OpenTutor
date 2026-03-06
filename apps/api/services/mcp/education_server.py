@@ -138,7 +138,6 @@ async def explain_concept(concept: str, course_id: str) -> str:
     material, then returns a structured explanation with context.
     """
     from sqlalchemy import select
-    from models.knowledge_graph import KnowledgePoint
     from models.content import CourseContentTree
     from database import async_session
 
@@ -146,14 +145,6 @@ async def explain_concept(concept: str, course_id: str) -> str:
     escaped = _escape_like(concept)
 
     async with async_session() as db:
-        kg_result = await db.execute(
-            select(KnowledgePoint).where(
-                KnowledgePoint.course_id == cid,
-                KnowledgePoint.label.ilike(f"%{escaped}%"),
-            )
-        )
-        kg_nodes = kg_result.scalars().all()
-
         ct_result = await db.execute(
             select(CourseContentTree).where(
                 CourseContentTree.course_id == cid,
@@ -163,15 +154,6 @@ async def explain_concept(concept: str, course_id: str) -> str:
         content_nodes = ct_result.scalars().all()
 
     parts = []
-
-    if kg_nodes:
-        parts.append("Knowledge Graph Entries:")
-        for node in kg_nodes[:5]:
-            mastery = getattr(node, "mastery", None)
-            mastery_str = f" (mastery: {mastery:.0%})" if mastery is not None else ""
-            parts.append(f"- {node.label}{mastery_str}")
-            if hasattr(node, "description") and node.description:
-                parts.append(f"  {node.description}")
 
     if content_nodes:
         parts.append("\nCourse Content:")
