@@ -9,29 +9,19 @@ from models.memory import ConversationMemory
 from models.ingestion import IngestionJob, StudySession, Assignment, WrongAnswer
 from models.progress import LearningProgress, LearningTemplate
 from models.scrape import ScrapeSource, AuthSession
-from models.scene import Scene
-from models.knowledge_graph import KnowledgePoint
 from models.chat_session import ChatSession
 from models.chat_message import ChatMessageLog
 from models.generated_asset import GeneratedAsset
 from models.study_plan import StudyPlan
 from models.study_goal import StudyGoal
 from models.agent_task import AgentTask
-from models.notification import Notification
-from models.notification_settings import NotificationSettings
-from models.push_subscription import PushSubscription
-from models.notification_delivery import NotificationDelivery
 from models.study_habit import StudyHabitLog
-from models.experiment import Experiment, ExperimentAssignment, ExperimentEvent
-from models.channel_binding import ChannelBinding
-from models.audit_log import AuditLog
 from models.agenda_run import AgendaRun
 from models.agent_kv import AgentKV
-from models.tool_call_event import ToolCallEvent
-from models.learning_event import LearningEvent
 from models.mastery_snapshot import MasterySnapshot
-from models.report import Report
 from models.integration_credential import IntegrationCredential
+from models.content_snapshot import ContentSnapshot
+from models.content_mutation import ContentMutation
 
 __all__ = [
     "User",
@@ -50,29 +40,17 @@ __all__ = [
     "LearningTemplate",
     "ScrapeSource",
     "AuthSession",
-    "Scene",
-    "KnowledgePoint",
     "ChatSession",
     "ChatMessageLog",
     "GeneratedAsset",
     "StudyPlan",
     "StudyGoal",
     "AgentTask",
-    "Notification",
-    "NotificationSettings",
-    "PushSubscription",
-    "NotificationDelivery",
     "StudyHabitLog",
-    "Experiment",
-    "ExperimentAssignment",
-    "ExperimentEvent",
-    "ChannelBinding",
-    "AuditLog",
     "AgendaRun",
     "AgentKV",
-    "ToolCallEvent",
-    "LearningEvent",
     "MasterySnapshot",
-    "Report",
     "IntegrationCredential",
+    "ContentSnapshot",
+    "ContentMutation",
 ]

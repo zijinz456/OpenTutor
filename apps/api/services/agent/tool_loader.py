@@ -107,25 +107,20 @@ TOOL_REGISTRY: dict[str, str] = {
 }
 
 
-def get_tools_for_scene(scene: str, include_preference: bool = False) -> str:
-    """Get concatenated tool definitions for a given scene.
+def get_all_tools(include_preference: bool = False) -> str:
+    """Get concatenated tool definitions for all tool categories.
 
     Args:
-        scene: Current study scene (from detect_scene)
         include_preference: Whether to include preference tools
                            (only when intent is PREFERENCE or LAYOUT)
 
     Returns:
         Concatenated tool prompt string
     """
-    tool_keys = SCENE_TOOL_MAP.get(scene, ["core", "layout"])
-
-    if include_preference and "preference" not in tool_keys:
-        tool_keys = tool_keys + ["preference"]
-
     parts = []
-    for key in tool_keys:
-        tool_prompt = TOOL_REGISTRY.get(key, "")
+    for key, tool_prompt in TOOL_REGISTRY.items():
+        if key == "preference" and not include_preference:
+            continue
         if tool_prompt:
             parts.append(tool_prompt)
 

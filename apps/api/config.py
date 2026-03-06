@@ -76,6 +76,7 @@ class Settings(BaseSettings):
     app_run_activity_engine: bool = False
     mcp_enabled: bool = False
     plugin_system_enabled: bool = False
+    ambient_monitor_enabled: bool = False
 
     # Multi-channel messaging
     channels_enabled: str = ""  # Comma-separated: "whatsapp,imessage"

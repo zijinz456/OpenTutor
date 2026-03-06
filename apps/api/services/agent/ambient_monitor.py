@@ -53,6 +53,7 @@ Your job is to decide what (if anything) to do based on the student's current le
 - "prepare_review": Queue a spaced-repetition review session.
 - "trigger_goal_pursuit": Start or resume goal pursuit workflow.
 - "generate_report": Generate a daily/weekly learning brief.
+- "trigger_guided_session": Start a proactive guided learning session. Only trigger when the student has been studying recently, there is material to review or deadlines approaching, and no guided session was completed in the last 24 hours. This is a lower-priority action than review or goal pursuit.
 
 ## Output format
 Respond with a single JSON object:
@@ -193,22 +194,8 @@ async def execute_ambient_decision(
         return "silent"
 
     elif action == "notify":
-        from services.notification.dispatcher import dispatch as dispatch_notification
-        message = decision.get("message", "Time to study!")
-        priority = decision.get("priority", "normal")
-        course_uuid = _parse_course_uuid(decision.get("target_course_id"))
-
-        await dispatch_notification(
-            user_id=user_id,
-            title="Your study assistant",
-            body=message,
-            category="ambient_monitor",
-            course_id=course_uuid,
-            priority=priority,
-            dedup_key=f"ambient:{user_id}:{datetime.now(timezone.utc).strftime('%Y-%m-%d-%H')}",
-            db=db,
-        )
-        return "notified"
+        logger.debug("Notification skipped (removed): %s", decision.get("message", ""))
+        return "notify_skipped"
 
     elif action == "prepare_review":
         from services.activity.engine import submit_task
@@ -277,21 +264,6 @@ async def execute_ambient_decision(
         return "no_goal_found"
 
     elif action == "generate_report":
-        # Skip if a daily brief was already sent today (cross-job dedup)
-        from models.notification import Notification
-        today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        existing = await db.execute(
-            select(Notification.id)
-            .where(
-                Notification.user_id == user_id,
-                Notification.category.in_(("daily_brief", "ambient_monitor")),
-                Notification.dedup_key.like(f"%{today_str}%"),
-            )
-            .limit(1)
-        )
-        if existing.scalar_one_or_none() is not None:
-            return "report_already_sent_today"
-
         from services.activity.engine import submit_task
         await submit_task(
             user_id=user_id,
@@ -304,5 +276,39 @@ async def execute_ambient_decision(
             max_attempts=1,
         )
         return "report_queued"
+
+    elif action == "trigger_guided_session":
+        from services.activity.engine import submit_task
+        from models.agent_task import AgentTask
+
+        # Skip if a guided session task is already queued/running
+        active_session = await db.execute(
+            select(AgentTask.id)
+            .where(
+                AgentTask.user_id == user_id,
+                AgentTask.task_type == "guided_session",
+                AgentTask.status.in_(("queued", "running", "pending_approval")),
+            )
+            .limit(1)
+        )
+        if active_session.scalar_one_or_none() is not None:
+            return "guided_session_already_queued"
+
+        course_uuid = _parse_course_uuid(decision.get("target_course_id"))
+        await submit_task(
+            user_id=user_id,
+            course_id=course_uuid,
+            task_type="guided_session",
+            title="Guided study session",
+            summary=decision.get("reason", "Agent-initiated guided learning session"),
+            source="ambient_monitor",
+            input_json={
+                "course_id": str(course_uuid) if course_uuid else None,
+                "trigger": "ambient_monitor",
+            },
+            requires_approval=False,
+            max_attempts=1,
+        )
+        return "guided_session_queued"
 
     return "unknown_action"

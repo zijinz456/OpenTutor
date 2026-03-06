@@ -32,7 +32,9 @@ SIGNAL_TYPES = (
     "failed_task",
     "forgetting_risk",
     "weak_area",
+    "content_stale",
     "inactivity",
+    "guided_session_ready",
 )
 
 
@@ -294,6 +296,82 @@ async def _collect_weak_areas(
     return signals
 
 
+async def _collect_content_stale(
+    user_id: uuid.UUID,
+    course_id: uuid.UUID | None,
+    db: AsyncSession,
+) -> list[AgendaSignal]:
+    """Content nodes with high error rates but no recent agent updates.
+
+    Fires when a node has ≥3 wrong answers AND no ContentMutation in the last 7 days.
+    This signals the agent to proactively improve the content.
+    """
+    from models.content import CourseContentTree
+    from models.content_mutation import ContentMutation
+    from models.course import Course
+
+    now = datetime.now(timezone.utc)
+    stale_threshold = now - timedelta(days=7)
+
+    # Find content nodes with ≥3 wrong answers
+    wrong_by_node = (
+        select(
+            WrongAnswer.content_node_id,
+            func.count(WrongAnswer.id).label("cnt"),
+        )
+        .where(
+            WrongAnswer.user_id == user_id,
+            WrongAnswer.mastered.is_(False),
+            WrongAnswer.content_node_id.isnot(None),
+        )
+    )
+    if course_id:
+        wrong_by_node = wrong_by_node.where(WrongAnswer.course_id == course_id)
+    wrong_by_node = wrong_by_node.group_by(WrongAnswer.content_node_id)
+    result = await db.execute(wrong_by_node)
+
+    signals: list[AgendaSignal] = []
+    for node_id, cnt in result.all():
+        if cnt < 3:
+            continue
+
+        # Check if this node had a recent mutation
+        recent_mutation = await db.execute(
+            select(func.count(ContentMutation.id))
+            .where(
+                ContentMutation.node_id == node_id,
+                ContentMutation.created_at >= stale_threshold,
+            )
+        )
+        if (recent_mutation.scalar() or 0) > 0:
+            continue
+
+        # Get node info for the signal
+        node = await db.get(CourseContentTree, node_id)
+        if not node:
+            continue
+
+        urgency = min(40.0 + cnt * 3, 55.0)
+        signals.append(AgendaSignal(
+            signal_type="content_stale",
+            user_id=user_id,
+            course_id=node.course_id,
+            entity_id=str(node_id),
+            title=f"Content needs update: {node.title} ({cnt} errors)",
+            urgency=urgency,
+            detail={
+                "wrong_answer_count": cnt,
+                "node_title": node.title,
+                "content_mutation_hint": {
+                    "tool": "update_section_notes",
+                    "reason": f"Student has {cnt} errors on this topic with no recent content updates",
+                },
+            },
+        ))
+
+    return signals[:5]  # Limit to 5 stale signals
+
+
 async def _collect_inactivity(
     user_id: uuid.UUID,
     course_id: uuid.UUID | None,
@@ -324,6 +402,96 @@ async def _collect_inactivity(
     return []
 
 
+async def _collect_guided_session_readiness(
+    user_id: uuid.UUID,
+    course_id: uuid.UUID | None,
+    db: AsyncSession,
+) -> list[AgendaSignal]:
+    """Check if a guided learning session should be suggested.
+
+    Fires when ALL conditions are met:
+    1. Student has been active in the last 7 days
+    2. At least one course has ingested content
+    3. No guided session completed in the last 24 hours
+    4. There exists either a deadline, overdue FSRS items, or weak areas
+    """
+    from models.course import Course
+    from models.content import CourseContentTree
+
+    now = datetime.now(timezone.utc)
+
+    # Check recent activity (must have studied within 7 days)
+    active_threshold = now - timedelta(days=7)
+    last_session_result = await db.execute(
+        select(StudySession)
+        .where(StudySession.user_id == user_id, StudySession.started_at >= active_threshold)
+        .limit(1)
+    )
+    if not last_session_result.scalar_one_or_none():
+        return []
+
+    # Check at least one course has content
+    content_check = await db.execute(
+        select(func.count(CourseContentTree.id))
+        .join(Course, Course.id == CourseContentTree.course_id)
+        .where(Course.user_id == user_id)
+    )
+    if (content_check.scalar() or 0) == 0:
+        return []
+
+    # Check no guided session in last 24 hours (via KV store)
+    from services.agent.kv_store import kv_list
+    recent_sessions = await kv_list(db, user_id, "guided_session")
+    for session in recent_sessions:
+        val = session.get("value", {})
+        if isinstance(val, dict):
+            completed_at = val.get("completed_at") or val.get("prepared_at")
+            if completed_at:
+                try:
+                    ts = datetime.fromisoformat(completed_at)
+                    if ts.tzinfo is None:
+                        ts = ts.replace(tzinfo=timezone.utc)
+                    if now - ts < timedelta(hours=24):
+                        return []
+                except (ValueError, TypeError):
+                    pass
+
+    # Determine urgency based on what's available
+    urgency = 45.0  # Base urgency (below weak_area at 55, above inactivity at 40)
+
+    # Boost if there are deadlines
+    deadline_count = await db.execute(
+        select(func.count(Assignment.id)).where(
+            Assignment.status == "active",
+            Assignment.due_date.isnot(None),
+            Assignment.due_date <= now + timedelta(days=7),
+            Assignment.due_date >= now,
+        )
+    )
+    if (deadline_count.scalar() or 0) > 0:
+        urgency = 55.0
+
+    target_course = course_id
+    if not target_course:
+        # Pick the course with content (inline after guided_session removal)
+        from sqlalchemy import select as _sel
+        from models.course import Course
+        _crs = await db.execute(
+            _sel(Course.id).where(Course.user_id == user_id).order_by(Course.updated_at.desc()).limit(1)
+        )
+        target_course = _crs.scalar_one_or_none()
+
+    return [AgendaSignal(
+        signal_type="guided_session_ready",
+        user_id=user_id,
+        course_id=target_course,
+        entity_id=f"guided:{user_id}",
+        title="Guided study session available",
+        urgency=urgency,
+        detail={"has_deadline": urgency > 50},
+    )]
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -334,7 +502,9 @@ _COLLECTORS = [
     _collect_failed_tasks,
     _collect_forgetting_risk,
     _collect_weak_areas,
+    _collect_content_stale,
     _collect_inactivity,
+    _collect_guided_session_readiness,
 ]
 
 

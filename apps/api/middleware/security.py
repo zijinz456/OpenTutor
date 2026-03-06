@@ -12,7 +12,6 @@ import logging
 import os
 import re
 import time
-import uuid
 from collections import defaultdict
 from dataclasses import dataclass, field
 
@@ -20,8 +19,6 @@ from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from config import settings
-from database import async_session
-from services.audit import record_audit_log
 
 logger = logging.getLogger(__name__)
 
@@ -266,38 +263,6 @@ class AuditLogMiddleware(BaseHTTPMiddleware):
             "AUDIT | %s %s | status=%d | ip=%s | %.0fms",
             request.method, path, response.status_code, client_ip, duration_ms,
         )
-        if request.method in self._MUTATING_METHODS:
-            actor_user_id = None
-            raw_user_id = getattr(request.state, "user_id", None)
-            if raw_user_id:
-                try:
-                    actor_user_id = uuid.UUID(str(raw_user_id))
-                except ValueError:
-                    actor_user_id = None
-            try:
-                session_factory = getattr(request.app.state, "test_session_factory", None) or async_session
-                async with session_factory() as db:
-                    await record_audit_log(
-                        db,
-                        actor_user_id=actor_user_id,
-                        task_id=None,
-                        tool_name=None,
-                        action_kind=getattr(request.state, "audit_action_kind", "http_request"),
-                        approval_status=getattr(request.state, "approval_status", None),
-                        outcome="success" if response.status_code < 400 else "error",
-                        details_json={
-                            "method": request.method,
-                            "path": path,
-                            "status_code": response.status_code,
-                            "duration_ms": round(duration_ms, 1),
-                            "client_ip": client_ip or None,
-                            "deployment_mode": getattr(request.state, "deployment_mode", None),
-                            "task_id": getattr(request.state, "audit_task_id", None),
-                        },
-                    )
-                    await db.commit()
-            except Exception:
-                logger.exception("Failed to persist audit row for %s %s", request.method, path)
         return response
 
 

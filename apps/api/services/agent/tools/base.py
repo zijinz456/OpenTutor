@@ -413,6 +413,8 @@ def _register_builtin_tools(registry: ToolRegistry) -> None:
     _register_web_tools(registry)
     _register_export_tools(registry)
     _register_file_tools(registry)
+    _register_mutation_tools(registry)
+    _register_workspace_tools(registry)
 
 
 def _register_web_tools(registry: ToolRegistry) -> None:
@@ -458,6 +460,29 @@ def _register_file_tools(registry: ToolRegistry) -> None:
         logger.info("Registered %d file tools", len(registry.get_by_domain("file")))
     except Exception as e:
         logger.warning("Failed to load file tools: %s", e)
+
+
+def _register_mutation_tools(registry: ToolRegistry) -> None:
+    """Register content mutation tools (rewrite, annotate, lock, etc.)."""
+    try:
+        from services.agent.tools.content_mutations import get_mutation_tools
+
+        for tool in get_mutation_tools():
+            registry.register(tool)
+        logger.info("Registered %d content mutation tools", len(get_mutation_tools()))
+    except Exception as e:
+        logger.warning("Failed to load content mutation tools: %s", e)
+
+
+def _register_workspace_tools(registry: ToolRegistry) -> None:
+    """Register workspace control tools (UI navigation, layout)."""
+    try:
+        from services.agent.tools.workspace import update_workspace
+
+        registry.register(update_workspace)
+        logger.info("Registered workspace control tool")
+    except Exception as e:
+        logger.warning("Failed to load workspace tools: %s", e)
 
 
 def _register_plugins(registry: ToolRegistry) -> None:

@@ -6,6 +6,14 @@
  */
 
 import { create } from "zustand";
+import {
+  type WorkspaceLayout,
+  type PresetId,
+  DEFAULT_LAYOUT,
+  LAYOUT_PRESETS,
+  getVisibleSections,
+  toggleSection,
+} from "@/lib/layout-presets";
 
 export type SectionId = "notes" | "practice" | "analytics" | "plan";
 
@@ -38,9 +46,19 @@ interface WorkspaceState {
   /** Per-section refresh counter — incremented by agent tools to trigger re-fetch. */
   sectionRefreshKey: Record<string, number>;
   triggerRefresh: (section: SectionId) => void;
+
+  /** Agent-driven sub-tab hint for the practice section (consumed once on render). */
+  practiceActiveTab: string | null;
+  setPracticeTab: (tab: string | null) => void;
+
+  /** Dynamic layout configuration. */
+  layout: WorkspaceLayout;
+  setLayout: (layout: WorkspaceLayout) => void;
+  applyPreset: (presetId: PresetId) => void;
+  toggleLayoutSection: (sectionId: SectionId, visible: boolean) => void;
 }
 
-export const useWorkspaceStore = create<WorkspaceState>((set) => ({
+export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   activeSection: "notes",
   setActiveSection: (id) => set({ activeSection: id, pdfOverlay: null }),
 
@@ -68,4 +86,29 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
         [section]: (s.sectionRefreshKey[section] ?? 0) + 1,
       },
     })),
+
+  practiceActiveTab: null,
+  setPracticeTab: (tab) => set({ practiceActiveTab: tab }),
+
+  layout: DEFAULT_LAYOUT,
+  setLayout: (layout) => {
+    const visible = getVisibleSections(layout);
+    const activeSection = get().activeSection;
+    const nextActive = visible.includes(activeSection) ? activeSection : visible[0] ?? "notes";
+    set({
+      layout,
+      treeWidth: layout.tree_width,
+      treeCollapsed: !layout.tree_visible,
+      chatHeight: layout.chat_height,
+      activeSection: nextActive,
+    });
+  },
+  applyPreset: (presetId) => {
+    const preset = LAYOUT_PRESETS[presetId];
+    if (preset) get().setLayout(preset);
+  },
+  toggleLayoutSection: (sectionId, visible) => {
+    const next = toggleSection(get().layout, sectionId, visible);
+    get().setLayout(next);
+  },
 }));

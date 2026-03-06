@@ -10,24 +10,16 @@ from routers import (
     auth,
     canvas,
     chat,
+    content_mutations,
     courses,
-    evaluation,
-    experiments,
-    export,
     flashcards,
     goals,
     health,
     integrations,
-    learning_events,
     notes,
-    notification_settings,
-    notifications,
-    podcast,
     preferences,
     progress,
-    push,
     quiz,
-    reports,
     scrape,
     tasks,
     upload,
@@ -37,7 +29,6 @@ from routers import (
     workspace,
     wrong_answers,
 )
-from routers.mcp import router as mcp_router
 
 
 CORE_ROUTERS = (
@@ -52,25 +43,16 @@ CORE_ROUTERS = (
     (progress.router, "/api/progress", ["progress"]),
     (flashcards.router, "/api/flashcards", ["flashcards"]),
     (canvas.router, "/api/canvas", ["canvas"]),
-    (notifications.router, "/api/notifications", ["notifications"]),
     (scrape.router, "/api/scrape", ["scrape"]),
     (wrong_answers.router, "/api/wrong-answers", ["wrong-answers"]),
     (tasks.router, "/api/tasks", ["tasks"]),
     (goals.router, "/api/goals", ["goals"]),
     (agenda.router, "/api/agent", ["agenda"]),
-    (evaluation.router, "/api/eval", ["evaluation"]),
-    (experiments.router, "/api/experiments", ["experiments"]),
-    (push.router, "/api/notifications/push", ["notifications"]),
-    (notification_settings.router, "/api/notifications", ["notifications"]),
-    (reports.router, "/api/reports", ["reports"]),
     (usage.router, None, None),
-    (export.router, "/api", ["export"]),
-    (learning_events.router, "/api/learning-events", ["learning-events"]),
     (voice.router, "/api/voice", ["voice"]),
-    (podcast.router, "/api/podcast", ["podcast"]),
+    (content_mutations.router, "/api/content", ["content-mutations"]),
     (workspace.router, "/api", ["workspace"]),
     (integrations.router, "/api", ["integrations"]),
-    (mcp_router, "/api", None),
 )
 
 
@@ -89,11 +71,6 @@ def register_routers(app: FastAPI) -> None:
 
     for router, prefix, tags in CORE_ROUTERS:
         _include_router(app, router, prefix=prefix, tags=tags)
-
-    if settings.enabled_channels:
-        from routers import webhooks
-
-        _include_router(app, webhooks.router, prefix="/api/webhooks", tags=["webhooks"])
 
     # Built-in lightweight UI for CLI mode (no Node.js required).
     # Disabled when the full Next.js frontend handles the UI.

@@ -265,120 +265,6 @@ async def run_code(parameters: dict[str, Any], ctx: Any, db: AsyncSession) -> To
     )
 
 
-@tool(
-    name="check_prerequisites",
-    description=(
-        "Check if the student has mastered the prerequisites for a given topic. "
-        "Returns which prerequisites are met and which have gaps."
-    ),
-    params=[param("topic", "string", "The topic to check prerequisites for.")],
-)
-async def check_prerequisites(parameters: dict[str, Any], ctx: Any, db: AsyncSession) -> ToolResult:
-    from models.content import CourseContentTree, KnowledgePoint
-    from models.progress import LearningProgress
-
-    topic = parameters.get("topic", "").strip()
-    if not topic:
-        return ToolResult(success=False, output="", error="No topic provided.")
-
-    try:
-        kp_result = await db.execute(
-            select(KnowledgePoint)
-            .where(KnowledgePoint.course_id == ctx.course_id, KnowledgePoint.name.ilike(f"%{topic}%"))
-            .limit(5)
-        )
-        kps = kp_result.scalars().all()
-
-        if not kps:
-            return ToolResult(success=True, output=f"No knowledge points found matching '{topic}'.")
-
-        lines = []
-        for kp in kps:
-            deps = kp.dependencies or []
-            if not deps:
-                lines.append(f"- {kp.name}: No prerequisites listed.")
-                continue
-            for dep_id in deps:
-                dep_result = await db.execute(select(KnowledgePoint).where(KnowledgePoint.id == dep_id))
-                dep_kp = dep_result.scalar_one_or_none()
-                dep_name = dep_kp.name if dep_kp else str(dep_id)[:8]
-
-                prog_result = await db.execute(
-                    select(LearningProgress).where(
-                        LearningProgress.user_id == ctx.user_id,
-                        LearningProgress.course_id == ctx.course_id,
-                        LearningProgress.content_node_id == dep_id,
-                    )
-                )
-                prog = prog_result.scalar_one_or_none()
-                mastery = prog.mastery_score if prog else 0.0
-                status = "OK" if mastery >= 0.6 else "GAP"
-                lines.append(f"- Prereq for '{kp.name}': {dep_name} — mastery={mastery:.0%} [{status}]")
-
-        return ToolResult(success=True, output="Prerequisites check:\n" + "\n".join(lines))
-    except Exception as e:
-        logger.error("check_prerequisites failed: %s", e)
-        return ToolResult(success=False, output="", error=str(e))
-
-
-@tool(
-    name="suggest_related_topics",
-    description=(
-        "Find topics related to a given concept based on the course knowledge graph. "
-        "Useful for expanding learning or finding connections."
-    ),
-    params=[param("topic", "string", "The topic to find related concepts for.")],
-)
-async def suggest_related_topics(parameters: dict[str, Any], ctx: Any, db: AsyncSession) -> ToolResult:
-    from models.content import KnowledgePoint
-
-    topic = parameters.get("topic", "").strip()
-    if not topic:
-        return ToolResult(success=False, output="", error="No topic provided.")
-
-    try:
-        result = await db.execute(
-            select(KnowledgePoint)
-            .where(KnowledgePoint.course_id == ctx.course_id, KnowledgePoint.name.ilike(f"%{topic}%"))
-            .limit(3)
-        )
-        kps = result.scalars().all()
-
-        if not kps:
-            return ToolResult(success=True, output=f"No knowledge points found matching '{topic}'.")
-
-        all_related_ids = set()
-        source_ids = {kp.id for kp in kps}
-        for kp in kps:
-            if kp.dependencies:
-                all_related_ids.update(kp.dependencies)
-
-        # Single query to find reverse dependents (downstream) — avoids N+1
-        all_course_kps = await db.execute(
-            select(KnowledgePoint).where(KnowledgePoint.course_id == ctx.course_id)
-        )
-        for other in all_course_kps.scalars().all():
-            if other.dependencies and source_ids & set(other.dependencies):
-                all_related_ids.add(other.id)
-
-        all_related_ids -= source_ids
-
-        lines = []
-        if all_related_ids:
-            related_result = await db.execute(
-                select(KnowledgePoint).where(KnowledgePoint.id.in_(list(all_related_ids)[:10]))
-            )
-            for related in related_result.scalars().all():
-                lines.append(f"- {related.name}")
-
-        if not lines:
-            return ToolResult(success=True, output=f"No related topics found for '{topic}' in the knowledge graph.")
-
-        return ToolResult(success=True, output=f"Related topics for '{topic}':\n" + "\n".join(lines))
-    except Exception as e:
-        logger.error("suggest_related_topics failed: %s", e)
-        return ToolResult(success=False, output="", error=str(e))
-
 
 @tool(
     name="get_forgetting_forecast",
@@ -534,13 +420,64 @@ async def list_assignments(parameters: dict[str, Any], ctx: Any, db: AsyncSessio
         if not assignments:
             return ToolResult(success=True, output="No assignments found for this course.")
 
-        lines = [
-            f"- {a.title}: type={a.assignment_type or 'general'}, status={a.status}, due={a.due_date or 'unspecified'}"
-            for a in assignments
-        ]
+        lines = []
+        for a in assignments:
+            meta = a.metadata_json or {}
+            source = meta.get("extraction_source", "manual")
+            confidence = meta.get("extraction_confidence")
+            line = f"- {a.title}: type={a.assignment_type or 'general'}, status={a.status}, due={a.due_date or 'unspecified'}"
+            if source != "manual":
+                line += f" [auto-extracted, source={source}"
+                if confidence is not None:
+                    line += f", confidence={confidence:.0%}"
+                line += "]"
+            lines.append(line)
         return ToolResult(success=True, output="Assignments:\n" + "\n".join(lines))
     except Exception as e:
         logger.error("list_assignments failed: %s", e)
+        return ToolResult(success=False, output="", error=str(e))
+
+
+@tool(
+    name="sync_deadlines_to_calendar",
+    description=(
+        "Sync upcoming assignment deadlines to the student's Google Calendar. "
+        "Only works if Google Calendar is connected. Creates reminder events for each deadline."
+    ),
+    category=ToolCategory.WRITE,
+    params=[],
+)
+async def sync_deadlines_to_calendar_tool(parameters: dict[str, Any], ctx: Any, db: AsyncSession) -> ToolResult:
+    from models.ingestion import Assignment
+    from models.integration_credential import IntegrationCredential
+
+    try:
+        # Check for Google Calendar credentials
+        cred_result = await db.execute(
+            select(IntegrationCredential).where(
+                IntegrationCredential.user_id == ctx.user_id,
+                IntegrationCredential.integration_name == "google_calendar",
+            )
+        )
+        credential = cred_result.scalar_one_or_none()
+        if not credential:
+            return ToolResult(success=False, output="", error="Google Calendar is not connected. Please connect it first in Settings.")
+
+        # Get assignments with due dates
+        result = await db.execute(
+            select(Assignment)
+            .where(Assignment.course_id == ctx.course_id, Assignment.due_date.isnot(None), Assignment.status == "active")
+        )
+        assignments = result.scalars().all()
+        if not assignments:
+            return ToolResult(success=True, output="No assignments with deadlines to sync.")
+
+        from services.integrations.google_calendar import sync_deadlines_to_calendar
+        count = await sync_deadlines_to_calendar(credential, assignments)
+        await db.commit()
+        return ToolResult(success=True, output=f"Synced {count} deadline(s) to Google Calendar.")
+    except Exception as e:
+        logger.error("sync_deadlines_to_calendar failed: %s", e)
         return ToolResult(success=False, output="", error=str(e))
 
 
@@ -823,6 +760,39 @@ async def derive_diagnostic_tool(parameters: dict[str, Any], ctx: Any, db: Async
         return ToolResult(success=False, output="", error=str(e))
 
 
+@tool(
+    name="update_workspace_layout",
+    description=(
+        "Update the user's workspace layout. Can apply a preset (daily_study, exam_prep, "
+        "assignment, minimal) or toggle individual sections on/off. "
+        "Use when the user asks to change their workspace layout, hide/show sections, "
+        "or switch to a different study mode."
+    ),
+    category=ToolCategory.WRITE,
+    params=[
+        param("preset", "string", "Layout preset to apply.", required=False,
+              enum=["daily_study", "exam_prep", "assignment", "minimal"]),
+        param("toggle_section", "string", "Section to toggle visibility.", required=False,
+              enum=["notes", "practice", "analytics", "plan"]),
+        param("visible", "boolean", "Whether the section should be visible (used with toggle_section).", required=False),
+    ],
+)
+async def update_workspace_layout(parameters: dict[str, Any], ctx: Any, db: AsyncSession) -> ToolResult:
+    preset = parameters.get("preset")
+    section = parameters.get("toggle_section")
+    visible = parameters.get("visible", True)
+
+    if preset:
+        ctx.actions.append({"action": "set_layout_preset", "value": preset})
+        return ToolResult(success=True, output=f"Applied layout preset: {preset}")
+    elif section:
+        action_value = f"{section}:{'show' if visible else 'hide'}"
+        ctx.actions.append({"action": "toggle_section", "value": action_value})
+        return ToolResult(success=True, output=f"{'Showing' if visible else 'Hiding'} section: {section}")
+    else:
+        return ToolResult(success=False, output="", error="Provide either 'preset' or 'toggle_section' parameter.")
+
+
 # ── Registry Helper ──
 
 
@@ -832,8 +802,9 @@ def get_builtin_tools() -> list[Tool]:
         lookup_progress, search_content, list_wrong_answers,
         get_mastery_report, get_course_outline, list_study_goals,
         list_recent_tasks, list_assignments, run_code,
-        check_prerequisites, suggest_related_topics, get_forgetting_forecast,
+        get_forgetting_forecast,
         # Write tools
         generate_flashcards_tool, generate_quiz_tool, generate_notes_tool,
         create_study_plan_tool, derive_diagnostic_tool,
+        sync_deadlines_to_calendar_tool, update_workspace_layout,
     ]

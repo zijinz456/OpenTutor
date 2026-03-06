@@ -23,6 +23,7 @@ export interface CourseAutoScrapeSettings {
 export interface CourseMetadata {
   workspace_features?: Partial<CourseWorkspaceFeatures> | null;
   auto_scrape?: CourseAutoScrapeSettings | null;
+  layout?: Record<string, unknown> | null;
 }
 
 export interface Course {
@@ -114,6 +115,16 @@ export async function updateCourse(
 
 export async function deleteCourse(id: string): Promise<void> {
   await request<void>(`/courses/${id}`, { method: "DELETE" });
+}
+
+export async function updateCourseLayout(
+  courseId: string,
+  layout: Record<string, unknown>,
+): Promise<{ status: string; layout: Record<string, unknown> }> {
+  return request(`/courses/${courseId}/layout`, {
+    method: "PATCH",
+    body: JSON.stringify(layout),
+  });
 }
 
 // ── Content ──

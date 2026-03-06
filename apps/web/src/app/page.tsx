@@ -6,7 +6,6 @@ import { useCourseStore } from "@/store/course";
 import { getHealthStatus, getLearningProfile, type HealthStatus } from "@/lib/api";
 import { ttlCache } from "@/lib/cache";
 import { useLocale, useT } from "@/lib/i18n-context";
-import { NotificationBell } from "@/components/shared/notification-bell";
 import { RuntimeAlert } from "@/components/shared/runtime-alert";
 
 const REQUIRED_ONBOARDING_DIMENSIONS = [
@@ -151,7 +150,6 @@ export default function DashboardPage() {
                 </p>
               </div>
               <div className="flex items-center gap-2 self-start sm:self-auto">
-                <NotificationBell />
                 <button
                   onClick={() => router.push("/new")}
                   className="h-9 px-5 bg-brand text-brand-foreground rounded-lg text-sm font-medium hover:opacity-90 transition-opacity shrink-0"

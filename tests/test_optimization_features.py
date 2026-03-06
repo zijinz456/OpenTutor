@@ -602,7 +602,7 @@ class TestTeachingAgentPrompt:
         return ctx
 
     def test_socratic_guardrails_injected_when_not_fatigued(self):
-        from services.agent.teaching import SOCRATIC_GUARDRAILS, TeachingAgent
+        from services.agent.agents.tutor import SOCRATIC_GUARDRAILS, TutorAgent as TeachingAgent
 
         agent = TeachingAgent()
         ctx = self._make_ctx(fatigue_score=0.3)
@@ -612,7 +612,7 @@ class TestTeachingAgentPrompt:
         assert "NEVER give the student the direct answer" in prompt
 
     def test_supportive_mode_when_fatigued(self):
-        from services.agent.teaching import TeachingAgent
+        from services.agent.agents.tutor import TutorAgent as TeachingAgent
 
         agent = TeachingAgent()
         ctx = self._make_ctx(fatigue_score=0.9)
@@ -624,7 +624,7 @@ class TestTeachingAgentPrompt:
         assert "NEVER give the student the direct answer" not in prompt
 
     def test_cross_course_connections_in_prompt(self):
-        from services.agent.teaching import TeachingAgent
+        from services.agent.agents.tutor import TutorAgent as TeachingAgent
 
         patterns = [
             {
@@ -646,7 +646,7 @@ class TestTeachingAgentPrompt:
         assert "Machine Learning" in prompt
 
     def test_no_cross_course_when_empty(self):
-        from services.agent.teaching import TeachingAgent
+        from services.agent.agents.tutor import TutorAgent as TeachingAgent
 
         agent = TeachingAgent()
         ctx = self._make_ctx()
@@ -656,7 +656,7 @@ class TestTeachingAgentPrompt:
 
     def test_fatigue_boundary_at_07(self):
         """Exactly 0.7 should still use Socratic mode."""
-        from services.agent.teaching import TeachingAgent
+        from services.agent.agents.tutor import TutorAgent as TeachingAgent
 
         agent = TeachingAgent()
 

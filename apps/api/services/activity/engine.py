@@ -45,7 +45,6 @@ from services.activity.redis_notify import (
     notify_task_ready,
     wait_for_task_notification,
 )
-from services.audit import record_audit_log
 from services.provenance import build_provenance, merge_provenance
 
 logger = logging.getLogger(__name__)
@@ -157,16 +156,10 @@ async def _record_task_audit(
     outcome: str,
     details: JsonObject | None = None,
 ) -> None:
-    tool_name = "run_code" if task.task_type == "code_execution" else None
-    await record_audit_log(
-        db,
-        actor_user_id=task.user_id,
-        task_id=task.id,
-        tool_name=tool_name,
-        action_kind=action_kind,
-        approval_status=task.approval_status,
-        outcome=outcome,
-        details_json=_task_audit_details(task, details),
+    """Audit logging stub — audit system removed in Phase 1.3."""
+    logger.debug(
+        "Task audit: %s %s (task=%s, user=%s)",
+        action_kind, outcome, task.id, task.user_id,
     )
 
 
@@ -377,26 +370,9 @@ async def submit_task(
         if settings.activity_use_redis_notify and task.status != APPROVAL_REQUIRED_STATUS:
             await notify_task_ready(str(task.id))
 
-        # Dispatch a user notification when a task needs approval
+        # Notification dispatch removed (Phase 1.1 refactor)
         if task.status == APPROVAL_REQUIRED_STATUS:
-            try:
-                from services.notification.dispatcher import dispatch as dispatch_notification
-
-                async with async_session() as notif_db:
-                    await dispatch_notification(
-                        user_id=user_id,
-                        title=f"Task needs approval: {title}",
-                        body=task.approval_reason or f"The agent wants to run '{task_type}'. Please approve or reject.",
-                        category="task_approval",
-                        course_id=course_id,
-                        priority="high",
-                        dedup_key=f"task_approval:{task.id}",
-                        action_url=f"/course/{course_id}" if course_id else None,
-                        action_label="Review Task",
-                        db=notif_db,
-                    )
-            except Exception as exc:
-                logger.warning("Failed to dispatch approval notification: %s", exc)
+            logger.info("Task %s needs approval: %s", task.id, title)
 
         return task
 
@@ -1049,6 +1025,9 @@ async def _dispatch_task(
 
                 result = await run_reentry_session(db, user_id, payload)
                 return result, (result.get("summary", "") or "Re-entry session prepared.")[:300]
+
+            if task_type == "guided_session":
+                raise ValueError("guided_session task type removed in Phase 2 consolidation")
 
             raise ValueError(f"Unsupported task_type: {task_type}")
 

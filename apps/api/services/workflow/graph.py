@@ -559,17 +559,7 @@ async def node_execute(state: GoalPursuitState, config: dict) -> dict:
 
     try:
         if tool == "notify":
-            from services.notification.dispatcher import dispatch as dispatch_notification
-            await dispatch_notification(
-                user_id=state["user_id"],
-                title=step.get("title", "Study reminder"),
-                body=step.get("description", ""),
-                category="goal_pursuit",
-                course_id=state.get("course_id"),
-                priority="normal",
-                db=db,
-            )
-            result = f"Sent notification: {step.get('title')}"
+            result = f"Notification skipped: {step.get('title')}"
         else:
             # Map tool → task_type; build input_json
             course_id_str = str(state.get("course_id")) if state.get("course_id") else None

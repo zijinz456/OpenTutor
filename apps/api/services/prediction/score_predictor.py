@@ -123,23 +123,8 @@ async def gather_prediction_state(
     except Exception:
         state["quiz_accuracy"] = 0.5
 
-    # Study hours (from learning events duration)
-    try:
-        from models.learning_event import LearningEvent
-
-        cutoff = datetime.now(timezone.utc) - timedelta(days=7)
-        result = await db.execute(
-            select(func.sum(LearningEvent.duration_seconds))
-            .where(
-                LearningEvent.user_id == user_id,
-                LearningEvent.course_id == course_id,
-                LearningEvent.timestamp >= cutoff,
-            )
-        )
-        total_seconds = result.scalar() or 0
-        state["study_hours_last_7d"] = total_seconds / 3600.0
-    except Exception:
-        state["study_hours_last_7d"] = 3.0
+    # Study hours — LearningEvent model removed in Phase 1.3
+    state["study_hours_last_7d"] = 3.0
 
     # Defaults for items not yet available
     state.setdefault("days_until_exam", 14)

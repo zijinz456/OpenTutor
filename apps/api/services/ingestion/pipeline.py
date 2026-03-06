@@ -24,6 +24,7 @@ import re
 import uuid
 from collections.abc import Mapping
 
+import sqlalchemy as sa
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -380,6 +381,7 @@ async def run_ingestion_pipeline(
         extracted = ""
         canvas_file_urls: list[dict] = []
         canvas_quiz_questions: list[dict] = []
+        canvas_assignments_data: list[dict] = []
         if url and session_name:
             from services.scraper.canvas_detector import detect_canvas_url as _detect
             _cinfo = _detect(url)
@@ -390,6 +392,7 @@ async def run_ingestion_pipeline(
                     extracted = deep_result.content
                     canvas_file_urls = deep_result.file_urls
                     canvas_quiz_questions = deep_result.quiz_questions
+                    canvas_assignments_data = deep_result.assignments_data
                     logger.info(
                         "Canvas deep extraction: %d chars, %d pages, %d modules, %d files, %d quiz questions",
                         len(extracted), deep_result.pages_fetched,
@@ -481,6 +484,8 @@ async def run_ingestion_pipeline(
     # Attach discovered Canvas file URLs and quiz questions for the caller to process
     job._canvas_file_urls = canvas_file_urls if canvas_file_urls else []
     job._canvas_quiz_questions = canvas_quiz_questions if canvas_quiz_questions else []
+    # Attach Canvas assignments data for deadline extraction in _dispatch_content
+    job._canvas_assignments_data = canvas_assignments_data if canvas_assignments_data else []
     return job
 
 
@@ -819,6 +824,403 @@ async def auto_generate_notes(
     return generated
 
 
+async def auto_generate_flashcards(
+    db_factory,
+    course_id: uuid.UUID,
+    user_id: uuid.UUID,
+    count: int = 10,
+) -> int:
+    """Auto-generate flashcards for a course after ingestion.
+
+    Dedup guard: skips if the course already has active flashcard assets.
+    """
+    from services.generated_assets import save_generated_asset, list_generated_asset_batches
+
+    async with db_factory() as db:
+        # Dedup guard — skip if flashcards already exist for this course
+        existing = await list_generated_asset_batches(
+            db, user_id=user_id, course_id=course_id, asset_type="flashcards",
+        )
+        if existing:
+            logger.info("Skipping auto-flashcards: %d batches already exist for course %s", len(existing), course_id)
+            return 0
+
+        try:
+            from services.spaced_repetition.flashcards import generate_flashcards
+            cards = await generate_flashcards(db, course_id, None, count)
+            if not cards:
+                return 0
+
+            await save_generated_asset(
+                db,
+                user_id=user_id,
+                course_id=course_id,
+                asset_type="flashcards",
+                title="Auto-generated starter set",
+                content={"cards": cards},
+                metadata={"count": len(cards), "auto_generated": True},
+            )
+            await db.commit()
+            logger.info("Auto-generated %d flashcards for course %s", len(cards), course_id)
+            return len(cards)
+        except Exception as e:
+            logger.warning("Auto-generate flashcards failed: %s", e)
+            return 0
+
+
+async def auto_generate_quiz(
+    db_factory,
+    course_id: uuid.UUID,
+    question_count: int = 5,
+) -> int:
+    """Auto-generate quiz questions for a course after ingestion.
+
+    Dedup guard: skips if the course already has ≥3 active quiz questions.
+    """
+    from models.content import CourseContentTree
+    from models.practice import PracticeProblem
+
+    async with db_factory() as db:
+        # Dedup guard — skip if enough quiz questions already exist
+        from sqlalchemy import func as sa_func
+        existing_count = (await db.execute(
+            select(sa_func.count()).select_from(PracticeProblem).where(
+                PracticeProblem.course_id == course_id,
+                PracticeProblem.is_archived == False,  # noqa: E712
+            )
+        )).scalar() or 0
+        if existing_count >= 3:
+            logger.info("Skipping auto-quiz: %d questions already exist for course %s", existing_count, course_id)
+            return 0
+
+        try:
+            from services.parser.quiz import extract_questions
+
+            result = await db.execute(
+                select(CourseContentTree).where(
+                    CourseContentTree.course_id == course_id,
+                    CourseContentTree.content.isnot(None),
+                )
+            )
+            nodes = result.scalars().all()
+
+            problems: list[PracticeProblem] = []
+            for node in nodes[:10]:
+                if node.content and len(node.content) > 100:
+                    node_problems = await extract_questions(
+                        node.content, node.title, course_id, node.id,
+                    )
+                    problems.extend(node_problems)
+                    if len(problems) >= question_count:
+                        break
+
+            added = 0
+            for p in problems[:question_count]:
+                db.add(p)
+                added += 1
+            await db.commit()
+            logger.info("Auto-generated %d quiz questions for course %s", added, course_id)
+            return added
+        except Exception as e:
+            logger.warning("Auto-generate quiz failed: %s", e)
+            return 0
+
+
+async def auto_prepare(
+    db_factory,
+    course_id: uuid.UUID,
+    user_id: uuid.UUID,
+) -> dict:
+    """Orchestrate full auto-preparation: notes → flashcards → quiz.
+
+    Each step is independent — one failure doesn't block the others.
+    """
+    summary: dict[str, int] = {}
+
+    try:
+        summary["notes"] = await auto_generate_notes(db_factory, course_id, user_id)
+    except Exception as e:
+        logger.warning("auto_prepare: notes step failed: %s", e)
+        summary["notes"] = 0
+
+    try:
+        summary["flashcards"] = await auto_generate_flashcards(db_factory, course_id, user_id)
+    except Exception as e:
+        logger.warning("auto_prepare: flashcards step failed: %s", e)
+        summary["flashcards"] = 0
+
+    try:
+        summary["quiz"] = await auto_generate_quiz(db_factory, course_id)
+    except Exception as e:
+        logger.warning("auto_prepare: quiz step failed: %s", e)
+        summary["quiz"] = 0
+
+    # Auto-configure: analyze content → select layout → generate welcome message
+    try:
+        config = await auto_configure_course(db_factory, course_id, summary)
+        summary["auto_configured"] = bool(config)
+    except Exception as e:
+        logger.warning("auto_prepare: auto-configure step failed: %s", e)
+        summary["auto_configured"] = False
+
+    logger.info("auto_prepare complete for course %s: %s", course_id, summary)
+    return summary
+
+
+# ---------------------------------------------------------------------------
+# Auto-configure: personalized layout + welcome message
+# ---------------------------------------------------------------------------
+
+# Layout presets (mirror frontend LAYOUT_PRESETS)
+_LAYOUT_PRESETS = {
+    "daily_study": {
+        "preset": "daily_study",
+        "sections": [
+            {"type": "notes", "position": 0, "visible": True, "size": "large"},
+            {"type": "practice", "position": 1, "visible": True, "size": "medium"},
+            {"type": "analytics", "position": 2, "visible": False},
+            {"type": "plan", "position": 3, "visible": False},
+        ],
+        "chat_visible": True, "chat_height": 0.35,
+        "tree_visible": True, "tree_width": 240,
+    },
+    "exam_prep": {
+        "preset": "exam_prep",
+        "sections": [
+            {"type": "notes", "position": 0, "visible": False},
+            {"type": "practice", "position": 1, "visible": True, "size": "large"},
+            {"type": "analytics", "position": 2, "visible": True, "size": "medium"},
+            {"type": "plan", "position": 3, "visible": True, "size": "small"},
+        ],
+        "chat_visible": True, "chat_height": 0.25,
+        "tree_visible": True, "tree_width": 200,
+    },
+    "assignment": {
+        "preset": "assignment",
+        "sections": [
+            {"type": "notes", "position": 0, "visible": True, "size": "medium"},
+            {"type": "practice", "position": 1, "visible": False},
+            {"type": "analytics", "position": 2, "visible": False},
+            {"type": "plan", "position": 3, "visible": True, "size": "large"},
+        ],
+        "chat_visible": True, "chat_height": 0.35,
+        "tree_visible": True, "tree_width": 240,
+    },
+}
+
+
+async def auto_configure_course(
+    db_factory,
+    course_id: uuid.UUID,
+    prep_summary: dict,
+) -> dict | None:
+    """Analyze ingested course content and auto-configure layout + welcome message.
+
+    Called after auto_prepare completes. Analyzes:
+    - Assignment count & deadlines → assignment preset
+    - Content categories (exam/quiz heavy) → exam_prep preset
+    - Default → daily_study preset
+    """
+    from datetime import datetime, timezone
+    from models.content import CourseContentTree
+
+    async with db_factory() as db:
+        # 1. Count assignments with deadlines
+        assign_result = await db.execute(
+            select(Assignment).where(Assignment.course_id == course_id)
+        )
+        assignments = assign_result.scalars().all()
+        deadline_count = sum(1 for a in assignments if a.due_date)
+
+        # 2. Check ingestion job content categories
+        job_result = await db.execute(
+            select(IngestionJob.content_category).where(
+                IngestionJob.course_id == course_id,
+                IngestionJob.content_category.isnot(None),
+            )
+        )
+        categories = [r[0] for r in job_result.all()]
+
+        # 3. Count content nodes
+        node_result = await db.execute(
+            select(sa.func.count()).select_from(CourseContentTree).where(
+                CourseContentTree.course_id == course_id
+            )
+        )
+        node_count = node_result.scalar() or 0
+
+        # 4. Get course info
+        course_result = await db.execute(
+            select(Course).where(Course.id == course_id)
+        )
+        course = course_result.scalar_one_or_none()
+        if not course:
+            return None
+
+        # --- Select layout preset ---
+        exam_categories = {"exam_schedule", "assignment", "exam"}
+        exam_cat_count = sum(1 for c in categories if c in exam_categories)
+
+        if deadline_count >= 3:
+            preset_id = "assignment"
+        elif exam_cat_count >= 2 or (deadline_count >= 1 and exam_cat_count >= 1):
+            preset_id = "exam_prep"
+        else:
+            preset_id = "daily_study"
+
+        layout = _LAYOUT_PRESETS[preset_id]
+
+        # --- Build welcome message ---
+        now = datetime.now(timezone.utc)
+        parts = [f"**{course.name}** is ready! Here's what I found:\n"]
+
+        parts.append(f"- **{node_count}** content sections indexed")
+
+        if prep_summary.get("notes", 0) > 0:
+            parts.append(f"- **{prep_summary['notes']}** AI-generated note summaries")
+        if prep_summary.get("flashcards", 0) > 0:
+            parts.append(f"- **{prep_summary['flashcards']}** flashcards created")
+        if prep_summary.get("quiz", 0) > 0:
+            parts.append(f"- **{prep_summary['quiz']}** quiz questions generated")
+
+        if deadline_count > 0:
+            # Find the nearest upcoming deadline
+            upcoming = [
+                a for a in assignments
+                if a.due_date and a.due_date > now
+            ]
+            upcoming.sort(key=lambda a: a.due_date)
+            parts.append(f"- **{deadline_count}** deadlines detected")
+            if upcoming:
+                next_due = upcoming[0]
+                days_left = (next_due.due_date - now).days
+                parts.append(
+                    f"- Next deadline: **{next_due.title}** in **{days_left} days**"
+                )
+
+        parts.append("")
+
+        if preset_id == "assignment":
+            parts.append(
+                "I've set up your workspace in **Assignment Mode** with study plan "
+                "and deadlines front and center. You can switch modes anytime by asking me."
+            )
+        elif preset_id == "exam_prep":
+            parts.append(
+                "I've set up your workspace in **Exam Prep Mode** with practice questions "
+                "and analytics visible. Ask me to quiz you or review weak areas."
+            )
+        else:
+            parts.append(
+                "I've set up your workspace in **Daily Study Mode**. "
+                "Ask me to explain any topic, generate practice questions, or create a study plan."
+            )
+
+        welcome_message = "\n".join(parts)
+
+        # --- Save to course metadata ---
+        metadata = dict(course.metadata_ or {})
+        metadata["layout"] = layout
+        metadata["welcome_message"] = welcome_message
+        metadata["auto_configured_at"] = now.isoformat()
+        metadata["auto_config"] = {
+            "preset": preset_id,
+            "node_count": node_count,
+            "deadline_count": deadline_count,
+            "categories": categories[:20],
+        }
+        course.metadata_ = metadata
+        await db.commit()
+
+        logger.info(
+            "Auto-configured course %s: preset=%s, nodes=%d, deadlines=%d",
+            course_id, preset_id, node_count, deadline_count,
+        )
+        return {"preset": preset_id, "welcome_message": welcome_message}
+
+
+async def _auto_generate_learning_content(
+    db: AsyncSession,
+    course_id: uuid.UUID,
+    user_id: uuid.UUID,
+    nodes: list,
+) -> None:
+    """Auto-generate practice problems and flashcards for newly ingested content nodes.
+
+    Runs as a fire-and-forget task after content tree creation.
+    Only processes nodes with >300 chars of content.
+    """
+    from models.practice import PracticeProblem
+    from services.content.block_utils import markdown_to_blocks, ensure_block_metadata
+
+    eligible = [n for n in nodes if n.content and len(n.content) > 300]
+    if not eligible:
+        return
+
+    for node in eligible[:20]:  # Cap to avoid excessive processing
+        try:
+            # Convert content to blocks_json if not already set
+            if not node.blocks_json and node.content:
+                blocks = markdown_to_blocks(node.content)
+                for block in blocks:
+                    ensure_block_metadata(block)
+                node.blocks_json = blocks
+
+            # Generate 2-3 practice problems per node
+            content_preview = (node.content or "")[:3000]
+            if content_preview:
+                client = get_llm_client("fast")
+                prompt = (
+                    f"Generate 2 multiple-choice practice problems from this content.\n"
+                    f"Topic: {node.title}\n\n"
+                    f"Content:\n{content_preview}\n\n"
+                    f"For each problem provide: question, options (A/B/C/D), correct_answer, explanation.\n"
+                    f"Format as JSON array."
+                )
+                raw, _ = await client.chat(
+                    "You are a quiz generator. Output valid JSON arrays.",
+                    prompt,
+                )
+
+                import json
+                try:
+                    json_start = raw.find("[")
+                    json_end = raw.rfind("]") + 1
+                    if json_start >= 0 and json_end > json_start:
+                        problems = json.loads(raw[json_start:json_end])
+                        for p in problems[:3]:
+                            if not p.get("question"):
+                                continue
+                            options = p.get("options", {})
+                            if isinstance(options, list):
+                                options = {chr(65 + i): opt for i, opt in enumerate(options)}
+                            problem = PracticeProblem(
+                                course_id=course_id,
+                                content_node_id=node.id,
+                                question_type="mc",
+                                question=p["question"],
+                                options=options,
+                                correct_answer=p.get("correct_answer", "A"),
+                                explanation=p.get("explanation", ""),
+                                difficulty_layer=1,
+                                source="ai_generated",
+                                source_owner="ai",
+                                locked=False,
+                            )
+                            db.add(problem)
+                except (json.JSONDecodeError, ValueError):
+                    pass
+
+        except Exception as e:
+            logger.debug("Auto-generate learning content failed for '%s': %s", node.title, e)
+
+    try:
+        await db.flush()
+        logger.info("Auto-generated learning content for %d nodes in course %s", len(eligible), course_id)
+    except Exception as e:
+        logger.warning("Failed to flush auto-generated content: %s", e)
+
+
 async def _dispatch_content(db: AsyncSession, job: IngestionJob) -> dict:
     """Step 6: Dispatch extracted content to appropriate business tables."""
     result = {}
@@ -884,6 +1286,13 @@ async def _dispatch_content(db: AsyncSession, job: IngestionJob) -> dict:
 
         result["content_tree"] = len(nodes)
 
+        # Queue auto-generation of learning content (notes, practice, flashcards)
+        if nodes and job.course_id:
+            import asyncio as _asyncio_dispatch
+            _asyncio_dispatch.create_task(
+                _auto_generate_learning_content(db, job.course_id, job.user_id, nodes)
+            )
+
     elif category == "assignment":
         # Extract assignment info
         from services.ingestion.content_trimmer import trim_for_llm
@@ -910,5 +1319,22 @@ async def _dispatch_content(db: AsyncSession, job: IngestionJob) -> dict:
         )
         db.add(assignment)
         result["assignments"] = 1
+
+    # ── Automatic deadline extraction (all categories) ──
+    if job.course_id and job.extracted_markdown:
+        try:
+            from services.ingestion.deadline_extractor import extract_and_create_deadlines
+            canvas_assignments = getattr(job, "_canvas_assignments_data", None)
+            deadline_count = await extract_and_create_deadlines(
+                db=db,
+                course_id=job.course_id,
+                content=job.extracted_markdown,
+                source_ingestion_id=job.id,
+                canvas_assignments=canvas_assignments,
+            )
+            if deadline_count:
+                result["deadlines_extracted"] = deadline_count
+        except Exception as e:
+            logger.debug("Deadline extraction failed (non-blocking): %s", e)
 
     return result

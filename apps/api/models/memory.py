@@ -1,15 +1,9 @@
-"""Memory models for EverMemOS 3-stage pipeline (encode → consolidate → retrieve).
+"""Memory models for 3-stage pipeline (encode → consolidate → retrieve).
 
-Upgraded with MemCell atomic extraction (EverMemOS pattern) and multi-type classification.
-
-Memory types (inspired by EverMemOS 7 types + memU 6 types, adapted for education):
-- episode:     Key learning event (first understood a concept, breakthrough)
-- profile:     Student identity (learning style, ability level)
-- preference:  Learning preference (format, pace, style)
-- knowledge:   Subject knowledge memory (concept understanding)
-- error:       Error pattern (common mistakes, confusion points)
-- skill:       Mastered skill / technique
-- fact:        Atomic fact extracted from conversation
+Simplified memory types (3 types):
+- profile:     About the user (learning style, weaknesses, preferences)
+- knowledge:   About course content (concepts understood, questions asked)
+- plan:        About learning plans (deadlines, progress, goals)
 
 Uses pgvector for semantic similarity + PostgreSQL full-text search for BM25.
 """
@@ -25,26 +19,19 @@ from sqlalchemy.orm import Mapped, mapped_column
 from database import Base
 
 
-# MemCell types (EverMemOS 7 types adapted for education)
+# Simplified memory types (3 types)
 MEMCELL_TYPES = [
-    "episode",      # Key learning events
-    "profile",      # Student identity / learning style
-    "preference",   # Learning preferences
-    "knowledge",    # Subject knowledge
-    "error",        # Error patterns
-    "skill",        # Mastered skills
-    "fact",         # Atomic facts
-    "conversation", # Legacy: raw conversation summaries
+    "profile",      # About the user (learning style, weaknesses, preferences)
+    "knowledge",    # About course content (concepts understood, questions asked)
+    "plan",         # About learning plans (deadlines, progress, goals)
 ]
 
 
 class ConversationMemory(Base):
-    """MemCell-based memory with atomic extraction and multi-type classification.
+    """Memory entry with rule-based classification into 3 types.
 
-    Upgraded from single-summary model to EverMemOS MemCell pattern:
-    - Each entry is an atomic memory unit (not a full conversation summary)
-    - Classified into one of 8 memory types for targeted retrieval
-    - Supports both vector search and BM25 keyword search (hybrid)
+    Each entry is an atomic memory unit classified as profile, knowledge, or plan.
+    Supports both vector search and BM25 keyword search (hybrid).
     """
 
     __tablename__ = "conversation_memories"

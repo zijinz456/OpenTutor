@@ -74,7 +74,7 @@ async def extract_teaching_strategies(
 
     Only meaningful for LEARN, QUIZ, REVIEW intents. Uses fast LLM tier.
     """
-    if intent and intent.lower() not in ("learn", "quiz", "review"):
+    if intent and intent.lower() not in ("learn", "general", "plan"):
         return None
 
     from services.llm.router import get_llm_client

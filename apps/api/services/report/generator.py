@@ -184,22 +184,12 @@ async def _save_report(
     course_id: Optional[uuid.UUID] = None,
     data_snapshot: Optional[dict] = None,
 ):
-    """Persist a generated report to the database and return the ORM instance."""
-    from models.report import Report
-
-    report = Report(
-        user_id=user_id,
-        course_id=course_id,
-        report_type=report_type,
-        period_start=period_start,
-        period_end=period_end,
-        content=content,
-        data_snapshot=data_snapshot,
+    """Persist a generated report — Report model removed in Phase 1.3."""
+    logger.debug(
+        "Report generated: type=%s, user=%s (not persisted)",
+        report_type, user_id,
     )
-    db.add(report)
-    await db.commit()
-    await db.refresh(report)
-    return report
+    return None
 
 
 async def generate_daily_brief(

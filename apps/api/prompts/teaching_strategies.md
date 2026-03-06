@@ -1,6 +1,6 @@
 # Teaching Strategy Prompt Fragments
-# Used by TeachingAgent to adapt teaching style via Thompson Sampling bandit.
-# Each strategy below is injected into the system prompt based on bandit selection.
+# Loaded as context for the TutorAgent to adapt teaching style.
+# All strategies are provided to the LLM as reference material.
 
 ## socratic_questioning
 

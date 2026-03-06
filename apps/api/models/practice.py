@@ -52,6 +52,11 @@ class PracticeProblem(Base):
     source_version: Mapped[int] = mapped_column(Integer, default=1)
     is_archived: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    # Content ownership tracking (for agent vs user content)
+    source_owner: Mapped[str] = mapped_column(String(20), default="ai")
+    # Values: "ai" | "user" | "ai+user_edited"
+    locked: Mapped[bool] = mapped_column(Boolean, default=False)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     # Relationships

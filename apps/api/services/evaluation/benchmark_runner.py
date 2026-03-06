@@ -11,10 +11,7 @@ from services.evaluation.eval_recovery import run_recovery_evaluation
 from services.evaluation.eval_response import ResponseEvalCase, eval_responses_batch
 from services.evaluation.eval_retrieval import eval_retrieval_from_course
 from services.evaluation.eval_routing import eval_routing
-from services.scene.policy import decide_scene_policy_from_features
-
 ROUTING_MIN_ACCURACY = 0.8
-SCENE_POLICY_MIN_ACCURACY = 0.8
 RETRIEVAL_MIN_RECALL = 0.45
 RESPONSE_MIN_CORRECTNESS = 3.5
 
@@ -56,112 +53,6 @@ class BenchmarkSuite:
     skipped: bool = False
 
 
-SCENE_POLICY_CASES = [
-    {
-        "name": "exam prep weak areas",
-        "expected_scene": "exam_prep",
-        "current_scene": "study_session",
-        "features": {
-            "matched_cues": {"exam_prep": ["final"], "assignment": [], "review_drill": [], "note_organize": [], "study_session": []},
-            "upcoming_assignments": 1,
-            "unmastered_wrong_answers": 2,
-            "low_mastery_count": 4,
-            "content_nodes": 12,
-            "active_tab": "plan",
-            "course_active_scene": "study_session",
-        },
-    },
-    {
-        "name": "homework focus",
-        "expected_scene": "assignment",
-        "current_scene": "study_session",
-        "features": {
-            "matched_cues": {"exam_prep": [], "assignment": ["assignment"], "review_drill": [], "note_organize": [], "study_session": []},
-            "upcoming_assignments": 3,
-            "unmastered_wrong_answers": 0,
-            "low_mastery_count": 1,
-            "content_nodes": 7,
-            "active_tab": "",
-            "course_active_scene": "study_session",
-        },
-    },
-    {
-        "name": "mistake drill",
-        "expected_scene": "review_drill",
-        "current_scene": "study_session",
-        "features": {
-            "matched_cues": {"exam_prep": [], "assignment": [], "review_drill": ["wrong answer"], "note_organize": [], "study_session": []},
-            "upcoming_assignments": 0,
-            "unmastered_wrong_answers": 6,
-            "low_mastery_count": 2,
-            "content_nodes": 9,
-            "active_tab": "review",
-            "course_active_scene": "study_session",
-        },
-    },
-    {
-        "name": "notes synthesis",
-        "expected_scene": "note_organize",
-        "current_scene": "study_session",
-        "features": {
-            "matched_cues": {"exam_prep": [], "assignment": [], "review_drill": [], "note_organize": ["organize notes"], "study_session": []},
-            "upcoming_assignments": 0,
-            "unmastered_wrong_answers": 0,
-            "low_mastery_count": 0,
-            "content_nodes": 18,
-            "active_tab": "notes",
-            "course_active_scene": "study_session",
-        },
-    },
-    {
-        "name": "plain explanation request",
-        "expected_scene": "study_session",
-        "current_scene": "study_session",
-        "features": {
-            "matched_cues": {"exam_prep": [], "assignment": [], "review_drill": [], "note_organize": [], "study_session": ["explain"]},
-            "upcoming_assignments": 0,
-            "unmastered_wrong_answers": 0,
-            "low_mastery_count": 0,
-            "content_nodes": 6,
-            "active_tab": "",
-            "course_active_scene": "study_session",
-        },
-    },
-]
-
-
-def run_scene_policy_benchmark() -> BenchmarkSuite:
-    mismatches: list[dict[str, Any]] = []
-    correct = 0
-
-    for case in SCENE_POLICY_CASES:
-        decision = decide_scene_policy_from_features(
-            features=case["features"],
-            current_scene=case["current_scene"],
-        )
-        if decision.scene_id == case["expected_scene"]:
-            correct += 1
-        else:
-            mismatches.append(
-                {
-                    "case": case["name"],
-                    "expected": case["expected_scene"],
-                    "predicted": decision.scene_id,
-                    "reason": decision.reason,
-                    "scores": decision.scores,
-                }
-            )
-
-    accuracy = correct / len(SCENE_POLICY_CASES)
-    return BenchmarkSuite(
-        name="scene_policy",
-        passed=accuracy >= SCENE_POLICY_MIN_ACCURACY,
-        score=accuracy,
-        threshold=SCENE_POLICY_MIN_ACCURACY,
-        details={"total": len(SCENE_POLICY_CASES), "correct": correct, "mismatches": mismatches},
-    )
-
-
 async def run_regression_benchmark(
     *,
     db: AsyncSession | None = None,
@@ -181,8 +72,6 @@ async def run_regression_benchmark(
             details={"total": routing.total, "correct": routing.correct, "mismatches": routing.mismatches},
         )
     )
-    suites.append(run_scene_policy_benchmark())
-
     if db is not None and course_id and retrieval_queries:
         retrieval = await eval_retrieval_from_course(db, course_id, retrieval_queries)
         if retrieval.total == 0:

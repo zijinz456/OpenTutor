@@ -27,8 +27,8 @@ interface ChatTaskLink {
 
 type ChatActionType =
   | "set_layout_preset"
+  | "toggle_section"
   | "set_preference"
-  | "suggest_scene_switch"
   | "switch_tab"
   | "open_flashcards"
   | "load_wrong_answers"

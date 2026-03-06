@@ -89,8 +89,6 @@ async def emit_learning_event(
     2. Dispatches to pluggy ``on_learning_event`` hooks.
     3. Returns the event ID.
     """
-    from models.learning_event import LearningEvent
-
     # Validate verb
     if event_data.verb not in VALID_VERBS:
         logger.warning("Unknown learning event verb: %s (allowed: %s)", event_data.verb, VALID_VERBS)
@@ -98,27 +96,6 @@ async def emit_learning_event(
     # Validate object_type
     if event_data.object_type not in VALID_OBJECT_TYPES:
         logger.warning("Unknown learning event object_type: %s", event_data.object_type)
-
-    # Create event record
-    event = LearningEvent(
-        user_id=event_data.user_id,
-        verb=event_data.verb,
-        object_type=event_data.object_type,
-        object_id=event_data.object_id,
-        score=event_data.score,
-        success=event_data.success,
-        completion=event_data.completion,
-        duration_seconds=event_data.duration_seconds,
-        result_json=event_data.result_json,
-        course_id=event_data.course_id,
-        agent_name=event_data.agent_name,
-        session_id=event_data.session_id,
-        context_json=event_data.context_json,
-        timestamp=event_data.timestamp or datetime.now(timezone.utc),
-    )
-
-    db.add(event)
-    await db.flush()
 
     logger.debug(
         "Learning event: %s %s %s (user=%s, score=%s)",
@@ -132,7 +109,8 @@ async def emit_learning_event(
     # Dispatch to pluggy hooks (non-blocking, errors logged)
     _dispatch_plugin_hooks(event_data)
 
-    return event.id
+    # LearningEvent model removed in Phase 1.3 — return a generated ID
+    return uuid.uuid4()
 
 
 def _dispatch_plugin_hooks(event_data: LearningEventData) -> None:
@@ -254,27 +232,8 @@ async def get_learning_events(
     limit: int = 50,
     offset: int = 0,
 ) -> list:
-    """Query learning events with optional filters."""
-    from sqlalchemy import select
-    from models.learning_event import LearningEvent
-
-    stmt = (
-        select(LearningEvent)
-        .where(LearningEvent.user_id == user_id)
-        .order_by(LearningEvent.timestamp.desc())
-        .limit(limit)
-        .offset(offset)
-    )
-
-    if course_id:
-        stmt = stmt.where(LearningEvent.course_id == course_id)
-    if verb:
-        stmt = stmt.where(LearningEvent.verb == verb)
-    if object_type:
-        stmt = stmt.where(LearningEvent.object_type == object_type)
-
-    result = await db.execute(stmt)
-    return result.scalars().all()
+    """Query learning events — LearningEvent model removed in Phase 1.3."""
+    return []
 
 
 async def get_event_summary(
@@ -282,43 +241,9 @@ async def get_event_summary(
     user_id: uuid.UUID,
     course_id: uuid.UUID | None = None,
 ) -> dict:
-    """Get aggregated summary of learning events."""
-    from sqlalchemy import func, select
-    from models.learning_event import LearningEvent
-
-    base_filter = [LearningEvent.user_id == user_id]
-    if course_id:
-        base_filter.append(LearningEvent.course_id == course_id)
-
-    # Count by verb
-    verb_counts = await db.execute(
-        select(LearningEvent.verb, func.count(LearningEvent.id))
-        .where(*base_filter)
-        .group_by(LearningEvent.verb)
-    )
-
-    # Average scores by object type
-    avg_scores = await db.execute(
-        select(
-            LearningEvent.object_type,
-            func.avg(LearningEvent.score),
-            func.count(LearningEvent.id),
-        )
-        .where(*base_filter, LearningEvent.score.isnot(None))
-        .group_by(LearningEvent.object_type)
-    )
-
-    # Total study time
-    total_time = await db.execute(
-        select(func.sum(LearningEvent.duration_seconds))
-        .where(*base_filter, LearningEvent.duration_seconds.isnot(None))
-    )
-
+    """Get aggregated summary — LearningEvent model removed in Phase 1.3."""
     return {
-        "verb_counts": {row[0]: row[1] for row in verb_counts.all()},
-        "average_scores": {
-            row[0]: {"avg_score": round(row[1], 3), "count": row[2]}
-            for row in avg_scores.all()
-        },
-        "total_study_seconds": total_time.scalar() or 0,
+        "verb_counts": {},
+        "average_scores": {},
+        "total_study_seconds": 0,
     }

@@ -25,22 +25,25 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import select
 
+from config import settings
 from database import async_session
 from models.agent_task import AgentTask
-from models.notification import Notification
 from models.study_goal import StudyGoal
 from models.user import User
 from services.activity.engine import submit_task
-from services.notification.dispatcher import dispatch as dispatch_notification
 from services.provenance import build_provenance
 
 logger = logging.getLogger(__name__)
 
 scheduler = AsyncIOScheduler()
 
-# SSE subscriber management has moved to services.notification.channels.sse.
-# Re-export for backward compatibility.
-from services.notification.channels.sse import subscribe_sse, unsubscribe_sse  # noqa: F401
+
+# No-op stubs for removed SSE subscriber management (backward compatibility).
+async def subscribe_sse(*a, **kw):
+    pass
+
+async def unsubscribe_sse(*a, **kw):
+    pass
 
 
 async def _get_user_ids() -> list[uuid.UUID]:
@@ -82,32 +85,10 @@ async def _push_notification(
     title: str,
     body: str,
     category: str = "reminder",
-    course_id: uuid.UUID | None = None,
-    priority: str = "normal",
-    dedup_key: str | None = None,
-    action_url: str | None = None,
-    action_label: str | None = None,
-    metadata_json: dict | None = None,
+    **kwargs,
 ):
-    """Dispatch notification via NotificationDispatcher.
-
-    Wraps the central dispatch() call with its own DB session, suitable for
-    scheduler jobs that run outside a request context.
-    """
-    async with async_session() as db:
-        await dispatch_notification(
-            user_id=user_id,
-            title=title,
-            body=body,
-            category=category,
-            course_id=course_id,
-            priority=priority,
-            dedup_key=dedup_key,
-            action_url=action_url,
-            action_label=action_label,
-            metadata_json=metadata_json,
-            db=db,
-        )
+    """No-op stub — notification system removed in Phase 1.1 refactor."""
+    logger.debug("Notification skipped (removed): [%s] %s", category, title)
 
 
 async def weekly_prep_job():
@@ -249,6 +230,8 @@ async def agenda_tick_job():
                     )
 
             # --- Ambient Study Monitor (LLM deliberation layer) ---
+            if not settings.ambient_monitor_enabled:
+                return u_ticks, u_tasks, u_ambient
             try:
                 from services.agent.ambient_monitor import (
                     gather_learning_state,
@@ -337,20 +320,6 @@ async def memory_consolidation_job():
                 total_decayed += consolidation.get("decayed", 0)
                 total_categorized += consolidation.get("categorized", 0)
 
-                # Cross-course concept linking (folded into per-user loop)
-                try:
-                    from services.memory.pipeline import find_cross_course_patterns
-                    from services.agent.kv_store import kv_set
-                    patterns = await find_cross_course_patterns(db, user_id)
-                    if patterns:
-                        await kv_set(
-                            db, user_id, "cross_course", "patterns",
-                            {"patterns": patterns[:5], "updated_at": datetime.now(timezone.utc).isoformat()},
-                            course_id=None,
-                        )
-                        logger.info("Cross-course patterns stored for user %s: %d patterns", user_id, len(patterns[:5]))
-                except Exception as e:
-                    logger.debug("Cross-course pattern detection failed for user %s: %s", user_id, e)
         except Exception as e:
             logger.error("Memory consolidation failed for user %s: %s", user_id, e)
 
@@ -369,96 +338,13 @@ async def memory_consolidation_job():
 
 
 async def timing_analysis_job():
-    """Timing analysis — compute preferred study times from habit logs.
-
-    Uses services.notification.timing.compute_preferred_study_time() to
-    analyse each user's study patterns and update their NotificationSettings
-    with the learned preferred_study_time and confidence score.
-
-    Runs once daily.
-    """
-    logger.info("Running timing analysis job...")
-    from services.notification.timing import compute_preferred_study_time
-    from services.notification.dispatcher import get_or_create_settings
-
-    async def _process(user_id, db):
-        preferred_time, confidence = await compute_preferred_study_time(user_id, db)
-        if preferred_time is not None:
-            ns = await get_or_create_settings(user_id, db)
-            ns.preferred_study_time = preferred_time
-            ns.study_time_confidence = confidence
-            await db.commit()
-            return True
-        return False
-
-    updated = await _for_each_user(_process, "Timing analysis")
-    logger.info("Timing analysis complete: updated %d users", updated)
+    """Timing analysis — no-op stub (notification system removed in Phase 1.1)."""
+    logger.debug("Timing analysis job skipped (notification system removed)")
 
 
 async def escalation_check_job():
-    """Escalation check — re-deliver unread high-priority notifications.
-
-    Finds notifications with priority "high" or "urgent" that have not been
-    read within the user's configured escalation_delay_hours window, and
-    re-dispatches them with "urgent" priority so the dispatcher bypasses
-    quiet hours and frequency caps on the second delivery attempt.
-
-    Runs every 2 hours.
-    """
-    logger.info("Running escalation check job...")
-    from models.notification_settings import NotificationSettings
-
-    # First, fetch user IDs with escalation enabled + their delay config
-    escalation_configs: list[tuple[uuid.UUID, int]] = []
-    async with async_session() as db:
-        settings_result = await db.execute(
-            select(
-                NotificationSettings.user_id,
-                NotificationSettings.escalation_delay_hours,
-            ).where(NotificationSettings.escalation_enabled.is_(True))
-        )
-        escalation_configs = [(row[0], row[1]) for row in settings_result.all()]
-
-    escalated = 0
-    now = datetime.now(timezone.utc)
-
-    for user_id, delay_hours in escalation_configs:
-        try:
-            async with async_session() as db:
-                cutoff = now - timedelta(hours=delay_hours)
-
-                # Unread high-priority notifications older than the escalation window
-                notif_result = await db.execute(
-                    select(Notification).where(
-                        Notification.user_id == user_id,
-                        Notification.read.is_(False),
-                        Notification.priority.in_(["high", "urgent"]),
-                        Notification.created_at <= cutoff,
-                    )
-                )
-                unread = notif_result.scalars().all()
-
-                for notif in unread:
-                    # Mark original as read to prevent re-escalation loops
-                    notif.read = True
-
-                    await dispatch_notification(
-                        user_id=user_id,
-                        title=f"[Reminder] {notif.title}",
-                        body=notif.body,
-                        category=notif.category,
-                        course_id=notif.course_id,
-                        priority="urgent",
-                        dedup_key=f"escalation-{notif.id}",
-                        db=db,
-                    )
-                    escalated += 1
-
-                await db.commit()
-        except Exception as e:
-            logger.error("Escalation check failed for user %s: %s", user_id, e)
-
-    logger.info("Escalation check complete: escalated %d notifications", escalated)
+    """Escalation check — no-op stub (notification system removed in Phase 1.1)."""
+    logger.debug("Escalation check job skipped (notification system removed)")
 
 
 async def _get_or_create_weekly_review_goal(
@@ -555,18 +441,7 @@ async def _broadcast_report_job(
         async with sem, async_session() as db:
             content = await generator(user_id, db)
             if content:
-                now_str = datetime.now(timezone.utc).strftime(dedup_pattern)
-                await dispatch_notification(
-                    user_id=user_id,
-                    title=title,
-                    body=content[:500],
-                    category=category,
-                    priority="normal",
-                    dedup_key=f"{category}:{user_id}:{now_str}",
-                    action_url="/dashboard",
-                    action_label=action_label,
-                    db=db,
-                )
+                logger.debug("Report generated for user %s [%s]: %s", user_id, category, content[:100])
                 return True
             return False
 
@@ -684,21 +559,7 @@ async def smart_review_trigger_job():
             requires_approval=False,
             max_attempts=2,
         )
-        await dispatch_notification(
-            user_id=user_id,
-            title="Review time",
-            body=assessment["recommendation"],
-            category="smart_review",
-            priority="high" if assessment["urgency"] == "critical" else "normal",
-            dedup_key=f"smart_review:{user_id}:{now.strftime('%Y-%m-%d')}",
-            action_url="/review",
-            action_label="Review Now",
-            metadata_json={
-                "due_count": assessment["due_count"],
-                "urgency": assessment["urgency"],
-            },
-            db=db,
-        )
+        logger.debug("Smart review task queued for user %s", user_id)
         return True
 
     triggered = await _for_each_user(_process, "Smart review trigger")
@@ -858,26 +719,7 @@ async def cross_course_linking_job():
                             requires_approval=False,
                             max_attempts=2,
                         )
-                        await dispatch_notification(
-                            user_id=user_id,
-                            title=f"Knowledge transfer: {pattern['topic']}",
-                            body=(
-                                f"You know '{pattern['topic']}' well in {strong['course_name']} "
-                                f"({strong['mastery']:.0%}) — review it in {weak['course_name']} "
-                                f"({weak['mastery']:.0%}) to strengthen both."
-                            ),
-                            category="cross_course",
-                            course_id=weak_course_id,
-                            priority="normal",
-                            dedup_key=f"cross_course:{user_id}:{pattern['topic'][:30]}",
-                            action_url=f"/study/course/{weak['course_id']}",
-                            action_label="Review Now",
-                            metadata_json={
-                                "topic": pattern["topic"],
-                                "mastery_gap": round(gap, 3),
-                            },
-                            db=db,
-                        )
+                        logger.debug("Cross-course review task queued for user %s: %s", user_id, pattern["topic"])
 
                     await db.commit()
                     links_found += len(patterns)

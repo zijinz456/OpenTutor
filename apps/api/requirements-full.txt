@@ -32,7 +32,6 @@ notion-client>=2.0.0
 
 # Advanced multimodal / experimentation
 pix2tex>=0.1.2
-contextualbandits>=0.3.20
 scikit-learn>=1.4.0
 pyBKT>=1.4
 

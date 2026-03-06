@@ -44,6 +44,26 @@ export interface ScrapeSource {
   created_at: string;
 }
 
+// ── Course Sync ──
+
+export interface SyncResult {
+  status: string;
+  new_files: number;
+  updated_files: number;
+  unchanged_files: number;
+  files_discovered: number;
+  job_id: string;
+  job_status: string;
+  nodes_created: number;
+  content_changed: boolean;
+}
+
+export async function syncCourse(courseId: string): Promise<SyncResult> {
+  return request(`/courses/${courseId}/sync`, { method: "POST" });
+}
+
+// ── Scrape Sources ──
+
 export async function createScrapeSource(body: {
   course_id: string;
   url: string;

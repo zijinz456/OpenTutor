@@ -1,65 +1,57 @@
-"""EverMemOS 3-stage memory pipeline: encode → consolidate → retrieve.
+"""Memory pipeline: encode → consolidate → retrieve.
 
-UPGRADED with:
-- MemCell atomic extraction (EverMemOS pattern): extracts multiple atomic memory units per conversation
-- Multi-type classification: episode / profile / preference / knowledge / error / skill / fact
-- BM25 + Vector hybrid search (OpenClaw pattern): weighted fusion (0.7 vector + 0.3 BM25)
-- minScore filtering (OpenClaw pattern): drop low-relevance memories (threshold 0.35)
-- Category hierarchy (memU pattern): Resource → Item → Category layered organization
-
-Borrows from:
-- EverMemOS: 3-stage architecture, MemCell extraction, importance-weighted retrieval
-- OpenClaw: Hybrid Search (BM25 0.3 + Vector 0.7), minScore 0.35, chunking (400 tokens, 80 overlap)
-- memU: 3-layer hierarchy (Resource → Item → Category), 6 memory types
-- openakita: "is this useful in a month?" filter, lifecycle consolidation
+Simplified from EverMemOS-style pipeline:
+- Rule-based classification into 3 types (profile / knowledge / plan)
+- Word overlap + cosine similarity dedup
+- Single importance decay rate (90 days for all types)
+- BM25 + Vector hybrid retrieval (unchanged)
 """
 
 import json
 import logging
 import math
+import re
 import uuid
-from collections import Counter
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from sqlalchemy import select, text, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import is_sqlite
 from models.memory import ConversationMemory, MEMCELL_TYPES
-from services.llm.router import get_llm_client
 from services.search.compat import cosine_similarity, update_search_vector
 
 logger = logging.getLogger(__name__)
 
-# ── Stage 1: ENCODE (MemCell Atomic Extraction) ──
+# ── Rule-based memory type classification ──
 
-MEMCELL_EXTRACTION_PROMPT = """Analyze this conversation turn and extract atomic memory units (MemCells).
+_PROFILE_PATTERNS = re.compile(
+    r"(i\s+(like|prefer|want|don'?t\s+like|hate|need|am\s+a|feel)|"
+    r"my\s+(style|level|weakness|strength|preference)|"
+    r"too\s+(fast|slow|detailed|brief|hard|easy)|"
+    r"(visual|auditory|hands.?on)\s+learner)",
+    re.IGNORECASE,
+)
 
-Each MemCell should be a single, self-contained piece of information about the student.
-Ask yourself: "Is this useful a month from now in a new conversation?"
+_PLAN_PATTERNS = re.compile(
+    r"(deadline|exam|schedule|assignment|due\s+date|"
+    r"study\s+plan|goal|target|timeline|midterm|final|"
+    r"week\s+\d|tomorrow|next\s+week|before\s+the)",
+    re.IGNORECASE,
+)
 
-Memory types to extract:
-- episode: Key learning event (e.g., "Student understood eigenvalue decomposition for the first time")
-- profile: Student identity info (e.g., "Student is a visual learner who prefers diagrams")
-- preference: Learning preference (e.g., "Student prefers step-by-step explanations")
-- knowledge: Subject knowledge (e.g., "Student understands basic matrix multiplication")
-- error: Error pattern (e.g., "Student confuses eigenvalues with eigenvectors")
-- skill: Mastered skill (e.g., "Student can solve 2x2 determinants correctly")
-- fact: Atomic fact (e.g., "Student is taking Linear Algebra this semester")
 
-Rules:
-- Extract 0-3 MemCells per conversation turn (most turns yield 0-1)
-- Each MemCell must be a single atomic fact, not a conversation summary
-- Focus on WHO the student IS, not WHAT they asked
-- Be specific and concise (under 50 words each)
-- If nothing worth remembering, return exactly: NONE
+def classify_memory_type(user_message: str, assistant_response: str = "") -> str:
+    """Rule-based memory type classification (replaces LLM classification)."""
+    text_combined = f"{user_message} {assistant_response}"
+    if _PROFILE_PATTERNS.search(text_combined):
+        return "profile"
+    if _PLAN_PATTERNS.search(text_combined):
+        return "plan"
+    return "knowledge"
 
-Conversation:
-Student: {user_message}
-Tutor: {assistant_response}
 
-Output NONE or a JSON array:
-[{{"type": "<memory_type>", "content": "<atomic memory>", "importance": <0.0-1.0>}}]"""
+# ── Stage 1: ENCODE ──
 
 
 async def encode_memory(
@@ -69,120 +61,60 @@ async def encode_memory(
     user_message: str,
     assistant_response: str,
 ) -> list[ConversationMemory]:
-    """Stage 1: Extract atomic MemCells from a conversation turn.
+    """Stage 1: Create a memory entry from a conversation turn.
 
-    Upgraded from single-summary to multi-MemCell extraction (EverMemOS pattern).
-    Returns list of created memory entries (usually 0-2).
+    Uses rule-based classification instead of LLM extraction.
+    Returns list of created memory entries (0 or 1).
     """
-    client = get_llm_client("fast")
-    created = []
-
-    try:
-        prompt = MEMCELL_EXTRACTION_PROMPT.format(
-            user_message=user_message[:500],
-            assistant_response=assistant_response[:500],
-        )
-        result, _ = await client.extract(
-            "You are a memory encoding specialist. Output NONE or valid JSON array.",
-            prompt,
-        )
-        result = result.strip()
-
-        if not result or result.upper().startswith("NONE"):
-            return []
-
-        # Parse JSON array from response
-        if "```" in result:
-            json_start = result.find("[")
-            json_end = result.rfind("]") + 1
-            if json_start >= 0 and json_end > json_start:
-                result = result[json_start:json_end]
-
-        memcells = json.loads(result)
-        if not isinstance(memcells, list):
-            memcells = [memcells]
-
-        for cell in memcells[:3]:  # Max 3 MemCells per turn
-            mem_type = cell.get("type", "fact")
-            if mem_type not in MEMCELL_TYPES:
-                mem_type = "fact"
-
-            content = cell.get("content", "").strip()
-            if not content or len(content) < 5:
-                continue
-
-            importance = min(1.0, max(0.0, float(cell.get("importance", 0.5))))
-            embedding = await generate_embedding(content)
-
-            memory = ConversationMemory(
-                user_id=user_id,
-                course_id=course_id,
-                summary=content,
-                memory_type=mem_type,
-                embedding=embedding,
-                importance=importance,
-                source_message=user_message[:200],
-                metadata_json={"source": "memcell_extraction"},
-            )
-            db.add(memory)
-            created.append(memory)
-
-        if created:
-            await db.flush()
-            # Update search vectors for BM25
-            for mem in created:
-                await update_search_vector(db, "conversation_memories", str(mem.id), mem.summary)
-            await db.flush()
-            logger.info("Encoded %d MemCells for user %s", len(created), user_id)
-
-        return created
-
-    except json.JSONDecodeError:
-        # Fallback: treat as single summary (backward compatible)
-        return await _encode_single_summary(
-            db, user_id, course_id, user_message, assistant_response, client,
-        )
-    except Exception as e:
-        logger.warning("MemCell extraction failed: %s", e)
+    # Skip very short or trivial messages
+    if len(user_message.strip()) < 10:
         return []
 
-
-async def _encode_single_summary(
-    db, user_id, course_id, user_message, assistant_response, client,
-) -> list[ConversationMemory]:
-    """Backward-compatible single-summary encoding (fallback)."""
-    prompt = (
-        f"Create a concise memory summary (under 100 words) of this conversation.\n"
-        f"Ask: 'Is this useful a month from now?'\n"
-        f"If nothing worth remembering, return NONE.\n\n"
-        f"Student: {user_message[:500]}\nTutor: {assistant_response[:500]}"
-    )
-    summary, _ = await client.extract(
-        "You are a memory encoding specialist. Output NONE or a brief summary.",
-        prompt,
-    )
-    summary = summary.strip()
-    if not summary or summary.upper().startswith("NONE"):
+    # Build a concise summary from the conversation
+    summary = _build_summary(user_message, assistant_response)
+    if not summary or len(summary) < 10:
         return []
 
+    mem_type = classify_memory_type(user_message, assistant_response)
     embedding = await generate_embedding(summary)
+
     memory = ConversationMemory(
         user_id=user_id,
         course_id=course_id,
         summary=summary,
-        memory_type="conversation",
+        memory_type=mem_type,
         embedding=embedding,
         importance=0.5,
         source_message=user_message[:200],
+        metadata_json={"source": "rule_based"},
     )
     db.add(memory)
     await db.flush()
 
-    # Update search vector
+    # Update search vector for BM25
     await update_search_vector(db, "conversation_memories", str(memory.id), summary)
     await db.flush()
-    logger.info("Memory encoded (fallback): %s", summary[:80])
+    logger.info("Memory encoded (type=%s) for user %s", mem_type, user_id)
     return [memory]
+
+
+# Also export as encode_memories for callers that use the plural form
+encode_memories = encode_memory
+
+
+def _build_summary(user_message: str, assistant_response: str) -> str:
+    """Build a concise memory summary from conversation turn.
+
+    Extracts the key information without LLM — just truncates and combines.
+    """
+    user_part = user_message.strip()[:300]
+    assistant_part = assistant_response.strip()[:300]
+
+    # For very short assistant responses, just use the user message
+    if len(assistant_part) < 20:
+        return user_part
+
+    return f"Student asked: {user_part}\nTutor responded: {assistant_part}"
 
 
 async def generate_embedding(text_content: str) -> list[float] | None:
@@ -200,21 +132,21 @@ async def generate_embedding(text_content: str) -> list[float] | None:
 
 _cosine_similarity = cosine_similarity
 
+# Single decay constant: 90 days half-life for all memory types
+DECAY_HALF_LIFE_DAYS = 90
+
 
 async def consolidate_memories(
     db: AsyncSession,
     user_id: uuid.UUID,
     course_id: uuid.UUID | None = None,
 ) -> dict:
-    """Stage 2: Consolidate memories — deduplicate, decay, and categorize.
+    """Stage 2: Consolidate memories — deduplicate and decay.
 
-    Upgraded with:
-    - Two-phase deduplication (EverMemOS + mem0 pattern):
-      Phase 1: Word overlap pre-filter (threshold 0.5) for candidate pairs
-      Phase 2: Embedding cosine similarity confirmation (threshold 0.85)
-    - MemCell-aware deduplication (same type only)
-    - Category-based organization (memU pattern)
-    - Importance-weighted recency decay
+    Simplified:
+    - Word overlap pre-filter (threshold 0.5) for candidate pairs
+    - Embedding cosine similarity confirmation (threshold 0.85)
+    - Single importance decay rate (90 days half-life for all types)
     """
     query = select(ConversationMemory).where(
         ConversationMemory.user_id == user_id,
@@ -228,9 +160,9 @@ async def consolidate_memories(
     memories = list(result.scalars().all())
 
     if len(memories) < 2:
-        return {"deduped": 0, "decayed": 0, "categorized": 0}
+        return {"deduped": 0, "decayed": 0}
 
-    # Phase 1: Word overlap pre-filter (threshold lowered to 0.5 for broader candidate capture)
+    # Phase 1: Word overlap pre-filter (threshold 0.5)
     candidates: list[tuple] = []
     removed = set()
     for i, mem_a in enumerate(memories):
@@ -253,9 +185,8 @@ async def consolidate_memories(
             if overlap >= 0.5:
                 candidates.append((mem_a, mem_b, overlap))
 
-    # Phase 2: Embedding cosine similarity confirmation (mem0 pattern, threshold 0.85)
-    # Upgraded: merge duplicates into a stronger combined memory instead of just deleting
-    merged_pairs: list[tuple] = []  # (keeper, loser, similarity)
+    # Phase 2: Embedding cosine similarity confirmation (threshold 0.85)
+    merged_pairs: list[tuple] = []
     for mem_a, mem_b, word_overlap in candidates:
         if mem_a.id in removed or mem_b.id in removed:
             continue
@@ -268,7 +199,7 @@ async def consolidate_memories(
             is_duplicate = True
 
         if is_duplicate:
-            # Keep the more important one, merge info from the other
+            # Keep the more important one
             if mem_b.importance >= mem_a.importance:
                 keeper, loser = mem_b, mem_a
             else:
@@ -280,7 +211,6 @@ async def consolidate_memories(
     for keeper, loser in merged_pairs:
         keeper.importance = min(1.0, keeper.importance + loser.importance * 0.3)
         keeper.access_count = (keeper.access_count or 0) + (loser.access_count or 0)
-        # Append merge metadata
         meta = keeper.metadata_json or {}
         meta["merge_count"] = meta.get("merge_count", 1) + 1
         meta["last_merged_at"] = datetime.now(timezone.utc).isoformat()
@@ -290,25 +220,14 @@ async def consolidate_memories(
         if mem.id in removed:
             await db.delete(mem)
 
-    # Recency decay (EverMemOS pattern, type-aware half-life)
-    HALF_LIFE = {
-        "episode": 180,     # Key events persist longer
-        "profile": 365,     # Identity info very long-lived
-        "preference": 120,  # Preferences change over time
-        "knowledge": 90,    # Knowledge needs reinforcement
-        "error": 60,        # Errors should be addressed soon
-        "skill": 120,       # Skills persist moderately
-        "fact": 90,         # Facts moderate persistence
-        "conversation": 60, # Raw conversations decay fast
-    }
+    # Importance decay (single rate for all types)
     now = datetime.now(timezone.utc)
     decayed_count = 0
     for mem in memories:
         if mem.id in removed:
             continue
         days = (now - mem.created_at).total_seconds() / 86400
-        half_life = HALF_LIFE.get(mem.memory_type, 90)
-        decay = math.exp(-days / half_life)
+        decay = math.exp(-days / DECAY_HALF_LIFE_DAYS)
         new_importance = mem.importance * decay
         if new_importance < 0.1:
             await db.delete(mem)
@@ -320,496 +239,12 @@ async def consolidate_memories(
     return {"deduped": len(removed), "decayed": decayed_count}
 
 
-# ── Stage 2b: SMART CONSOLIDATE (AI-powered semantic merge) ──
-
-# Stop words excluded from word-overlap computation
-_STOP_WORDS = frozenset(
-    "a an the is are was were be been being have has had do does did will "
-    "would shall should may might can could of in to for on with at by from "
-    "as into about between through after before during and but or nor not so "
-    "yet both either neither each every all any few more most other some such "
-    "no only own same than too very it its he she they them their this that "
-    "these those i me my we our you your who what which when where how".split()
-)
-
-MAX_SMART_MERGES_PER_RUN = 10
-SMART_CONSOLIDATE_THRESHOLD = 50  # Minimum memories before AI consolidation kicks in
-WORD_OVERLAP_THRESHOLD = 0.30     # 30% shared significant words to form a group
-
-
-def _significant_words(text: str) -> set[str]:
-    """Extract significant (non-stop) words from text, lowercased."""
-    return {
-        w for w in text.lower().split()
-        if w not in _STOP_WORDS and len(w) > 2
-    }
-
-
-def _group_by_word_overlap(
-    memories: list["ConversationMemory"],
-) -> list[list["ConversationMemory"]]:
-    """Group memories by rough word overlap (>30% shared significant words).
-
-    Uses single-linkage clustering: a memory joins a group if it overlaps
-    with *any* existing member of that group.  Groups only contain memories
-    of the same ``memory_type``.
-    """
-    # Pre-compute word sets
-    word_sets: dict[uuid.UUID, set[str]] = {}
-    for mem in memories:
-        word_sets[mem.id] = _significant_words(mem.summary)
-
-    assigned: set[uuid.UUID] = set()
-    groups: list[list["ConversationMemory"]] = []
-
-    for mem in memories:
-        if mem.id in assigned:
-            continue
-        words_a = word_sets[mem.id]
-        if len(words_a) < 2:
-            continue
-
-        group = [mem]
-        assigned.add(mem.id)
-
-        # Scan remaining memories for overlaps with any group member
-        changed = True
-        while changed:
-            changed = False
-            for candidate in memories:
-                if candidate.id in assigned:
-                    continue
-                if candidate.memory_type != mem.memory_type:
-                    continue
-                words_c = word_sets[candidate.id]
-                if len(words_c) < 2:
-                    continue
-                # Check overlap against any group member
-                for member in group:
-                    words_m = word_sets[member.id]
-                    denom = min(len(words_c), len(words_m))
-                    if denom == 0:
-                        continue
-                    overlap = len(words_c & words_m) / denom
-                    if overlap >= WORD_OVERLAP_THRESHOLD:
-                        group.append(candidate)
-                        assigned.add(candidate.id)
-                        changed = True
-                        break  # re-scan with enlarged group
-
-        if len(group) >= 2:
-            groups.append(group)
-
-    return groups
-
-
-MERGE_SYSTEM_PROMPT = (
-    "Merge these related memories into one concise memory. "
-    "Preserve all unique facts. Output only the merged memory text."
-)
-
-COMPRESSION_MERGE_PROMPT = (
-    "Merge these related student memories into a single concise summary. "
-    "Preserve all unique facts and insights. The merged memory should capture "
-    "the essence of all inputs in under 80 words. Output only the merged text."
-)
-
-
-async def _merge_memory_groups(
-    db: AsyncSession,
-    user_id: uuid.UUID,
-    course_id: uuid.UUID | None,
-    groups: list[list[ConversationMemory]],
-    *,
-    system_prompt: str,
-    source_label: str,
-    log_prefix: str,
-) -> int:
-    """Merge groups of related memories via LLM.
-
-    Shared by smart_consolidate and compress_old_memories.
-    """
-    client = get_llm_client("fast")
-    total_merged = 0
-
-    for group in groups[:MAX_SMART_MERGES_PER_RUN]:
-        try:
-            mem_lines = "\n".join(f"- {m.summary}" for m in group)
-            user_prompt = (
-                f"Memories to merge ({len(group)} items, "
-                f"type={group[0].memory_type}):\n{mem_lines}"
-            )
-            merged_text, _ = await client.extract(system_prompt, user_prompt)
-            merged_text = merged_text.strip()
-            if not merged_text or len(merged_text) < 5:
-                logger.warning("%s: LLM returned empty merge, skipping group", log_prefix)
-                continue
-
-            best_importance = max(m.importance for m in group)
-            total_access = sum((m.access_count or 0) for m in group)
-            embedding = await generate_embedding(merged_text)
-
-            group_course_ids = {m.course_id for m in group}
-            merged_course_id = group_course_ids.pop() if len(group_course_ids) == 1 else course_id
-
-            merged_memory = ConversationMemory(
-                user_id=user_id,
-                course_id=merged_course_id,
-                summary=merged_text,
-                memory_type=group[0].memory_type,
-                embedding=embedding,
-                importance=best_importance,
-                access_count=total_access,
-                source_message=group[0].source_message,
-                metadata_json={
-                    "source": source_label,
-                    "merged_from": [str(m.id) for m in group],
-                    "merge_count": len(group),
-                    "merged_at": datetime.now(timezone.utc).isoformat(),
-                },
-            )
-            db.add(merged_memory)
-            await db.flush()
-
-            await update_search_vector(
-                db, "conversation_memories", str(merged_memory.id), merged_memory.summary,
-            )
-
-            now = datetime.now(timezone.utc)
-            for old_mem in group:
-                old_mem.dismissed_at = now
-                old_mem.dismissal_reason = f"{source_label}: merged into {merged_memory.id}"
-                meta = old_mem.metadata_json or {}
-                meta["merged_into"] = str(merged_memory.id)
-                meta["merged_at"] = now.isoformat()
-                old_mem.metadata_json = meta
-
-            total_merged += len(group)
-            logger.info(
-                "%s: merged %d memories (type=%s) into %s",
-                log_prefix, len(group), group[0].memory_type, merged_memory.id,
-            )
-        except Exception as e:
-            logger.warning("%s: failed to merge group of %d: %s", log_prefix, len(group), e)
-            continue
-
-    if total_merged:
-        await db.flush()
-        logger.info("%s: total %d memories merged for user %s", log_prefix, total_merged, user_id)
-
-    return total_merged
-
-
-async def smart_consolidate(
-    db: AsyncSession,
-    user_id: uuid.UUID,
-    course_id: uuid.UUID | None = None,
-) -> int:
-    """AI-powered memory consolidation.
-
-    Groups semantically similar memories and merges them using LLM.
-    Only runs when user has > SMART_CONSOLIDATE_THRESHOLD memories.
-    Returns number of memories merged (i.e. old memories replaced).
-    """
-    count_filters = [
-        ConversationMemory.user_id == user_id,
-        ConversationMemory.dismissed_at.is_(None),
-    ]
-    if course_id:
-        count_filters.append(ConversationMemory.course_id == course_id)
-
-    count_q = await db.execute(
-        select(func.count(ConversationMemory.id)).where(*count_filters)
-    )
-    total = count_q.scalar() or 0
-
-    if total < SMART_CONSOLIDATE_THRESHOLD:
-        logger.debug(
-            "smart_consolidate: skipping (only %d memories, threshold %d)",
-            total, SMART_CONSOLIDATE_THRESHOLD,
-        )
-        return 0
-
-    query = (
-        select(ConversationMemory)
-        .where(*count_filters)
-        .order_by(ConversationMemory.created_at.asc())
-    )
-    result = await db.execute(query)
-    memories = list(result.scalars().all())
-
-    groups = _group_by_word_overlap(memories)
-    if not groups:
-        logger.debug("smart_consolidate: no groups found for merging")
-        return 0
-
-    return await _merge_memory_groups(
-        db, user_id, course_id, groups,
-        system_prompt=MERGE_SYSTEM_PROMPT,
-        source_label="smart_consolidate",
-        log_prefix="smart_consolidate",
-    )
-
-
-async def compress_old_memories(
-    db: AsyncSession,
-    user_id: uuid.UUID,
-    course_id: uuid.UUID | None,
-    age_threshold_days: int = 14,
-) -> int:
-    """Compress old memories by grouping related ones and merging via LLM.
-
-    Finds conversation memories older than *age_threshold_days*, groups them
-    by topic/category using word-overlap clustering, then asks the LLM to
-    merge each group into a single consolidated summary.  Original memories
-    are soft-deleted (dismissed) with lineage metadata preserved.
-
-    Returns the count of original memories that were compressed (replaced).
-    """
-    cutoff = datetime.now(timezone.utc) - timedelta(days=age_threshold_days)
-
-    filters = [
-        ConversationMemory.user_id == user_id,
-        ConversationMemory.dismissed_at.is_(None),
-        ConversationMemory.created_at < cutoff,
-    ]
-    if course_id:
-        filters.append(ConversationMemory.course_id == course_id)
-
-    result = await db.execute(
-        select(ConversationMemory)
-        .where(*filters)
-        .order_by(ConversationMemory.created_at.asc())
-    )
-    old_memories = list(result.scalars().all())
-
-    if len(old_memories) < 2:
-        logger.debug(
-            "compress_old_memories: only %d old memories, nothing to compress",
-            len(old_memories),
-        )
-        return 0
-
-    groups = _group_by_word_overlap(old_memories)
-    if not groups:
-        logger.debug("compress_old_memories: no groups formed from old memories")
-        return 0
-
-    return await _merge_memory_groups(
-        db, user_id, course_id, groups,
-        system_prompt=COMPRESSION_MERGE_PROMPT,
-        source_label="long_term_compression",
-        log_prefix="compress_old_memories",
-    )
-
-
-# ── Stage 2d: CROSS-COURSE MEMORY LINKING ──
-
-
-async def find_cross_course_patterns(
-    db: AsyncSession,
-    user_id: uuid.UUID,
-) -> list[dict]:
-    """Identify topics/concepts that appear across multiple courses.
-
-    Queries all active memories for the user, groups them by significant
-    keyword overlap across different courses, and returns a list of
-    cross-course connections.  Uses pure text overlap (no LLM call).
-
-    Returns:
-        List of dicts: [
-            {
-                "topic": "<representative keywords>",
-                "courses": [
-                    {"course_id": str, "course_name": str, "memory_summary": str},
-                    ...
-                ],
-            },
-            ...
-        ]
-    """
-    from models.course import Course
-
-    # ── 1. Load all active memories with course info ──
-    result = await db.execute(
-        select(ConversationMemory, Course.name.label("course_name"))
-        .join(Course, ConversationMemory.course_id == Course.id, isouter=True)
-        .where(
-            ConversationMemory.user_id == user_id,
-            ConversationMemory.dismissed_at.is_(None),
-            ConversationMemory.course_id.isnot(None),
-        )
-        .order_by(ConversationMemory.importance.desc())
-    )
-    rows = result.all()
-
-    if len(rows) < 2:
-        return []
-
-    # ── 2. Build per-memory word sets and course mapping ──
-    # Each entry: (memory, course_name, significant_words)
-    entries: list[tuple] = []
-    for row in rows:
-        mem = row[0]
-        course_name = row[1] or "Unknown Course"
-        words = _significant_words(mem.summary)
-        if len(words) >= 2:
-            entries.append((mem, course_name, words))
-
-    if not entries:
-        return []
-
-    # ── 3. Cluster by keyword overlap across different courses ──
-    # We want to find topics that span 2+ courses, so we build topic clusters
-    # where members come from different courses.
-    assigned: set[int] = set()
-    clusters: list[list[int]] = []  # indices into entries
-
-    for i, (mem_a, cname_a, words_a) in enumerate(entries):
-        if i in assigned:
-            continue
-
-        cluster = [i]
-        assigned.add(i)
-        cluster_courses = {mem_a.course_id}
-
-        for j in range(i + 1, len(entries)):
-            if j in assigned:
-                continue
-            mem_b, cname_b, words_b = entries[j]
-
-            # Require overlap with any cluster member
-            for idx in cluster:
-                _, _, words_m = entries[idx]
-                denom = min(len(words_b), len(words_m))
-                if denom == 0:
-                    continue
-                overlap = len(words_b & words_m) / denom
-                if overlap >= WORD_OVERLAP_THRESHOLD:
-                    cluster.append(j)
-                    assigned.add(j)
-                    cluster_courses.add(mem_b.course_id)
-                    break
-
-        # Only keep clusters spanning 2+ courses
-        if len(cluster_courses) >= 2 and len(cluster) >= 2:
-            clusters.append(cluster)
-
-    # ── 4. Build result dicts ──
-    connections: list[dict] = []
-    for cluster in clusters:
-        # Determine representative topic from the most common significant words
-        all_words: list[str] = []
-        for idx in cluster:
-            _, _, words = entries[idx]
-            all_words.extend(words)
-
-        word_counts = Counter(all_words)
-        top_keywords = [w for w, _ in word_counts.most_common(5)]
-        topic = " ".join(top_keywords)
-
-        # Group by course
-        course_map: dict[str, dict] = {}
-        for idx in cluster:
-            mem, course_name, _ = entries[idx]
-            cid = str(mem.course_id)
-            if cid not in course_map:
-                course_map[cid] = {
-                    "course_id": cid,
-                    "course_name": course_name,
-                    "memory_summary": mem.summary,
-                }
-            else:
-                # Append summaries for the same course (keep it concise)
-                existing = course_map[cid]["memory_summary"]
-                if len(existing) < 300:
-                    course_map[cid]["memory_summary"] = (
-                        existing + " | " + mem.summary
-                    )
-
-        connections.append({
-            "topic": topic,
-            "courses": list(course_map.values()),
-        })
-
-    logger.info(
-        "find_cross_course_patterns: found %d cross-course connections for user %s",
-        len(connections), user_id,
-    )
-    return connections
-
-
-# ── Stage 2e: MEMORY IMPORTANCE DECAY ──
-
-
-async def apply_importance_decay(
-    db: AsyncSession,
-    user_id: uuid.UUID,
-    decay_rate: float = 0.95,
-) -> int:
-    """Apply time-based importance decay to all active memories.
-
-    For each memory, reduces importance by *decay_rate* per week since the
-    memory was last accessed (updated_at) or created.  Memories that fall
-    below the minimum floor of 0.1 are clamped rather than deleted, so no
-    data is lost.
-
-    Args:
-        db: Async database session.
-        user_id: The user whose memories to decay.
-        decay_rate: Multiplicative decay factor per week (default 0.95).
-
-    Returns:
-        Count of memories whose importance was updated.
-    """
-    result = await db.execute(
-        select(ConversationMemory).where(
-            ConversationMemory.user_id == user_id,
-            ConversationMemory.dismissed_at.is_(None),
-        )
-    )
-    memories = list(result.scalars().all())
-
-    if not memories:
-        return 0
-
-    IMPORTANCE_FLOOR = 0.1
-    now = datetime.now(timezone.utc)
-    decayed_count = 0
-
-    for mem in memories:
-        # Use updated_at as proxy for "last accessed" (it gets bumped on
-        # access_count increments and metadata changes).
-        last_touched = mem.updated_at or mem.created_at
-        weeks_since = (now - last_touched).total_seconds() / (7 * 86400)
-
-        if weeks_since < 0.01:
-            # Touched very recently, skip
-            continue
-
-        decayed_importance = mem.importance * (decay_rate ** weeks_since)
-        decayed_importance = max(IMPORTANCE_FLOOR, decayed_importance)
-
-        if abs(decayed_importance - mem.importance) > 0.001:
-            mem.importance = round(decayed_importance, 4)
-            decayed_count += 1
-
-    if decayed_count:
-        await db.flush()
-        logger.info(
-            "apply_importance_decay: decayed %d memories for user %s (rate=%.3f)",
-            decayed_count, user_id, decay_rate,
-        )
-
-    return decayed_count
-
-
 # ── Stage 3: RETRIEVE (Hybrid BM25 + Vector Search) ──
 
-# OpenClaw hybrid search weights
+# Hybrid search weights
 VECTOR_WEIGHT = 0.7
 BM25_WEIGHT = 0.3
-MIN_SCORE = 0.35  # OpenClaw minScore filter
+MIN_SCORE = 0.35
 
 
 async def retrieve_memories(
@@ -822,17 +257,15 @@ async def retrieve_memories(
 ) -> list[dict]:
     """Stage 3: Hybrid BM25 + Vector retrieval with RRF fusion.
 
-    Upgraded from pure vector search to OpenClaw hybrid pattern:
     - BM25 keyword search via PostgreSQL ts_rank (weight 0.3)
     - Vector cosine similarity via pgvector (weight 0.7)
     - RRF fusion ranking
     - minScore filtering (0.35 threshold)
     """
-    # Run BM25 and vector search in parallel
     bm25_results = await _bm25_memory_search(db, user_id, query, course_id, limit * 2, memory_types)
     vector_results = await _vector_memory_search(db, user_id, query, course_id, limit * 2, memory_types)
 
-    # RRF fusion (same pattern as content hybrid search)
+    # RRF fusion
     RRF_K = 60
     score_map: dict[str, float] = {}
     doc_map: dict[str, dict] = {}
@@ -847,12 +280,11 @@ async def retrieve_memories(
         score_map[doc_id] = score_map.get(doc_id, 0) + VECTOR_WEIGHT / (RRF_K + rank)
         doc_map[doc_id] = doc
 
-    # Sort by fused score, apply minScore filter
     ranked = sorted(score_map.items(), key=lambda x: x[1], reverse=True)
 
     results = []
     for doc_id, score in ranked[:limit]:
-        if score < MIN_SCORE / 1000:  # Normalized threshold
+        if score < MIN_SCORE / 1000:
             continue
         doc = doc_map[doc_id]
         doc["hybrid_score"] = score
@@ -878,17 +310,12 @@ async def _vector_memory_search(
     limit: int,
     memory_types: list[str] | None,
 ) -> list[dict]:
-    """Vector similarity search on memory embeddings.
-
-    PostgreSQL: pgvector <=> cosine distance operator.
-    SQLite: Python-side cosine similarity (acceptable at personal-scale data).
-    """
+    """Vector similarity search on memory embeddings."""
     query_embedding = await generate_embedding(query)
     if not query_embedding:
         return []
 
     if is_sqlite():
-        # SQLite: load embeddings and compute cosine similarity in Python
         base_query = (
             select(ConversationMemory)
             .where(
@@ -985,12 +412,7 @@ async def _bm25_memory_search(
     limit: int,
     memory_types: list[str] | None,
 ) -> list[dict]:
-    """BM25 keyword search on memory content.
-
-    PostgreSQL: ts_rank_cd full-text search.
-    SQLite: Falls back to keyword matching directly.
-    """
-    # PostgreSQL: try full-text search first
+    """BM25 keyword search on memory content."""
     if not is_sqlite():
         params = {
             "user_id": str(user_id),
