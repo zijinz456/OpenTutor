@@ -77,6 +77,14 @@ async def prepare_agent_turn(
             user_message=ctx.user_message,
         )
         ctx.metadata["cognitive_load"] = cl
+        # Suggest layout simplification when cognitive load is high
+        if cl.get("score", 0) >= 0.7:
+            from services.cognitive_load import suggest_layout_simplification
+            block_types = ctx.metadata.get("block_types", [])
+            if block_types:
+                ctx.metadata["layout_simplification"] = suggest_layout_simplification(
+                    cl["score"], block_types
+                )
     except Exception as e:
         logger.debug("Cognitive load detection skipped: %s", e)
 
@@ -506,6 +514,13 @@ async def orchestrate_stream(
             user_message=ctx.user_message,
         )
         ctx.metadata["cognitive_load"] = cl
+        if cl.get("score", 0) >= 0.7:
+            from services.cognitive_load import suggest_layout_simplification
+            block_types = ctx.metadata.get("block_types", [])
+            if block_types:
+                ctx.metadata["layout_simplification"] = suggest_layout_simplification(
+                    cl["score"], block_types
+                )
     except Exception as e:
         logger.debug("Cognitive load detection skipped: %s", e)
 

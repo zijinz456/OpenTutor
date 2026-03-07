@@ -123,16 +123,24 @@ export interface GeneratedAssetBatchSummary extends GeneratedBatchSummaryBase {
   preview: JsonObject;
 }
 
+export interface PrerequisiteGap {
+  concept: string;
+  concept_id: string;
+  mastery: number;
+  gap_severity: number;
+}
+
 export interface AnswerResult {
   is_correct: boolean;
   correct_answer: string | null;
   explanation: string | null;
+  prerequisite_gaps?: PrerequisiteGap[] | null;
 }
 
-export async function extractQuiz(courseId: string, contentNodeId?: string): Promise<{ problems_created: number }> {
+export async function extractQuiz(courseId: string, contentNodeId?: string, mode?: string): Promise<{ problems_created: number }> {
   return request("/quiz/extract", {
     method: "POST",
-    body: JSON.stringify({ course_id: courseId, content_node_id: contentNodeId }),
+    body: JSON.stringify({ course_id: courseId, content_node_id: contentNodeId, mode }),
   });
 }
 
@@ -187,10 +195,11 @@ export interface Flashcard {
 export async function generateFlashcards(
   courseId: string,
   count: number = 5,
+  mode?: string,
 ): Promise<{ cards: Flashcard[]; count: number }> {
   return request("/flashcards/generate", {
     method: "POST",
-    body: JSON.stringify({ course_id: courseId, count }),
+    body: JSON.stringify({ course_id: courseId, count, mode }),
   });
 }
 
@@ -229,6 +238,24 @@ export async function getDueFlashcards(
   courseId: string,
 ): Promise<DueFlashcardsResult> {
   return request(`/flashcards/due/${courseId}`);
+}
+
+export interface LectorFlashcard extends Flashcard {
+  card_index?: number;
+  lector_priority?: number;
+  lector_reason?: string;
+}
+
+export interface LectorOrderResult {
+  cards: LectorFlashcard[];
+  count: number;
+  lector_concepts: number;
+}
+
+export async function getLectorOrderedFlashcards(
+  courseId: string,
+): Promise<LectorOrderResult> {
+  return request(`/flashcards/lector-order/${courseId}`);
 }
 
 // ── Wrong Answer Review ──

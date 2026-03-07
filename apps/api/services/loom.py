@@ -324,6 +324,182 @@ async def get_mastery_graph(
     }
 
 
+# ── Prerequisite Gap Detection ──
+
+async def check_prerequisite_gaps(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    course_id: uuid.UUID,
+    failed_concept_names: list[str] | None = None,
+    mastery_threshold: float = 0.4,
+) -> list[dict]:
+    """Walk prerequisite edges of failed concepts and find unmastered parents.
+
+    Returns list of ``{"concept": str, "concept_id": str, "mastery": float, "gap_severity": float}``
+    sorted by gap_severity descending.
+    """
+    # Get all nodes and edges for this course
+    nodes_result = await db.execute(
+        select(KnowledgeNode).where(KnowledgeNode.course_id == course_id)
+    )
+    nodes = nodes_result.scalars().all()
+    if not nodes:
+        return []
+
+    node_by_id = {n.id: n for n in nodes}
+    node_by_name = {n.name.lower(): n for n in nodes}
+    node_ids = [n.id for n in nodes]
+
+    # Get prerequisite edges (source depends on target)
+    edges_result = await db.execute(
+        select(KnowledgeEdge).where(
+            KnowledgeEdge.source_id.in_(node_ids),
+            KnowledgeEdge.relation_type == "prerequisite",
+        )
+    )
+    edges = edges_result.scalars().all()
+
+    # Build prerequisite map: concept -> list of prerequisite concept IDs
+    prereq_map: dict[uuid.UUID, list[uuid.UUID]] = {}
+    for edge in edges:
+        prereq_map.setdefault(edge.source_id, []).append(edge.target_id)
+
+    # Get user mastery for all nodes
+    mastery_result = await db.execute(
+        select(ConceptMastery).where(
+            ConceptMastery.user_id == user_id,
+            ConceptMastery.knowledge_node_id.in_(node_ids),
+        )
+    )
+    masteries = {m.knowledge_node_id: m.mastery_score for m in mastery_result.scalars().all()}
+
+    # Determine which concepts to check
+    if failed_concept_names:
+        target_ids = [
+            node_by_name[name.lower()].id
+            for name in failed_concept_names
+            if name.lower() in node_by_name
+        ]
+    else:
+        # Check all concepts with low mastery
+        target_ids = [n.id for n in nodes if masteries.get(n.id, 0.0) < 0.5]
+
+    # Walk prerequisite edges and collect gaps
+    gaps: dict[uuid.UUID, dict] = {}
+    visited: set[uuid.UUID] = set()
+
+    def _walk(node_id: uuid.UUID) -> None:
+        if node_id in visited:
+            return
+        visited.add(node_id)
+        for prereq_id in prereq_map.get(node_id, []):
+            prereq_mastery = masteries.get(prereq_id, 0.0)
+            if prereq_mastery < mastery_threshold and prereq_id in node_by_id:
+                prereq_node = node_by_id[prereq_id]
+                gaps[prereq_id] = {
+                    "concept": prereq_node.name,
+                    "concept_id": str(prereq_id),
+                    "mastery": round(prereq_mastery, 3),
+                    "gap_severity": round(1.0 - prereq_mastery, 3),
+                }
+            _walk(prereq_id)
+
+    for tid in target_ids:
+        _walk(tid)
+
+    return sorted(gaps.values(), key=lambda g: g["gap_severity"], reverse=True)
+
+
+async def generate_learning_path(
+    db: AsyncSession,
+    course_id: uuid.UUID,
+    user_id: uuid.UUID,
+) -> list[dict]:
+    """Topological sort (Kahn's algorithm) over prerequisite edges, filtered to unmastered concepts.
+
+    Returns ordered list of ``{"id": str, "name": str, "mastery": float}``
+    representing the recommended study order.
+    """
+    nodes_result = await db.execute(
+        select(KnowledgeNode).where(KnowledgeNode.course_id == course_id)
+    )
+    nodes = nodes_result.scalars().all()
+    if not nodes:
+        return []
+
+    node_by_id = {n.id: n for n in nodes}
+    node_ids = [n.id for n in nodes]
+
+    # Get user mastery
+    mastery_result = await db.execute(
+        select(ConceptMastery).where(
+            ConceptMastery.user_id == user_id,
+            ConceptMastery.knowledge_node_id.in_(node_ids),
+        )
+    )
+    masteries = {m.knowledge_node_id: m.mastery_score for m in mastery_result.scalars().all()}
+
+    # Filter to unmastered concepts (mastery < 0.8)
+    unmastered_ids = {n.id for n in nodes if masteries.get(n.id, 0.0) < 0.8}
+    if not unmastered_ids:
+        return []
+
+    # Get prerequisite edges among unmastered concepts
+    edges_result = await db.execute(
+        select(KnowledgeEdge).where(
+            KnowledgeEdge.source_id.in_(list(unmastered_ids)),
+            KnowledgeEdge.relation_type == "prerequisite",
+        )
+    )
+    edges = edges_result.scalars().all()
+
+    # Kahn's algorithm: source depends on target, so target should come first
+    in_degree: dict[uuid.UUID, int] = {nid: 0 for nid in unmastered_ids}
+    # Reverse edges: if A->B is "prerequisite", B must come before A
+    adj: dict[uuid.UUID, list[uuid.UUID]] = {nid: [] for nid in unmastered_ids}
+    for edge in edges:
+        if edge.target_id in unmastered_ids and edge.source_id in unmastered_ids:
+            adj[edge.target_id].append(edge.source_id)
+            in_degree[edge.source_id] = in_degree.get(edge.source_id, 0) + 1
+
+    from collections import deque
+    queue: deque[uuid.UUID] = deque()
+    for nid in unmastered_ids:
+        if in_degree.get(nid, 0) == 0:
+            queue.append(nid)
+
+    # Sort queue by mastery (lowest first) for deterministic ordering
+    queue = deque(sorted(queue, key=lambda nid: masteries.get(nid, 0.0)))
+
+    result: list[dict] = []
+    while queue:
+        nid = queue.popleft()
+        node = node_by_id[nid]
+        result.append({
+            "id": str(nid),
+            "name": node.name,
+            "mastery": round(masteries.get(nid, 0.0), 3),
+        })
+        for neighbor in adj.get(nid, []):
+            in_degree[neighbor] -= 1
+            if in_degree[neighbor] == 0:
+                queue.append(neighbor)
+        # Re-sort new entries by mastery
+        queue = deque(sorted(queue, key=lambda nid: masteries.get(nid, 0.0)))
+
+    # Append any remaining (cycle) nodes sorted by mastery
+    remaining = unmastered_ids - {uuid.UUID(r["id"]) for r in result}
+    for nid in sorted(remaining, key=lambda nid: masteries.get(nid, 0.0)):
+        node = node_by_id[nid]
+        result.append({
+            "id": str(nid),
+            "name": node.name,
+            "mastery": round(masteries.get(nid, 0.0), 3),
+        })
+
+    return result
+
+
 # ── Integration: Build graph after ingestion ──
 
 async def build_course_graph(db_factory, course_id: uuid.UUID) -> int:

@@ -443,6 +443,54 @@ export async function getNextAction(courseId: string): Promise<NextActionRespons
   return request(`/goals/${courseId}/next-action`);
 }
 
+// ── Agenda Runs ──
+
+export interface AgendaRun {
+  id: string;
+  user_id: string;
+  course_id: string | null;
+  goal_id: string | null;
+  trigger: string;
+  status: string;
+  top_signal_type: string | null;
+  signals_json: Array<Record<string, unknown>> | Record<string, unknown> | null;
+  decision_json: Record<string, unknown> | null;
+  task_id: string | null;
+  dedup_key: string | null;
+  error_message: string | null;
+  created_at: string | null;
+  completed_at: string | null;
+}
+
+export async function listAgendaRuns(courseId?: string, limit = 20): Promise<AgendaRun[]> {
+  const params = new URLSearchParams();
+  if (courseId) params.set("course_id", courseId);
+  params.set("limit", String(limit));
+  return request(`/agent/runs?${params.toString()}`);
+}
+
+export interface AgendaDecisionLogRequest {
+  course_id?: string | null;
+  goal_id?: string | null;
+  trigger?: string;
+  status?: string;
+  top_signal_type?: string | null;
+  action: string;
+  title?: string;
+  reason?: string;
+  decision_type?: string;
+  source?: string;
+  metadata_json?: Record<string, unknown>;
+  dedup_key?: string;
+}
+
+export async function logAgentDecision(body: AgendaDecisionLogRequest): Promise<AgendaRun> {
+  return request("/agent/log-decision", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
 // ── Learning Templates ──
 
 interface LearningTemplate {

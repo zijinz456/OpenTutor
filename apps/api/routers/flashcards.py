@@ -22,6 +22,7 @@ class GenerateRequest(BaseModel):
     course_id: uuid.UUID
     content_node_id: uuid.UUID | None = None
     count: int = 5
+    mode: str | None = None  # learning mode: course_following, self_paced, exam_prep, maintenance
 
 
 class ReviewRequest(BaseModel):
@@ -46,7 +47,7 @@ async def generate_flashcards(body: GenerateRequest, db: AsyncSession = Depends(
     await ensure_llm_ready("Flashcard generation")
     try:
         cards = await generate_flashcards(
-            db, body.course_id, body.content_node_id, body.count
+            db, body.course_id, body.content_node_id, body.count, mode=body.mode
         )
     except Exception as exc:
         reraise_as_app_error(exc, "Flashcard generation failed")
@@ -153,6 +154,85 @@ async def list_generated_flashcards(
         course_id=course_id,
         asset_type="flashcards",
     )
+
+
+@router.get("/lector-order/{course_id}")
+async def get_lector_ordered_flashcards(
+    course_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get flashcards ordered by LECTOR semantic priority instead of pure FSRS due date.
+
+    Merges LECTOR concept priority with flashcard content for a semantically-aware review order.
+    """
+    from models.generated_asset import GeneratedAsset
+    from services.lector import get_smart_review_session
+
+    await get_course_or_404(db, course_id, user_id=user.id)
+
+    # Get LECTOR priority order
+    review_items = await get_smart_review_session(db, user.id, course_id, max_items=30)
+    concept_priority = {item.concept_name.lower(): (i, item) for i, item in enumerate(review_items)}
+
+    # Get all active flashcard batches
+    result = await db.execute(
+        select(GeneratedAsset).where(
+            GeneratedAsset.user_id == user.id,
+            GeneratedAsset.course_id == course_id,
+            GeneratedAsset.asset_type == "flashcards",
+            GeneratedAsset.is_archived == False,  # noqa: E712
+        )
+    )
+    batches = result.scalars().all()
+
+    now = datetime.now(timezone.utc)
+    scored_cards: list[tuple[float, int, dict]] = []
+
+    for batch in batches:
+        cards = (batch.content or {}).get("cards", [])
+        for idx, card in enumerate(cards):
+            fsrs = card.get("fsrs")
+            is_due = True
+            if fsrs and fsrs.get("due"):
+                try:
+                    due_dt = datetime.fromisoformat(fsrs["due"].replace("Z", "+00:00"))
+                    is_due = due_dt <= now
+                except (ValueError, TypeError):
+                    pass
+
+            if not is_due:
+                continue
+
+            # Score by LECTOR concept match
+            front = (card.get("front") or "").lower()
+            concept = card.get("concept", "").lower()
+            priority_score = 999.0  # Default: no concept match
+            reason = "due"
+
+            for concept_name, (rank, item) in concept_priority.items():
+                if concept_name in front or concept_name in concept or concept in concept_name:
+                    priority_score = rank
+                    reason = item.reason
+                    break
+
+            card_with_meta = {
+                **card,
+                "batch_id": str(batch.batch_id),
+                "card_index": idx,
+                "lector_priority": priority_score,
+                "lector_reason": reason,
+            }
+            scored_cards.append((priority_score, idx, card_with_meta))
+
+    scored_cards.sort(key=lambda x: (x[0], x[1]))
+    ordered_cards = [c[2] for c in scored_cards]
+
+    return {
+        "cards": ordered_cards,
+        "count": len(ordered_cards),
+        "lector_concepts": len(review_items),
+    }
 
 
 @router.get("/due/{course_id}")

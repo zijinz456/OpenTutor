@@ -83,6 +83,7 @@ export type {
   GeneratedQuizBatchSummary,
   GeneratedAssetBatchSummary,
   AnswerResult,
+  PrerequisiteGap,
   DueFlashcardsResult,
   Flashcard,
 } from "./practice";
@@ -108,6 +109,8 @@ export {
   getForgettingForecast,
   getMisconceptionDashboard,
   getReviewSession,
+  listAgendaRuns,
+  logAgentDecision,
 } from "./progress";
 
 export type {
@@ -129,6 +132,8 @@ export type {
   AgentTaskVerifierDiagnostics,
   NextActionResponse,
   StudyGoal,
+  AgendaRun,
+  AgendaDecisionLogRequest,
 } from "./progress";
 
 export {
@@ -184,6 +189,7 @@ export {
   listNotifications,
   markNotificationRead,
   markAllNotificationsRead,
+  markTaskNotificationsRead,
 } from "./notifications";
 
 export type {

@@ -25,6 +25,9 @@ import {
   updateUnlockContext,
 } from "@/lib/block-system/feature-unlock";
 import { recordSessionVisit } from "@/lib/learner-persona";
+import { useT, useTF } from "@/lib/i18n-context";
+
+const MODE_SUGGESTION_COOLDOWN_MS = 12 * 60 * 60 * 1000;
 
 // Check for newly unlockable blocks and suggest them via agent insight
 function checkAndSuggestUnlockedBlocks(
@@ -32,6 +35,7 @@ function checkAndSuggestUnlockedBlocks(
   totalCourses: number,
   mode: LearningMode | undefined,
   aiActionsEnabled: boolean,
+  t: (key: string) => string,
 ) {
   if (!aiActionsEnabled) return;
   const ctx = { ...getUnlockContext(courseId, totalCourses), mode };
@@ -48,10 +52,10 @@ function checkAndSuggestUnlockedBlocks(
   } catch { /* ignore */ }
 
   const UNLOCK_SUGGESTIONS: Array<{ type: BlockType; message: string }> = [
-    { type: "knowledge_graph", message: "You now have enough content to generate your Knowledge Graph." },
-    { type: "wrong_answers", message: "Wrong Answers is now available to track recurring mistakes." },
-    { type: "forecast", message: "Forecast is now available to predict readiness and retention." },
-    { type: "plan", message: "Study Plan is now available to track deadlines and targets." },
+    { type: "knowledge_graph", message: t("course.unlock.knowledgeGraph") },
+    { type: "wrong_answers", message: t("course.unlock.wrongAnswers") },
+    { type: "forecast", message: t("course.unlock.forecast") },
+    { type: "plan", message: t("course.unlock.plan") },
   ];
 
   for (const suggestion of UNLOCK_SUGGESTIONS) {
@@ -73,7 +77,7 @@ function checkAndSuggestUnlockedBlocks(
         reason: suggestion.message,
         needsApproval: true,
         dismissible: true,
-        approvalCta: `Add ${blockLabel}`,
+        approvalCta: `${t("course.unlock.add")} ${blockLabel}`,
       },
     );
 
@@ -90,6 +94,8 @@ function checkAndSuggestUnlockedBlocks(
 export default function CoursePage() {
   const params = useParams();
   const router = useRouter();
+  const t = useT();
+  const tf = useTF();
   const courseId = params.id as string;
   const [health, setHealth] = useState<HealthStatus | null>(
     () => ttlCache.get<HealthStatus>("course:health") ?? null,
@@ -168,13 +174,65 @@ export default function CoursePage() {
     }
     // After unlock context is updated, check for newly unlockable blocks
     const llmReady = health?.llm_status !== "mock_fallback" && health?.llm_status !== "configuration_required";
-    checkAndSuggestUnlockedBlocks(courseId, courses.length, spaceMode, llmReady);
-  }, [courseId, contentTree.length, courses.length, spaceMode, health?.llm_status]);
+    checkAndSuggestUnlockedBlocks(courseId, courses.length, spaceMode, llmReady, t);
+  }, [courseId, contentTree.length, courses.length, spaceMode, health?.llm_status, t]);
 
   const course = activeCourse ?? courses.find((item) => item.id === courseId) ?? null;
   const aiActionsEnabled =
     health?.llm_status !== "mock_fallback" &&
     health?.llm_status !== "configuration_required";
+  const queueModeSuggestion = useCallback((payload: {
+    suggestedMode: LearningMode;
+    reason: string;
+    approvalCta: string;
+    cooldownKey: string;
+    signals?: string[];
+  }): boolean => {
+    const store = useWorkspaceStore.getState();
+    const hasPendingModeSuggestion = store.spaceLayout.blocks.some(
+      (b) =>
+        b.type === "agent_insight" &&
+        b.config.insightType === "mode_suggestion" &&
+        b.agentMeta?.needsApproval,
+    );
+    if (hasPendingModeSuggestion) return false;
+
+    const key = `opentutor_mode_suggestion_${courseId}_${payload.suggestedMode}_${payload.cooldownKey}`;
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw) {
+        const lastTs = Number(raw);
+        if (!Number.isNaN(lastTs) && Date.now() - lastTs < MODE_SUGGESTION_COOLDOWN_MS) {
+          return false;
+        }
+      }
+    } catch {
+      // ignore localStorage parse issues
+    }
+
+    store.agentAddBlock(
+      "agent_insight",
+      {
+        insightType: "mode_suggestion",
+        suggestedMode: payload.suggestedMode,
+        reason: payload.reason,
+        suggestionSignals: payload.signals ?? [],
+      },
+      {
+        reason: payload.reason,
+        dismissible: true,
+        needsApproval: true,
+        approvalCta: payload.approvalCta,
+      },
+    );
+
+    try {
+      localStorage.setItem(key, String(Date.now()));
+    } catch {
+      // ignore localStorage write issues
+    }
+    return true;
+  }, [courseId]);
 
   // Initialize blocks from course metadata or localStorage
   useEffect(() => {
@@ -293,15 +351,15 @@ export default function CoursePage() {
           "agent_insight",
           { insightType: "mode_suggestion", suggestedMode: mode, reason: action.extra || "" },
           {
-            reason: action.extra || `Suggested switching to ${mode} mode`,
+            reason: action.extra || tf("course.modeSuggestion.generic", { mode }),
             dismissible: true,
             needsApproval: true,
-            approvalCta: "Switch Mode",
+            approvalCta: t("course.modeSuggestion.switch"),
           },
         );
       }
     }
-  }, [courseId, router]);
+  }, [courseId, router, t, tf]);
 
   useEffect(() => {
     useChatStore.getState().setOnAction(handleAction);
@@ -330,7 +388,7 @@ export default function CoursePage() {
                 "agent_insight",
                 { insightType: "review_needed" },
                 {
-                  reason: `${urgentItems.length} concept${urgentItems.length > 1 ? "s" : ""} at risk of fading`,
+                  reason: tf("course.reviewNeeded", { count: urgentItems.length }),
                   dismissible: true,
                 },
               );
@@ -339,155 +397,100 @@ export default function CoursePage() {
         })
         .catch((e) => console.error("[Course] LECTOR review check failed:", e));
     });
-  }, [course, courseId, aiActionsEnabled]);
+  }, [course, courseId, aiActionsEnabled, tf]);
 
-  // Agent autonomy: suggest mode switch when deadline approaches (Tier 2)
+  // Agent autonomy: evaluate one mode transition suggestion (Tier-2) using prioritized signals.
   useEffect(() => {
     if (!course || !aiActionsEnabled) return;
-    const modeKey = `agent_mode_check_${courseId}`;
-    if (sessionStorage.getItem(modeKey) === "true") return;
-    sessionStorage.setItem(modeKey, "true");
+    const evalKey = `agent_mode_eval_${courseId}`;
+    if (sessionStorage.getItem(evalKey) === "true") return;
+    sessionStorage.setItem(evalKey, "true");
 
-    const currentMode = useWorkspaceStore.getState().spaceLayout.mode as string | undefined;
-    if (currentMode === "exam_prep" || currentMode === "maintenance") return;
+    const currentMode = useWorkspaceStore.getState().spaceLayout.mode as LearningMode | undefined;
+    if (!currentMode) return;
 
-    import("@/lib/api/progress").then(({ listStudyGoals }) => {
-      listStudyGoals(courseId, "active")
-        .then((goals) => {
-          // Track hasDeadline for feature-unlock
-          if (goals.some((g) => g.target_date)) {
-            updateUnlockContext(courseId, { hasDeadline: true });
-          }
-          const now = Date.now();
-          const urgentGoal = goals.find((g) => {
-            if (!g.target_date) return false;
-            const daysUntil = (new Date(g.target_date).getTime() - now) / (1000 * 60 * 60 * 24);
-            return daysUntil >= 0 && daysUntil <= 7;
-          });
-          if (urgentGoal) {
-            const store = useWorkspaceStore.getState();
-            const hasInsight = store.spaceLayout.blocks.some(
-              (b) => b.type === "agent_insight" && b.config.insightType === "mode_suggestion",
-            );
-            if (!hasInsight) {
-              const daysLeft = Math.ceil(
-                (new Date(urgentGoal.target_date!).getTime() - now) / (1000 * 60 * 60 * 24),
-              );
-              store.agentAddBlock(
-                "agent_insight",
-                { insightType: "mode_suggestion", suggestedMode: "exam_prep", reason: `${urgentGoal.title} in ${daysLeft}d` },
-                {
-                  reason: `"${urgentGoal.title}" is due in ${daysLeft} day${daysLeft !== 1 ? "s" : ""}. Switch to Exam Prep mode?`,
-                  dismissible: true,
-                  needsApproval: true,
-                  approvalCta: "Switch to Exam Prep",
-                },
-              );
-            }
-          }
-        })
-        .catch((e) => console.error("[Course] mode check goals fetch failed:", e));
-    });
-  }, [course, courseId, aiActionsEnabled]);
+    import("@/lib/api/progress").then(async ({ listStudyGoals, getCourseProgress }) => {
+      const goals = await listStudyGoals(courseId, "active").catch(() => []);
+      const now = Date.now();
+      const deadlines = goals
+        .filter((g) => g.target_date)
+        .map((g) => ({
+          goal: g,
+          daysLeft: Math.ceil((new Date(g.target_date!).getTime() - now) / (1000 * 60 * 60 * 24)),
+        }));
 
-  // Agent autonomy: suggest maintenance mode (exam passed or all mastered)
-  useEffect(() => {
-    if (!course || !aiActionsEnabled) return;
-    const maintenanceKey = `agent_maintenance_check_${courseId}`;
-    if (sessionStorage.getItem(maintenanceKey) === "true") return;
-    sessionStorage.setItem(maintenanceKey, "true");
+      if (deadlines.length > 0) {
+        updateUnlockContext(courseId, { hasDeadline: true });
+      }
 
-    const currentMode = useWorkspaceStore.getState().spaceLayout.mode as string | undefined;
-    if (currentMode === "maintenance") return;
+      const upcoming = deadlines
+        .filter((d) => d.daysLeft >= 0 && d.daysLeft <= 7)
+        .sort((a, b) => a.daysLeft - b.daysLeft)[0];
+      const allDeadlinesPassed = deadlines.length > 0 && deadlines.every((d) => d.daysLeft < 0);
 
-    // Check 1: Exam prep → maintenance when deadline has passed
-    if (currentMode === "exam_prep") {
-      import("@/lib/api/progress").then(({ listStudyGoals }) => {
-        listStudyGoals(courseId, "active")
-          .then((goals) => {
-            const now = Date.now();
-            const allPassed = goals.length > 0 && goals.every((g) => {
-              if (!g.target_date) return false;
-              return new Date(g.target_date).getTime() < now;
-            });
-            if (allPassed) {
-              const store = useWorkspaceStore.getState();
-              if (!store.spaceLayout.blocks.some((b) => b.config.insightType === "mode_suggestion")) {
-                store.agentAddBlock(
-                  "agent_insight",
-                  { insightType: "mode_suggestion", suggestedMode: "maintenance", reason: "Exam deadlines have passed" },
-                  { reason: "Your exam deadlines have passed. Switch to Maintenance mode to retain knowledge?", dismissible: true, needsApproval: true, approvalCta: "Switch to Maintenance" },
-                );
-              }
-            }
-          })
-          .catch((e) => console.error("[Course] exam deadline check failed:", e));
-      });
-    }
+      const progress = await getCourseProgress(courseId).catch(() => null);
+      const mastery = progress ? Math.round((progress.average_mastery ?? 0) * 100) : null;
+      const totalAttempts = progress ? progress.mastered + progress.reviewed + progress.in_progress : 0;
+      const errorRatePct =
+        progress && totalAttempts > 10
+          ? Math.round((progress.in_progress / totalAttempts) * 100)
+          : null;
 
-    // Check 2: Self-paced/course_following → maintenance when mastery is high
-    if (currentMode === "self_paced" || currentMode === "course_following") {
-      import("@/lib/api/progress").then(({ getCourseProgress }) => {
-        getCourseProgress(courseId)
-          .then((progress) => {
-            const mastery = Math.round((progress?.average_mastery ?? 0) * 100);
-            if (mastery >= 85) {
-              const store = useWorkspaceStore.getState();
-              if (!store.spaceLayout.blocks.some((b) => b.config.insightType === "mode_suggestion")) {
-                store.agentAddBlock(
-                  "agent_insight",
-                  { insightType: "mode_suggestion", suggestedMode: "maintenance", reason: `Mastery at ${mastery}%` },
-                  { reason: `You've mastered ${mastery}% of concepts. Switch to Maintenance mode?`, dismissible: true, needsApproval: true, approvalCta: "Switch to Maintenance" },
-                );
-              }
-            }
-          })
-          .catch((e) => console.error("[Course] mastery check failed:", e));
-      });
-    }
-  }, [course, courseId, aiActionsEnabled]);
-
-  // Agent autonomy: suggest exam_prep when error rate is high + upcoming deadline (Tier 2)
-  useEffect(() => {
-    if (!course || !aiActionsEnabled) return;
-    const errRateKey = `agent_error_rate_check_${courseId}`;
-    if (sessionStorage.getItem(errRateKey) === "true") return;
-    sessionStorage.setItem(errRateKey, "true");
-
-    const currentMode = useWorkspaceStore.getState().spaceLayout.mode as string | undefined;
-    if (currentMode !== "course_following" && currentMode !== "self_paced") return;
-
-    Promise.all([
-      import("@/lib/api/progress").then(({ getCourseProgress }) => getCourseProgress(courseId)),
-      import("@/lib/api/progress").then(({ listStudyGoals }) => listStudyGoals(courseId, "active")),
-    ])
-      .then(([progress, goals]) => {
-        if (!progress) return;
-        const totalAttempts = progress.mastered + progress.reviewed + progress.in_progress;
-        const errorRate = totalAttempts > 10 ? (progress.in_progress / totalAttempts) : 0;
-        const hasUpcomingDeadline = goals.some((g: { target_date?: string | null }) => {
-          if (!g.target_date) return false;
-          const days = Math.ceil((new Date(g.target_date).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
-          return days >= 0 && days <= 7;
+      if (currentMode === "exam_prep" && allDeadlinesPassed) {
+        queueModeSuggestion({
+          suggestedMode: "maintenance",
+          reason: t("course.modeSuggestion.examPassed"),
+          approvalCta: t("course.modeSuggestion.switchMaintenance"),
+          cooldownKey: "exam_passed",
+          signals: [t("course.modeSuggestion.signal.deadlinesPassed")],
         });
-        if (errorRate > 0.4 && hasUpcomingDeadline) {
-          const store = useWorkspaceStore.getState();
-          if (!store.spaceLayout.blocks.some((b) => b.config.insightType === "mode_suggestion")) {
-            store.agentAddBlock(
-              "agent_insight",
-              { insightType: "mode_suggestion", suggestedMode: "exam_prep", reason: "High error rate with upcoming deadline" },
-              {
-                reason: "Your error rate is above 40% with a deadline approaching. Exam Prep mode focuses on weak spots.",
-                needsApproval: true,
-                dismissible: true,
-                approvalCta: "Switch to Exam Prep",
-              },
-            );
-          }
+        return;
+      }
+
+      if (currentMode === "course_following" || currentMode === "self_paced") {
+        if (upcoming && errorRatePct != null && errorRatePct > 40) {
+          queueModeSuggestion({
+            suggestedMode: "exam_prep",
+            reason: tf("course.modeSuggestion.errorRateDetailed", {
+              rate: errorRatePct,
+              days: upcoming.daysLeft,
+            }),
+            approvalCta: t("course.modeSuggestion.switchExamPrep"),
+            cooldownKey: "error_rate",
+            signals: [
+              tf("course.modeSuggestion.signal.errorRate", { rate: errorRatePct }),
+              tf("course.modeSuggestion.signal.deadline", { days: upcoming.daysLeft }),
+            ],
+          });
+          return;
         }
-      })
-      .catch((e) => console.error("[Course] error rate check failed:", e));
-  }, [course, courseId, aiActionsEnabled]);
+
+        if (upcoming) {
+          queueModeSuggestion({
+            suggestedMode: "exam_prep",
+            reason: tf("course.modeSuggestion.deadline", {
+              title: upcoming.goal.title,
+              days: upcoming.daysLeft,
+            }),
+            approvalCta: t("course.modeSuggestion.switchExamPrep"),
+            cooldownKey: "deadline",
+            signals: [tf("course.modeSuggestion.signal.deadline", { days: upcoming.daysLeft })],
+          });
+          return;
+        }
+
+        if (mastery != null && mastery >= 85) {
+          queueModeSuggestion({
+            suggestedMode: "maintenance",
+            reason: tf("course.modeSuggestion.mastery", { mastery }),
+            approvalCta: t("course.modeSuggestion.switchMaintenance"),
+            cooldownKey: "mastery",
+            signals: [tf("course.modeSuggestion.signal.mastery", { mastery })],
+          });
+        }
+      }
+    }).catch((e) => console.error("[Course] mode evaluator failed:", e));
+  }, [course, courseId, aiActionsEnabled, t, tf, queueModeSuggestion]);
 
   // Consume init prompt if any
   useEffect(() => {
@@ -568,7 +571,7 @@ export default function CoursePage() {
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
-      <WorkspaceHeader courseName={course?.name || "Course"} courseId={courseId} />
+      <WorkspaceHeader courseName={course?.name || t("course.defaultTitle")} courseId={courseId} />
 
       <div className="px-4 pt-3 max-w-5xl mx-auto w-full space-y-2">
         <RuntimeAlert health={health} />
@@ -593,9 +596,9 @@ export default function CoursePage() {
             <ContinueLearningCta courseId={courseId} nodes={contentTree} />
 
             <section>
-              <h2 className="text-lg font-semibold mb-3">Choose a template</h2>
+              <h2 className="text-lg font-semibold mb-3">{t("course.template.title")}</h2>
               <p className="text-sm text-muted-foreground mb-4">
-                Pick a layout to get started. Your AI tutor will customize it as you learn.
+                {t("course.template.subtitle")}
               </p>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                 {TEMPLATE_LIST.map((t) => (

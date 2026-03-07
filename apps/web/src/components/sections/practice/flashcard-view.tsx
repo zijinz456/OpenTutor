@@ -10,6 +10,7 @@ import {
   saveGeneratedFlashcards,
   type Flashcard,
 } from "@/lib/api";
+import { getLectorOrderedFlashcards, type LectorFlashcard } from "@/lib/api/practice";
 import { useBatchManager } from "@/hooks/use-batch-manager";
 import { useWorkspaceStore } from "@/store/workspace";
 import { Button } from "@/components/ui/button";
@@ -40,30 +41,52 @@ export function FlashcardView({
     refreshSection: "practice",
     listFn: listGeneratedFlashcardBatches,
   });
-  const [cards, setCards] = useState<Flashcard[]>([]);
+  const [cards, setCards] = useState<(Flashcard | LectorFlashcard)[]>([]);
   const [index, setIndex] = useState(0);
   const [flipped, setFlipped] = useState(false);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [reviewed, setReviewed] = useState(0);
   const [dueCount, setDueCount] = useState(0);
+  const [useLector, setUseLector] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
 
     (async () => {
       try {
-        const due = await getDueFlashcards(courseId);
+        // Try LECTOR-ordered cards first for semantically-aware review
+        const lector = await getLectorOrderedFlashcards(courseId);
         if (cancelled) return;
-        setCards(due.cards);
-        setDueCount(due.due_count);
+        if (lector.cards.length > 0) {
+          setCards(lector.cards);
+          setDueCount(lector.count);
+          setUseLector(true);
+        } else {
+          // Fall back to regular FSRS due cards
+          const due = await getDueFlashcards(courseId);
+          if (cancelled) return;
+          setCards(due.cards);
+          setDueCount(due.due_count);
+          setUseLector(false);
+        }
         setIndex(0);
         setFlipped(false);
         setReviewed(0);
       } catch {
-        if (!cancelled) {
-          setCards([]);
-          setDueCount(0);
+        // Fall back to regular due cards on any error
+        try {
+          const due = await getDueFlashcards(courseId);
+          if (!cancelled) {
+            setCards(due.cards);
+            setDueCount(due.due_count);
+            setUseLector(false);
+          }
+        } catch {
+          if (!cancelled) {
+            setCards([]);
+            setDueCount(0);
+          }
         }
       } finally {
         if (!cancelled) {
@@ -80,7 +103,8 @@ export function FlashcardView({
   const handleGenerate = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await generateFlashcards(courseId, 5);
+      const mode = useWorkspaceStore.getState().spaceLayout.mode ?? undefined;
+      const data = await generateFlashcards(courseId, 5, mode);
       setCards(data.cards);
       setIndex(0);
       setFlipped(false);
@@ -169,9 +193,16 @@ export function FlashcardView({
   return (
     <div className="flex-1 flex flex-col items-center justify-center gap-6 p-6">
       <div className="flex w-full max-w-md items-center justify-between gap-2">
-        <Badge variant="outline">
-          {reviewed}/{cards.length} reviewed
-        </Badge>
+        <div className="flex items-center gap-2">
+          <Badge variant="outline">
+            {reviewed}/{cards.length} reviewed
+          </Badge>
+          {useLector && (card as LectorFlashcard).lector_reason && (card as LectorFlashcard).lector_reason !== "due" ? (
+            <Badge variant="secondary" className="text-[10px]">
+              {(card as LectorFlashcard).lector_reason}
+            </Badge>
+          ) : null}
+        </div>
         <div className="flex items-center gap-2">
           {latestBatch ? (
             <Button

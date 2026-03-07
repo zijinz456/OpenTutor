@@ -45,9 +45,9 @@ export default function ProfilePage() {
     health?.llm_status !== "configuration_required";
   const requestedTab = searchParams.get("tab");
   const tab = (requestedTab &&
-    ["progress", "review", "blindspots", "forecast", "graph", "profile"].includes(requestedTab)
+    ["progress", "review", "blindspots", "forecast", "graph", "agent", "profile"].includes(requestedTab)
       ? requestedTab
-      : "profile") as "progress" | "review" | "blindspots" | "forecast" | "graph" | "profile";
+      : "profile") as "progress" | "review" | "blindspots" | "forecast" | "graph" | "agent" | "profile";
 
   return (
     <div className="min-h-screen bg-background flex flex-col">

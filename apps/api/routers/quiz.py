@@ -159,7 +159,7 @@ async def extract_quiz(body: ExtractRequest, user: User = Depends(get_current_us
                 raise NotFoundError("Content node not found or empty")
 
             problems = await extract_questions(
-                node.content, node.title, body.course_id, body.content_node_id
+                node.content, node.title, body.course_id, body.content_node_id, mode=body.mode
             )
         else:
             import asyncio
@@ -182,7 +182,7 @@ async def extract_quiz(body: ExtractRequest, user: User = Depends(get_current_us
                 async with sem:
                     try:
                         return await asyncio.wait_for(
-                            extract_questions(n.content, n.title, body.course_id, n.id),
+                            extract_questions(n.content, n.title, body.course_id, n.id, mode=body.mode),
                             timeout=60,
                         )
                     except asyncio.TimeoutError:
@@ -355,10 +355,28 @@ async def submit_answer(
     if not is_correct and wa:
         background_tasks.add_task(_auto_derive_diagnostic, wa.id, user.id)
 
+    # Check prerequisite gaps on wrong answers
+    prerequisite_gaps = None
+    if not is_correct and problem.knowledge_points:
+        try:
+            from services.loom import check_prerequisite_gaps
+            kp = problem.knowledge_points
+            concept_names = kp if isinstance(kp, list) else [kp] if isinstance(kp, str) else []
+            if concept_names:
+                gaps = await check_prerequisite_gaps(
+                    db, user.id, problem.course_id,
+                    failed_concept_names=concept_names,
+                )
+                if gaps:
+                    prerequisite_gaps = gaps[:3]
+        except Exception as e:
+            logger.debug("Prerequisite gap check failed (best-effort): %s", e)
+
     return AnswerResponse(
         is_correct=is_correct,
         correct_answer=problem.correct_answer,
         explanation=problem.explanation,
+        prerequisite_gaps=prerequisite_gaps,
     )
 
 

@@ -3,6 +3,7 @@
 import { lazy } from "react";
 import { useWorkspaceStore } from "@/store/workspace";
 import type { LearningMode } from "@/lib/block-system/types";
+import { useT } from "@/lib/i18n-context";
 import { TabbedSection, type TabDef } from "./tabbed-section";
 
 const PlanView = lazy(() =>
@@ -24,20 +25,20 @@ interface PlanSectionProps {
 
 type PlanTab = "plan" | "calendar" | "tasks";
 
-const TABS: TabDef<PlanTab>[] = [
-  { id: "plan", label: "Plan", testId: "right-tab-plan" },
-  { id: "calendar", label: "Calendar" },
-  { id: "tasks", label: "Tasks" },
-];
-
 export function PlanSection({
   courseId,
   aiActionsEnabled = true,
   learningMode,
   defaultTab,
 }: PlanSectionProps) {
+  const t = useT();
   const storeMode = useWorkspaceStore((s) => s.spaceLayout.mode);
   const mode = learningMode ?? storeMode;
+  const tabs: TabDef<PlanTab>[] = [
+    { id: "plan", label: t("plan.tabs.plan"), testId: "right-tab-plan" },
+    { id: "calendar", label: t("plan.tabs.calendar") },
+    { id: "tasks", label: t("plan.tabs.tasks") },
+  ];
   const resolvedDefaultTab: PlanTab =
     defaultTab ??
     (mode === "course_following"
@@ -47,7 +48,7 @@ export function PlanSection({
         : "plan");
 
   return (
-    <TabbedSection tabs={TABS} defaultTab={resolvedDefaultTab} testId="plan-section">
+    <TabbedSection tabs={tabs} defaultTab={resolvedDefaultTab} testId="plan-section">
       {(activeTab) => (
         <>
           {activeTab === "plan" ? (

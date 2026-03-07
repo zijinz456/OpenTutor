@@ -122,11 +122,20 @@ def _normalize_problem_metadata(
     return normalized["difficulty_layer"], normalized["problem_metadata"]
 
 
+_MODE_QUIZ_HINTS: dict[str, str] = {
+    "exam_prep": "\n\nMode: EXAM PREP — Bias toward Layer 2-3 difficulty. Include time estimates per question. Prefer application and analysis questions.",
+    "maintenance": "\n\nMode: MAINTENANCE — Only generate questions about previously-covered core concepts. Focus on retention and recall.",
+    "self_paced": "\n\nMode: SELF-PACED — Include open-ended and cross-topic questions. Encourage deeper exploration.",
+    "course_following": "\n\nMode: COURSE FOLLOWING — Strictly follow the provided content. Only test concepts explicitly covered in the material.",
+}
+
+
 async def extract_questions(
     content: str,
     title: str,
     course_id: uuid.UUID,
     content_node_id: uuid.UUID | None = None,
+    mode: str | None = None,
 ) -> list:
     """Extract practice questions from content using LLM.
 
@@ -135,15 +144,20 @@ async def extract_questions(
         title: Section title for context
         course_id: Course UUID
         content_node_id: Optional reference to content tree node
+        mode: Learning mode hint for question generation style
 
     Returns:
         List of PracticeProblem ORM objects ready for DB insertion
     """
     client = get_llm_client()
 
+    user_msg = f"## {title}\n\n{content}"
+    if mode and mode in _MODE_QUIZ_HINTS:
+        user_msg += _MODE_QUIZ_HINTS[mode]
+
     response, _ = await client.chat(
         EXTRACTION_PROMPT,
-        f"## {title}\n\n{content}",
+        user_msg,
     )
 
     questions = parse_question_array(response)

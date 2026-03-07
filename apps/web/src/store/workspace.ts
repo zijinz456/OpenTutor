@@ -132,6 +132,30 @@ interface WorkspaceState {
   setLearningMode: (mode: LearningMode) => void;
   /** Set the mode marker without replacing current blocks. */
   setSpaceMode: (mode: LearningMode) => void;
+
+  // ── Layout History (undo support) ──
+
+  /** Stack of previous layouts for undo (max 10). */
+  layoutHistory: SpaceLayout[];
+
+  /** Undo the last layout change. Returns true if undo was performed. */
+  undoLayout: () => boolean;
+
+  /** Apply multiple block operations atomically with a single history push. */
+  batchUpdateBlocks: (
+    ops: Array<
+      | { action: "add"; type: BlockType; config?: Record<string, unknown>; size?: BlockSize }
+      | { action: "remove"; blockId: string }
+      | { action: "reorder"; orderedTypes: BlockType[] }
+    >,
+  ) => void;
+}
+
+const MAX_LAYOUT_HISTORY = 10;
+
+function pushHistory(state: WorkspaceState): SpaceLayout[] {
+  const history = [...state.layoutHistory, state.spaceLayout];
+  return history.slice(-MAX_LAYOUT_HISTORY);
 }
 
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
@@ -208,6 +232,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       source,
     };
     set((s) => ({
+      layoutHistory: pushHistory(s),
       spaceLayout: {
         ...s.spaceLayout,
         blocks: [...s.spaceLayout.blocks, newBlock],
@@ -220,6 +245,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       const idx = state.spaceLayout.blocks.findIndex((b) => b.id === blockId);
       const block = state.spaceLayout.blocks[idx];
       return {
+        layoutHistory: pushHistory(state),
         lastRemovedBlock: block ? { block, index: idx } : null,
         spaceLayout: {
           ...state.spaceLayout,
@@ -403,5 +429,70 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         mode,
       },
     }));
+  },
+
+  // ── Layout History ──
+
+  layoutHistory: [],
+
+  undoLayout: () => {
+    const state = get();
+    if (state.layoutHistory.length === 0) return false;
+    const history = [...state.layoutHistory];
+    const previous = history.pop()!;
+    set({ spaceLayout: previous, layoutHistory: history });
+    return true;
+  },
+
+  batchUpdateBlocks: (ops) => {
+    set((state) => {
+      const history = pushHistory(state);
+      let blocks = [...state.spaceLayout.blocks];
+
+      for (const op of ops) {
+        if (op.action === "add") {
+          const entry = BLOCK_REGISTRY[op.type];
+          if (!entry) continue;
+          blocks.push({
+            id: nextBlockId(),
+            type: op.type,
+            position: blocks.length,
+            size: op.size ?? entry.defaultSize,
+            config: { ...entry.defaultConfig, ...op.config },
+            visible: true,
+            source: "agent",
+          });
+        } else if (op.action === "remove") {
+          blocks = blocks.filter((b) => b.id !== op.blockId);
+        } else if (op.action === "reorder") {
+          const byType = new Map<BlockType, BlockInstance[]>();
+          for (const b of blocks) {
+            const list = byType.get(b.type) ?? [];
+            list.push(b);
+            byType.set(b.type, list);
+          }
+          const reordered: BlockInstance[] = [];
+          for (const type of op.orderedTypes) {
+            const list = byType.get(type);
+            if (list?.length) {
+              reordered.push(list.shift()!);
+              if (list.length === 0) byType.delete(type);
+            }
+          }
+          for (const remaining of byType.values()) {
+            reordered.push(...remaining);
+          }
+          blocks = reordered;
+        }
+      }
+
+      return {
+        layoutHistory: history,
+        spaceLayout: {
+          ...state.spaceLayout,
+          blocks: blocks.map((b, i) => ({ ...b, position: i })),
+        },
+      };
+    });
   },
 }));

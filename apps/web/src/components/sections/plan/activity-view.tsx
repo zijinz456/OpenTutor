@@ -1,11 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useT } from "@/lib/i18n-context";
+import { useT, useTF } from "@/lib/i18n-context";
 import {
   listAgentTasks,
   approveAgentTask,
   rejectAgentTask,
+  markTaskNotificationsRead,
   listStudyGoals,
   type AgentTask,
   type AgentTaskReview,
@@ -31,6 +32,13 @@ const STATUS_COLORS: Record<string, string> = {
 
 function statusColor(status: string) {
   return STATUS_COLORS[status] ?? "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300";
+}
+
+function statusLabel(status: string, t: (key: string) => string): string {
+  const key = `activity.status.${status}`;
+  const translated = t(key);
+  if (translated !== key) return translated;
+  return status.replaceAll("_", " ");
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -74,6 +82,7 @@ function getVerifierSummary(step: AgentTaskStepResult): string | null {
 
 export function ActivityView({ courseId }: ActivityViewProps) {
   const t = useT();
+  const tf = useTF();
 
   const [tasks, setTasks] = useState<AgentTask[]>([]);
   const [goals, setGoals] = useState<StudyGoal[]>([]);
@@ -85,18 +94,18 @@ export function ActivityView({ courseId }: ActivityViewProps) {
     setLoading(true);
     setError(null);
     try {
-      const [t, g] = await Promise.all([
+      const [tasksResult, goalsResult] = await Promise.all([
         listAgentTasks(courseId),
         listStudyGoals(courseId),
       ]);
-      setTasks(t);
-      setGoals(g);
+      setTasks(tasksResult);
+      setGoals(goalsResult);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load data");
+      setError(e instanceof Error ? e.message : t("activity.loadFailed"));
     } finally {
       setLoading(false);
     }
-  }, [courseId]);
+  }, [courseId, t]);
 
   useEffect(() => {
     fetchData();
@@ -109,6 +118,7 @@ export function ActivityView({ courseId }: ActivityViewProps) {
     setActing((s) => new Set(s).add(taskId));
     try {
       const updated = await fn(taskId);
+      await markTaskNotificationsRead(taskId).catch(() => undefined);
       setTasks((prev) => prev.map((tk) => (tk.id === taskId ? updated : tk)));
     } catch { /* keep current state */ } finally {
       setActing((s) => { const n = new Set(s); n.delete(taskId); return n; });
@@ -117,20 +127,20 @@ export function ActivityView({ courseId }: ActivityViewProps) {
 
   if (loading) return (
     <div className="flex-1 flex items-center justify-center p-8">
-      <p className="text-xs text-muted-foreground animate-pulse">Loading tasks...</p>
+      <p className="text-xs text-muted-foreground animate-pulse">{t("activity.loading")}</p>
     </div>
   );
   if (error) return (
     <div className="flex-1 flex flex-col items-center justify-center p-8 gap-2">
       <p className="text-xs text-destructive">{error}</p>
-      <Button variant="outline" size="sm" onClick={fetchData}>Retry</Button>
+      <Button variant="outline" size="sm" onClick={fetchData}>{t("activity.retry")}</Button>
     </div>
   );
   if (tasks.length === 0 && goals.length === 0) return (
     <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
       <h3 className="text-sm font-medium mb-1">{t("course.activity")}</h3>
       <p className="text-xs text-muted-foreground max-w-xs">
-        No tasks or goals yet. Start a conversation and the agent will create tasks automatically.
+        {t("activity.empty")}
       </p>
     </div>
   );
@@ -158,7 +168,7 @@ export function ActivityView({ courseId }: ActivityViewProps) {
       {pending.length > 0 && (
         <section>
           <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-400 mb-2">
-            Needs Approval ({pending.length})
+            {tf("activity.needsApproval", { count: pending.length })}
           </h3>
           <div className="flex flex-col gap-2">
             {pending.map((tk) => (
@@ -170,8 +180,8 @@ export function ActivityView({ courseId }: ActivityViewProps) {
                     <p className="text-[10px] text-muted-foreground mt-1">{tk.task_type} &middot; {tk.source}</p>
                   </div>
                   <div className="flex gap-1.5 shrink-0">
-                    <Button size="sm" disabled={acting.has(tk.id)} onClick={() => act(tk.id, approveAgentTask)}>Approve</Button>
-                    <Button size="sm" variant="outline" disabled={acting.has(tk.id)} onClick={() => act(tk.id, rejectAgentTask)}>Reject</Button>
+                    <Button size="sm" disabled={acting.has(tk.id)} onClick={() => act(tk.id, approveAgentTask)}>{t("activity.approve")}</Button>
+                    <Button size="sm" variant="outline" disabled={acting.has(tk.id)} onClick={() => act(tk.id, rejectAgentTask)}>{t("activity.reject")}</Button>
                   </div>
                 </div>
               </div>
@@ -184,7 +194,7 @@ export function ActivityView({ courseId }: ActivityViewProps) {
       {sortedStatuses.map((status) => (
         <section key={status}>
           <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2 flex items-center gap-1.5">
-            <Badge variant="outline" className={statusColor(status)}>{status.replace("_", " ")}</Badge>
+            <Badge variant="outline" className={statusColor(status)}>{statusLabel(status, t)}</Badge>
             <span>({grouped[status].length})</span>
           </h3>
           <div className="flex flex-col gap-1.5">
@@ -192,7 +202,7 @@ export function ActivityView({ courseId }: ActivityViewProps) {
               <div key={tk.id} className="rounded-md border p-2.5 text-sm">
                 <div className="flex items-center gap-2">
                   <span className="font-medium truncate flex-1">{tk.title}</span>
-                  <Badge variant="outline" className={statusColor(tk.status)}>{tk.status.replace("_", " ")}</Badge>
+                  <Badge variant="outline" className={statusColor(tk.status)}>{statusLabel(tk.status, t)}</Badge>
                 </div>
                 {tk.summary && <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{tk.summary}</p>}
                 <p className="text-[10px] text-muted-foreground mt-1">{tk.task_type} &middot; {tk.source}</p>
@@ -211,14 +221,14 @@ export function ActivityView({ courseId }: ActivityViewProps) {
                         <div className="space-y-1">
                           {review.blockers.slice(0, 3).map((blocker) => (
                             <p key={blocker} className="text-[11px] text-muted-foreground">
-                              Blocker: {blocker}
+                              {t("activity.blocker")}: {blocker}
                             </p>
                           ))}
                         </div>
                       ) : null}
                       {review?.follow_up?.auto_queued ? (
                         <p className="text-[11px] text-muted-foreground">
-                          Repair queued automatically{review.follow_up.queued_task_id ? ` (${review.follow_up.queued_task_id.slice(0, 8)})` : ""}.
+                          {t("activity.repairQueued")}{review.follow_up.queued_task_id ? ` (${review.follow_up.queued_task_id.slice(0, 8)})` : ""}.
                         </p>
                       ) : null}
                       {failedSteps.slice(0, 2).map((step, idx) => {
@@ -236,21 +246,21 @@ export function ActivityView({ courseId }: ActivityViewProps) {
                         return (
                           <div key={`${tk.id}-${step.step_index ?? idx}`} className="rounded border border-border/70 bg-background/70 p-2">
                             <p className="text-[11px] font-medium">
-                              {step.title ?? step.step_type ?? `Step ${idx + 1}`}
+                              {step.title ?? step.step_type ?? tf("activity.step", { index: idx + 1 })}
                             </p>
                             {step.error ? <p className="text-[11px] text-muted-foreground mt-0.5">{step.error}</p> : null}
-                            {verifierSummary ? <p className="text-[11px] text-muted-foreground mt-0.5">Verifier: {verifierSummary}</p> : null}
+                            {verifierSummary ? <p className="text-[11px] text-muted-foreground mt-0.5">{t("activity.verifier")}: {verifierSummary}</p> : null}
                             {(requestCoverage || evidenceCoverage) ? (
                               <div className="mt-1 flex flex-wrap gap-1.5">
-                                {requestCoverage ? <Badge variant="outline" className="text-[10px]">Request {requestCoverage}</Badge> : null}
-                                {evidenceCoverage ? <Badge variant="outline" className="text-[10px]">Evidence {evidenceCoverage}</Badge> : null}
+                                {requestCoverage ? <Badge variant="outline" className="text-[10px]">{t("activity.request")} {requestCoverage}</Badge> : null}
+                                {evidenceCoverage ? <Badge variant="outline" className="text-[10px]">{t("activity.evidence")} {evidenceCoverage}</Badge> : null}
                               </div>
                             ) : null}
                             {requestTerms.length > 0 ? (
-                              <p className="text-[10px] text-muted-foreground mt-1">Covered request terms: {requestTerms.join(", ")}</p>
+                              <p className="text-[10px] text-muted-foreground mt-1">{t("activity.coveredRequestTerms")}: {requestTerms.join(", ")}</p>
                             ) : null}
                             {evidenceTerms.length > 0 ? (
-                              <p className="text-[10px] text-muted-foreground">Used evidence: {evidenceTerms.join(", ")}</p>
+                              <p className="text-[10px] text-muted-foreground">{t("activity.usedEvidence")}: {evidenceTerms.join(", ")}</p>
                             ) : null}
                           </div>
                         );
@@ -268,19 +278,19 @@ export function ActivityView({ courseId }: ActivityViewProps) {
       {goals.length > 0 && (
         <section>
           <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
-            Goals ({goals.length})
+            {tf("activity.goals", { count: goals.length })}
           </h3>
           <div className="flex flex-col gap-1.5">
             {goals.map((g) => (
               <div key={g.id} className="rounded-md border p-2.5">
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium truncate flex-1">{g.title}</span>
-                  <Badge variant="secondary" className="text-[10px]">{g.status}</Badge>
+                  <Badge variant="secondary" className="text-[10px]">{statusLabel(g.status, t)}</Badge>
                 </div>
                 <p className="text-xs text-muted-foreground mt-0.5">{g.objective}</p>
-                {g.current_milestone && <p className="text-[10px] text-muted-foreground mt-1">Milestone: {g.current_milestone}</p>}
-                {g.next_action && <p className="text-[10px] text-muted-foreground">Next: {g.next_action}</p>}
-                {g.target_date && <p className="text-[10px] text-muted-foreground">Target: {g.target_date}</p>}
+                {g.current_milestone && <p className="text-[10px] text-muted-foreground mt-1">{t("activity.milestone")}: {g.current_milestone}</p>}
+                {g.next_action && <p className="text-[10px] text-muted-foreground">{t("activity.next")}: {g.next_action}</p>}
+                {g.target_date && <p className="text-[10px] text-muted-foreground">{t("activity.target")}: {g.target_date}</p>}
               </div>
             ))}
           </div>

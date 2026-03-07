@@ -147,6 +147,23 @@ async def get_smart_review_session(
                 priority += settings.lector_factor_confusion
                 break
 
+        # Factor 6: FSRS due card boost
+        # If this concept has low stability or is overdue per FSRS schedule, boost priority
+        if mastery and mastery.next_review_at:
+            review_at = mastery.next_review_at
+            if review_at.tzinfo is None:
+                review_at = review_at.replace(tzinfo=timezone.utc)
+            if review_at <= now:
+                # Overdue — compute retrievability using FSRS-4.5: R(t) = (1 + t/(9*S))^-1
+                # t = days since last practice, S = stability
+                days_since = (now - mastery.last_practiced_at).total_seconds() / 86400 if mastery.last_practiced_at else 0
+                stability = mastery.stability_days or 1.0
+                retrievability = (1 + days_since / (9 * stability)) ** -1
+                fsrs_boost = (1.0 - retrievability) * settings.lector_factor_time_decay
+                priority += fsrs_boost
+                if fsrs_boost > 0.1:
+                    reason_parts.append("FSRS overdue")
+
         if priority < 0.1:
             continue  # Skip well-mastered concepts
 

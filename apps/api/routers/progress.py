@@ -817,3 +817,16 @@ async def get_loom_graph(
 
     graph = await get_mastery_graph(db, user.id, course_id)
     return {"course_id": str(course_id), **graph}
+
+
+@router.get("/courses/{course_id}/learning-path")
+async def get_learning_path(
+    course_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get prerequisite-respecting study order for unmastered concepts (Kahn's algorithm)."""
+    from services.loom import generate_learning_path
+
+    path = await generate_learning_path(db, course_id, user.id)
+    return {"course_id": str(course_id), "path": path, "count": len(path)}

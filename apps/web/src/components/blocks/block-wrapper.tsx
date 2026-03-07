@@ -5,8 +5,11 @@ import Link from "next/link";
 import { X, Check, Sparkles, Maximize2 } from "lucide-react";
 import { BLOCK_REGISTRY } from "@/lib/block-system/registry";
 import type { BlockInstance, BlockType, LearningMode } from "@/lib/block-system/types";
+import { updateUnlockContext } from "@/lib/block-system/feature-unlock";
+import { logAgentDecision } from "@/lib/api";
 import { useWorkspaceStore } from "@/store/workspace";
 import { cn } from "@/lib/utils";
+import { useT } from "@/lib/i18n-context";
 import { toast } from "sonner";
 
 const BLOCK_FULL_PAGE_LINKS: Partial<Record<BlockType, (courseId: string) => string>> = {
@@ -28,6 +31,7 @@ interface BlockWrapperProps {
 }
 
 export function BlockWrapper({ block, courseId, aiActionsEnabled }: BlockWrapperProps) {
+  const t = useT();
   const removeBlock = useWorkspaceStore((s) => s.removeBlock);
   const addBlock = useWorkspaceStore((s) => s.addBlock);
   const approveAgentBlock = useWorkspaceStore((s) => s.approveAgentBlock);
@@ -42,13 +46,35 @@ export function BlockWrapper({ block, courseId, aiActionsEnabled }: BlockWrapper
   const isAgent = block.source === "agent";
   const needsApproval = isAgent && block.agentMeta?.needsApproval;
   const insightType = block.type === "agent_insight" ? (block.config.insightType as string | undefined) : undefined;
+  const suggestionSignals = Array.isArray(block.config.suggestionSignals)
+    ? block.config.suggestionSignals.filter((signal): signal is string => typeof signal === "string")
+    : [];
+
+  const logModeSuggestionDecision = (action: string, suggestedMode?: LearningMode) => {
+    void logAgentDecision({
+      course_id: courseId,
+      action,
+      title: entry.label,
+      reason: typeof block.config.reason === "string" ? block.config.reason : block.agentMeta?.reason,
+      decision_type: "mode_suggestion",
+      source: "course_workspace",
+      top_signal_type: "manual_override",
+      metadata_json: {
+        suggested_mode: suggestedMode,
+        approval_cta: block.agentMeta?.approvalCta,
+        signals: suggestionSignals,
+      },
+    }).catch(() => undefined);
+  };
 
   const handleApprove = () => {
     // Apply the intended operation directly for high-impact Tier-2 suggestions.
     if (insightType === "mode_suggestion") {
       const suggestedMode = block.config.suggestedMode as LearningMode | undefined;
       if (suggestedMode) {
+        logModeSuggestionDecision("approve_mode_suggestion", suggestedMode);
         setLearningMode(suggestedMode);
+        updateUnlockContext(courseId, { mode: suggestedMode });
         dismissAgentBlock(block.id);
         return;
       }
@@ -77,6 +103,14 @@ export function BlockWrapper({ block, courseId, aiActionsEnabled }: BlockWrapper
     approveAgentBlock(block.id);
   };
 
+  const handleDismiss = () => {
+    if (insightType === "mode_suggestion") {
+      const suggestedMode = block.config.suggestedMode as LearningMode | undefined;
+      logModeSuggestionDecision("dismiss_mode_suggestion", suggestedMode);
+    }
+    dismissAgentBlock(block.id);
+  };
+
   return (
     <div
       className={cn(
@@ -95,8 +129,8 @@ export function BlockWrapper({ block, courseId, aiActionsEnabled }: BlockWrapper
           <Link
             href={BLOCK_FULL_PAGE_LINKS[block.type]!(courseId)}
             className="text-muted-foreground hover:text-foreground transition-colors p-1"
-            aria-label="Open full page"
-            title="Open full page"
+            aria-label={t("block.openFullPage")}
+            title={t("block.openFullPage")}
           >
             <Maximize2 className="size-3.5" />
           </Link>
@@ -116,10 +150,10 @@ export function BlockWrapper({ block, courseId, aiActionsEnabled }: BlockWrapper
               className="inline-flex items-center gap-1 text-[11px] font-medium text-success bg-success-muted px-2.5 py-1 rounded-md hover:bg-success/20 transition-colors"
             >
               <Check className="size-3" />
-              {block.agentMeta?.approvalCta || "Approve"}
+              {block.agentMeta?.approvalCta || t("block.approve")}
             </button>
             <button
-              onClick={() => dismissAgentBlock(block.id)}
+              onClick={handleDismiss}
               className="inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground hover:text-destructive px-1.5 py-1 rounded-md transition-colors"
             >
               <X className="size-3" />
@@ -129,7 +163,7 @@ export function BlockWrapper({ block, courseId, aiActionsEnabled }: BlockWrapper
 
         {!needsApproval && isAgent && block.agentMeta?.dismissible && (
           <button
-            onClick={() => dismissAgentBlock(block.id)}
+            onClick={handleDismiss}
             className="text-muted-foreground hover:text-foreground transition-colors p-1 -mr-1"
             aria-label="Dismiss"
           >
@@ -141,16 +175,16 @@ export function BlockWrapper({ block, courseId, aiActionsEnabled }: BlockWrapper
           <button
             onClick={() => {
               removeBlock(block.id);
-              toast("Block removed", {
+              toast(t("block.removed"), {
                 action: {
-                  label: "Undo",
+                  label: t("block.undo"),
                   onClick: () => useWorkspaceStore.getState().undoRemoveBlock(),
                 },
                 duration: 5000,
               });
             }}
             className="text-muted-foreground hover:text-destructive transition-colors p-1 -mr-1"
-            aria-label="Remove block"
+            aria-label={t("block.remove")}
           >
             <X className="size-3.5" />
           </button>
@@ -169,7 +203,7 @@ export function BlockWrapper({ block, courseId, aiActionsEnabled }: BlockWrapper
         <Suspense
           fallback={
             <div className="flex items-center justify-center h-32 text-sm text-muted-foreground">
-              Loading...
+              {t("block.loading")}
             </div>
           }
         >

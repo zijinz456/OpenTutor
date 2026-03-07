@@ -40,12 +40,20 @@ Rules:
 - Make questions specific enough to have one clear answer
 - Include a mix of recall, understanding, and application questions"""
 
+_MODE_FLASHCARD_HINTS: dict[str, str] = {
+    "exam_prep": "\nMode: EXAM PREP — Prefer cloze-deletion style and application questions. Bias toward harder difficulty.",
+    "maintenance": "\nMode: MAINTENANCE — Only cover previously-seen core concepts. Focus on retention, not new material.",
+    "self_paced": "\nMode: SELF-PACED — Include exploratory, open-ended questions. Encourage cross-topic connections.",
+    "course_following": "\nMode: COURSE FOLLOWING — Follow the syllabus order. Only test concepts from the provided content.",
+}
+
 
 async def generate_flashcards(
     db: AsyncSession,
     course_id: uuid.UUID,
     content_node_id: uuid.UUID | None = None,
     count: int = 5,
+    mode: str | None = None,
 ) -> list[dict]:
     """Generate flashcards from course content using LLM.
 
@@ -77,9 +85,12 @@ async def generate_flashcards(
     )[:5000]  # Limit context size
 
     client = get_llm_client()
+    prompt = FLASHCARD_PROMPT.format(content=content, count=count)
+    if mode and mode in _MODE_FLASHCARD_HINTS:
+        prompt += _MODE_FLASHCARD_HINTS[mode]
     response, _ = await client.chat(
         "You are an expert at creating educational flashcards. Output only valid JSON.",
-        FLASHCARD_PROMPT.format(content=content, count=count),
+        prompt,
     )
 
     # Parse response

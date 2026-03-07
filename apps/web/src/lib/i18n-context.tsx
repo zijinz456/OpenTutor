@@ -1,12 +1,13 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
-import { type Locale, setLocale as setI18nLocale, initLocale, getLocale, t as rawT } from "./i18n";
+import { type Locale, setLocale as setI18nLocale, initLocale, getLocale, t as rawT, tf as rawTF } from "./i18n";
 
 interface I18nContextValue {
   locale: Locale;
   setLocale: (locale: Locale) => void;
   t: (key: string) => string;
+  tf: (key: string, vars?: Record<string, string | number | null | undefined>) => string;
 }
 
 const I18nContext = createContext<I18nContextValue | null>(null);
@@ -32,9 +33,14 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [locale],
   );
+  const tf = useCallback(
+    (key: string, vars?: Record<string, string | number | null | undefined>) => rawTF(key, vars),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [locale],
+  );
 
   return (
-    <I18nContext.Provider value={{ locale, setLocale, t }}>
+    <I18nContext.Provider value={{ locale, setLocale, t, tf }}>
       {children}
     </I18nContext.Provider>
   );
@@ -50,4 +56,10 @@ export function useLocale() {
   const ctx = useContext(I18nContext);
   if (!ctx) throw new Error("useLocale must be used inside <LocaleProvider>");
   return { locale: ctx.locale, setLocale: ctx.setLocale };
+}
+
+export function useTF() {
+  const ctx = useContext(I18nContext);
+  if (!ctx) throw new Error("useTF must be used inside <LocaleProvider>");
+  return ctx.tf;
 }

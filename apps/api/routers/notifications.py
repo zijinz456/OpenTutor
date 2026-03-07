@@ -48,6 +48,9 @@ async def list_notifications(
                 "body": n.body,
                 "category": n.category,
                 "read": n.read,
+                "course_id": str(n.course_id) if n.course_id else None,
+                "action_url": n.action_url,
+                "action_label": n.action_label,
                 "data": n.metadata_json,
                 "created_at": n.created_at.isoformat() if n.created_at else None,
             }

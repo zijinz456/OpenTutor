@@ -205,12 +205,16 @@ _MODE_INSTRUCTIONS: dict[str, str] = {
         "The student is following a structured course. Stick closely to the syllabus order. "
         "Reference specific lectures, chapters, and upcoming deadlines. "
         "Encourage sequential progress and connect new material to previous lessons.\n"
+        "When generating quizzes, follow syllabus order strictly — test only concepts covered so far. "
+        "When suggesting flashcards, align them with the current lecture/chapter.\n"
     ),
     "self_paced": (
         "\n## Learning Mode: Self-Paced Exploration\n"
         "The student is exploring freely. Follow their curiosity — let them jump between topics. "
         "Suggest interesting tangents and deeper dives. Focus on building intuition and "
         "making connections between concepts rather than following a fixed order.\n"
+        "When generating quizzes, include open-ended questions and cross-topic connections. "
+        "Suggest related topics the student hasn't explored yet.\n"
     ),
     "exam_prep": (
         "\n## Learning Mode: Exam Preparation\n"
@@ -218,12 +222,16 @@ _MODE_INSTRUCTIONS: dict[str, str] = {
         "and identifying weak areas. Focus on high-yield topics and common exam patterns. "
         "Be more direct — give worked examples, then immediately test with similar problems. "
         "Flag knowledge gaps urgently and suggest targeted review.\n"
+        "When generating quizzes, bias toward higher difficulty (Layer 2-3). Include time estimates. "
+        "Use more cloze-deletion and application-style questions. Add time-pressure language.\n"
     ),
     "maintenance": (
         "\n## Learning Mode: Maintenance / Review\n"
         "The student has completed initial learning and is maintaining knowledge. "
         "Focus on spaced repetition, reviewing weak concepts, and interleaving topics. "
         "Keep sessions short and focused. Celebrate retention and gently re-teach forgotten material.\n"
+        "When generating quizzes, only test previously-seen concepts — do NOT introduce new material. "
+        "Focus on retention metrics and decaying concepts. Reduce new content suggestions.\n"
     ),
 }
 
