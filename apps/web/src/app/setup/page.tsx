@@ -1,13 +1,15 @@
 "use client";
 
+import { Suspense } from "react";
 import { useSetup } from "./use-setup";
 import { SetupProgress } from "./setup-progress";
 import { LlmCheckStep } from "./llm-check-step";
 import { ContentStep } from "./content-step";
 import { DiscoveryStep } from "./discovery-step";
+import { TemplateStep } from "./template-step";
 import { CanvasLoginModal } from "../new/canvas-login-modal";
 
-export default function SetupPage() {
+function SetupInner() {
   const s = useSetup();
 
   return (
@@ -64,6 +66,16 @@ export default function SetupPage() {
             />
           )}
 
+          {s.step === "template" && (
+            <TemplateStep
+              selectedTemplate={s.selectedTemplate}
+              onSelect={s.setSelectedTemplate}
+              onConfirm={s.confirmTemplate}
+              onBack={() => s.setStep("content")}
+              t={s.t}
+            />
+          )}
+
           {s.step === "discovery" && (
             <DiscoveryStep
               parseSteps={s.parseSteps}
@@ -95,5 +107,13 @@ export default function SetupPage() {
         />
       )}
     </div>
+  );
+}
+
+export default function SetupPage() {
+  return (
+    <Suspense>
+      <SetupInner />
+    </Suspense>
   );
 }

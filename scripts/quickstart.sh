@@ -12,7 +12,6 @@ ENV_FILE="${ROOT_DIR}/.env"
 VENV_DIR="${API_DIR}/.venv"
 API_PID=""
 WEB_PID=""
-DB_MODE="sqlite"
 DB_DISPLAY=""
 
 # ---------------------------------------------------------------------------
@@ -73,18 +72,16 @@ load_env_file "${ENV_FILE}"
 bash "${ROOT_DIR}/scripts/check_local_mode.sh" --env-file "${ENV_FILE}" --skip-api
 
 if [[ -n "${DATABASE_URL:-}" && "${DATABASE_URL}" != sqlite* ]]; then
-  DB_MODE="postgresql"
-  DB_DISPLAY="${DATABASE_URL}"
-else
-  DB_MODE="sqlite"
-  if [[ -n "${DATABASE_URL:-}" ]]; then
-    DB_DISPLAY="${DATABASE_URL}"
-  else
-    DB_DISPLAY="sqlite+aiosqlite:///${HOME}/.opentutor/data.db"
-  fi
+  fail "SQLite-only local mode: DATABASE_URL must start with sqlite (current: ${DATABASE_URL})"
 fi
 
-log "  Database mode: ${DB_MODE}"
+if [[ -n "${DATABASE_URL:-}" ]]; then
+  DB_DISPLAY="${DATABASE_URL}"
+else
+  DB_DISPLAY="sqlite+aiosqlite:///${HOME}/.opentutor/data.db"
+fi
+
+log "  Database mode: sqlite"
 log "  Database URL:  ${DB_DISPLAY}"
 
 # ---------------------------------------------------------------------------
@@ -122,50 +119,8 @@ log "  Optional integrations remain available via requirements-full.txt"
 # 5. Database setup
 # ---------------------------------------------------------------------------
 step "Database"
-
-if [[ "${DB_MODE}" == "postgresql" ]]; then
-  if ! command -v psql >/dev/null 2>&1; then
-    fail "PostgreSQL client (psql) not found. Install: $(install_hint postgresql)"
-  fi
-  log "  psql found"
-
-  DB_NAME="$(
-    DATABASE_URL="${DATABASE_URL}" "${PY_BIN}" - <<'PY'
-from urllib.parse import urlparse
-import os
-
-parsed = urlparse(os.environ["DATABASE_URL"])
-path = (parsed.path or "/opentutor").lstrip("/") or "opentutor"
-print(path)
-PY
-  )"
-
-  # Check if PostgreSQL is running
-  if ! pg_isready -q 2>/dev/null; then
-    log "  PostgreSQL is not running. Attempting to start ..."
-    start_postgresql
-    if ! pg_isready -q 2>/dev/null; then
-      fail "PostgreSQL is not running. Start it manually:
-  macOS:   brew services start postgresql@16
-  Linux:   sudo systemctl start postgresql
-  Windows: Start-Service postgresql-x64-16  (run as admin)"
-    fi
-  fi
-
-  # Create database if it doesn't exist
-  if psql -lqt 2>/dev/null | cut -d \| -f 1 | grep -qw "${DB_NAME}"; then
-    log "  Database '${DB_NAME}' already exists"
-  else
-    log "  Creating database '${DB_NAME}' ..."
-    createdb "${DB_NAME}" 2>/dev/null || true
-  fi
-
-  # Enable pgvector extension
-  psql -d "${DB_NAME}" -c "CREATE EXTENSION IF NOT EXISTS vector;" 2>/dev/null || \
-    log "  Warning: Could not create pgvector extension. Install: $(install_hint pgvector)"
-else
-  sqlite_path="$(
-    DATABASE_URL="${DATABASE_URL:-}" "${PY_BIN}" - <<'PY'
+sqlite_path="$(
+  DATABASE_URL="${DATABASE_URL:-}" "${PY_BIN}" - <<'PY'
 from pathlib import Path
 import os
 
@@ -182,25 +137,15 @@ elif database_url.startswith("sqlite"):
 else:
     raise SystemExit("Expected SQLite URL")
 PY
-  )"
-  mkdir -p "$(dirname "${sqlite_path}")"
-  log "  Using SQLite lite mode at ${sqlite_path}"
-  log "  PostgreSQL is not required for this quickstart."
-fi
+)"
+mkdir -p "$(dirname "${sqlite_path}")"
+log "  Using SQLite at ${sqlite_path}"
 
 # ---------------------------------------------------------------------------
-# 6. Database migrations
+# 6. Database bootstrap
 # ---------------------------------------------------------------------------
-if [[ "${DB_MODE}" == "postgresql" ]]; then
-  step "Running database migrations"
-
-  cd "${API_DIR}"
-  "${PY_BIN}" -m alembic upgrade head
-  log "  Migrations complete"
-else
-  step "Database bootstrap"
-  log "  SQLite mode uses the app startup hooks to create tables and seed built-in data."
-fi
+step "Database bootstrap"
+log "  SQLite mode uses app startup hooks to create tables and seed built-in data."
 
 # ---------------------------------------------------------------------------
 # 7. Frontend dependencies
@@ -236,7 +181,7 @@ log "  Starting API server (port 8000) ..."
 API_PID=$!
 
 cd "${WEB_DIR}"
-log "  Starting Web server (port 3000) ..."
+log "  Starting Web server (port 3001) ..."
 npm run dev 2>&1 | sed 's/^/  [web] /' &
 WEB_PID=$!
 
@@ -246,7 +191,7 @@ WEB_PID=$!
 step "Waiting for services to become ready"
 
 wait_for_url "API" "http://localhost:8000/api/health" 60
-wait_for_url "Web" "http://localhost:3000" 60
+wait_for_url "Web" "http://localhost:3001" 60
 
 # Show health status
 health="$(curl -sS http://localhost:8000/api/health 2>/dev/null || echo '{}')"
@@ -274,7 +219,7 @@ local_beta_blockers="$(printf '%s\n' "${health_lines}" | sed -n '4p')"
 log ""
 log "============================================"
 log "  OpenTutor is running!"
-log "  Web:    http://localhost:3000"
+log "  Web:    http://localhost:3001"
 log "  API:    http://localhost:8000/api"
 log "  Health: http://localhost:8000/api/health"
 log "  DB:     ${database_backend}"

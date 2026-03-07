@@ -10,7 +10,7 @@ async def test_regression_benchmark_runs_offline_suites_without_optional_inputs(
 
     assert result["passed"] is True
     suite_names = {suite["name"] for suite in result["suites"]}
-    assert {"routing", "scene_policy", "retrieval", "response_quality"} <= suite_names
+    assert {"routing", "retrieval", "response_quality", "recovery"} <= suite_names
     retrieval_suite = next(s for s in result["suites"] if s["name"] == "retrieval")
     assert retrieval_suite["skipped"] is True
     response_suite = next(s for s in result["suites"] if s["name"] == "response_quality")

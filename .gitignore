@@ -33,6 +33,8 @@ uploads/
 *.egg
 *.whl
 pip-log.txt
+.coverage
+htmlcov/
 
 # Claude Code
 .claude/
@@ -44,4 +46,3 @@ tmp/
 
 # Temporary directories
 sessions/
-

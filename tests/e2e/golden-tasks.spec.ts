@@ -12,7 +12,6 @@ import {
   createCourseWithContent,
   dispatchShortcut,
   expectAssistantMessage,
-  hasRealLlmEnv,
   skipOnboarding,
   switchScene,
 } from "./helpers/test-utils";
@@ -51,25 +50,27 @@ test.describe.serial("Golden tasks — core learning journey", () => {
     await expectAssistantMessage(page, { timeout: 60_000 });
   });
 
-  test("GT-3: Generate exam prep plan", async ({ page, request }) => {
+  test("GT-3: Submit exam prep task from exam scene", async ({ page, request }) => {
     test.setTimeout(120_000);
-    if (!hasRealLlmEnv()) {
-      test.skip(true, "Skipping — no real LLM available");
-      return;
-    }
     const courseId = await createCourseWithContent(page, "Golden Plan");
 
-    // Switch to exam_prep scene
+    // Switch to exam_prep scene first to validate scene routing UX.
     await switchScene(page, "exam_prep");
 
-    // Generate plan via API (faster than UI interaction)
-    const resp = await request.post(`${apiBaseUrl}/workflows/exam-prep`, {
-      data: { course_id: courseId, days_until_exam: 3 },
+    const resp = await request.post(`${apiBaseUrl}/tasks/submit`, {
+      data: {
+        task_type: "exam_prep",
+        title: "Golden exam prep task",
+        course_id: courseId,
+        input_json: { course_id: courseId, days_until_exam: 3 },
+        requires_approval: true,
+        max_attempts: 2,
+      },
     });
     expect(resp.ok()).toBeTruthy();
-    const result = await resp.json();
-    expect(result.plan).toBeTruthy();
-    expect(result.plan.length).toBeGreaterThan(50);
+    const task = await resp.json();
+    expect(task.status).toBe("pending_approval");
+    expect(task.task_type).toBe("exam_prep");
   });
 
   test("GT-4: Create goal → submit task → verify in tasks view", async ({ page, request }) => {

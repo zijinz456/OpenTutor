@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useCallback } from "react";
-import { Loader2, CheckCircle2, AlertCircle } from "lucide-react";
+import { Loader2, AlertCircle } from "lucide-react";
 import { useCourseStore } from "@/store/course";
 import type { IngestionJobSummary } from "@/lib/api";
 
@@ -71,11 +71,7 @@ export function IngestionProgress({ courseId }: IngestionProgressProps) {
   }, [activeJobs.length, courseId, fetchContentTree]);
 
   // Don't render if there are no active or recent failed jobs
-  const recentFailedJobs = failedJobs.filter((j) => {
-    if (!j.updated_at) return false;
-    const age = Date.now() - new Date(j.updated_at).getTime();
-    return age < 60_000; // Show failed jobs for 60 seconds
-  });
+  const recentFailedJobs = failedJobs.slice(0, 3);
 
   if (activeJobs.length === 0 && recentFailedJobs.length === 0) {
     return null;

@@ -1,14 +1,15 @@
 "use client";
 
-type SetupStep = "llm" | "content" | "discovery";
+type SetupStep = "llm" | "content" | "template" | "discovery";
 
 const STEPS: { id: SetupStep; labelKey: string }[] = [
   { id: "llm", labelKey: "setup.step.connect" },
   { id: "content", labelKey: "setup.step.feed" },
+  { id: "template", labelKey: "setup.step.template" },
   { id: "discovery", labelKey: "setup.step.discover" },
 ];
 
-const ORDER: Record<SetupStep, number> = { llm: 0, content: 1, discovery: 2 };
+const ORDER: Record<SetupStep, number> = { llm: 0, content: 1, template: 2, discovery: 3 };
 
 interface SetupProgressProps {
   currentStep: SetupStep;

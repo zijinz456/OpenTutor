@@ -51,7 +51,7 @@ bash scripts/check_local_mode.sh --skip-api
 bash scripts/quickstart.sh
 ```
 
-If you leave `DATABASE_URL` blank, the host quickstart uses SQLite lite mode at `~/.opentutor/data.db`.
+The local stack is SQLite-only by default. Keep `DATABASE_URL` as a SQLite URL, for example `sqlite+aiosqlite:///~/.opentutor/data.db`.
 
 Or with Docker:
 
@@ -61,7 +61,7 @@ bash scripts/check_local_mode.sh --skip-api
 bash scripts/dev_local.sh up --build
 ```
 
-If `8000` or `3000` is already in use, publish the Docker stack on alternate ports:
+If `8000` or `3001` is already in use, publish the Docker stack on alternate ports:
 
 ```bash
 API_PORT=38000 WEB_PORT=33000 bash scripts/dev_local.sh up --build

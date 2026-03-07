@@ -117,6 +117,7 @@ export function NotesSection({
     () => findNodeById(contentTree, selectedNodeId) ?? findFirstContentNode(contentTree),
     [selectedNodeId, contentTree],
   );
+  const selectedNodeForFetch = selectedNode?.id;
 
   useEffect(() => {
     if (contentTree.length === 0) {
@@ -143,13 +144,13 @@ export function NotesSection({
 
   // Fetch AI note for selected node
   useEffect(() => {
-    if (!selectedNode) {
+    if (!selectedNodeForFetch) {
       setAiNote(null);
       return;
     }
     let cancelled = false;
     setAiNoteLoading(true);
-    getAiNoteForNode(courseId, selectedNode.id)
+    getAiNoteForNode(courseId, selectedNodeForFetch)
       .then((note) => {
         if (!cancelled) {
           setAiNote(note);
@@ -163,7 +164,7 @@ export function NotesSection({
         }
       });
     return () => { cancelled = true; };
-  }, [courseId, selectedNode?.id]);
+  }, [courseId, selectedNodeForFetch]);
 
   const handleGenerate = useCallback(async () => {
     if (!selectedNode) {

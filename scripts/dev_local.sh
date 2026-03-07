@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/_common.sh"
 
 API_PORT="${API_PORT:-8000}"
-WEB_PORT="${WEB_PORT:-3000}"
+WEB_PORT="${WEB_PORT:-3001}"
 API_HOST="${API_HOST:-http://localhost:${API_PORT}}"
 API_BASE="${API_BASE:-${API_HOST}/api}"
 WEB_BASE_URL="${WEB_BASE_URL:-http://localhost:${WEB_PORT}}"
@@ -35,13 +35,13 @@ Usage:
   scripts/dev_local.sh reset
 
 Commands:
-  up              Start db, redis, api, and web with Docker Compose and wait for readiness.
+  up              Start redis, api, and web with Docker Compose and wait for readiness.
   check-local-mode Validate that .env and the running API are both using local single-user mode.
   beta-check      Fail unless the running local stack is ready for the technical-user single-user beta.
   migrate-host    Run Alembic migrations with the resolved host Python interpreter.
   preflight       Check local prerequisites and stack readiness before running full verification.
   verify-host     Run all checks that can execute on the current host, and mark stack-gated checks as skipped.
-  verify          Run smoke, regression, DB-backed integration tests, and Playwright E2E against the local stack.
+  verify          Run smoke, regression, database integration tests, and Playwright E2E against the local stack.
   status          Show compose service status.
   logs            Stream compose logs for all services or a single service.
   down            Stop the local stack.
@@ -53,7 +53,7 @@ Flags for verify:
 
 Important environment variables:
   API_PORT=8000
-  WEB_PORT=3000
+  WEB_PORT=3001
   API_HOST=http://localhost:${API_PORT}
   WEB_BASE_URL=http://localhost:${WEB_PORT}
   UPLOAD_FILE=tests/e2e/fixtures/sample-course.md
@@ -441,9 +441,15 @@ guard_stack_health() {
 }
 
 check_db_integration_once() {
+  local backend
+  backend="$(detect_database_backend)"
+  if [[ "${backend}" == "sqlite" ]]; then
+    return 2
+  fi
+
   local tmp_output
   tmp_output="$(mktemp)"
-  if "${PY_BIN}" -m pytest tests/test_api_integration.py -k weekly_prep_creates_agent_task -q >"${tmp_output}" 2>&1; then
+  if "${PY_BIN}" -m pytest tests/test_api_integration.py::test_study_goal_create_update_and_task_link -q -o addopts= >"${tmp_output}" 2>&1; then
     cat "${tmp_output}"
     rm -f "${tmp_output}"
     return 0
@@ -457,6 +463,28 @@ check_db_integration_once() {
 
   rm -f "${tmp_output}"
   return 1
+}
+
+detect_database_backend() {
+  local health_json
+  local backend
+
+  if ! is_url_ready "${API_BASE}/health"; then
+    printf 'unknown\n'
+    return 0
+  fi
+
+  health_json="$(fetch_api_health_json || true)"
+  if [[ -z "${health_json}" ]]; then
+    printf 'unknown\n'
+    return 0
+  fi
+
+  backend="$(json_get_field "${health_json}" "database_backend")"
+  if [[ -z "${backend}" ]]; then
+    backend="unknown"
+  fi
+  printf '%s\n' "${backend}"
 }
 
 run_host_migrate() {
@@ -577,8 +605,8 @@ run_host_verify() {
   init_report
   refresh_stack_endpoints_from_compose
 
-  run_reported "Service-layer tests" "${PY_BIN}" -m pytest tests/test_services.py -q
-  run_reported "Agent regression tests" "${PY_BIN}" -m pytest tests/test_eval_regressions.py tests/test_agent_runtime_regressions.py -q
+  run_reported "Service-layer tests" "${PY_BIN}" -m pytest tests/test_services.py -q -o addopts=
+  run_reported "Agent regression tests" "${PY_BIN}" -m pytest tests/test_eval_regressions.py tests/test_agent_runtime_regressions.py -q -o addopts=
   run_reported "Frontend lint" bash -lc "cd '${ROOT_DIR}/apps/web' && npm run lint"
   run_reported "Playwright spec discovery" npx playwright test tests/e2e/activity-tasks.spec.ts --list
 
@@ -589,7 +617,7 @@ run_host_verify() {
   else
     status=$?
     if [[ "${status}" == "2" ]]; then
-      record_skip "DB-backed integration unavailable on this host (PostgreSQL or localhost:5432 access blocked)"
+      record_skip "PostgreSQL-only DB integration check skipped (SQLite mode)"
     else
       fail "DB-backed integration spot check failed for a code reason"
     fi
@@ -667,6 +695,7 @@ run_verify() {
   local run_all_e2e=0
   local run_real_llm=0
   local arg
+  local db_backend
   local e2e_targets=()
 
   for arg in "$@"; do
@@ -703,7 +732,12 @@ run_verify() {
 
   run_reported "Smoke test" bash -lc "API_BASE='${API_HOST}' UPLOAD_FILE='${UPLOAD_FILE}' SCRAPE_URL='${SCRAPE_URL}' STRICT_LLM='${STRICT_LLM:-0}' bash '${ROOT_DIR}/scripts/smoke_test.sh'"
   run_reported "Regression benchmark" bash -lc "API_BASE='${API_BASE}' UPLOAD_FILE='${UPLOAD_FILE}' PYTHON_BIN='${PY_BIN}' bash '${ROOT_DIR}/scripts/run_regression_benchmark.sh'"
-  run_reported "DB-backed integration tests" "${PY_BIN}" -m pytest tests/test_api_integration.py -q
+  db_backend="$(detect_database_backend)"
+  if [[ "${db_backend}" == "sqlite" ]]; then
+    run_reported "SQLite integration tests" "${PY_BIN}" -m pytest tests/test_sqlite_mode.py -q -o addopts=
+  else
+    run_reported "DB-backed integration tests" "${PY_BIN}" -m pytest tests/test_api_integration.py -q -o addopts=
+  fi
 
   if (( run_all_e2e )); then
     run_reported "Playwright E2E suite" bash -lc "PLAYWRIGHT_USE_EXISTING_SERVER=1 PLAYWRIGHT_BASE_URL='${WEB_BASE_URL}' PLAYWRIGHT_API_URL='${API_BASE}' npx playwright test --project='${PLAYWRIGHT_PROJECT}'"
@@ -735,9 +769,9 @@ case "${command}" in
     bash "${ROOT_DIR}/scripts/check_local_mode.sh" --env-file "${ROOT_DIR}/.env" --skip-api
     step "Starting local stack"
     if [[ "${1:-}" == "--build" ]]; then
-      compose up -d --build db redis api web
+      compose up -d --build redis api web
     else
-      compose up -d db redis api web
+      compose up -d redis api web
     fi
     refresh_stack_endpoints_from_compose
     wait_for_url "API health" "${API_BASE}/health" "${WAIT_TIMEOUT_SECONDS}"

@@ -107,6 +107,7 @@ export {
   applyTemplate,
   getForgettingForecast,
   getMisconceptionDashboard,
+  getReviewSession,
 } from "./progress";
 
 export type {
@@ -120,6 +121,8 @@ export type {
   ForgettingForecast,
   KnowledgeGraphNode,
   KnowledgeGraphEdge,
+  ReviewItem,
+  ReviewSession,
   AgentTask,
   AgentTaskStepResult,
   AgentTaskReview,
@@ -176,3 +179,14 @@ export type {
   SyncResult,
   ScrapeSource,
 } from "./ingestion";
+
+export {
+  listNotifications,
+  markNotificationRead,
+  markAllNotificationsRead,
+} from "./notifications";
+
+export type {
+  AppNotification,
+  NotificationsResponse,
+} from "./notifications";

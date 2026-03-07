@@ -74,6 +74,17 @@ def _count_created_nodes(dispatch_result: Mapping[str, object] | None) -> int:
             total += value
     return total
 
+
+def _snapshot_job_int(job: IngestionJob, field: str, default: int = 0) -> int:
+    """Read scalar job fields without triggering ORM lazy-loading after rollback."""
+    raw_value = job.__dict__.get(field, default)
+    if raw_value is None:
+        return default
+    try:
+        return int(raw_value)
+    except (TypeError, ValueError):
+        return default
+
 # ── Step 0: Filename regex patterns (expanded) ──
 
 FILENAME_PATTERNS = {
@@ -503,12 +514,14 @@ async def run_ingestion_pipeline(
             await db.rollback()
         except Exception:
             pass
+        last_progress = _snapshot_job_int(job, "progress_percent", 0)
+        last_nodes = _snapshot_job_int(job, "nodes_created", 0)
         _set_job_phase(
             job,
             status="failed",
-            progress_percent=job.progress_percent or 0,
+            progress_percent=last_progress,
             embedding_status="failed",
-            nodes_created=job.nodes_created,
+            nodes_created=last_nodes,
             error_message=str(e)[:500],
         )
         logger.error(f"Ingestion pipeline failed: {e}")

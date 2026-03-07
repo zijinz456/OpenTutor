@@ -711,7 +711,7 @@ def main():
 
     # 等待服务就绪，然后打开浏览器
     time.sleep(3)
-    webbrowser.open("http://localhost:3000")
+    webbrowser.open("http://localhost:3001")
 
     try:
         api_proc.wait()

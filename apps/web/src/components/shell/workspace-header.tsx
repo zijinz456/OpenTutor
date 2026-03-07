@@ -3,6 +3,8 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import Link from "next/link";
 import { ArrowLeft, Layout, RefreshCw, Settings } from "lucide-react";
+import { NotificationBell } from "./notification-bell";
+import { ModeSelector } from "@/components/course/mode-selector";
 import { Button } from "@/components/ui/button";
 import { useT } from "@/lib/i18n-context";
 import { syncCourse } from "@/lib/api";
@@ -113,6 +115,9 @@ export function WorkspaceHeader({
       </div>
 
       <div className="ml-auto flex items-center gap-1.5">
+        {/* Learning mode selector */}
+        <ModeSelector />
+
         {/* Layout preset switcher */}
         <div className="relative" ref={presetRef}>
           <Button
@@ -152,6 +157,8 @@ export function WorkspaceHeader({
             </div>
           )}
         </div>
+
+        <NotificationBell />
 
         <Button
           variant="ghost"

@@ -1,21 +1,4 @@
 services:
-  db:
-    image: pgvector/pgvector:pg17
-    container_name: opentutor-db
-    environment:
-      POSTGRES_USER: opentutor
-      POSTGRES_PASSWORD: opentutor_dev
-      POSTGRES_DB: opentutor
-    ports:
-      - "${DB_PORT:-5432}:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U opentutor"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
   redis:
     image: redis:7-alpine
     container_name: opentutor-redis
@@ -39,7 +22,7 @@ services:
     ports:
       - "${API_PORT:-8000}:8000"
     environment:
-      DATABASE_URL: postgresql+asyncpg://opentutor:opentutor_dev@db:5432/opentutor
+      DATABASE_URL: sqlite+aiosqlite:////app/data/opentutor.db
       REDIS_URL: redis://redis:6379/0
       AUTH_ENABLED: ${AUTH_ENABLED:-false}
       DEPLOYMENT_MODE: ${DEPLOYMENT_MODE:-single_user}
@@ -53,15 +36,15 @@ services:
       VLLM_BASE_URL: ${DOCKER_VLLM_BASE_URL:-http://host.docker.internal:8000/v1}
       TEXTGENWEBUI_BASE_URL: ${DOCKER_TEXTGENWEBUI_BASE_URL:-http://host.docker.internal:5000/v1}
       LLM_REQUIRED: ${LLM_REQUIRED:-false}
-      APP_AUTO_CREATE_TABLES: ${APP_AUTO_CREATE_TABLES:-false}
-      APP_AUTO_SEED_SYSTEM: ${APP_AUTO_SEED_SYSTEM:-false}
+      APP_AUTO_CREATE_TABLES: ${APP_AUTO_CREATE_TABLES:-true}
+      APP_AUTO_SEED_SYSTEM: ${APP_AUTO_SEED_SYSTEM:-true}
       APP_RUN_SCHEDULER: ${APP_RUN_SCHEDULER:-false}
       APP_RUN_ACTIVITY_ENGINE: ${APP_RUN_ACTIVITY_ENGINE:-false}
       CODE_SANDBOX_BACKEND: ${CODE_SANDBOX_BACKEND:-container}
       CODE_SANDBOX_RUNTIME: ${CODE_SANDBOX_RUNTIME:-docker}
       CODE_SANDBOX_IMAGE: ${CODE_SANDBOX_IMAGE:-python:3.11-alpine}
       ALLOW_INSECURE_PROCESS_SANDBOX: ${ALLOW_INSECURE_PROCESS_SANDBOX:-false}
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3001,http://127.0.0.1:3001}
       SERVE_BUILTIN_UI: "false"
       UPLOAD_DIR: /app/uploads
       SCRAPE_FIXTURE_DIR: /fixtures/e2e/scrape
@@ -69,12 +52,11 @@ services:
       - ./apps/api:/app
       - ./tests/e2e/fixtures:/fixtures/e2e:ro
       - uploads:/app/uploads
+      - sqlite_data:/app/data
       - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
-      db:
-        condition: service_healthy
       redis:
         condition: service_healthy
     command: bash -lc "uvicorn main:app --host 0.0.0.0 --port 8000 --reload"
@@ -92,12 +74,12 @@ services:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000/api}
     container_name: opentutor-web
     ports:
-      - "${WEB_PORT:-3000}:3000"
+      - "${WEB_PORT:-3001}:3001"
     depends_on:
       api:
         condition: service_healthy
 
 volumes:
-  pgdata:
   redisdata:
   uploads:
+  sqlite_data:

@@ -188,6 +188,32 @@ export async function getKnowledgeGraph(
   return request(`/progress/courses/${courseId}/knowledge-graph`);
 }
 
+// ── LECTOR Review Session ──
+
+export interface ReviewItem {
+  concept_id: string;
+  concept_label: string;
+  mastery: number;
+  stability_days: number;
+  retrievability: number;
+  urgency: string;
+  cluster: string | null;
+  last_reviewed: string | null;
+}
+
+export interface ReviewSession {
+  course_id: string;
+  items: ReviewItem[];
+  count: number;
+}
+
+export async function getReviewSession(
+  courseId: string,
+  maxItems = 10,
+): Promise<ReviewSession> {
+  return request(`/progress/courses/${courseId}/review-session?max_items=${maxItems}`);
+}
+
 // ── Exam Prep & Study Plans ──
 
 interface ExamPrepPlan {

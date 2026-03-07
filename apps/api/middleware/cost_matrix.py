@@ -35,9 +35,6 @@ EXACT_COSTS: dict[str, int] = {
     "/api/flashcards/generate": 40,
     "/api/notes/restructure": 35,
 
-    # Workflow execution (very high cost)
-    "/api/workflows/exam-prep": 80,
-
     # File upload / scrape (medium cost — I/O bound)
     "/api/content/files": 15,
     "/api/content/url": 20,

@@ -82,17 +82,20 @@ def _fit_with_pybkt(data: list[dict]) -> dict[str, dict[str, float]]:
     Returns {concept: {prior, learns, guesses, slips}} for concepts with
     enough data.
     """
-    try:
-        import numpy as np
-        from pyBKT.models import Model
-    except ImportError:
-        logger.info("pyBKT not installed — using heuristic BKT params")
-        return {}
-
     # Group by concept
     concept_data: dict[str, list[bool]] = {}
     for d in data:
         concept_data.setdefault(d["concept"], []).append(d["correct"])
+
+    # No concept has enough data to justify EM fitting.
+    if all(len(responses) < MIN_OBSERVATIONS_FOR_FIT for responses in concept_data.values()):
+        return {}
+
+    try:
+        from pyBKT.models import Model
+    except Exception as exc:  # ImportError + dependency/runtime compatibility failures
+        logger.info("pyBKT unavailable — using heuristic BKT params (%s)", exc)
+        return {}
 
     fitted = {}
     for concept, responses in concept_data.items():

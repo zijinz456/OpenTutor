@@ -192,11 +192,11 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _resolve_database_url(self):
-        """Resolve database URL: fallback to SQLite, normalize PG schemes.
+        """Resolve database URL with SQLite default and legacy PG compatibility.
 
         - Empty/unset DATABASE_URL → SQLite at ~/.opentutor/data.db (lazy dir creation)
-        - postgres:// → postgresql+asyncpg:// (Render/Railway compat)
-        - postgresql:// → postgresql+asyncpg:// (missing driver suffix)
+        - postgres:// → postgresql+asyncpg:// (legacy compatibility)
+        - postgresql:// → postgresql+asyncpg:// (legacy compatibility)
         """
         if not self.database_url:
             data_dir = Path.home() / ".opentutor"
@@ -210,6 +210,13 @@ class Settings(BaseSettings):
             self.database_url = self.database_url.replace(
                 "postgresql://", "postgresql+asyncpg://", 1
             )
+        elif self.database_url.startswith("sqlite"):
+            for prefix in ("sqlite+aiosqlite:///", "sqlite:///"):
+                if self.database_url.startswith(prefix):
+                    sqlite_path = self.database_url[len(prefix):]
+                    if sqlite_path.startswith("~"):
+                        self.database_url = f"{prefix}{Path(sqlite_path).expanduser()}"
+                    break
         return self
 
     @model_validator(mode="after")

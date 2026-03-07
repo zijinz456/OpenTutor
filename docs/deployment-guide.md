@@ -52,7 +52,7 @@ The script will:
 7. Install frontend npm packages
 8. Start the API server (port 8000) and the web server (port 3000)
 
-Once ready, open **http://localhost:3000** in your browser.
+Once ready, open **http://localhost:3001** in your browser.
 
 > The app works without an LLM API key -- it will return mock responses. Add a key to `.env` later for real AI features. See [LLM Provider Configuration](#6-llm-provider-configuration).
 
@@ -78,7 +78,7 @@ docker compose ps          # all services should show "healthy"
 curl http://localhost:8000/api/health
 ```
 
-Open **http://localhost:3000**.
+Open **http://localhost:3001**.
 
 ### Option C: Dev Local Script (Docker + verification)
 
@@ -200,7 +200,7 @@ cd apps/web
 npm run dev
 ```
 
-Open **http://localhost:3000**. The API is at **http://localhost:8000/api**.
+Open **http://localhost:3001**. The API is at **http://localhost:8000/api**.
 
 > Redis is optional for local development. It is only required when `APP_RUN_SCHEDULER=true` or `APP_RUN_ACTIVITY_ENGINE=true` (both default to `false`).
 
@@ -286,7 +286,7 @@ All variables are defined in `apps/api/config.py` (via pydantic-settings) and do
 | `ENVIRONMENT` | `development` | `development` or `production` |
 | `DATABASE_URL` | `postgresql+asyncpg://opentutor:opentutor_dev@localhost:5432/opentutor` | Async PostgreSQL connection string |
 | `REDIS_URL` | `redis://localhost:6379/0` | Redis connection (needed for scheduler/activity engine) |
-| `CORS_ORIGINS` | `http://localhost:3000,http://127.0.0.1:3000` | Comma-separated allowed origins, or `*` for all |
+| `CORS_ORIGINS` | `http://localhost:3001,http://127.0.0.1:3000` | Comma-separated allowed origins, or `*` for all |
 
 ### LLM
 
@@ -714,7 +714,7 @@ Caddy automatically provisions Let's Encrypt certificates.
 ```
 tutor.example.com {
     reverse_proxy /api/* localhost:8000
-    reverse_proxy /* localhost:3000
+    reverse_proxy /* localhost:3001
 }
 ```
 
@@ -974,7 +974,7 @@ alembic stamp head
 The frontend cannot reach the API. Verify:
 
 1. API is running: `curl http://localhost:8000/api/health`
-2. CORS is configured: `CORS_ORIGINS` in `.env` includes `http://localhost:3000`
+2. CORS is configured: `CORS_ORIGINS` in `.env` includes `http://localhost:3001`
 3. If using non-default ports, set `NEXT_PUBLIC_API_URL` accordingly
 
 ### Slow chat responses
