@@ -32,7 +32,7 @@ export default function GraphPage() {
   useEffect(() => {
     getHealthStatus()
       .then((d) => { ttlCache.set("course:health", d, 30_000); setHealth(d); })
-      .catch(() => {});
+      .catch((e) => console.error("[Graph] health check failed:", e));
   }, []);
 
   const course = activeCourse ?? courses.find((c) => c.id === courseId) ?? null;

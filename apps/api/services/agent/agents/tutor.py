@@ -199,6 +199,35 @@ the gap between "the student thinks they understand" and "they actually understa
 """
 
 
+_MODE_INSTRUCTIONS: dict[str, str] = {
+    "course_following": (
+        "\n## Learning Mode: Course Following\n"
+        "The student is following a structured course. Stick closely to the syllabus order. "
+        "Reference specific lectures, chapters, and upcoming deadlines. "
+        "Encourage sequential progress and connect new material to previous lessons.\n"
+    ),
+    "self_paced": (
+        "\n## Learning Mode: Self-Paced Exploration\n"
+        "The student is exploring freely. Follow their curiosity — let them jump between topics. "
+        "Suggest interesting tangents and deeper dives. Focus on building intuition and "
+        "making connections between concepts rather than following a fixed order.\n"
+    ),
+    "exam_prep": (
+        "\n## Learning Mode: Exam Preparation\n"
+        "The student is preparing for an exam. Prioritize practice problems, timed exercises, "
+        "and identifying weak areas. Focus on high-yield topics and common exam patterns. "
+        "Be more direct — give worked examples, then immediately test with similar problems. "
+        "Flag knowledge gaps urgently and suggest targeted review.\n"
+    ),
+    "maintenance": (
+        "\n## Learning Mode: Maintenance / Review\n"
+        "The student has completed initial learning and is maintaining knowledge. "
+        "Focus on spaced repetition, reviewing weak concepts, and interleaving topics. "
+        "Keep sessions short and focused. Celebrate retention and gently re-teach forgotten material.\n"
+    ),
+}
+
+
 class TutorAgent(ReActMixin, BaseAgent):
     """Unified learning agent handling teaching, quizzes, review, assessment, and more."""
 
@@ -241,6 +270,12 @@ class TutorAgent(ReActMixin, BaseAgent):
         fatigue_score = ctx.metadata.get("fatigue_score", 0.0)
 
         parts = [base]
+
+        # ── Learning mode adaptation ──
+        if ctx.learning_mode:
+            mode_instructions = _MODE_INSTRUCTIONS.get(ctx.learning_mode)
+            if mode_instructions:
+                parts.append(mode_instructions)
 
         # ── Conditional section: quiz/exercise ──
         if _QUIZ_RE.search(msg):

@@ -11,7 +11,7 @@ from sqlalchemy.exc import ProgrammingError
 
 from libs.exceptions import NotFoundError, ValidationError
 from routers.chat import _build_session_title, _resolve_chat_session
-from routers.goals import get_next_action
+from routers.goals import get_next_action, queue_next_action
 from routers.preferences import _normalize_preference_value
 from routers.upload import _validate_url
 from routers.wrong_answers import derive_question, diagnose_from_pair
@@ -190,6 +190,51 @@ class _ScalarResult:
         return self._value
 
 
+def _serialized_task_payload(
+    *,
+    task_id: str,
+    user_id: uuid.UUID,
+    course_id: uuid.UUID,
+    goal_id: uuid.UUID | None,
+    task_type: str,
+    title: str,
+    summary: str | None,
+    metadata_json: dict | None = None,
+) -> dict:
+    return {
+        "id": task_id,
+        "user_id": str(user_id),
+        "course_id": str(course_id),
+        "goal_id": str(goal_id) if goal_id else None,
+        "task_type": task_type,
+        "status": "queued",
+        "title": title,
+        "summary": summary,
+        "source": "agenda",
+        "input_json": {},
+        "metadata_json": metadata_json,
+        "result_json": None,
+        "error_message": None,
+        "attempts": 0,
+        "max_attempts": 2,
+        "requires_approval": False,
+        "task_kind": "read_only",
+        "risk_level": "low",
+        "approval_status": "not_required",
+        "approval_reason": None,
+        "approval_action": None,
+        "checkpoint_json": None,
+        "step_results": [],
+        "provenance": None,
+        "approved_at": None,
+        "started_at": None,
+        "cancel_requested_at": None,
+        "created_at": None,
+        "updated_at": None,
+        "completed_at": None,
+    }
+
+
 @pytest.mark.asyncio
 async def test_get_next_action_prefers_active_goal_next_action(monkeypatch):
     user = SimpleNamespace(id=uuid.uuid4())
@@ -251,6 +296,110 @@ async def test_get_next_action_falls_back_to_failed_task(monkeypatch):
     assert result.source == "task_failure"
     assert result.goal_id is None
     assert result.suggested_task_type == "exam_prep"
+
+
+@pytest.mark.asyncio
+async def test_queue_next_action_from_active_goal_returns_multi_step_task(monkeypatch):
+    user = SimpleNamespace(id=uuid.uuid4())
+    course_id = uuid.uuid4()
+    goal_id = uuid.uuid4()
+    queued_task = object()
+    decision = AgendaDecision(
+        action="submit",
+        signal=AgendaSignal(
+            signal_type="active_goal",
+            user_id=user.id,
+            course_id=course_id,
+            entity_id=str(goal_id),
+            title="Pass the final",
+            urgency=90.0,
+            detail={"next_action": "Review weak points from chapter 3 tonight."},
+        ),
+        task_type="multi_step",
+        task_title="Execute next step: Pass the final",
+        task_summary="Review weak points from chapter 3 tonight.",
+        goal_id=goal_id,
+        reason="Active goal has a concrete next action.",
+    )
+
+    serialized = _serialized_task_payload(
+        task_id=str(uuid.uuid4()),
+        user_id=user.id,
+        course_id=course_id,
+        goal_id=goal_id,
+        task_type="multi_step",
+        title="Execute next step: Pass the final",
+        summary="Review weak points from chapter 3 tonight.",
+        metadata_json={"agenda_decision": {"goal_id": str(goal_id), "reason": decision.reason}},
+    )
+
+    monkeypatch.setattr("routers.goals.get_course_or_404", AsyncMock())
+    monkeypatch.setattr("routers.goals.resolve_next_action", AsyncMock(return_value=decision))
+    queue_mock = AsyncMock(return_value=queued_task)
+    monkeypatch.setattr("routers.goals.queue_decision", queue_mock)
+    monkeypatch.setattr("routers.goals.serialize_task", lambda _task: serialized)
+
+    result = await queue_next_action(course_id=course_id, user=user, db=MagicMock())
+
+    assert result.task_type == "multi_step"
+    assert result.goal_id == str(goal_id)
+    assert result.title == "Execute next step: Pass the final"
+    assert result.summary == "Review weak points from chapter 3 tonight."
+    assert result.metadata_json["agenda_decision"]["reason"] == "Active goal has a concrete next action."
+    queue_mock.assert_awaited_once()
+    call = queue_mock.await_args
+    assert call.args[0] is decision
+    assert call.kwargs["user_id"] == user.id
+    assert call.kwargs["course_id"] == course_id
+
+
+@pytest.mark.asyncio
+async def test_queue_next_action_retries_failed_task_and_clears_previous_error(monkeypatch):
+    user = SimpleNamespace(id=uuid.uuid4())
+    course_id = uuid.uuid4()
+    failed_task_id = uuid.uuid4()
+    queued_task = object()
+    decision = AgendaDecision(
+        action="retry",
+        signal=AgendaSignal(
+            signal_type="failed_task",
+            user_id=user.id,
+            course_id=course_id,
+            entity_id=str(failed_task_id),
+            title="Queued exam prep",
+            urgency=80.0,
+            detail={"status": "failed", "task_type": "exam_prep"},
+        ),
+        task_type="exam_prep",
+        task_title="Recover: Queued exam prep",
+        existing_task_id=failed_task_id,
+        reason="Most recent durable task did not finish; recovery is more valuable than starting new work.",
+    )
+
+    serialized = _serialized_task_payload(
+        task_id=str(failed_task_id),
+        user_id=user.id,
+        course_id=course_id,
+        goal_id=None,
+        task_type="exam_prep",
+        title="Queued exam prep",
+        summary="Task failed previously.",
+    )
+
+    monkeypatch.setattr("routers.goals.get_course_or_404", AsyncMock())
+    monkeypatch.setattr("routers.goals.resolve_next_action", AsyncMock(return_value=decision))
+    queue_mock = AsyncMock(return_value=queued_task)
+    monkeypatch.setattr("routers.goals.queue_decision", queue_mock)
+    monkeypatch.setattr("routers.goals.serialize_task", lambda _task: serialized)
+
+    result = await queue_next_action(course_id=course_id, user=user, db=MagicMock())
+
+    assert result.id == str(failed_task_id)
+    assert result.task_type == "exam_prep"
+    assert result.status == "queued"
+    assert result.attempts == 0
+    assert result.error_message is None
+    queue_mock.assert_awaited_once()
 
 
 def test_validate_url_blocks_private_dns_resolution(monkeypatch):

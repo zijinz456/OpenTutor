@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { useCourseStore } from "@/store/course";
 import { WorkspaceHeader } from "@/components/shell/workspace-header";
 import { PracticeSection } from "@/components/sections/practice-section";
@@ -12,6 +12,7 @@ import { ttlCache } from "@/lib/cache";
 
 export default function PracticePage() {
   const params = useParams();
+  const searchParams = useSearchParams();
   const courseId = params.id as string;
   const [chatOpen, setChatOpen] = useState(false);
   const [health, setHealth] = useState<HealthStatus | null>(
@@ -32,19 +33,25 @@ export default function PracticePage() {
   useEffect(() => {
     getHealthStatus()
       .then((d) => { ttlCache.set("course:health", d, 30_000); setHealth(d); })
-      .catch(() => {});
+      .catch((e) => console.error("[Practice] health check failed:", e));
   }, []);
 
   const course = activeCourse ?? courses.find((c) => c.id === courseId) ?? null;
   const aiActionsEnabled =
     health?.llm_status !== "mock_fallback" &&
     health?.llm_status !== "configuration_required";
+  const tab = (searchParams.get("tab") ?? "quiz") as "quiz" | "flashcards" | "review" | "podcast";
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <WorkspaceHeader courseName={course?.name || "Practice"} courseId={courseId} />
       <main className="flex-1 max-w-5xl mx-auto w-full px-4 py-6">
-        <PracticeSection courseId={courseId} showReview aiActionsEnabled={aiActionsEnabled} />
+        <PracticeSection
+          courseId={courseId}
+          showReview
+          aiActionsEnabled={aiActionsEnabled}
+          defaultTab={tab}
+        />
       </main>
       <ChatFab open={chatOpen} onToggle={() => setChatOpen((v) => !v)} />
       <ChatDrawer courseId={courseId} open={chatOpen} aiActionsEnabled={aiActionsEnabled} />

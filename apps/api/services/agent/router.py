@@ -19,7 +19,13 @@ INTENT_RULES: list[tuple[IntentType, re.Pattern, float]] = [
     (IntentType.LAYOUT, re.compile(
         r"(layout|resize|maximize|minimize|expand|collapse|"
         r"set_layout|change\s+layout|zoom\s+in|zoom\s+out|fullscreen|"
-        r"switch\s+to\s+.*mode|hide\s+\w+|show\s+\w+|make\s+.*bigger|make\s+.*smaller)", re.IGNORECASE
+        r"switch\s+to\s+.*mode|hide\s+\w+|show\s+\w+|make\s+.*bigger|make\s+.*smaller|"
+        # Block-level actions
+        r"(add|remove|delete)\s+(the\s+|a\s+)?\w*\s*(block|card|widget)|"
+        r"(add|remove|delete|show|hide)\s+(the\s+|a\s+)?(flashcard|note|podcast|forecast|knowledge.?graph|review|plan|progress|wrong.?answer|chapter)\s*(block|card|section|widget|s\b)?|"
+        r"reorder|rearrange|reorganize|move\s+.*\s+(up|down|first|last)|"
+        r"apply\s+(the\s+|a\s+)?.*template|use\s+(the\s+|a\s+)?.*template|"
+        r"(exam.?prep|self.?paced|maintenance|course.?following)\s+mode)", re.IGNORECASE
     ), 0.95),
 
     # Study plan / scheduling

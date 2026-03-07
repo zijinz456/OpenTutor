@@ -38,7 +38,7 @@ Commands:
   up              Start redis, api, and web with Docker Compose and wait for readiness.
   check-local-mode Validate that .env and the running API are both using local single-user mode.
   beta-check      Fail unless the running local stack is ready for the technical-user single-user beta.
-  migrate-host    Run Alembic migrations with the resolved host Python interpreter.
+  migrate-host    Schema helper (no-op in SQLite local mode).
   preflight       Check local prerequisites and stack readiness before running full verification.
   verify-host     Run all checks that can execute on the current host, and mark stack-gated checks as skipped.
   verify          Run smoke, regression, database integration tests, and Playwright E2E against the local stack.
@@ -202,7 +202,7 @@ refresh_stack_endpoints_from_compose() {
     API_BASE="${API_HOST}/api"
   fi
 
-  compose_web_base="$(compose_service_url web 3000 || true)"
+  compose_web_base="$(compose_service_url web 3001 || true)"
   if [[ -n "${compose_web_base}" ]]; then
     WEB_BASE_URL="${compose_web_base}"
   fi
@@ -347,24 +347,10 @@ if not expected_keys.issubset(data):
 
 if data.get("migration_required") or data.get("schema") == "missing":
     status = "migration_required"
-    migration_status = data.get("migration_status")
-    if migration_status == "version_table_missing":
-        notes.append(
-            "Database tables exist but Alembic tracking is missing; verify the schema and run "
-            "'cd apps/api && python -m alembic stamp head'."
-        )
-    elif migration_status == "out_of_date":
-        notes.append(
-            "Database migrations are behind the app; run 'cd apps/api && python -m alembic upgrade head'."
-        )
-    elif migration_status == "inspection_error":
-        notes.append(
-            "Migration inspection failed; verify Alembic files and database connectivity before retrying."
-        )
-    else:
-        notes.append(
-            "Database schema is missing; run 'cd apps/api && python -m alembic upgrade head' or restart the Docker API service."
-        )
+    notes.append(
+        "SQLite schema is missing; restart the API with APP_AUTO_CREATE_TABLES=true "
+        "or run quickstart/dev_local up again."
+    )
 
 if data.get("code_sandbox_runtime_available") is False:
     if status == "ok":
@@ -440,67 +426,11 @@ guard_stack_health() {
   esac
 }
 
-check_db_integration_once() {
-  local backend
-  backend="$(detect_database_backend)"
-  if [[ "${backend}" == "sqlite" ]]; then
-    return 2
-  fi
-
-  local tmp_output
-  tmp_output="$(mktemp)"
-  if "${PY_BIN}" -m pytest tests/test_api_integration.py::test_study_goal_create_update_and_task_link -q -o addopts= >"${tmp_output}" 2>&1; then
-    cat "${tmp_output}"
-    rm -f "${tmp_output}"
-    return 0
-  fi
-
-  cat "${tmp_output}"
-  if grep -Eq "PermissionError: \[Errno 1\] Operation not permitted|5432|pgvector extension unavailable" "${tmp_output}"; then
-    rm -f "${tmp_output}"
-    return 2
-  fi
-
-  rm -f "${tmp_output}"
-  return 1
-}
-
-detect_database_backend() {
-  local health_json
-  local backend
-
-  if ! is_url_ready "${API_BASE}/health"; then
-    printf 'unknown\n'
-    return 0
-  fi
-
-  health_json="$(fetch_api_health_json || true)"
-  if [[ -z "${health_json}" ]]; then
-    printf 'unknown\n'
-    return 0
-  fi
-
-  backend="$(json_get_field "${health_json}" "database_backend")"
-  if [[ -z "${backend}" ]]; then
-    backend="unknown"
-  fi
-  printf '%s\n' "${backend}"
-}
-
 run_host_migrate() {
   [[ -n "${PY_BIN}" ]] || fail "Python interpreter not found. Expected apps/api/.venv/bin/python or python3.11."
   require_python_311 "${PY_BIN}"
-
-  step "Running Alembic migrations with ${PY_BIN}"
-  (
-    cd "${ROOT_DIR}/apps/api"
-    "${PY_BIN}" -m alembic upgrade head
-  )
-
-  if is_url_ready "${API_BASE}/health"; then
-    CURRENT_CHECK="Stack readiness"
-    guard_stack_health
-  fi
+  step "Host migration"
+  log "  SQLite-only local mode: Alembic host migration is skipped."
 }
 
 run_preflight() {
@@ -610,18 +540,7 @@ run_host_verify() {
   run_reported "Frontend lint" bash -lc "cd '${ROOT_DIR}/apps/web' && npm run lint"
   run_reported "Playwright spec discovery" npx playwright test tests/e2e/activity-tasks.spec.ts --list
 
-  CURRENT_CHECK="DB-backed integration spot check"
-  step "DB-backed integration spot check"
-  if check_db_integration_once; then
-    record_ok "DB-backed integration available"
-  else
-    status=$?
-    if [[ "${status}" == "2" ]]; then
-      record_skip "PostgreSQL-only DB integration check skipped (SQLite mode)"
-    else
-      fail "DB-backed integration spot check failed for a code reason"
-    fi
-  fi
+  run_reported "SQLite integration spot check" "${PY_BIN}" -m pytest tests/test_sqlite_mode.py -q -o addopts=
 
   if is_url_ready "${API_BASE}/health" && is_url_ready "${WEB_BASE_URL}"; then
     CURRENT_CHECK="Stack smoke/regression"
@@ -695,7 +614,6 @@ run_verify() {
   local run_all_e2e=0
   local run_real_llm=0
   local arg
-  local db_backend
   local e2e_targets=()
 
   for arg in "$@"; do
@@ -732,12 +650,7 @@ run_verify() {
 
   run_reported "Smoke test" bash -lc "API_BASE='${API_HOST}' UPLOAD_FILE='${UPLOAD_FILE}' SCRAPE_URL='${SCRAPE_URL}' STRICT_LLM='${STRICT_LLM:-0}' bash '${ROOT_DIR}/scripts/smoke_test.sh'"
   run_reported "Regression benchmark" bash -lc "API_BASE='${API_BASE}' UPLOAD_FILE='${UPLOAD_FILE}' PYTHON_BIN='${PY_BIN}' bash '${ROOT_DIR}/scripts/run_regression_benchmark.sh'"
-  db_backend="$(detect_database_backend)"
-  if [[ "${db_backend}" == "sqlite" ]]; then
-    run_reported "SQLite integration tests" "${PY_BIN}" -m pytest tests/test_sqlite_mode.py -q -o addopts=
-  else
-    run_reported "DB-backed integration tests" "${PY_BIN}" -m pytest tests/test_api_integration.py -q -o addopts=
-  fi
+  run_reported "SQLite integration tests" "${PY_BIN}" -m pytest tests/test_sqlite_mode.py -q -o addopts=
 
   if (( run_all_e2e )); then
     run_reported "Playwright E2E suite" bash -lc "PLAYWRIGHT_USE_EXISTING_SERVER=1 PLAYWRIGHT_BASE_URL='${WEB_BASE_URL}' PLAYWRIGHT_API_URL='${API_BASE}' npx playwright test --project='${PLAYWRIGHT_PROJECT}'"

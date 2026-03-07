@@ -20,7 +20,10 @@ import {
 import { useT } from "@/lib/i18n-context";
 import { useCourseStore } from "@/store/course";
 import { useWorkspaceStore } from "@/store/workspace";
+import { updateUnlockContext } from "@/lib/block-system/feature-unlock";
+import { TEMPLATES } from "@/lib/block-system/templates";
 
+import type { LearningMode } from "@/lib/block-system/types";
 import type { FileItem, ParseLog } from "../new/types";
 import { isCanvasUrl, deriveParseSteps, deriveParseProgress } from "../new/types";
 import { submitSources, buildMetadata } from "../new/parse-actions";
@@ -75,8 +78,9 @@ export function useSetup() {
   const [canvasLogging, setCanvasLogging] = useState(false);
   const [canvasLoginError, setCanvasLoginError] = useState<string | null>(null);
 
-  // ── Template state ──
+  // ── Template + Mode state ──
   const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
+  const [selectedMode, setSelectedMode] = useState<LearningMode | null>(null);
 
   // ── Parsing state ──
   const [createdCourseId, setCreatedCourseId] = useState<string | null>(null);
@@ -315,14 +319,19 @@ export function useSetup() {
 
     try {
       const features = { notes: true, practice: true, study_plan: true, free_qa: true, wrong_answer: true };
-      const metadata = buildMetadata(features, true, url, files.length > 0 && url.trim() ? "both" : files.length > 0 ? "upload" : "url");
+      const sourceMode = files.length > 0 && url.trim() ? "both" : files.length > 0 ? "upload" : "url";
+      const modeFromTemplate = selectedTemplate ? TEMPLATES[selectedTemplate]?.defaultMode : undefined;
+      const modeForCourse = selectedMode ?? modeFromTemplate;
+      const metadata = {
+        ...buildMetadata(features, true, url, sourceMode),
+        ...(modeForCourse ? { learning_mode: modeForCourse } : {}),
+      };
       const course = await addCourse(projectName.trim() || t("new.untitledProject"), undefined, metadata);
       setCreatedCourseId(course.id);
       addLog(t("new.logProjectCreated"), "text-success");
 
-      const mode = files.length > 0 && url.trim() ? "both" : files.length > 0 ? "upload" : "url";
       await submitSources({
-        course, files, url, mode, autoScrape: true, canvasSessionValid, projectName,
+        course, files, url, mode: sourceMode, autoScrape: true, canvasSessionValid, projectName,
         addLog, setCanvasSessionValid, setShowCanvasLogin, setCanvasLogging,
         setCanvasLoginError, setNoSourcesSubmitted, t,
       });
@@ -331,7 +340,7 @@ export function useSetup() {
     } finally {
       setIsSubmittingContent(false);
     }
-  }, [addCourse, canvasSessionValid, files, projectName, t, url]);
+  }, [addCourse, canvasSessionValid, files, projectName, selectedMode, selectedTemplate, t, url]);
 
   // ── Enter workspace ──
   const enterWorkspace = useCallback(async () => {
@@ -348,12 +357,22 @@ export function useSetup() {
     // Apply selected template and persist to localStorage
     if (selectedTemplate) {
       useWorkspaceStore.getState().applyBlockTemplate(selectedTemplate);
-      const layout = useWorkspaceStore.getState().spaceLayout;
+    }
+    // Persist selected mode without replacing the chosen template layout.
+    if (selectedMode) {
+      useWorkspaceStore.getState().setSpaceMode(selectedMode);
+    }
+    // Persist final layout
+    const layout = useWorkspaceStore.getState().spaceLayout;
+    if (selectedTemplate || selectedMode) {
       localStorage.setItem(`opentutor_blocks_${createdCourseId}`, JSON.stringify(layout));
+      if (layout.mode) {
+        updateUnlockContext(createdCourseId, { mode: layout.mode });
+      }
     }
     localStorage.setItem("opentutor_onboarded", "true");
     router.push(`/course/${createdCourseId}`);
-  }, [createdCourseId, router, selectedTemplate]);
+  }, [createdCourseId, router, selectedMode, selectedTemplate]);
 
   // ── Skip content (empty workspace) ──
   const skipContent = useCallback(async () => {
@@ -392,8 +411,9 @@ export function useSetup() {
     hasCompletedJob, allJobsFailed, noSourcesSubmitted,
     aiProbeResponse, aiProbeStreaming, aiProbeDone, canEnterEarly,
     createdCourseId,
-    // Template
+    // Template + Mode
     selectedTemplate, setSelectedTemplate,
+    selectedMode, setSelectedMode,
     // Actions
     startLearning, confirmTemplate, enterWorkspace, skipContent,
   };

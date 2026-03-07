@@ -21,6 +21,7 @@ interface PracticeSectionProps {
   courseId: string;
   showReview?: boolean;
   aiActionsEnabled?: boolean;
+  defaultTab?: PracticeTab;
 }
 
 type PracticeTab = "quiz" | "flashcards" | "review" | "podcast";
@@ -36,6 +37,7 @@ export function PracticeSection({
   courseId,
   showReview = true,
   aiActionsEnabled = true,
+  defaultTab = "quiz",
 }: PracticeSectionProps) {
   const tabs = useMemo(
     () => (showReview ? ALL_TABS : ALL_TABS.filter((t) => t.id !== "review")),
@@ -50,7 +52,7 @@ export function PracticeSection({
   return (
     <TabbedSection
       tabs={tabs}
-      defaultTab="quiz"
+      defaultTab={tabs.some((t) => t.id === defaultTab) ? defaultTab : "quiz"}
       testId="practice-section"
       externalTab={practiceActiveTab}
       onExternalTabConsumed={clearPracticeTab}

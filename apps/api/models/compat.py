@@ -1,61 +1,40 @@
-"""Cross-database type compatibility layer.
+"""SQLite-only model type aliases.
 
-Provides column types that work with both PostgreSQL and SQLite:
-- CompatUUID: UUID (PG) or String(36) (SQLite)
-- CompatJSONB: JSONB (PG) or JSON (SQLite, backed by TEXT + JSON1)
-- CompatTSVECTOR: TSVECTOR (PG) or Text (SQLite, ignored — FTS5 used instead)
-- CompatVector: pgvector Vector (PG) or Text (SQLite — sqlite-vec used via raw SQL)
+`Compat*` names are kept for backwards compatibility with existing model code.
 """
 
-from sqlalchemy import Text, String, JSON
-from sqlalchemy.types import TypeDecorator
 import uuid as _uuid
 
-from database import is_sqlite
+from sqlalchemy import JSON, String, Text
+from sqlalchemy.types import TypeDecorator
 
-if is_sqlite():
-    class CompatUUID(TypeDecorator):
-        """Store UUIDs as 36-char strings in SQLite."""
-        impl = String(36)
-        cache_ok = True
 
-        def process_bind_param(self, value, dialect):
-            if value is not None:
-                return str(value)
-            return value
+class CompatUUID(TypeDecorator):
+    """Store UUIDs as 36-char strings in SQLite."""
 
-        def process_result_value(self, value, dialect):
-            if value is not None:
-                return _uuid.UUID(value)
-            return value
+    impl = String(36)
+    cache_ok = True
 
-    CompatJSONB = JSON  # SQLite JSON1 extension via SQLAlchemy's JSON type
-    CompatTSVECTOR = Text  # Placeholder; FTS5 virtual tables used instead
+    def process_bind_param(self, value, dialect):
+        if value is not None:
+            return str(value)
+        return value
 
-    class _TextVectorFactory:
-        """Mimic pgvector's Vector(dim) API but return Text for SQLite."""
-        def __call__(self, *args, **kwargs):
-            return Text()
-    CompatVector = _TextVectorFactory()  # CompatVector(1536) → Text()
+    def process_result_value(self, value, dialect):
+        if value is not None:
+            return _uuid.UUID(value)
+        return value
 
-else:
-    from sqlalchemy.dialects.postgresql import UUID as _PGUUID, JSONB as _PGJSONB, TSVECTOR as _PGTSVECTOR
-    try:
-        from pgvector.sqlalchemy import Vector as _PGVector
-    except ImportError:
-        _PGVector = Text  # Graceful fallback if pgvector not installed
 
-    class CompatUUID(TypeDecorator):
-        """Native PG UUID."""
-        impl = _PGUUID(as_uuid=True)
-        cache_ok = True
+CompatJSONB = JSON
+CompatTSVECTOR = Text
 
-        def process_bind_param(self, value, dialect):
-            return value
 
-        def process_result_value(self, value, dialect):
-            return value
+class _TextVectorFactory:
+    """Keep CompatVector(1536) call-shape while storing as TEXT in SQLite."""
 
-    CompatJSONB = _PGJSONB
-    CompatTSVECTOR = _PGTSVECTOR
-    CompatVector = _PGVector
+    def __call__(self, *args, **kwargs):
+        return Text()
+
+
+CompatVector = _TextVectorFactory()

@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, CheckCircle2, ChevronLeft, ChevronRight } from "lucide-react";
 import {
   getReviewSession,
+  submitReviewRating,
   type ReviewItem,
   type ReviewSession,
 } from "@/lib/api/progress";
@@ -56,12 +57,14 @@ export default function ReviewPage() {
     (rating: Rating) => {
       if (!current) return;
       setRatings((prev) => new Map(prev).set(current.concept_id, rating));
+      // Submit rating to backend (fire-and-forget)
+      submitReviewRating(courseId, current.concept_id, rating).catch(() => {});
       setRevealed(false);
       if (currentIndex < total - 1) {
         setCurrentIndex((i) => i + 1);
       }
     },
-    [current, currentIndex, total],
+    [current, currentIndex, total, courseId],
   );
 
   const goBack = () => router.push(`/course/${courseId}`);

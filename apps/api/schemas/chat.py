@@ -32,6 +32,8 @@ class ChatRequest(BaseModel):
     images: list[ImageAttachment] = Field(default_factory=list, max_length=10)
     # v3.2: User interrupt/steering — indicates the user interrupted a previous streaming response
     interrupt: bool = False
+    # v3.3: Learning mode from frontend (course_following, self_paced, exam_prep, maintenance)
+    learning_mode: str | None = None
 
 
 class ChatResponse(BaseModel):

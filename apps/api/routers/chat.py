@@ -248,6 +248,7 @@ async def chat_stream(
                 tab_context=body.tab_context,
                 scene=resolved_scene,
                 images=[img.model_dump() for img in body.images] if body.images else None,
+                learning_mode=body.learning_mode,
             ):
                 # Stop streaming if client disconnected (saves LLM cost)
                 if await request.is_disconnected():
@@ -377,7 +378,29 @@ async def get_greeting(
 
     greeting_parts.append("What would you like to work on?")
 
+    # Build suggested actions based on greeting context
+    suggested_actions: list[dict[str, str]] = []
+    try:
+        if review.get("needs_review") and review.get("urgent_count", 0) > 0:
+            suggested_actions.append({
+                "action": "agent_insight",
+                "value": "review_needed",
+                "extra": f"{review['urgent_count']} concept(s) at risk",
+            })
+    except Exception:
+        pass
+    try:
+        if upcoming and days_until <= 7:
+            suggested_actions.append({
+                "action": "suggest_mode",
+                "value": "exam_prep",
+                "extra": f"{upcoming.title} due in {days_until} day(s)",
+            })
+    except Exception:
+        pass
+
     return {
         "greeting": " ".join(greeting_parts),
         "course_name": course.name,
+        "suggested_actions": suggested_actions,
     }

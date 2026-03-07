@@ -78,10 +78,24 @@ interface WorkspaceState {
   spaceLayout: SpaceLayout;
 
   /** Add a block to the space. */
-  addBlock: (type: BlockType, config?: Record<string, unknown>, source?: BlockSource) => void;
+  addBlock: (
+    type: BlockType,
+    config?: Record<string, unknown>,
+    source?: BlockSource,
+    size?: BlockSize,
+  ) => void;
+
+  /** Last removed block (for undo). */
+  lastRemovedBlock: { block: BlockInstance; index: number } | null;
 
   /** Remove a block by ID. */
   removeBlock: (blockId: string) => void;
+
+  /** Undo the last block removal. */
+  undoRemoveBlock: () => void;
+
+  /** Remove expired agent blocks. */
+  cleanupExpiredBlocks: () => void;
 
   /** Remove the first block matching a given type. */
   removeBlockByType: (type: BlockType) => void;
@@ -116,6 +130,8 @@ interface WorkspaceState {
 
   /** Set learning mode and apply its default block layout. */
   setLearningMode: (mode: LearningMode) => void;
+  /** Set the mode marker without replacing current blocks. */
+  setSpaceMode: (mode: LearningMode) => void;
 }
 
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
@@ -174,9 +190,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   // ── Block System ──
 
+  lastRemovedBlock: null,
+
   spaceLayout: { templateId: null, blocks: [], columns: 2 },
 
-  addBlock: (type, config = {}, source = "user") => {
+  addBlock: (type, config = {}, source = "user", size) => {
     const entry = BLOCK_REGISTRY[type];
     if (!entry) return;
     const blocks = get().spaceLayout.blocks;
@@ -184,7 +202,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       id: nextBlockId(),
       type,
       position: blocks.length,
-      size: entry.defaultSize,
+      size: size ?? entry.defaultSize,
       config: { ...entry.defaultConfig, ...config },
       visible: true,
       source,
@@ -198,14 +216,42 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   removeBlock: (blockId) => {
-    set((s) => ({
-      spaceLayout: {
-        ...s.spaceLayout,
-        blocks: s.spaceLayout.blocks
-          .filter((b) => b.id !== blockId)
-          .map((b, i) => ({ ...b, position: i })),
-      },
-    }));
+    set((state) => {
+      const idx = state.spaceLayout.blocks.findIndex((b) => b.id === blockId);
+      const block = state.spaceLayout.blocks[idx];
+      return {
+        lastRemovedBlock: block ? { block, index: idx } : null,
+        spaceLayout: {
+          ...state.spaceLayout,
+          blocks: state.spaceLayout.blocks.filter((b) => b.id !== blockId),
+        },
+      };
+    });
+  },
+
+  undoRemoveBlock: () => {
+    set((state) => {
+      const removed = state.lastRemovedBlock;
+      if (!removed) return state;
+      const blocks = [...state.spaceLayout.blocks];
+      blocks.splice(removed.index, 0, removed.block);
+      return {
+        lastRemovedBlock: null,
+        spaceLayout: { ...state.spaceLayout, blocks },
+      };
+    });
+  },
+
+  cleanupExpiredBlocks: () => {
+    set((state) => {
+      const now = new Date().toISOString();
+      const blocks = state.spaceLayout.blocks.filter((b) => {
+        if (b.source !== "agent" || !b.agentMeta?.expiresAt) return true;
+        return b.agentMeta.expiresAt > now;
+      });
+      if (blocks.length === state.spaceLayout.blocks.length) return state;
+      return { spaceLayout: { ...state.spaceLayout, blocks } };
+    });
   },
 
   removeBlockByType: (type) => {
@@ -277,7 +323,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   applyBlockTemplate: (templateId) => {
     const layout = buildLayoutFromTemplate(templateId);
     if (layout) {
-      set({ spaceLayout: layout });
+      const existingMode = get().spaceLayout.mode;
+      set({
+        spaceLayout: {
+          ...layout,
+          mode: existingMode ?? layout.mode,
+        },
+      });
     }
   },
 
@@ -342,5 +394,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   setLearningMode: (mode) => {
     const layout = buildLayoutFromMode(mode);
     set({ spaceLayout: layout });
+  },
+
+  setSpaceMode: (mode) => {
+    set((s) => ({
+      spaceLayout: {
+        ...s.spaceLayout,
+        mode,
+      },
+    }));
   },
 }));

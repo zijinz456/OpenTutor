@@ -10,7 +10,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     environment: str = "development"
 
-    # Database — defaults to SQLite at ~/.opentutor/data.db if DATABASE_URL not set
+    # Database (SQLite-only local mode) — defaults to ~/.opentutor/data.db if DATABASE_URL not set
     database_url: str = ""
     redis_url: str = "redis://localhost:6379/0"
 
@@ -62,7 +62,7 @@ class Settings(BaseSettings):
     jwt_refresh_token_expire_days: int = 7
 
     # CORS
-    cors_origins: str = "http://localhost:3000,http://localhost:3001,http://127.0.0.1:3000,http://127.0.0.1:3001"
+    cors_origins: str = "http://localhost:3001,http://127.0.0.1:3001"
 
     # File Upload
     upload_dir: str = "./uploads"
@@ -123,8 +123,8 @@ class Settings(BaseSettings):
     activity_engine_max_concurrency: int = 3
     activity_use_redis_notify: bool = False
 
-    # Phase 3: Multi-modal
-    screenpipe_enabled: bool = False  # Enable Screenpipe screen context integration
+    # Phase 3: Multi-modal (TODO: not yet implemented — no referencing code)
+    screenpipe_enabled: bool = False
 
     # Web search
     tavily_api_key: str = ""
@@ -137,7 +137,7 @@ class Settings(BaseSettings):
     code_sandbox_runtime: str = "docker"  # docker | podman
     code_sandbox_image: str = "python:3.11-alpine"
     code_sandbox_timeout_seconds: int = 5
-    allow_insecure_process_sandbox: bool = False
+    allow_insecure_process_sandbox: bool = False  # Allows raw subprocess sandbox (no container isolation)
 
     # Encryption (Fernet key for at-rest encryption of OAuth tokens etc.)
     # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
@@ -192,24 +192,15 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _resolve_database_url(self):
-        """Resolve database URL with SQLite default and legacy PG compatibility.
+        """Resolve database URL in SQLite-only local mode.
 
         - Empty/unset DATABASE_URL → SQLite at ~/.opentutor/data.db (lazy dir creation)
-        - postgres:// → postgresql+asyncpg:// (legacy compatibility)
-        - postgresql:// → postgresql+asyncpg:// (legacy compatibility)
+        - DATABASE_URL must be a sqlite URL when explicitly set
         """
         if not self.database_url:
             data_dir = Path.home() / ".opentutor"
             data_dir.mkdir(parents=True, exist_ok=True)
             self.database_url = f"sqlite+aiosqlite:///{data_dir / 'data.db'}"
-        elif self.database_url.startswith("postgres://"):
-            self.database_url = self.database_url.replace(
-                "postgres://", "postgresql+asyncpg://", 1
-            )
-        elif self.database_url.startswith("postgresql://") and "+asyncpg" not in self.database_url:
-            self.database_url = self.database_url.replace(
-                "postgresql://", "postgresql+asyncpg://", 1
-            )
         elif self.database_url.startswith("sqlite"):
             for prefix in ("sqlite+aiosqlite:///", "sqlite:///"):
                 if self.database_url.startswith(prefix):
@@ -217,6 +208,10 @@ class Settings(BaseSettings):
                     if sqlite_path.startswith("~"):
                         self.database_url = f"{prefix}{Path(sqlite_path).expanduser()}"
                     break
+        else:
+            raise ValueError(
+                "SQLite-only local mode requires DATABASE_URL to be empty or start with sqlite"
+            )
         return self
 
     @model_validator(mode="after")
@@ -238,6 +233,14 @@ class Settings(BaseSettings):
             if "opentutor_dev" in self.database_url:
                 raise ValueError(
                     "Default database password must be changed in production"
+                )
+            # Require encryption_key when OAuth integrations are configured
+            has_oauth = bool(self.google_client_id and self.google_client_secret)
+            if has_oauth and not self.encryption_key:
+                raise ValueError(
+                    "encryption_key is required in production when OAuth integrations "
+                    "are configured (Google Calendar, etc.). Generate one with: "
+                    "python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
                 )
         return self
 

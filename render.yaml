@@ -8,11 +8,13 @@ services:
     dockerfilePath: apps/api/Dockerfile
     dockerContext: .
     healthCheckPath: /api/health
+    disk:
+      name: opentutor-data
+      mountPath: /var/data
+      sizeGB: 10
     envVars:
       - key: DATABASE_URL
-        fromDatabase:
-          name: opentutor-db
-          property: connectionURI
+        value: sqlite+aiosqlite:////var/data/opentutor.db
       - key: APP_AUTO_CREATE_TABLES
         value: "true"
       - key: APP_AUTO_SEED_SYSTEM
@@ -37,9 +39,3 @@ services:
           type: web
           name: opentutor-api
           envVarKey: RENDER_EXTERNAL_URL
-
-databases:
-  - name: opentutor-db
-    plan: starter
-    postgresMajorVersion: "17"
-    ipAllowList: []

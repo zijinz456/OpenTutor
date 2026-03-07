@@ -358,6 +358,7 @@ async def orchestrate_stream(
     tab_context: dict | None = None,
     scene: str | None = None,
     images: list[dict] | None = None,
+    learning_mode: str | None = None,
 ) -> AsyncIterator[dict]:
     """Main orchestration entry point for streaming responses.
 
@@ -383,6 +384,7 @@ async def orchestrate_stream(
         tab_context=tab_context,
         scene=scene,
         images=images,
+        learning_mode=learning_mode,
     )
 
     # ── Guided session detection (bypass normal routing) ──

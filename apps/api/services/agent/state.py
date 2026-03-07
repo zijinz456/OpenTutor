@@ -131,6 +131,9 @@ class AgentContext:
     # Tool idempotency cache (used by ToolRegistry to deduplicate calls)
     _idem_cache: dict[str, Any] = field(default_factory=dict)
 
+    # Learning mode (from frontend preferences)
+    learning_mode: str | None = None  # course_following, self_paced, exam_prep, maintenance
+
     # Metadata
     created_at: float = field(default_factory=time.time)
     completed_at: float | None = None

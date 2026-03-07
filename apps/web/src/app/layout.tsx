@@ -4,6 +4,7 @@ import { ThemeProvider } from "next-themes";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { LocaleProvider } from "@/lib/i18n-context";
+import { ConnectionStatus } from "@/components/shared/connection-status";
 import "./globals.css";
 
 const spaceGrotesk = Space_Grotesk({
@@ -50,6 +51,7 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning className={spaceGrotesk.variable}>
       <body className="antialiased">
+        <ConnectionStatus />
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
           <LocaleProvider>
             <TooltipProvider>

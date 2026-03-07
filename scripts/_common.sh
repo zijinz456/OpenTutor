@@ -40,74 +40,6 @@ detect_os() {
   esac
 }
 
-# Detect the available package manager.
-detect_pkg_manager() {
-  if command -v brew >/dev/null 2>&1; then printf 'brew\n'
-  elif command -v apt-get >/dev/null 2>&1; then printf 'apt\n'
-  elif command -v dnf >/dev/null 2>&1; then printf 'dnf\n'
-  elif command -v pacman >/dev/null 2>&1; then printf 'pacman\n'
-  elif command -v zypper >/dev/null 2>&1; then printf 'zypper\n'
-  elif command -v apk >/dev/null 2>&1; then printf 'apk\n'
-  else printf 'unknown\n'
-  fi
-}
-
-# Return a platform-specific install hint for a given package.
-# Usage: install_hint "postgresql"
-install_hint() {
-  local pkg="$1"
-  local pm
-  pm="$(detect_pkg_manager)"
-
-  case "${pm}" in
-    brew)
-      case "${pkg}" in
-        postgresql) printf 'brew install postgresql@16\n' ;;
-        python)     printf 'brew install python@3.11\n' ;;
-        pgvector)   printf 'brew install pgvector\n' ;;
-        node)       printf 'brew install node\n' ;;
-        *)          printf 'brew install %s\n' "${pkg}" ;;
-      esac
-      ;;
-    apt)
-      case "${pkg}" in
-        postgresql) printf 'sudo apt install postgresql\n' ;;
-        python)     printf 'sudo apt install python3.11 python3.11-venv\n' ;;
-        pgvector)   printf 'See https://github.com/pgvector/pgvector#linux\n' ;;
-        node)       printf 'See https://nodejs.org/ or: curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && sudo apt install -y nodejs\n' ;;
-        *)          printf 'sudo apt install %s\n' "${pkg}" ;;
-      esac
-      ;;
-    dnf)
-      case "${pkg}" in
-        postgresql) printf 'sudo dnf install postgresql-server\n' ;;
-        python)     printf 'sudo dnf install python3.11\n' ;;
-        pgvector)   printf 'See https://github.com/pgvector/pgvector#linux\n' ;;
-        node)       printf 'sudo dnf install nodejs\n' ;;
-        *)          printf 'sudo dnf install %s\n' "${pkg}" ;;
-      esac
-      ;;
-    pacman)
-      case "${pkg}" in
-        postgresql) printf 'sudo pacman -S postgresql\n' ;;
-        python)     printf 'sudo pacman -S python\n' ;;
-        pgvector)   printf 'See https://github.com/pgvector/pgvector#linux\n' ;;
-        node)       printf 'sudo pacman -S nodejs npm\n' ;;
-        *)          printf 'sudo pacman -S %s\n' "${pkg}" ;;
-      esac
-      ;;
-    *)
-      case "${pkg}" in
-        postgresql) printf 'Install PostgreSQL 16+: https://www.postgresql.org/download/\n' ;;
-        python)     printf 'Install Python 3.11: https://www.python.org/downloads/\n' ;;
-        pgvector)   printf 'See https://github.com/pgvector/pgvector\n' ;;
-        node)       printf 'Install Node.js 20+: https://nodejs.org/\n' ;;
-        *)          printf 'Install %s manually\n' "${pkg}" ;;
-      esac
-      ;;
-  esac
-}
-
 # Return the venv python path for the current platform.
 venv_python_path() {
   local venv_dir="$1"
@@ -126,32 +58,6 @@ venv_pip_path() {
   else
     printf '%s/bin/pip\n' "${venv_dir}"
   fi
-}
-
-# Attempt to start PostgreSQL in a cross-platform way. Returns 0 on success.
-start_postgresql() {
-  local os
-  os="$(detect_os)"
-  case "${os}" in
-    macos)
-      if command -v brew >/dev/null 2>&1; then
-        brew services start postgresql@16 2>/dev/null || brew services start postgresql 2>/dev/null || true
-        sleep 2
-      fi
-      ;;
-    linux)
-      if command -v systemctl >/dev/null 2>&1; then
-        sudo systemctl start postgresql 2>/dev/null || true
-        sleep 2
-      elif command -v service >/dev/null 2>&1; then
-        sudo service postgresql start 2>/dev/null || true
-        sleep 2
-      fi
-      ;;
-    windows)
-      log "  Please start PostgreSQL via Services (services.msc) or pg_ctl."
-      ;;
-  esac
 }
 
 resolve_python_bin() {

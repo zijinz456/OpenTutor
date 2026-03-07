@@ -24,6 +24,7 @@ const ReviewSummaryView = lazy(() =>
 
 interface AnalyticsSectionProps {
   courseId: string;
+  defaultTab?: AnalyticsTab;
 }
 
 type AnalyticsTab = "progress" | "review" | "blindspots" | "forecast" | "graph" | "profile";
@@ -37,9 +38,13 @@ const TABS: TabDef<AnalyticsTab>[] = [
   { id: "profile", label: "Profile" },
 ];
 
-export function AnalyticsSection({ courseId }: AnalyticsSectionProps) {
+export function AnalyticsSection({ courseId, defaultTab = "progress" }: AnalyticsSectionProps) {
   return (
-    <TabbedSection tabs={TABS} defaultTab="progress" testId="analytics-section">
+    <TabbedSection
+      tabs={TABS}
+      defaultTab={TABS.some((tab) => tab.id === defaultTab) ? defaultTab : "progress"}
+      testId="analytics-section"
+    >
       {(activeTab) => (
         <>
           {activeTab === "progress" ? <ProgressView courseId={courseId} /> : null}

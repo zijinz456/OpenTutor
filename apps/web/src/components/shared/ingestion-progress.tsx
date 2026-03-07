@@ -7,6 +7,7 @@ import type { IngestionJobSummary } from "@/lib/api";
 
 interface IngestionProgressProps {
   courseId: string;
+  onIngestionComplete?: () => void;
 }
 
 /** Phase label to user-friendly description mapping. */
@@ -16,7 +17,7 @@ function describePhase(job: IngestionJobSummary): string {
   return job.phase_label || job.status;
 }
 
-export function IngestionProgress({ courseId }: IngestionProgressProps) {
+export function IngestionProgress({ courseId, onIngestionComplete }: IngestionProgressProps) {
   const ingestionJobs = useCourseStore((s) => s.ingestionJobs);
   const fetchIngestionJobs = useCourseStore((s) => s.fetchIngestionJobs);
   const fetchContentTree = useCourseStore((s) => s.fetchContentTree);
@@ -66,9 +67,10 @@ export function IngestionProgress({ courseId }: IngestionProgressProps) {
   useEffect(() => {
     if (prevActiveCountRef.current > 0 && activeJobs.length === 0) {
       void fetchContentTree(courseId);
+      onIngestionComplete?.();
     }
     prevActiveCountRef.current = activeJobs.length;
-  }, [activeJobs.length, courseId, fetchContentTree]);
+  }, [activeJobs.length, courseId, fetchContentTree, onIngestionComplete]);
 
   // Don't render if there are no active or recent failed jobs
   const recentFailedJobs = failedJobs.slice(0, 3);

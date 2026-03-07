@@ -1,19 +1,20 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { useCourseStore } from "@/store/course";
 import { WorkspaceHeader } from "@/components/shell/workspace-header";
 import { ChatFab } from "@/components/chat/chat-fab";
 import { ChatDrawer } from "@/components/chat/chat-drawer";
 import { getHealthStatus, type HealthStatus } from "@/lib/api";
 import { ttlCache } from "@/lib/cache";
-import { ProfileView } from "@/components/sections/analytics/profile-view";
+import { AnalyticsSection } from "@/components/sections/analytics-section";
 import { ModeSelector } from "@/components/course/mode-selector";
 import { useT } from "@/lib/i18n-context";
 
 export default function ProfilePage() {
   const params = useParams();
+  const searchParams = useSearchParams();
   const courseId = params.id as string;
   const t = useT();
   const [chatOpen, setChatOpen] = useState(false);
@@ -35,13 +36,18 @@ export default function ProfilePage() {
   useEffect(() => {
     getHealthStatus()
       .then((d) => { ttlCache.set("course:health", d, 30_000); setHealth(d); })
-      .catch(() => {});
+      .catch((e) => console.error("[Profile] health check failed:", e));
   }, []);
 
   const course = activeCourse ?? courses.find((c) => c.id === courseId) ?? null;
   const aiActionsEnabled =
     health?.llm_status !== "mock_fallback" &&
     health?.llm_status !== "configuration_required";
+  const requestedTab = searchParams.get("tab");
+  const tab = (requestedTab &&
+    ["progress", "review", "blindspots", "forecast", "graph", "profile"].includes(requestedTab)
+      ? requestedTab
+      : "profile") as "progress" | "review" | "blindspots" | "forecast" | "graph" | "profile";
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -54,8 +60,10 @@ export default function ProfilePage() {
           <ModeSelector />
         </section>
 
-        {/* Learning profile */}
-        <ProfileView courseId={courseId} />
+        {/* Full analytics view with mode-aware default tab */}
+        <div className="rounded-xl border border-border bg-card overflow-hidden min-h-[380px]">
+          <AnalyticsSection courseId={courseId} defaultTab={tab} />
+        </div>
       </main>
       <ChatFab open={chatOpen} onToggle={() => setChatOpen((v) => !v)} />
       <ChatDrawer courseId={courseId} open={chatOpen} aiActionsEnabled={aiActionsEnabled} />

@@ -11,6 +11,10 @@ import {
 } from "@/lib/api";
 import { useT } from "@/lib/i18n-context";
 import { useCourseStore } from "@/store/course";
+import { useWorkspaceStore } from "@/store/workspace";
+import { updateUnlockContext } from "@/lib/block-system/feature-unlock";
+import { buildLayoutFromMode } from "@/lib/block-system/templates";
+import type { LearningMode } from "@/lib/block-system/types";
 
 import type { Mode, Step, FileItem, ParseLog } from "./types";
 import { isCanvasUrl, FEATURE_CARDS, deriveParseSteps, deriveParseProgress } from "./types";
@@ -24,6 +28,7 @@ export function useNewProject() {
   /* ---------- State ---------- */
   const [step, setStep] = useState<Step>("mode");
   const [mode, setMode] = useState<Mode>("both");
+  const [learningMode, setLearningMode] = useState<LearningMode>("course_following");
   const [projectName, setProjectName] = useState("");
   const [files, setFiles] = useState<FileItem[]>([]);
   const [url, setUrl] = useState("");
@@ -161,7 +166,10 @@ export function useNewProject() {
     let nextCourseId: string | null = null;
 
     try {
-      const metadata = buildMetadata(features, autoScrape, url, mode);
+      const metadata = {
+        ...buildMetadata(features, autoScrape, url, mode),
+        learning_mode: learningMode,
+      };
       addLog(`${new Date().toLocaleTimeString()}  ${t("new.logCreatingProject")} "${projectName || t("new.untitled")}"...`, "text-muted-foreground");
 
       const description = nlInput.trim() || undefined;
@@ -181,20 +189,45 @@ export function useNewProject() {
       setIsSubmittingContent(false);
       if (nextCourseId) void fetchContentTree(nextCourseId).catch(() => undefined);
     }
-  }, [addCourse, autoScrape, canvasSessionValid, features, fetchContentTree, files, mode, nlInput, projectName, t, url]);
+  }, [
+    addCourse,
+    autoScrape,
+    canvasSessionValid,
+    features,
+    fetchContentTree,
+    files,
+    learningMode,
+    mode,
+    nlInput,
+    projectName,
+    t,
+    url,
+  ]);
 
   /* ---------- Enter workspace ---------- */
   const enterWorkspace = useCallback(async () => {
     if (!createdCourseId) return;
-    const metadata = buildMetadata(features, autoScrape, url, mode);
+    const layout = buildLayoutFromMode(learningMode);
+    const metadata = {
+      ...buildMetadata(features, autoScrape, url, mode),
+      learning_mode: learningMode,
+      spaceLayout: layout as unknown as Record<string, unknown>,
+    };
+
+    // Prime workspace state so the first paint on /course is mode-correct.
+    useWorkspaceStore.getState().loadBlocks(layout);
+    localStorage.setItem(`opentutor_blocks_${createdCourseId}`, JSON.stringify(layout));
+    updateUnlockContext(createdCourseId, { mode: learningMode });
+
     try { await updateCourse(createdCourseId, { metadata }); } catch { /* still works */ }
     if (nlInput.trim()) localStorage.setItem(`course_init_prompt_${createdCourseId}`, nlInput.trim());
     router.push(`/course/${createdCourseId}`);
-  }, [autoScrape, createdCourseId, features, mode, nlInput, router, url]);
+  }, [autoScrape, createdCourseId, features, learningMode, mode, nlInput, router, url]);
 
   return {
     router, t, step, setStep,
     mode, setMode,
+    learningMode, setLearningMode,
     projectName, setProjectName, nameError, validateName,
     files, setFiles,
     url, setUrl, urlError, validateUrl, isCanvasDetected, canvasSessionValid, handleAddUrl,

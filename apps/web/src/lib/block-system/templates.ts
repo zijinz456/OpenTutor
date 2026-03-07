@@ -24,6 +24,8 @@ export interface TemplateDefinition {
   nameZh: string;
   description: string;
   descriptionZh: string;
+  /** Default learning mode attached to this template. */
+  defaultMode: LearningMode;
   blocks: Array<Omit<BlockInstance, "id"> & { id: string }>;
   columns: 1 | 2 | 3;
 }
@@ -35,6 +37,7 @@ export const TEMPLATES: Record<string, TemplateDefinition> = {
     nameZh: "理工科学生",
     description: "Step-by-step notes, adaptive quizzes, knowledge graph",
     descriptionZh: "分步笔记、自适应测验、知识图谱",
+    defaultMode: "course_following",
     columns: 2,
     blocks: [
       b("chapter_list", "full", {}),
@@ -50,6 +53,7 @@ export const TEMPLATES: Record<string, TemplateDefinition> = {
     nameZh: "人文学者",
     description: "Rich narrative notes, review sessions, reading progress",
     descriptionZh: "叙事性笔记、复习环节、阅读进度",
+    defaultMode: "course_following",
     columns: 2,
     blocks: [
       b("chapter_list", "full"),
@@ -64,6 +68,7 @@ export const TEMPLATES: Record<string, TemplateDefinition> = {
     nameZh: "语言学习者",
     description: "Flashcards-first, comparison tables, frequent practice",
     descriptionZh: "闪卡优先、对比表格、频繁练习",
+    defaultMode: "self_paced",
     columns: 2,
     blocks: [
       b("chapter_list", "full"),
@@ -79,6 +84,7 @@ export const TEMPLATES: Record<string, TemplateDefinition> = {
     nameZh: "视觉学习者",
     description: "Knowledge graph prominent, mind map notes, visual aids",
     descriptionZh: "知识图谱突出、思维导图笔记、视觉辅助",
+    defaultMode: "self_paced",
     columns: 2,
     blocks: [
       b("chapter_list", "full"),
@@ -94,6 +100,7 @@ export const TEMPLATES: Record<string, TemplateDefinition> = {
     nameZh: "快速复习",
     description: "Quiz-heavy, flashcards, error analysis",
     descriptionZh: "大量刷题、闪卡、错题分析",
+    defaultMode: "exam_prep",
     columns: 2,
     blocks: [
       b("chapter_list", "full"),
@@ -103,9 +110,28 @@ export const TEMPLATES: Record<string, TemplateDefinition> = {
       b("progress", "small"),
     ],
   },
+  blank_canvas: {
+    id: "blank_canvas",
+    name: "Blank Canvas",
+    nameZh: "空白画布",
+    description: "Start from scratch and build your own space.",
+    descriptionZh: "从零开始，自定义你的学习空间。",
+    defaultMode: "self_paced",
+    columns: 2,
+    blocks: [],
+  },
 };
 
-export const TEMPLATE_LIST = Object.values(TEMPLATES);
+const TEMPLATE_DISPLAY_ORDER = [
+  "stem_student",
+  "humanities_scholar",
+  "visual_learner",
+  "quick_reviewer",
+  "blank_canvas",
+] as const;
+
+/** Templates shown in onboarding/template picker. */
+export const TEMPLATE_LIST = TEMPLATE_DISPLAY_ORDER.map((id) => TEMPLATES[id]);
 
 // ── Learning Mode Definitions ──
 
@@ -203,6 +229,7 @@ export function buildLayoutFromTemplate(templateId: string): SpaceLayout | null 
     templateId,
     blocks,
     columns: template.columns,
+    mode: template.defaultMode,
   };
 }
 

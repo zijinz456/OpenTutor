@@ -10,6 +10,8 @@ import {
 
 interface GraphViewProps {
   courseId: string;
+  focusTerms?: string[];
+  maxNodes?: number;
 }
 
 interface SimNode extends KnowledgeGraphNode {
@@ -27,7 +29,63 @@ const SPRING_LEN = 120;
 const DAMPING = 0.85;
 const MAX_ITER = 100;
 
-export function GraphView({ courseId }: GraphViewProps) {
+function buildFocusedGraph(
+  nodes: KnowledgeGraphNode[],
+  edges: KnowledgeGraphEdge[],
+  focusTerms?: string[],
+  maxNodes = 20,
+): { nodes: KnowledgeGraphNode[]; edges: KnowledgeGraphEdge[] } {
+  const normalizedTerms = (focusTerms ?? [])
+    .map((term) => term.trim().toLowerCase())
+    .filter((term) => term.length >= 2);
+  if (normalizedTerms.length === 0) {
+    return { nodes, edges };
+  }
+
+  const seedIds = new Set(
+    nodes
+      .filter((node) =>
+        normalizedTerms.some((term) => node.label.toLowerCase().includes(term)),
+      )
+      .map((node) => node.id),
+  );
+
+  // If no direct matches, fall back to the full graph.
+  if (seedIds.size === 0) {
+    return { nodes, edges };
+  }
+
+  const included = new Set(seedIds);
+  for (const edge of edges) {
+    if (seedIds.has(edge.source) || seedIds.has(edge.target)) {
+      included.add(edge.source);
+      included.add(edge.target);
+    }
+  }
+
+  let focusedNodes = nodes.filter((node) => included.has(node.id));
+  let focusedEdges = edges.filter(
+    (edge) => included.has(edge.source) && included.has(edge.target),
+  );
+
+  if (focusedNodes.length > maxNodes) {
+    const prioritized = [...focusedNodes].sort((a, b) => {
+      const aSeed = seedIds.has(a.id) ? 0 : 1;
+      const bSeed = seedIds.has(b.id) ? 0 : 1;
+      if (aSeed !== bSeed) return aSeed - bSeed;
+      return a.mastery - b.mastery;
+    });
+    focusedNodes = prioritized.slice(0, maxNodes);
+    const allowed = new Set(focusedNodes.map((node) => node.id));
+    focusedEdges = focusedEdges.filter(
+      (edge) => allowed.has(edge.source) && allowed.has(edge.target),
+    );
+  }
+
+  return { nodes: focusedNodes, edges: focusedEdges };
+}
+
+export function GraphView({ courseId, focusTerms, maxNodes = 20 }: GraphViewProps) {
   const t = useT();
   const [nodes, setNodes] = useState<SimNode[]>([]);
   const [edges, setEdges] = useState<KnowledgeGraphEdge[]>([]);
@@ -41,7 +99,14 @@ export function GraphView({ courseId }: GraphViewProps) {
     getKnowledgeGraph(courseId)
       .then((data) => {
         if (cancelled) return;
-        if (!data.nodes?.length) {
+        const focused = buildFocusedGraph(
+          data.nodes ?? [],
+          data.edges ?? [],
+          focusTerms,
+          maxNodes,
+        );
+
+        if (!focused.nodes.length) {
           setEmpty(true);
           setLoading(false);
           return;
@@ -49,8 +114,8 @@ export function GraphView({ courseId }: GraphViewProps) {
         const cx = WIDTH / 2;
         const cy = HEIGHT / 2;
         const r = Math.min(WIDTH, HEIGHT) * 0.35;
-        const simNodes: SimNode[] = data.nodes.map((node, index) => {
-          const angle = (2 * Math.PI * index) / data.nodes.length;
+        const simNodes: SimNode[] = focused.nodes.map((node, index) => {
+          const angle = (2 * Math.PI * index) / focused.nodes.length;
           return {
             ...node,
             x: cx + r * Math.cos(angle),
@@ -59,7 +124,7 @@ export function GraphView({ courseId }: GraphViewProps) {
             vy: 0,
           };
         });
-        setEdges(data.edges ?? []);
+        setEdges(focused.edges);
         setNodes(simNodes);
         setEmpty(false);
         setLoading(false);
@@ -73,7 +138,7 @@ export function GraphView({ courseId }: GraphViewProps) {
     return () => {
       cancelled = true;
     };
-  }, [courseId]);
+  }, [courseId, focusTerms, maxNodes]);
 
   useEffect(() => {
     if (nodes.length === 0) return;

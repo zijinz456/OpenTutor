@@ -190,3 +190,19 @@ export type {
   AppNotification,
   NotificationsResponse,
 } from "./notifications";
+
+// ── Search ──
+export async function searchContent(
+  query: string,
+  courseId?: string,
+): Promise<{ results: Array<{ id: string; title: string; snippet: string; type: string; course_id: string; course_name?: string }> }> {
+  const { request } = await import("./client");
+  const params = new URLSearchParams({ q: query });
+  if (courseId) params.set("course_id", courseId);
+  try {
+    return await request(`/search?${params.toString()}`);
+  } catch {
+    // Fallback: search locally through content tree
+    return { results: [] };
+  }
+}

@@ -24,6 +24,9 @@ export interface CourseMetadata {
   workspace_features?: Partial<CourseWorkspaceFeatures> | null;
   auto_scrape?: CourseAutoScrapeSettings | null;
   layout?: Record<string, unknown> | null;
+  spaceLayout?: Record<string, unknown> | null;
+  learning_mode?: string | null;
+  [key: string]: unknown;
 }
 
 export interface Course {

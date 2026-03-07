@@ -4,18 +4,21 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { X, Check, Sparkles, Maximize2 } from "lucide-react";
 import { BLOCK_REGISTRY } from "@/lib/block-system/registry";
-import type { BlockInstance, BlockType } from "@/lib/block-system/types";
+import type { BlockInstance, BlockType, LearningMode } from "@/lib/block-system/types";
 import { useWorkspaceStore } from "@/store/workspace";
 import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 
-const BLOCK_FULL_PAGE_ROUTES: Partial<Record<BlockType, string>> = {
-  notes: "notes",
-  quiz: "practice",
-  flashcards: "practice",
-  knowledge_graph: "graph",
-  plan: "plan",
-  review: "review",
-  progress: "profile",
+const BLOCK_FULL_PAGE_LINKS: Partial<Record<BlockType, (courseId: string) => string>> = {
+  notes: (courseId) => `/course/${courseId}/notes`,
+  quiz: (courseId) => `/course/${courseId}/practice?tab=quiz`,
+  flashcards: (courseId) => `/course/${courseId}/practice?tab=flashcards`,
+  knowledge_graph: (courseId) => `/course/${courseId}/graph`,
+  plan: (courseId) => `/course/${courseId}/plan`,
+  review: (courseId) => `/course/${courseId}/review`,
+  progress: (courseId) => `/course/${courseId}/profile?tab=progress`,
+  wrong_answers: (courseId) => `/course/${courseId}/profile?tab=blindspots`,
+  forecast: (courseId) => `/course/${courseId}/profile?tab=forecast`,
 };
 
 interface BlockWrapperProps {
@@ -26,8 +29,11 @@ interface BlockWrapperProps {
 
 export function BlockWrapper({ block, courseId, aiActionsEnabled }: BlockWrapperProps) {
   const removeBlock = useWorkspaceStore((s) => s.removeBlock);
+  const addBlock = useWorkspaceStore((s) => s.addBlock);
   const approveAgentBlock = useWorkspaceStore((s) => s.approveAgentBlock);
   const dismissAgentBlock = useWorkspaceStore((s) => s.dismissAgentBlock);
+  const setLearningMode = useWorkspaceStore((s) => s.setLearningMode);
+  const applyBlockTemplate = useWorkspaceStore((s) => s.applyBlockTemplate);
 
   const entry = BLOCK_REGISTRY[block.type];
   if (!entry) return null;
@@ -35,6 +41,41 @@ export function BlockWrapper({ block, courseId, aiActionsEnabled }: BlockWrapper
   const Component = entry.component;
   const isAgent = block.source === "agent";
   const needsApproval = isAgent && block.agentMeta?.needsApproval;
+  const insightType = block.type === "agent_insight" ? (block.config.insightType as string | undefined) : undefined;
+
+  const handleApprove = () => {
+    // Apply the intended operation directly for high-impact Tier-2 suggestions.
+    if (insightType === "mode_suggestion") {
+      const suggestedMode = block.config.suggestedMode as LearningMode | undefined;
+      if (suggestedMode) {
+        setLearningMode(suggestedMode);
+        dismissAgentBlock(block.id);
+        return;
+      }
+    }
+    if (insightType === "layout_suggestion") {
+      const suggestedTemplate = block.config.suggestedTemplate as string | undefined;
+      if (suggestedTemplate) {
+        applyBlockTemplate(suggestedTemplate);
+        dismissAgentBlock(block.id);
+        return;
+      }
+    }
+    if (insightType === "feature_unlock") {
+      const suggestedBlockType = block.config.suggestedBlockType as BlockType | undefined;
+      if (suggestedBlockType) {
+        const exists = useWorkspaceStore.getState().spaceLayout.blocks.some(
+          (b) => b.type === suggestedBlockType,
+        );
+        if (!exists) {
+          addBlock(suggestedBlockType, {}, "agent");
+        }
+        dismissAgentBlock(block.id);
+        return;
+      }
+    }
+    approveAgentBlock(block.id);
+  };
 
   return (
     <div
@@ -50,9 +91,9 @@ export function BlockWrapper({ block, courseId, aiActionsEnabled }: BlockWrapper
           {entry.label}
         </span>
 
-        {BLOCK_FULL_PAGE_ROUTES[block.type] && (
+        {BLOCK_FULL_PAGE_LINKS[block.type] && (
           <Link
-            href={`/course/${courseId}/${BLOCK_FULL_PAGE_ROUTES[block.type]}`}
+            href={BLOCK_FULL_PAGE_LINKS[block.type]!(courseId)}
             className="text-muted-foreground hover:text-foreground transition-colors p-1"
             aria-label="Open full page"
             title="Open full page"
@@ -71,7 +112,7 @@ export function BlockWrapper({ block, courseId, aiActionsEnabled }: BlockWrapper
         {needsApproval && (
           <>
             <button
-              onClick={() => approveAgentBlock(block.id)}
+              onClick={handleApprove}
               className="inline-flex items-center gap-1 text-[11px] font-medium text-success bg-success-muted px-2.5 py-1 rounded-md hover:bg-success/20 transition-colors"
             >
               <Check className="size-3" />
@@ -98,7 +139,16 @@ export function BlockWrapper({ block, courseId, aiActionsEnabled }: BlockWrapper
 
         {block.source === "user" && (
           <button
-            onClick={() => removeBlock(block.id)}
+            onClick={() => {
+              removeBlock(block.id);
+              toast("Block removed", {
+                action: {
+                  label: "Undo",
+                  onClick: () => useWorkspaceStore.getState().undoRemoveBlock(),
+                },
+                duration: 5000,
+              });
+            }}
             className="text-muted-foreground hover:text-destructive transition-colors p-1 -mr-1"
             aria-label="Remove block"
           >

@@ -52,11 +52,6 @@ class CourseContentTree(Base):
     children = relationship("CourseContentTree", back_populates="parent", cascade="all, delete-orphan")
     parent = relationship("CourseContentTree", back_populates="children", remote_side=[id])
 
-
-from database import is_sqlite
-
-# GIN index for fast full-text search (PostgreSQL only; SQLite uses FTS5 virtual tables)
-if not is_sqlite():
-    Index("ix_content_tree_search_vector", CourseContentTree.search_vector, postgresql_using="gin")
+Index("ix_content_tree_search_vector", CourseContentTree.search_vector)
 Index("ix_content_tree_course_parent", CourseContentTree.course_id, CourseContentTree.parent_id)
 Index("ix_content_tree_course_order", CourseContentTree.course_id, CourseContentTree.order_index)

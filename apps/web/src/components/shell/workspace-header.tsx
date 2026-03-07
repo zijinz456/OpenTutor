@@ -1,23 +1,20 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback } from "react";
 import Link from "next/link";
-import { ArrowLeft, Layout, RefreshCw, Settings } from "lucide-react";
+import { ArrowLeft, RefreshCw, Search, Settings } from "lucide-react";
 import { NotificationBell } from "./notification-bell";
 import { ModeSelector } from "@/components/course/mode-selector";
 import { Button } from "@/components/ui/button";
 import { useT } from "@/lib/i18n-context";
 import { syncCourse } from "@/lib/api";
 import { useCourseStore } from "@/store/course";
-import { useWorkspaceStore } from "@/store/workspace";
-import { LAYOUT_PRESETS, PRESET_LABELS, type PresetId } from "@/lib/layout-presets";
+
 
 interface WorkspaceHeaderProps {
   courseName: string;
   courseId?: string;
 }
-
-const PRESET_IDS = Object.keys(LAYOUT_PRESETS) as PresetId[];
 
 export function WorkspaceHeader({
   courseName,
@@ -26,12 +23,8 @@ export function WorkspaceHeader({
   const t = useT();
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
-  const [presetOpen, setPresetOpen] = useState(false);
-  const presetRef = useRef<HTMLDivElement>(null);
   const fetchContentTree = useCourseStore((s) => s.fetchContentTree);
   const fetchIngestionJobs = useCourseStore((s) => s.fetchIngestionJobs);
-  const currentPreset = useWorkspaceStore((s) => s.layout.preset);
-  const applyPreset = useWorkspaceStore((s) => s.applyPreset);
 
   const handleSync = useCallback(async () => {
     if (!courseId || syncing) return;
@@ -59,18 +52,6 @@ export function WorkspaceHeader({
       setSyncing(false);
     }
   }, [courseId, syncing, fetchContentTree, fetchIngestionJobs]);
-
-  // Close dropdown on outside click
-  useEffect(() => {
-    if (!presetOpen) return;
-    const handler = (e: MouseEvent) => {
-      if (presetRef.current && !presetRef.current.contains(e.target as Node)) {
-        setPresetOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [presetOpen]);
 
   return (
     <header
@@ -118,45 +99,15 @@ export function WorkspaceHeader({
         {/* Learning mode selector */}
         <ModeSelector />
 
-        {/* Layout preset switcher */}
-        <div className="relative" ref={presetRef}>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            className="text-muted-foreground hover:text-foreground"
-            title="Layout preset"
-            onClick={() => setPresetOpen((v) => !v)}
-          >
-            <Layout className="size-3.5" />
-          </Button>
-
-          {presetOpen && (
-            <div className="absolute right-0 top-full mt-1 z-50 min-w-[180px] rounded-md border border-border bg-popover p-1 shadow-md">
-              {PRESET_IDS.map((id) => {
-                const meta = PRESET_LABELS[id];
-                const active = currentPreset === id;
-                return (
-                  <button
-                    type="button"
-                    key={id}
-                    onClick={() => {
-                      applyPreset(id);
-                      setPresetOpen(false);
-                    }}
-                    className={`flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-xs transition-colors ${
-                      active
-                        ? "bg-primary/10 text-primary font-medium"
-                        : "text-foreground hover:bg-muted"
-                    }`}
-                  >
-                    <span className="flex-1 text-left">{meta.label}</span>
-                    <span className="text-[10px] text-muted-foreground">{meta.description}</span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          className="text-muted-foreground hover:text-foreground"
+          title="Search (⌘K)"
+          onClick={() => window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true }))}
+        >
+          <Search className="size-3.5" />
+        </Button>
 
         <NotificationBell />
 

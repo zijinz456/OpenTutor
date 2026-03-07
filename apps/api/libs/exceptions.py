@@ -93,3 +93,34 @@ class PermissionDeniedError(AppError):
 
     def __init__(self, message: str = "Permission denied"):
         super().__init__(message)
+
+
+class IngestionError(AppError):
+    """Raised when document ingestion or parsing fails."""
+    code = "ingestion_error"
+    status = 500
+
+    def __init__(self, message: str = "Ingestion failed", source: str | None = None):
+        self.source = source
+        detail = f"Ingestion failed for {source}: {message}" if source else message
+        super().__init__(detail)
+
+
+class ToolExecutionError(AppError):
+    """Raised when an agent tool fails during execution."""
+    code = "tool_execution_error"
+    status = 500
+
+    def __init__(self, tool_name: str, message: str = "Tool execution failed"):
+        self.tool_name = tool_name
+        super().__init__(f"Tool '{tool_name}' failed: {message}")
+
+
+class ContextBuildError(AppError):
+    """Raised when context assembly for the agent fails."""
+    code = "context_build_error"
+    status = 500
+
+    def __init__(self, phase: str = "unknown", message: str = "Context building failed"):
+        self.phase = phase
+        super().__init__(f"Context build error ({phase}): {message}")

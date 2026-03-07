@@ -1,10 +1,13 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import { useParams } from "next/navigation";
 import { GraduationCap, Compass, Clock, Shield, ChevronDown } from "lucide-react";
 import { useWorkspaceStore } from "@/store/workspace";
 import { LEARNING_MODE_LIST } from "@/lib/block-system/templates";
 import type { LearningMode } from "@/lib/block-system/types";
+import { updateUnlockContext } from "@/lib/block-system/feature-unlock";
+import { updateCourseLayout } from "@/lib/api";
 import { useT } from "@/lib/i18n-context";
 
 const MODE_ICONS: Record<LearningMode, typeof GraduationCap> = {
@@ -34,6 +37,8 @@ interface ModeSelectorProps {
 
 export function ModeSelector({ onModeChange }: ModeSelectorProps) {
   const t = useT();
+  const params = useParams();
+  const courseId = (params?.id as string) ?? "";
   const [open, setOpen] = useState(false);
   const [confirming, setConfirming] = useState<LearningMode | null>(null);
   const ref = useRef<HTMLDivElement>(null);
@@ -60,6 +65,12 @@ export function ModeSelector({ onModeChange }: ModeSelectorProps) {
     }
     if (confirming === mode) {
       setLearningMode(mode);
+      if (courseId) {
+        updateUnlockContext(courseId, { mode });
+        const layout = useWorkspaceStore.getState().spaceLayout;
+        localStorage.setItem(`opentutor_blocks_${courseId}`, JSON.stringify(layout));
+        updateCourseLayout(courseId, layout as unknown as Record<string, unknown>).catch(() => undefined);
+      }
       onModeChange?.(mode);
       setOpen(false);
       setConfirming(null);

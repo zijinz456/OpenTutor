@@ -214,7 +214,10 @@ async def update_course(
     if body.description is not None:
         course.description = body.description
     if body.metadata is not None:
-        course.metadata_ = body.metadata.model_dump(exclude_none=True)
+        existing_metadata = dict(course.metadata_ or {})
+        incoming_metadata = body.metadata.model_dump(exclude_none=True)
+        existing_metadata.update(incoming_metadata)
+        course.metadata_ = existing_metadata
     await db.commit()
     await db.refresh(course)
     return course
@@ -229,9 +232,14 @@ async def update_layout(
 ):
     """Update the workspace layout configuration stored in course metadata."""
     body = await request.json()
+    if not isinstance(body, dict):
+        body = {}
     course = await get_course_or_404(db, course_id, user_id=user.id)
     metadata = dict(course.metadata_ or {})
-    metadata["layout"] = body
+    metadata["spaceLayout"] = body
+    mode = body.get("mode")
+    if isinstance(mode, str) and mode:
+        metadata["learning_mode"] = mode
     course.metadata_ = metadata
     await db.commit()
     await db.refresh(course)

@@ -1,24 +1,38 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { useCourseStore } from "@/store/course";
+import { useWorkspaceStore } from "@/store/workspace";
 import { WorkspaceHeader } from "@/components/shell/workspace-header";
 import { PlanSection } from "@/components/sections/plan-section";
 import { ChatFab } from "@/components/chat/chat-fab";
 import { ChatDrawer } from "@/components/chat/chat-drawer";
 import { getHealthStatus, type HealthStatus } from "@/lib/api";
 import { ttlCache } from "@/lib/cache";
+import type { LearningMode } from "@/lib/block-system/types";
+
+function asLearningMode(value: unknown): LearningMode | undefined {
+  return value === "course_following" ||
+    value === "self_paced" ||
+    value === "exam_prep" ||
+    value === "maintenance"
+    ? value
+    : undefined;
+}
 
 export default function PlanPage() {
   const params = useParams();
+  const searchParams = useSearchParams();
   const courseId = params.id as string;
   const [chatOpen, setChatOpen] = useState(false);
   const [health, setHealth] = useState<HealthStatus | null>(
     () => ttlCache.get<HealthStatus>("course:health") ?? null,
   );
+  const [resolvedMode, setResolvedMode] = useState<LearningMode | undefined>(undefined);
 
   const { activeCourse, courses, fetchCourses, setActiveCourse } = useCourseStore();
+  const spaceMode = useWorkspaceStore((s) => s.spaceLayout.mode);
 
   useEffect(() => {
     if (courses.length === 0) void fetchCourses();
@@ -32,10 +46,38 @@ export default function PlanPage() {
   useEffect(() => {
     getHealthStatus()
       .then((d) => { ttlCache.set("course:health", d, 30_000); setHealth(d); })
-      .catch(() => {});
+      .catch((e) => console.error("[Plan] health check failed:", e));
   }, []);
 
   const course = activeCourse ?? courses.find((c) => c.id === courseId) ?? null;
+  useEffect(() => {
+    const metadata = (course?.metadata as Record<string, unknown> | undefined) ?? {};
+    const layout = metadata.spaceLayout;
+    const layoutMode = layout && typeof layout === "object"
+      ? asLearningMode((layout as Record<string, unknown>).mode)
+      : undefined;
+    const metaMode = asLearningMode(metadata.learning_mode);
+
+    let localMode: LearningMode | undefined;
+    try {
+      const raw = localStorage.getItem(`opentutor_blocks_${courseId}`);
+      if (raw) {
+        const parsed = JSON.parse(raw) as { mode?: unknown };
+        localMode = asLearningMode(parsed.mode);
+      }
+    } catch {
+      // ignore malformed local storage
+    }
+
+    setResolvedMode(spaceMode ?? localMode ?? layoutMode ?? metaMode);
+  }, [course?.metadata, courseId, spaceMode]);
+
+  const requestedTab = searchParams.get("tab");
+  const defaultTab =
+    requestedTab === "plan" || requestedTab === "calendar" || requestedTab === "tasks"
+      ? requestedTab
+      : undefined;
+
   const aiActionsEnabled =
     health?.llm_status !== "mock_fallback" &&
     health?.llm_status !== "configuration_required";
@@ -44,7 +86,12 @@ export default function PlanPage() {
     <div className="min-h-screen bg-background flex flex-col">
       <WorkspaceHeader courseName={course?.name || "Study Plan"} courseId={courseId} />
       <main className="flex-1 max-w-5xl mx-auto w-full px-4 py-6">
-        <PlanSection courseId={courseId} aiActionsEnabled={aiActionsEnabled} />
+        <PlanSection
+          courseId={courseId}
+          aiActionsEnabled={aiActionsEnabled}
+          learningMode={resolvedMode}
+          defaultTab={defaultTab}
+        />
       </main>
       <ChatFab open={chatOpen} onToggle={() => setChatOpen((v) => !v)} />
       <ChatDrawer courseId={courseId} open={chatOpen} aiActionsEnabled={aiActionsEnabled} />

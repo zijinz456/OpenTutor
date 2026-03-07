@@ -2,7 +2,9 @@
 
 import uuid
 
-from fastapi import APIRouter, Depends
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -721,6 +723,86 @@ async def get_review_session(
         "course_id": str(course_id),
         "items": [asdict(i) for i in items],
         "count": len(items),
+    }
+
+
+@router.post("/courses/{course_id}/review-session/rate")
+async def submit_review_rating(
+    course_id: uuid.UUID,
+    body: dict,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Submit a rating for a reviewed concept (again/hard/good/easy).
+
+    Updates ConceptMastery with new mastery score, stability, and review timestamp.
+    Body: { "concept_id": str, "rating": "again"|"hard"|"good"|"easy" }
+    """
+    from models.knowledge_graph import ConceptMastery
+
+    concept_id = body.get("concept_id")
+    rating = body.get("rating", "good")
+    if not concept_id:
+        raise HTTPException(status_code=400, detail="concept_id is required")
+
+    # Rating → mastery adjustment factors
+    RATING_FACTORS = {
+        "again": {"mastery_delta": -0.15, "stability_mult": 0.3, "correct": False},
+        "hard":  {"mastery_delta": -0.05, "stability_mult": 0.7, "correct": True},
+        "good":  {"mastery_delta": 0.05,  "stability_mult": 1.5, "correct": True},
+        "easy":  {"mastery_delta": 0.10,  "stability_mult": 2.5, "correct": True},
+    }
+    factors = RATING_FACTORS.get(rating, RATING_FACTORS["good"])
+
+    try:
+        concept_uuid = uuid.UUID(concept_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid concept_id")
+
+    # Find or create mastery record
+    result = await db.execute(
+        select(ConceptMastery).where(
+            ConceptMastery.user_id == user.id,
+            ConceptMastery.knowledge_node_id == concept_uuid,
+        )
+    )
+    mastery = result.scalar_one_or_none()
+
+    now = datetime.now(timezone.utc)
+
+    if not mastery:
+        mastery = ConceptMastery(
+            user_id=user.id,
+            knowledge_node_id=concept_uuid,
+            mastery_score=max(0.0, min(1.0, 0.3 + factors["mastery_delta"])),
+            practice_count=1,
+            correct_count=1 if factors["correct"] else 0,
+            wrong_count=0 if factors["correct"] else 1,
+            last_practiced_at=now,
+            stability_days=max(0.5, 1.0 * factors["stability_mult"]),
+        )
+        db.add(mastery)
+    else:
+        mastery.mastery_score = max(0.0, min(1.0, mastery.mastery_score + factors["mastery_delta"]))
+        mastery.practice_count += 1
+        if factors["correct"]:
+            mastery.correct_count += 1
+        else:
+            mastery.wrong_count += 1
+        mastery.stability_days = max(0.5, mastery.stability_days * factors["stability_mult"])
+        mastery.last_practiced_at = now
+        # Schedule next review based on stability
+        from datetime import timedelta
+        mastery.next_review_at = now + timedelta(days=mastery.stability_days)
+
+    await db.commit()
+
+    return {
+        "concept_id": concept_id,
+        "rating": rating,
+        "new_mastery": round(mastery.mastery_score, 3),
+        "new_stability_days": round(mastery.stability_days, 1),
+        "next_review_at": mastery.next_review_at.isoformat() if mastery.next_review_at else None,
     }
 
 

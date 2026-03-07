@@ -90,7 +90,7 @@
   --card-foreground: oklch(0.18 0.02 250);
   --popover: oklch(0.99 0.003 80);
   --popover-foreground: oklch(0.18 0.02 250);
-  --primary: oklch(0.35 0.08 250);
+  --primary: oklch(0.30 0.08 250);
   --primary-foreground: oklch(0.98 0.005 80);
   --secondary: oklch(0.96 0.008 80);
   --secondary-foreground: oklch(0.30 0.06 250);
@@ -110,14 +110,14 @@
   --chart-5: oklch(0.65 0.18 25);
   --sidebar: oklch(0.97 0.006 80);
   --sidebar-foreground: oklch(0.18 0.02 250);
-  --sidebar-primary: oklch(0.35 0.08 250);
+  --sidebar-primary: oklch(0.30 0.08 250);
   --sidebar-primary-foreground: oklch(0.98 0.005 80);
   --sidebar-accent: oklch(0.94 0.015 250);
   --sidebar-accent-foreground: oklch(0.30 0.06 250);
   --sidebar-border: oklch(0.91 0.008 80);
   --sidebar-ring: oklch(0.50 0.08 250);
   /* Brand — deep blue */
-  --brand: oklch(0.35 0.08 250);
+  --brand: oklch(0.30 0.08 250);
   --brand-foreground: oklch(0.98 0.005 80);
   --brand-muted: oklch(0.93 0.02 250);
   /* Status: success — green (mastery/growth) */
@@ -139,7 +139,7 @@
   --tree-active: oklch(0.91 0.02 250);
 
   /* Chat bubbles */
-  --chat-user-bg: oklch(0.35 0.08 250);
+  --chat-user-bg: oklch(0.30 0.08 250);
   --chat-user-fg: oklch(0.98 0.005 80);
   --chat-assistant-bg: oklch(0.96 0.006 80);
   --chat-assistant-fg: oklch(0.18 0.02 250);
@@ -257,4 +257,10 @@
 .flashcard-back {
   backface-visibility: hidden;
   transform: rotateY(180deg);
+}
+
+/* Block appear animation for staggered layout reveal */
+@keyframes block-appear {
+  from { opacity: 0; transform: translateY(12px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
