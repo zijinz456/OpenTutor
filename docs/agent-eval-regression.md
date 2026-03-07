@@ -5,9 +5,9 @@ OpenTutor Zenus now exposes a bundled regression benchmark at `POST /api/eval/re
 What it checks by default:
 
 - routing accuracy against golden intent cases
-- scene policy accuracy against curated policy fixtures
 - retrieval benchmark when `course_id` and `retrieval_queries` are supplied
 - response-quality benchmark when `response_cases` are supplied
+- recovery benchmark when DB-backed checks are available
 
 Minimal example:
 

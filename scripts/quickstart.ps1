@@ -176,17 +176,14 @@ if (-not (Test-Path $EnvFile)) {
 
 $DatabaseUrl = Get-DotEnvValue -Path $EnvFile -Name "DATABASE_URL"
 if (-not [string]::IsNullOrWhiteSpace($DatabaseUrl) -and -not $DatabaseUrl.StartsWith("sqlite")) {
-    $DbMode = "postgresql"
-    $DbDisplay = $DatabaseUrl
-} else {
-    $DbMode = "sqlite"
-    if ([string]::IsNullOrWhiteSpace($DatabaseUrl)) {
-        $DbDisplay = "sqlite+aiosqlite:///$HOME/.opentutor/data.db"
-    } else {
-        $DbDisplay = $DatabaseUrl
-    }
+    Write-Fail "SQLite-only local mode: DATABASE_URL must start with sqlite (current: $DatabaseUrl)"
 }
-Write-Log "  Database mode: $DbMode"
+if ([string]::IsNullOrWhiteSpace($DatabaseUrl)) {
+    $DbDisplay = "sqlite+aiosqlite:///$HOME/.opentutor/data.db"
+} else {
+    $DbDisplay = $DatabaseUrl
+}
+Write-Log "  Database mode: sqlite"
 Write-Log "  Database URL:  $DbDisplay"
 
 # ---------------------------------------------------------------------------
@@ -212,77 +209,15 @@ Write-Log "  Optional integrations remain available via requirements-full.txt"
 # ---------------------------------------------------------------------------
 Write-Step "Database"
 
-if ($DbMode -eq "postgresql") {
-    if (-not (Get-Command psql -ErrorAction SilentlyContinue)) {
-        Write-Fail "PostgreSQL (psql) not found. Download from https://www.postgresql.org/download/windows/"
-    }
-    Write-Log "  psql found"
-
-    $DbName = "opentutor"
-    try {
-        $uri = [Uri]$DatabaseUrl
-        if ($uri.AbsolutePath) {
-            $DbName = $uri.AbsolutePath.Trim("/")
-        }
-    } catch { }
-
-    $pgReady = $false
-    try {
-        pg_isready -q 2>$null | Out-Null
-        if ($LASTEXITCODE -eq 0) { $pgReady = $true }
-    } catch { }
-    if (-not $pgReady) {
-        Write-Log "  PostgreSQL is not running. Attempting to start ..."
-        try {
-            $pgService = Get-Service -Name "postgresql*" -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($pgService -and $pgService.Status -ne "Running") {
-                Start-Service $pgService.Name -ErrorAction SilentlyContinue
-                Start-Sleep -Seconds 3
-            }
-        } catch { }
-        try {
-            pg_isready -q 2>$null | Out-Null
-            if ($LASTEXITCODE -eq 0) { $pgReady = $true }
-        } catch { }
-        if (-not $pgReady) {
-            Write-Fail "PostgreSQL is not running. Start it via Services (services.msc), pg_ctl, or: Start-Service postgresql-x64-16"
-        }
-    }
-    Write-Log "  PostgreSQL is running"
-
-    $dbList = psql -lqt 2>$null
-    if ($dbList -and ($dbList | Select-String -Pattern "\b$DbName\b" -Quiet)) {
-        Write-Log "  Database '$DbName' already exists"
-    } else {
-        Write-Log "  Creating database '$DbName' ..."
-        createdb $DbName 2>$null
-    }
-
-    psql -d $DbName -c "CREATE EXTENSION IF NOT EXISTS vector;" 2>$null
-    if ($LASTEXITCODE -ne 0) {
-        Write-Log "  Warning: Could not create pgvector extension. See https://github.com/pgvector/pgvector#windows"
-    }
-} else {
-    $sqlitePath = Resolve-SqlitePath -DatabaseUrl $DatabaseUrl
-    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $sqlitePath) | Out-Null
-    Write-Log "  Using SQLite lite mode at $sqlitePath"
-    Write-Log "  PostgreSQL is not required for this quickstart."
-}
+$sqlitePath = Resolve-SqlitePath -DatabaseUrl $DatabaseUrl
+New-Item -ItemType Directory -Force -Path (Split-Path -Parent $sqlitePath) | Out-Null
+Write-Log "  Using SQLite at $sqlitePath"
 
 # ---------------------------------------------------------------------------
-# 5. Database migrations
+# 5. Database bootstrap
 # ---------------------------------------------------------------------------
-if ($DbMode -eq "postgresql") {
-    Write-Step "Running database migrations"
-
-    Push-Location $ApiDir
-    & $VenvPython -m alembic upgrade head
-    Pop-Location
-    Write-Log "  Migrations complete"
-} else {
-    Write-Step "Database bootstrap"
-    Write-Log "  SQLite mode uses the app startup hooks to create tables and seed built-in data."
-}
+Write-Step "Database bootstrap"
+Write-Log "  SQLite mode uses app startup hooks to create tables and seed built-in data."
 
 # ---------------------------------------------------------------------------
 # 6. Frontend dependencies
@@ -320,7 +255,7 @@ $apiJob = Start-Job -ScriptBlock {
     & $venvPy -m uvicorn main:app --host 127.0.0.1 --port 8000 --reload 2>&1
 } -ArgumentList $VenvPython, $ApiDir
 
-Write-Log "  Starting Web server (port 3000) ..."
+Write-Log "  Starting Web server (port 3001) ..."
 $webJob = Start-Job -ScriptBlock {
     param($webDir_)
     Set-Location $webDir_
@@ -351,7 +286,7 @@ Write-Log "  API ready"
 $start = Get-Date
 while ($true) {
     try {
-        $resp = Invoke-WebRequest -Uri "http://localhost:3000" -UseBasicParsing -TimeoutSec 3 -ErrorAction SilentlyContinue
+        $resp = Invoke-WebRequest -Uri "http://localhost:3001" -UseBasicParsing -TimeoutSec 3 -ErrorAction SilentlyContinue
         if ($resp.StatusCode -ge 200 -and $resp.StatusCode -lt 400) { break }
     } catch { }
     if (((Get-Date) - $start).TotalSeconds -ge $timeout) {
@@ -383,7 +318,7 @@ try {
 Write-Host ""
 Write-Host "============================================"
 Write-Host "  OpenTutor is running!"
-Write-Host "  Web:    http://localhost:3000"
+Write-Host "  Web:    http://localhost:3001"
 Write-Host "  API:    http://localhost:8000/api"
 Write-Host "  Health: http://localhost:8000/api/health"
 Write-Host "  DB:     $databaseBackend"

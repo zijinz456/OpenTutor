@@ -992,7 +992,10 @@ async def _dispatch_task(
                 return result, (result.get("summary", "") or "Re-entry session prepared.")[:300]
 
             if task_type == "guided_session":
-                raise ValueError("guided_session task type removed in Phase 2 consolidation")
+                from services.agent.guided_session import prepare_guided_session
+                payload["task_id"] = str(task_id)
+                result = await prepare_guided_session(db, user_id, payload)
+                return result, (result.get("summary", "") or "Guided session prepared.")[:300]
 
             raise ValueError(f"Unsupported task_type: {task_type}")
 

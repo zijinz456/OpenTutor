@@ -186,10 +186,6 @@ fc_payload="{\"course_id\":\"${course_id}\",\"count\":5}"
 api_call "POST" "/api/flashcards/generate" "$fc_payload"
 run_step_optional "flashcard generate" "$API_STATUS" "$API_BODY"
 
-# 12) Workflows (mostly LLM-dependent)
-api_call "GET" "/api/workflows/weekly-prep"
-run_step_optional "workflow weekly-prep" "$API_STATUS" "$API_BODY"
-
 log ""
 log "Summary: pass=${PASS_COUNT} warn=${WARN_COUNT} fail=${FAIL_COUNT}"
 if [[ "$FAIL_COUNT" -gt 0 ]]; then

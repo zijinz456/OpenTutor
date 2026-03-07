@@ -4,7 +4,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from services.agent.scene_agent import SceneAgent
 from services.agent.state import AgentContext, IntentType
 from services.agent.orchestrator import _build_provenance, orchestrate_stream, run_agent_turn
 from services.search.hybrid import vector_search
@@ -121,48 +120,6 @@ async def test_run_agent_turn_does_not_double_count_function_calling_usage(monke
     assert ctx.input_tokens == 10
     assert ctx.output_tokens == 4
     assert ctx.total_tokens == 14
-
-
-@pytest.mark.asyncio
-async def test_scene_agent_falls_back_to_teaching_when_no_scene_switch(monkeypatch):
-    async def fake_teaching_stream(self, ctx, _db):
-        ctx.response = "Detailed help from teaching agent."
-        yield ctx.response
-
-    class _Decision:
-        scene_id = "study_session"
-        confidence = 0.4
-        scores = {
-            "study_session": 1.0,
-            "exam_prep": 0.5,
-            "assignment": 0.4,
-            "review_drill": 0.3,
-            "note_organize": 0.2,
-        }
-        features = {}
-        reason = "Stay in study_session."
-        switch_recommended = False
-
-    async def fake_resolve_scene_policy(*_args, **_kwargs):
-        return _Decision()
-
-    monkeypatch.setattr("services.agent.teaching.TeachingAgent.stream", fake_teaching_stream)
-    monkeypatch.setattr("services.agent.scene_agent.resolve_scene_policy", fake_resolve_scene_policy)
-
-    agent = SceneAgent()
-    ctx = AgentContext(
-        user_id=uuid.uuid4(),
-        course_id=uuid.uuid4(),
-        user_message="Can you explain eigenvalues again?",
-        scene="study_session",
-    )
-
-    chunks = []
-    async for chunk in agent.stream(ctx, None):
-        chunks.append(chunk)
-
-    assert "".join(chunks) == "Detailed help from teaching agent."
-    assert ctx.response == "Detailed help from teaching agent."
 
 
 @pytest.mark.asyncio

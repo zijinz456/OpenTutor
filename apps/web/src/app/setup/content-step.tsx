@@ -2,7 +2,7 @@
 
 import { useCallback, useRef, useState } from "react";
 import type { FileItem } from "../new/types";
-import { formatSize, isCanvasUrl } from "../new/types";
+import { formatSize } from "../new/types";
 
 type ContentTab = "upload" | "url";
 

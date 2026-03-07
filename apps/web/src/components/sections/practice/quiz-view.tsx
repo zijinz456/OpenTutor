@@ -13,6 +13,7 @@ import { useWorkspaceStore } from "@/store/workspace";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { AiFeatureBlocked } from "@/components/shared/ai-feature-blocked";
+import { updateUnlockContext, getUnlockContext } from "@/lib/block-system/feature-unlock";
 
 interface QuizViewProps {
   courseId: string;
@@ -78,6 +79,12 @@ export function QuizView({ courseId, aiActionsEnabled = true }: QuizViewProps) {
         correct: prev.correct + (res.is_correct ? 1 : 0),
         total: prev.total + 1,
       }));
+      // Track feature-unlock context
+      const ctx = getUnlockContext(courseId, 0);
+      updateUnlockContext(courseId, {
+        practiceAttempts: ctx.practiceAttempts + 1,
+        hasWrongAnswer: ctx.hasWrongAnswer || !res.is_correct,
+      });
     } catch {
       setSelectedOption(null);
     } finally {

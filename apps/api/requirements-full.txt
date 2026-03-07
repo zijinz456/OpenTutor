@@ -37,3 +37,4 @@ pyBKT>=1.4
 
 # Testing support used in CI
 pytest-asyncio>=0.23.0
+pytest-cov>=5.0.0

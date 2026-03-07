@@ -15,6 +15,7 @@ import { useT } from "@/lib/i18n-context";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import { getPersona, getOptimalStudyWindows, formatStudyWindow } from "@/lib/learner-persona";
 
 interface ProfileViewProps {
   courseId: string;
@@ -115,8 +116,66 @@ export function ProfileView({ courseId }: ProfileViewProps) {
   const hasDismissed =
     profile.dismissed_preferences.length > 0 || profile.dismissed_memories.length > 0;
 
+  const persona = getPersona();
+  const studyWindows = getOptimalStudyWindows();
+
   return (
     <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      {/* Local Learner Persona */}
+      {persona.totalSessions > 0 && (
+        <div className="rounded-xl border border-border bg-card p-4 space-y-3">
+          <h3 className="text-sm font-medium">Study Habits</h3>
+          <div className="grid grid-cols-2 gap-3 text-xs">
+            <div>
+              <p className="text-muted-foreground">Sessions tracked</p>
+              <p className="text-foreground font-medium">{persona.totalSessions}</p>
+            </div>
+            {persona.avgSessionMinutes > 0 && (
+              <div>
+                <p className="text-muted-foreground">Avg session</p>
+                <p className="text-foreground font-medium">{Math.round(persona.avgSessionMinutes)} min</p>
+              </div>
+            )}
+            {persona.noteFormat !== "auto" && (
+              <div>
+                <p className="text-muted-foreground">Note format</p>
+                <p className="text-foreground font-medium capitalize">{persona.noteFormat.replace(/_/g, " ")}</p>
+              </div>
+            )}
+            {persona.difficultyPreference !== "adaptive" && (
+              <div>
+                <p className="text-muted-foreground">Difficulty</p>
+                <p className="text-foreground font-medium capitalize">{persona.difficultyPreference}</p>
+              </div>
+            )}
+          </div>
+          {studyWindows.length > 0 && (
+            <div>
+              <p className="text-xs text-muted-foreground mb-1">Optimal study windows</p>
+              <div className="flex flex-wrap gap-1.5">
+                {studyWindows.map((w, i) => (
+                  <Badge key={i} variant="outline" className="text-xs">
+                    {formatStudyWindow(w)} ({w.count}x)
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          )}
+          {persona.stickingPoints.length > 0 && (
+            <div>
+              <p className="text-xs text-muted-foreground mb-1">Sticking points</p>
+              <div className="flex flex-wrap gap-1.5">
+                {persona.stickingPoints.slice(0, 5).map((s) => (
+                  <Badge key={s} variant="outline" className="text-xs text-orange-600">
+                    {s}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Active preferences */}
       <div>
         <h3 className="mb-2 text-sm font-medium">{t("course.profile")}</h3>

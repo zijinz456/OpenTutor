@@ -11,6 +11,7 @@ from routers import (
     canvas,
     chat,
     courses,
+    evaluation,
     flashcards,
     goals,
     health,
@@ -24,6 +25,7 @@ from routers import (
     tasks,
     upload,
     usage,
+    workflows,
     workspace,
     wrong_answers,
 )
@@ -49,6 +51,8 @@ CORE_ROUTERS = (
     (workspace.router, "/api", ["workspace"]),
     (integrations.router, "/api", ["integrations"]),
     (notifications.router, "/api", ["notifications"]),
+    (evaluation.router, "/api/eval", ["evaluation"]),
+    (workflows.router, "/api/workflows", ["workflows"]),
 )
 
 

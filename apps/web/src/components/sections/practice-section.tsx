@@ -1,6 +1,7 @@
 "use client";
 
-import { lazy, useMemo } from "react";
+import { lazy, useCallback, useMemo } from "react";
+import { useWorkspaceStore } from "@/store/workspace";
 import { TabbedSection, type TabDef } from "./tabbed-section";
 
 const QuizView = lazy(() =>
@@ -41,8 +42,19 @@ export function PracticeSection({
     [showReview],
   );
 
+  const practiceActiveTab = useWorkspaceStore((s) => s.practiceActiveTab) as PracticeTab | null;
+  const clearPracticeTab = useCallback(() => {
+    useWorkspaceStore.getState().setPracticeTab(null);
+  }, []);
+
   return (
-    <TabbedSection tabs={tabs} defaultTab="quiz" testId="practice-section">
+    <TabbedSection
+      tabs={tabs}
+      defaultTab="quiz"
+      testId="practice-section"
+      externalTab={practiceActiveTab}
+      onExternalTabConsumed={clearPracticeTab}
+    >
       {(activeTab) => (
         <>
           {activeTab === "quiz" ? <QuizView courseId={courseId} aiActionsEnabled={aiActionsEnabled} /> : null}

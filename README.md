@@ -96,7 +96,7 @@ uvicorn main:app --reload --port 8000
 cd apps/web && npm install && npm run dev
 ```
 
-Visit [http://localhost:3000](http://localhost:3000).
+Visit [http://localhost:3001](http://localhost:3001).
 
 ## LLM Configuration
 
@@ -166,7 +166,7 @@ Agents use a ReAct tool loop with access to content search, quiz generation, fla
 |-------|-------------|
 | **Frontend** | Next.js 16, React 19, TypeScript, Tailwind CSS 4, Zustand, shadcn/ui |
 | **Backend** | FastAPI, Python 3.11+, Pydantic 2, SQLAlchemy 2 (async), Alembic |
-| **Database** | PostgreSQL + pgvector · SQLite (dev mode) |
+| **Database** | SQLite (aiosqlite, local-first) |
 | **Learning Science** | FSRS 4.5 · BKT · LECTOR · LOOM · Cognitive Load Theory |
 | **CI/CD** | GitHub Actions · Docker Compose · Playwright |
 

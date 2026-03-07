@@ -18,15 +18,19 @@ const ProfileView = lazy(() =>
 const MisconceptionView = lazy(() =>
   import("./analytics/misconception-view").then((m) => ({ default: m.MisconceptionView })),
 );
+const ReviewSummaryView = lazy(() =>
+  import("./analytics/review-summary-view").then((m) => ({ default: m.ReviewSummaryView })),
+);
 
 interface AnalyticsSectionProps {
   courseId: string;
 }
 
-type AnalyticsTab = "progress" | "blindspots" | "forecast" | "graph" | "profile";
+type AnalyticsTab = "progress" | "review" | "blindspots" | "forecast" | "graph" | "profile";
 
 const TABS: TabDef<AnalyticsTab>[] = [
   { id: "progress", label: "Stats", testId: "right-tab-progress" },
+  { id: "review", label: "Review", testId: "right-tab-review" },
   { id: "blindspots", label: "Blind Spots", testId: "right-tab-blindspots" },
   { id: "forecast", label: "Forecast", testId: "right-tab-forecast" },
   { id: "graph", label: "Graph", testId: "right-tab-graph" },
@@ -39,6 +43,7 @@ export function AnalyticsSection({ courseId }: AnalyticsSectionProps) {
       {(activeTab) => (
         <>
           {activeTab === "progress" ? <ProgressView courseId={courseId} /> : null}
+          {activeTab === "review" ? <ReviewSummaryView courseId={courseId} /> : null}
           {activeTab === "blindspots" ? <MisconceptionView courseId={courseId} /> : null}
           {activeTab === "forecast" ? <ForecastView courseId={courseId} /> : null}
           {activeTab === "graph" ? <GraphView courseId={courseId} /> : null}

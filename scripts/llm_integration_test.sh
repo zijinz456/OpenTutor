@@ -170,21 +170,4 @@ if ! grep -Eq "event: message|event: done" "$TMP_DIR/chat.txt"; then
 fi
 echo "PASS: real chat stream"
 
-# Real workflow call
-status="$(curl -sS -o "$TMP_DIR/weekly.json" -w "%{http_code}" \
-  "${API_BASE}/api/workflows/weekly-prep" \
-  --max-time "${TIMEOUT_SECONDS}")"
-if [[ ! "$status" =~ ^2 ]]; then
-  echo "FAIL: weekly-prep failed (HTTP $status)"
-  cat "$TMP_DIR/weekly.json" || true
-  exit 1
-fi
-
-if grep -Eq "No LLM API key configured|local fallback response" "$TMP_DIR/weekly.json"; then
-  echo "FAIL: weekly-prep used mock fallback instead of real provider"
-  cat "$TMP_DIR/weekly.json" || true
-  exit 1
-fi
-echo "PASS: real weekly-prep workflow"
-
 echo "PASS: Real LLM integration checks completed"

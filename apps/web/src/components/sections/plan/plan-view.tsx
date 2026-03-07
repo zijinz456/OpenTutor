@@ -15,6 +15,7 @@ import {
 import { AiFeatureBlocked } from "@/components/shared/ai-feature-blocked";
 import { useBatchManager } from "@/hooks/use-batch-manager";
 import { toast } from "sonner";
+import { updateUnlockContext } from "@/lib/block-system/feature-unlock";
 
 // ── Exam Countdown Banner ──
 
@@ -32,6 +33,10 @@ function ExamCountdown({ courseId }: { courseId: string }) {
         const goals = await listStudyGoals(courseId, "active");
         if (cancelled) return;
         const now = Date.now();
+        // Track hasDeadline for feature-unlock
+        if (goals.some((g) => g.target_date)) {
+          updateUnlockContext(courseId, { hasDeadline: true });
+        }
         const computed = goals
           .filter((g) => g.target_date)
           .map((g) => {

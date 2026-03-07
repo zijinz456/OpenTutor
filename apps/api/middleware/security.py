@@ -89,11 +89,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
     **Cost-aware GCRA mode** (inspired by OpenFang):
       Each endpoint has a cost (0-100). Budget is ``cost_budget_per_minute``
-      cost units per IP per minute.  Health checks cost 0 (exempt), data
-      reads cost 2-3, LLM calls cost 30-50, workflow runs cost 80-100.
+      cost units per IP per minute. Health checks cost 0 (exempt), data
+      reads cost 2-3, LLM calls cost 30-50.
     """
 
-    _LLM_PATHS = {"/api/chat", "/api/quiz/extract", "/api/flashcards/generate", "/api/workflows/exam-prep"}
+    _LLM_PATHS = {"/api/chat", "/api/quiz/extract", "/api/flashcards/generate"}
     _EXEMPT_PREFIXES = ("/api/webhooks/", "/api/health", "/docs", "/openapi.json")
 
     def __init__(

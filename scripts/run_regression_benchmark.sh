@@ -15,7 +15,8 @@ require_cmd curl
 [[ -f "${UPLOAD_FILE}" ]] || fail "Upload fixture not found: ${UPLOAD_FILE}"
 
 step "[1/3] Running pytest regression suite"
-"${PY_BIN}" -m pytest tests/test_eval_regressions.py tests/test_agent_runtime_regressions.py -q
+# This script intentionally runs a focused subset; ignore global pytest addopts coverage gates.
+"${PY_BIN}" -m pytest tests/test_eval_regressions.py tests/test_agent_runtime_regressions.py -q -o addopts=
 
 step "[2/3] Seeding retrieval fixture"
 course_payload='{"name":"Regression Benchmark Fixture","description":"regression benchmark"}'

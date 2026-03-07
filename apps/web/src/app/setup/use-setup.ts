@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef, useCallback } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   getHealthStatus,
   getLlmRuntimeConfig,
@@ -12,7 +12,6 @@ import {
   type LlmConnectionTestResult,
   type IngestionJobSummary,
   listIngestionJobs,
-  updateCourse,
   listAuthSessions,
   canvasBrowserLogin,
   setPreference,
@@ -20,20 +19,25 @@ import {
 } from "@/lib/api";
 import { useT } from "@/lib/i18n-context";
 import { useCourseStore } from "@/store/course";
+import { useWorkspaceStore } from "@/store/workspace";
 
 import type { FileItem, ParseLog } from "../new/types";
 import { isCanvasUrl, deriveParseSteps, deriveParseProgress } from "../new/types";
 import { submitSources, buildMetadata } from "../new/parse-actions";
 
-export type SetupStep = "llm" | "content" | "discovery";
+export type SetupStep = "llm" | "content" | "template" | "discovery";
 
 export function useSetup() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const t = useT();
-  const { addCourse, fetchContentTree } = useCourseStore();
+  const { addCourse } = useCourseStore();
 
-  // ── Step ──
-  const [step, setStep] = useState<SetupStep>("llm");
+  // ── Step (honor ?step=content query param for returning users) ──
+  const initialStep = (searchParams.get("step") as SetupStep) || "llm";
+  const [step, setStep] = useState<SetupStep>(
+    ["llm", "content", "template", "discovery"].includes(initialStep) ? initialStep : "llm"
+  );
 
   // ── LLM state ──
   const [health, setHealth] = useState<HealthStatus | null>(null);
@@ -70,6 +74,9 @@ export function useSetup() {
   const [showCanvasLogin, setShowCanvasLogin] = useState(false);
   const [canvasLogging, setCanvasLogging] = useState(false);
   const [canvasLoginError, setCanvasLoginError] = useState<string | null>(null);
+
+  // ── Template state ──
+  const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
 
   // ── Parsing state ──
   const [createdCourseId, setCreatedCourseId] = useState<string | null>(null);
@@ -183,7 +190,7 @@ export function useSetup() {
       const match = sessions.find((s) => s.is_valid && domain.includes(s.domain));
       if (match) setCanvasSessionValid(true);
     } catch { /* ignore — will prompt login */ }
-  }, [canvasSessionValid]);
+  }, []);
 
   // ── Canvas auth handler (browser login) ──
   const handleAuthCanvas = useCallback(async () => {
@@ -250,8 +257,48 @@ export function useSetup() {
     return () => window.clearTimeout(timer);
   }, [step, createdCourseId]);
 
-  // ── Start parsing (Step 2 → Step 3) ──
+  // ── AI Probe: auto-send analysis request when first job completes ──
+  useEffect(() => {
+    if (!hasCompletedJob || !createdCourseId || probeSentRef.current) return;
+    probeSentRef.current = true;
+    setAiProbeStreaming(true);
+
+    const controller = new AbortController();
+    (async () => {
+      try {
+        const gen = streamChat({
+          courseId: createdCourseId,
+          message: "Analyze what I've uploaded and identify 3 key concepts I should test my understanding of. Be concise.",
+          activeTab: "chat",
+          signal: controller.signal,
+        });
+        for await (const event of gen) {
+          if (event.type === "content") {
+            setAiProbeResponse((prev) => prev + event.content);
+          } else if (event.type === "replace") {
+            setAiProbeResponse(event.content);
+          } else if (event.type === "done") {
+            break;
+          }
+        }
+      } catch {
+        // Aborted or failed — non-critical
+      } finally {
+        setAiProbeStreaming(false);
+        setAiProbeDone(true);
+      }
+    })();
+
+    return () => controller.abort();
+  }, [hasCompletedJob, createdCourseId]);
+
+  // ── Start parsing (Content → Template → Discovery) ──
   const startLearning = useCallback(async () => {
+    setStep("template");
+  }, []);
+
+  // ── Confirm template and begin ingestion (Template → Discovery) ──
+  const confirmTemplate = useCallback(async () => {
     setStep("discovery");
     setIngestionJobs([]);
     setParseLogs([]);
@@ -298,9 +345,15 @@ export function useSetup() {
         setPreference("layout_preset", "balanced", "global"),
       ]);
     } catch { /* non-critical */ }
+    // Apply selected template and persist to localStorage
+    if (selectedTemplate) {
+      useWorkspaceStore.getState().applyBlockTemplate(selectedTemplate);
+      const layout = useWorkspaceStore.getState().spaceLayout;
+      localStorage.setItem(`opentutor_blocks_${createdCourseId}`, JSON.stringify(layout));
+    }
     localStorage.setItem("opentutor_onboarded", "true");
     router.push(`/course/${createdCourseId}`);
-  }, [createdCourseId, router]);
+  }, [createdCourseId, router, selectedTemplate]);
 
   // ── Skip content (empty workspace) ──
   const skipContent = useCallback(async () => {
@@ -339,7 +392,9 @@ export function useSetup() {
     hasCompletedJob, allJobsFailed, noSourcesSubmitted,
     aiProbeResponse, aiProbeStreaming, aiProbeDone, canEnterEarly,
     createdCourseId,
+    // Template
+    selectedTemplate, setSelectedTemplate,
     // Actions
-    startLearning, enterWorkspace, skipContent,
+    startLearning, confirmTemplate, enterWorkspace, skipContent,
   };
 }

@@ -199,7 +199,7 @@ ollama list
 
 ## Frontend Issues
 
-### Blank page at localhost:3000
+### Blank page at localhost:3001
 
 ```bash
 # Docker — check web container
@@ -217,7 +217,7 @@ curl http://localhost:8000/api/health
 The frontend can't reach the API. Check:
 
 1. API is running on port 8000: `curl http://localhost:8000/api/health`
-2. CORS is configured: check `CORS_ORIGINS` in `.env` includes `http://localhost:3000`
+2. CORS is configured: check `CORS_ORIGINS` in `.env` includes `http://localhost:3001`
 3. If using different ports, update `NEXT_PUBLIC_API_URL` in your `.env`
 
 ### npm install fails

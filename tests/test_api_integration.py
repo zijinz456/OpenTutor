@@ -22,7 +22,7 @@ import database as database_module
 from database import get_db, Base
 from models.agent_task import AgentTask
 from models.content import CourseContentTree
-from models.ingestion import StudySession
+from models.ingestion import StudySession, WrongAnswer
 from models.progress import LearningProgress
 from models.practice import PracticeProblem, PracticeResult
 from models.preference import PreferenceSignal
@@ -947,6 +947,82 @@ async def test_save_generated_flashcards_and_study_plans(client):
 
 
 @pytest.mark.asyncio
+async def test_workflow_compat_routes_cover_exam_plan_study_plan_and_wrong_answer_review(client):
+    create_resp = await client.post("/api/courses/", json={"name": "Workflow Compat", "description": "compat"})
+    assert create_resp.status_code == 201
+    course_id = create_resp.json()["id"]
+
+    exam_resp = await client.post(
+        "/api/workflows/exam-prep",
+        json={"course_id": course_id, "days_until_exam": 5, "exam_topic": "Binary Search"},
+    )
+    assert exam_resp.status_code == 200
+    exam_payload = exam_resp.json()
+    assert exam_payload["days_until_exam"] == 5
+    assert exam_payload["topics_count"] >= 0
+    assert "Day 1" in exam_payload["plan"]
+
+    save_resp = await client.post(
+        "/api/workflows/study-plans/save",
+        json={
+            "course_id": course_id,
+            "markdown": "# Plan\n- Day 1: review edge cases",
+            "title": "Compat Plan",
+        },
+    )
+    assert save_resp.status_code == 200
+    saved = save_resp.json()
+    assert saved["batch_id"]
+    assert saved["version"] == 1
+
+    list_resp = await client.get(f"/api/workflows/study-plans/{course_id}")
+    assert list_resp.status_code == 200
+    listed = list_resp.json()
+    assert len(listed) == 1
+    assert listed[0]["batch_id"] == saved["batch_id"]
+
+    wrong_answer_id: str
+    async with app.state.test_session_factory() as session:
+        user_result = await session.execute(select(User).limit(1))
+        user = user_result.scalar_one()
+        problem = PracticeProblem(
+            course_id=uuid.UUID(course_id),
+            question_type="mc",
+            question="What is the loop invariant in binary search?",
+            options={"A": "Correct interval is preserved", "B": "Array is always sorted"},
+            correct_answer="A",
+            explanation="Binary search preserves a valid search interval each iteration.",
+            order_index=1,
+            source="generated",
+            source_owner="ai",
+            locked=False,
+        )
+        session.add(problem)
+        await session.flush()
+        wrong = WrongAnswer(
+            user_id=user.id,
+            problem_id=problem.id,
+            course_id=uuid.UUID(course_id),
+            user_answer="B",
+            correct_answer="A",
+            explanation="You tracked a property that is true but not the invariant needed for correctness.",
+            error_category="conceptual",
+            mastered=False,
+            review_count=0,
+        )
+        session.add(wrong)
+        await session.commit()
+        wrong_answer_id = str(wrong.id)
+
+    review_resp = await client.get("/api/workflows/wrong-answer-review", params={"course_id": course_id})
+    assert review_resp.status_code == 200
+    review_payload = review_resp.json()
+    assert review_payload["wrong_answer_count"] >= 1
+    assert wrong_answer_id in review_payload["wrong_answer_ids"]
+    assert "Wrong Answer Review" in review_payload["review"]
+
+
+@pytest.mark.asyncio
 async def test_study_goal_create_update_and_task_link(client):
     create_resp = await client.post("/api/courses/", json={"name": "Goal Course", "description": "goal"})
     assert create_resp.status_code == 201
@@ -1356,7 +1432,7 @@ async def test_regression_benchmark_endpoint_runs_offline_suites(client):
     payload = resp.json()
     assert "suites" in payload
     suite_names = {suite["name"] for suite in payload["suites"]}
-    assert {"routing", "scene_policy", "retrieval", "response_quality"} <= suite_names
+    assert {"routing", "retrieval", "response_quality", "recovery"} <= suite_names
     response_suite = next(suite for suite in payload["suites"] if suite["name"] == "response_quality")
     assert response_suite["skipped"] is False
 
