@@ -171,9 +171,6 @@ async def _stop_health_monitor() -> None:
     await registry.stop_health_monitor()
 
 
-
-
-
 async def run_startup_hooks() -> None:
     await _maybe_create_tables()
     await _maybe_bootstrap_migration_tracking()
