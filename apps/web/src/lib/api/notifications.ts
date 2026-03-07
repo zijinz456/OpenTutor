@@ -10,6 +10,9 @@ export interface AppNotification {
   body: string;
   category: string;
   read: boolean;
+  course_id?: string | null;
+  action_url?: string | null;
+  action_label?: string | null;
   data: Record<string, unknown> | null;
   created_at: string | null;
 }
@@ -35,4 +38,20 @@ export async function markNotificationRead(id: string): Promise<void> {
 
 export async function markAllNotificationsRead(): Promise<void> {
   await request<{ ok: boolean }>("/notifications/read-all", { method: "POST" });
+}
+
+function notificationMatchesTask(notification: AppNotification, taskId: string): boolean {
+  const data = notification.data;
+  if (!data || typeof data !== "object") return false;
+  const record = data as Record<string, unknown>;
+  return record.task_id === taskId ||
+    record.queued_task_id === taskId ||
+    record.agent_task_id === taskId;
+}
+
+export async function markTaskNotificationsRead(taskId: string, limit = 100): Promise<void> {
+  const { notifications } = await listNotifications({ limit });
+  const targets = notifications.filter((n) => !n.read && notificationMatchesTask(n, taskId));
+  if (targets.length === 0) return;
+  await Promise.all(targets.map((n) => markNotificationRead(n.id)));
 }

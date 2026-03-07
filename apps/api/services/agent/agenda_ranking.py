@@ -26,6 +26,7 @@ _TYPE_PRECEDENCE: dict[str, int] = {
     "failed_task": 100,
     "deadline": 90,
     "active_goal": 80,      # sub-ranked by urgency
+    "prerequisite_gap": 75,  # between forgetting_risk and active_goal
     "forgetting_risk": 70,
     "weak_area": 50,
     "content_stale": 48,
@@ -165,6 +166,28 @@ def rank_signals(signals: list[AgendaSignal]) -> AgendaDecision:
             },
         }
         decision.reason = "Forgetting forecast shows material close to slipping below retention threshold."
+
+    elif winner.signal_type == "prerequisite_gap":
+        decision.action = "submit"
+        decision.task_type = "prerequisite_review"
+        concept = winner.detail.get("concept", "unknown")
+        decision.task_title = f"Review prerequisite: {concept}"
+        decision.task_summary = (
+            f"Concept '{concept}' is a prerequisite gap "
+            f"(mastery {winner.detail.get('mastery', 0):.0%}). "
+            f"Strengthen this foundation before advancing."
+        )
+        decision.input_json = {
+            "course_id": str(winner.course_id) if winner.course_id else None,
+            "concept": concept,
+            "concept_id": winner.detail.get("concept_id"),
+            "trigger_signal": "prerequisite_gap",
+            "content_mutation_hint": {
+                "tool": "add_targeted_practice",
+                "reason": f"Prerequisite gap detected for '{concept}' — generate foundational exercises",
+            },
+        }
+        decision.reason = f"Prerequisite concept '{concept}' has low mastery — must strengthen before dependent topics."
 
     elif winner.signal_type == "weak_area":
         decision.action = "submit"

@@ -30,6 +30,19 @@ export function t(key: string): string {
   return translations[currentLocale]?.[key] ?? translations.en[key] ?? key;
 }
 
+export function tf(
+  key: string,
+  vars?: Record<string, string | number | null | undefined>,
+): string {
+  let message = t(key);
+  if (!vars) return message;
+  for (const [name, value] of Object.entries(vars)) {
+    const token = `{${name}}`;
+    message = message.split(token).join(value == null ? "" : String(value));
+  }
+  return message;
+}
+
 export function initLocale(): void {
   if (typeof window !== "undefined") {
     const saved = localStorage.getItem("opentutor-locale") as Locale | null;

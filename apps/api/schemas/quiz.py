@@ -12,6 +12,7 @@ class ExtractRequest(BaseModel):
     course_id: uuid.UUID
     content_node_id: uuid.UUID | None = None
     count: int | None = None
+    mode: str | None = None  # learning mode: course_following, self_paced, exam_prep, maintenance
 
 
 class SubmitAnswerRequest(BaseModel):
@@ -41,10 +42,18 @@ class ProblemResponse(BaseModel):
         return normalize_question_options(value)
 
 
+class PrerequisiteGap(BaseModel):
+    concept: str
+    concept_id: str
+    mastery: float
+    gap_severity: float
+
+
 class AnswerResponse(BaseModel):
     is_correct: bool
     correct_answer: str | None
     explanation: str | None
+    prerequisite_gaps: list[PrerequisiteGap] | None = None
 
 
 class MasterySnapshotResponse(BaseModel):

@@ -19,33 +19,23 @@ import { useBatchManager } from "@/hooks/use-batch-manager";
 import { toast } from "sonner";
 import { updateUnlockContext } from "@/lib/block-system/feature-unlock";
 import type { LearningMode } from "@/lib/block-system/types";
+import { useT, useTF } from "@/lib/i18n-context";
 
 // ── Helpers ──
 
-const MODE_TITLE: Record<LearningMode, string> = {
-  course_following: "Course Following Plan",
-  self_paced: "Self-Paced Learning Path",
-  exam_prep: "Exam Countdown Plan",
-  maintenance: "Maintenance Review Queue",
-};
-
-const MODE_DESC: Record<LearningMode, string> = {
-  course_following: "Track deadlines, readings, and assignments on a timeline.",
-  self_paced: "Follow a concept-first path and close your weakest gaps daily.",
-  exam_prep: "Generate a focused, day-by-day countdown plan for your exam.",
-  maintenance: "Keep knowledge fresh by reviewing concepts that are fading.",
-};
-
-function formatDateLabel(raw: string | null): string {
-  if (!raw) return "No date";
+function formatDateLabel(raw: string | null, fallback: string): string {
+  if (!raw) return fallback;
   const d = new Date(raw);
-  if (Number.isNaN(d.getTime())) return "No date";
+  if (Number.isNaN(d.getTime())) return fallback;
   return d.toLocaleDateString(undefined, {
     month: "short",
     day: "numeric",
     year: "numeric",
   });
 }
+
+type TranslateFn = (key: string) => string;
+type TranslateFormatFn = (key: string, vars?: Record<string, string | number | null | undefined>) => string;
 
 function getDaysLeft(raw: string | null): number | null {
   if (!raw) return null;
@@ -60,7 +50,15 @@ interface UpcomingDeadline extends StudyGoal {
   daysLeft: number;
 }
 
-function ExamCountdown({ courseId }: { courseId: string }) {
+function ExamCountdown({
+  courseId,
+  t,
+  tf,
+}: {
+  courseId: string;
+  t: TranslateFn;
+  tf: TranslateFormatFn;
+}) {
   const [upcoming, setUpcoming] = useState<UpcomingDeadline[]>([]);
 
   useEffect(() => {
@@ -106,12 +104,16 @@ function ExamCountdown({ courseId }: { courseId: string }) {
             className={`flex items-center gap-2 text-xs ${urgent ? "font-semibold text-destructive" : "text-amber-800 dark:text-amber-200"}`}
           >
             <span className="tabular-nums">
-              {g.daysLeft === 0 ? "TODAY" : g.daysLeft === 1 ? "1 day" : `${g.daysLeft} days`}
+              {g.daysLeft === 0
+                ? t("plan.banner.today")
+                : g.daysLeft === 1
+                  ? t("plan.banner.oneDay")
+                  : tf("plan.banner.manyDays", { days: g.daysLeft })}
             </span>
             <span className="truncate flex-1">{g.title}</span>
             {urgent ? (
               <span className="shrink-0 rounded bg-destructive/10 px-1.5 py-0.5 text-[10px] uppercase tracking-wider">
-                urgent
+                {t("plan.banner.urgent")}
               </span>
             ) : null}
           </div>
@@ -123,7 +125,15 @@ function ExamCountdown({ courseId }: { courseId: string }) {
 
 // ── Mode Views ──
 
-function CourseFollowingTimeline({ goals }: { goals: StudyGoal[] }) {
+function CourseFollowingTimeline({
+  goals,
+  t,
+  tf,
+}: {
+  goals: StudyGoal[];
+  t: TranslateFn;
+  tf: TranslateFormatFn;
+}) {
   const timeline = goals
     .filter((g) => g.target_date)
     .sort((a, b) => new Date(a.target_date!).getTime() - new Date(b.target_date!).getTime());
@@ -131,7 +141,7 @@ function CourseFollowingTimeline({ goals }: { goals: StudyGoal[] }) {
   if (timeline.length === 0) {
     return (
       <p className="text-sm text-muted-foreground">
-        No dated goals yet. Add your first deadline to start a syllabus timeline.
+        {t("plan.timeline.empty")}
       </p>
     );
   }
@@ -154,19 +164,19 @@ function CourseFollowingTimeline({ goals }: { goals: StudyGoal[] }) {
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium text-foreground">{goal.title}</p>
                 {goal.next_action ? (
-                  <p className="text-xs text-muted-foreground mt-1">Next: {goal.next_action}</p>
+                  <p className="text-xs text-muted-foreground mt-1">{t("plan.path.nextPrefix")} {goal.next_action}</p>
                 ) : null}
               </div>
               <div className="text-right shrink-0">
-                <p className="text-xs text-foreground">{formatDateLabel(goal.target_date)}</p>
+                <p className="text-xs text-foreground">{formatDateLabel(goal.target_date, t("plan.deadline.noDate"))}</p>
                 <p className={`text-[11px] mt-0.5 ${urgencyClass}`}>
                   {daysLeft == null
-                    ? "No deadline"
+                    ? t("plan.deadline.none")
                     : daysLeft < 0
-                      ? "Overdue"
+                      ? t("plan.deadline.overdue")
                       : daysLeft === 0
-                        ? "Today"
-                        : `${daysLeft}d left`}
+                        ? t("plan.deadline.today")
+                        : tf("plan.deadline.daysLeft", { days: daysLeft })}
                 </p>
               </div>
             </div>
@@ -177,50 +187,104 @@ function CourseFollowingTimeline({ goals }: { goals: StudyGoal[] }) {
   );
 }
 
-function SelfPacedPath({ goals, reviewItems }: { goals: StudyGoal[]; reviewItems: ReviewItem[] }) {
+function SelfPacedPath({
+  goals,
+  reviewItems,
+  t,
+}: {
+  goals: StudyGoal[];
+  reviewItems: ReviewItem[];
+  t: TranslateFn;
+}) {
   const activeGoals = goals.filter((g) => g.status !== "completed");
   const weakConcepts = [...reviewItems]
     .sort((a, b) => a.mastery - b.mastery)
     .slice(0, 8);
 
+  const nextUp = activeGoals.filter((g) => {
+    if (!g.target_date) return !!g.next_action;
+    const days = getDaysLeft(g.target_date);
+    return days != null && days >= 0 && days <= 7;
+  });
+  const inProgress = activeGoals.filter((g) => !nextUp.some((n) => n.id === g.id));
+  const completed = goals.filter((g) => g.status === "completed").slice(0, 6);
+
   return (
     <div className="space-y-4">
       <div>
         <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
-          Checklist
+          {t("plan.path.title")}
         </h4>
         {activeGoals.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            No active learning goals yet. Add goals to build a guided concept path.
+            {t("plan.path.empty")}
           </p>
         ) : (
-          <div className="space-y-2">
-            {activeGoals.map((goal) => (
-              <div key={goal.id} className="rounded-lg border border-border p-3">
-                <p className="text-sm font-medium text-foreground">{goal.title}</p>
-                <p className="text-xs text-muted-foreground mt-1">{goal.objective || "No objective provided"}</p>
-                {goal.next_action ? (
-                  <p className="text-xs text-brand mt-1">Next action: {goal.next_action}</p>
-                ) : null}
-              </div>
-            ))}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="rounded-lg border border-border p-2.5 space-y-2">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{t("plan.path.nextUp")}</p>
+              {nextUp.length === 0 ? (
+                <p className="text-xs text-muted-foreground">{t("plan.path.nextUp.empty")}</p>
+              ) : (
+                nextUp.map((goal) => (
+                  <div key={goal.id} className="rounded-md border border-border/70 p-2">
+                    <p className="text-xs font-medium">{goal.title}</p>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">
+                      {goal.target_date
+                        ? formatDateLabel(goal.target_date, t("plan.deadline.noDate"))
+                        : t("plan.deadline.noDate")}
+                    </p>
+                  </div>
+                ))
+              )}
+            </div>
+            <div className="rounded-lg border border-border p-2.5 space-y-2">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{t("plan.path.inProgress")}</p>
+              {inProgress.length === 0 ? (
+                <p className="text-xs text-muted-foreground">{t("plan.path.inProgress.empty")}</p>
+              ) : (
+                inProgress.slice(0, 6).map((goal) => (
+                  <div key={goal.id} className="rounded-md border border-border/70 p-2">
+                    <p className="text-xs font-medium">{goal.title}</p>
+                    {goal.next_action ? (
+                      <p className="text-[11px] text-brand mt-0.5">{t("plan.path.nextPrefix")} {goal.next_action}</p>
+                    ) : (
+                      <p className="text-[11px] text-muted-foreground mt-0.5">{t("plan.path.noNextAction")}</p>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+            <div className="rounded-lg border border-border p-2.5 space-y-2">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{t("plan.path.done")}</p>
+              {completed.length === 0 ? (
+                <p className="text-xs text-muted-foreground">{t("plan.path.done.empty")}</p>
+              ) : (
+                completed.map((goal) => (
+                  <div key={goal.id} className="rounded-md border border-border/70 p-2">
+                    <p className="text-xs font-medium">{goal.title}</p>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">{t("plan.path.completed")}</p>
+                  </div>
+                ))
+              )}
+            </div>
           </div>
         )}
       </div>
 
       <div>
         <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
-          Suggested next concepts
+          {t("plan.path.suggestedConcepts")}
         </h4>
         {weakConcepts.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Practice more to generate concept-level recommendations.</p>
+          <p className="text-sm text-muted-foreground">{t("plan.path.suggestedConcepts.empty")}</p>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             {weakConcepts.map((item) => (
               <div key={item.concept_id} className="rounded-lg border border-border p-2.5">
                 <p className="text-sm font-medium truncate">{item.concept_label}</p>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  Mastery {Math.round(item.mastery * 100)}% · Stability {item.stability_days}d
+                  {t("plan.metric.mastery")} {Math.round(item.mastery * 100)}% · {t("plan.metric.stability")} {item.stability_days}d
                 </p>
               </div>
             ))}
@@ -231,7 +295,34 @@ function SelfPacedPath({ goals, reviewItems }: { goals: StudyGoal[]; reviewItems
   );
 }
 
-function MaintenanceQueue({ reviewItems }: { reviewItems: ReviewItem[] }) {
+function ExamCoverageChecklist({ reviewItems, t }: { reviewItems: ReviewItem[]; t: TranslateFn }) {
+  const weakConcepts = [...reviewItems]
+    .sort((a, b) => a.mastery - b.mastery)
+    .slice(0, 8);
+  if (weakConcepts.length === 0) {
+    return (
+      <div className="rounded-lg border border-border p-3">
+        <p className="text-xs text-muted-foreground">{t("plan.exam.coverage.empty")}</p>
+      </div>
+    );
+  }
+  return (
+    <div className="rounded-lg border border-border p-3 space-y-2.5">
+      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t("plan.exam.coverage")}</p>
+      {weakConcepts.map((item) => (
+        <div key={`${item.concept_id}-exam`} className="flex items-center gap-2">
+          <div className="w-20 h-1.5 bg-muted rounded-full overflow-hidden shrink-0">
+            <div className="h-full bg-warning rounded-full" style={{ width: `${Math.round(item.mastery * 100)}%` }} />
+          </div>
+          <p className="text-xs text-foreground truncate flex-1">{item.concept_label}</p>
+          <span className="text-[11px] text-muted-foreground">{Math.round(item.mastery * 100)}%</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function MaintenanceQueue({ reviewItems, t }: { reviewItems: ReviewItem[]; t: TranslateFn }) {
   const rank = { overdue: 0, urgent: 1, warning: 2 } as const;
   const dueItems = reviewItems
     .filter((i) => i.urgency === "overdue" || i.urgency === "urgent" || i.urgency === "warning")
@@ -243,7 +334,7 @@ function MaintenanceQueue({ reviewItems }: { reviewItems: ReviewItem[] }) {
     });
 
   if (dueItems.length === 0) {
-    return <p className="text-sm text-muted-foreground">No concepts are fading right now. Great retention.</p>;
+    return <p className="text-sm text-muted-foreground">{t("plan.maintenance.empty")}</p>;
   }
 
   return (
@@ -262,7 +353,7 @@ function MaintenanceQueue({ reviewItems }: { reviewItems: ReviewItem[] }) {
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium text-foreground truncate">{item.concept_label}</p>
                 <p className="text-xs text-muted-foreground mt-1">
-                  Retrievability {Math.round(item.retrievability * 100)}% · Stability {item.stability_days}d
+                  {t("plan.metric.retrievability")} {Math.round(item.retrievability * 100)}% · {t("plan.metric.stability")} {item.stability_days}d
                 </p>
               </div>
               <span className={`text-xs font-medium uppercase ${urgencyStyle}`}>{item.urgency}</span>
@@ -287,6 +378,8 @@ export function PlanView({
   aiActionsEnabled = true,
   learningMode,
 }: PlanViewProps) {
+  const t = useT();
+  const tf = useTF();
   const mode: LearningMode = learningMode ?? "course_following";
 
   const { saving, latestBatch, wrapSave } = useBatchManager({
@@ -327,8 +420,8 @@ export function PlanView({
     };
   }, [courseId]);
 
-  const modeLabel = useMemo(() => MODE_TITLE[mode], [mode]);
-  const modeDesc = useMemo(() => MODE_DESC[mode], [mode]);
+  const modeLabel = useMemo(() => t(`mode.${mode}`), [mode, t]);
+  const modeDesc = useMemo(() => t(`mode.${mode}.desc`), [mode, t]);
 
   const handleGenerate = async () => {
     setLoading(true);
@@ -336,9 +429,9 @@ export function PlanView({
       const days = Math.max(1, Number.parseInt(daysUntilExam || "7", 10) || 7);
       const result = await getExamPrepPlan(courseId, days);
       setPlanMarkdown(result.plan);
-      toast.success(`Generated ${days}-day prep plan`);
+      toast.success(tf("plan.exam.generated", { days }));
     } catch (error) {
-      toast.error((error as Error).message || "Failed to generate study plan");
+      toast.error((error as Error).message || t("plan.exam.generateFailed"));
     } finally {
       setLoading(false);
     }
@@ -347,7 +440,7 @@ export function PlanView({
   const handleSave = async (replaceBatchId?: string) => {
     if (!planMarkdown.trim()) return;
     await wrapSave(() =>
-      saveStudyPlan(courseId, planMarkdown, "Exam Prep Plan", replaceBatchId),
+      saveStudyPlan(courseId, planMarkdown, t("plan.exam.saveTitle"), replaceBatchId),
     );
   };
 
@@ -357,17 +450,17 @@ export function PlanView({
       const days = Math.max(1, Number.parseInt(daysUntilExam || "7", 10) || 7);
       await submitAgentTask({
         task_type: "exam_prep",
-        title: "Queued exam prep plan",
+        title: t("plan.exam.taskTitle"),
         course_id: courseId,
-        summary: `Generate a ${days}-day exam prep plan in the background.`,
+        summary: tf("plan.exam.taskSummary", { days }),
         input_json: { course_id: courseId, days_until_exam: days },
         source: "study_plan_panel",
         requires_approval: true,
         max_attempts: 2,
       });
-      toast.success("Queued exam prep task for approval in Activity");
+      toast.success(t("plan.exam.queued"));
     } catch (error) {
-      toast.error((error as Error).message || "Failed to queue exam prep task");
+      toast.error((error as Error).message || t("plan.exam.queueFailed"));
     } finally {
       setQueueing(false);
     }
@@ -376,7 +469,7 @@ export function PlanView({
   if (mode === "exam_prep") {
     return (
       <div className="flex-1 flex flex-col overflow-hidden" data-testid="study-plan-panel">
-        <ExamCountdown courseId={courseId} />
+        <ExamCountdown courseId={courseId} t={t} tf={tf} />
         <div className="px-3 py-2 border-b flex items-center gap-2 text-xs text-muted-foreground">
           <div>
             <p className="text-foreground font-medium">{modeLabel}</p>
@@ -390,7 +483,7 @@ export function PlanView({
                 onClick={() => void handleSave(latestBatch.batch_id)}
                 disabled={saving || loading}
               >
-                Replace Latest
+                {t("plan.actions.replaceLatest")}
               </Button>
             ) : null}
             {planMarkdown ? (
@@ -400,7 +493,7 @@ export function PlanView({
                 onClick={() => void handleSave()}
                 disabled={saving || loading}
               >
-                Save New
+                {t("plan.actions.saveNew")}
               </Button>
             ) : null}
             <Input
@@ -409,7 +502,7 @@ export function PlanView({
               onChange={(e) => setDaysUntilExam(e.target.value)}
               className="h-8 w-20 text-xs"
               inputMode="numeric"
-              placeholder="days"
+              placeholder={t("plan.daysPlaceholder")}
               disabled={!aiActionsEnabled || loading || queueing}
             />
             <Button
@@ -419,7 +512,7 @@ export function PlanView({
               disabled={!aiActionsEnabled || queueing || loading}
             >
               {queueing ? <span className="mr-1 animate-pulse">...</span> : null}
-              Queue
+              {t("plan.actions.queue")}
             </Button>
             <Button
               data-testid="study-plan-generate"
@@ -428,7 +521,7 @@ export function PlanView({
               disabled={!aiActionsEnabled || loading}
             >
               {loading ? <span className="mr-1 animate-pulse">...</span> : null}
-              Generate
+              {t("plan.actions.generate")}
             </Button>
           </div>
         </div>
@@ -436,14 +529,18 @@ export function PlanView({
         <div className="flex-1 overflow-y-auto p-4">
           {!aiActionsEnabled ? <AiFeatureBlocked compact className="mb-4" /> : null}
           {planMarkdown ? (
-            <div className="prose prose-sm max-w-none" data-testid="study-plan-content">
-              <MarkdownRenderer content={planMarkdown} />
+            <div className="space-y-4">
+              <div className="prose prose-sm max-w-none" data-testid="study-plan-content">
+                <MarkdownRenderer content={planMarkdown} />
+              </div>
+              <ExamCoverageChecklist reviewItems={reviewItems} t={t} />
             </div>
           ) : (
-            <div className="h-full flex items-center justify-center text-center">
-              <div>
+            <div className="space-y-4">
+              <ExamCoverageChecklist reviewItems={reviewItems} t={t} />
+              <div className="text-center pt-2">
                 <p className="text-sm text-muted-foreground mb-3">
-                  Generate a focused exam prep plan for this course
+                  {t("plan.exam.emptyHint")}
                 </p>
                 <Button
                   size="sm"
@@ -452,7 +549,7 @@ export function PlanView({
                   disabled={!aiActionsEnabled || loading}
                 >
                   {loading ? <span className="mr-1 animate-pulse">...</span> : null}
-                  Create Plan
+                  {t("plan.actions.createPlan")}
                 </Button>
               </div>
             </div>
@@ -479,13 +576,13 @@ export function PlanView({
         ) : null}
 
         {!loadingContext && mode === "course_following" ? (
-          <CourseFollowingTimeline goals={goals} />
+          <CourseFollowingTimeline goals={goals} t={t} tf={tf} />
         ) : null}
         {!loadingContext && mode === "self_paced" ? (
-          <SelfPacedPath goals={goals} reviewItems={reviewItems} />
+          <SelfPacedPath goals={goals} reviewItems={reviewItems} t={t} />
         ) : null}
         {!loadingContext && mode === "maintenance" ? (
-          <MaintenanceQueue reviewItems={reviewItems} />
+          <MaintenanceQueue reviewItems={reviewItems} t={t} />
         ) : null}
       </div>
     </div>

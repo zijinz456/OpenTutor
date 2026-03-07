@@ -218,6 +218,7 @@ def envelope_payload(ctx: AgentContext) -> dict:
         "verifier_diagnostics": ctx.metadata.get("verifier_diagnostics"),
         "task_link": envelope.task_link,
         "reflection": ctx.metadata.get("reflection"),
+        "layout_simplification": ctx.metadata.get("layout_simplification"),
     }
 
 

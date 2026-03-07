@@ -4,7 +4,6 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Search, X, FileText, ArrowRight } from "lucide-react";
 import { useCourseStore } from "@/store/course";
-import { useT } from "@/lib/i18n-context";
 import type { ContentNode } from "@/lib/api";
 
 function flattenTree(nodes: ContentNode[], courseId: string): Array<{ id: string; title: string; content: string; courseId: string }> {
@@ -28,16 +27,18 @@ interface SearchDialogProps {
 
 export function SearchDialog({ open, onClose, courseId }: SearchDialogProps) {
   const router = useRouter();
-  const t = useT();
   const inputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const contentTree = useCourseStore((s) => s.contentTree);
   const courses = useCourseStore((s) => s.courses);
+  const handleClose = useCallback(() => {
+    setQuery("");
+    onClose();
+  }, [onClose]);
 
   // Focus input when dialog opens
   useEffect(() => {
     if (open) {
-      setQuery("");
       setTimeout(() => inputRef.current?.focus(), 100);
     }
   }, [open]);
@@ -46,11 +47,11 @@ export function SearchDialog({ open, onClose, courseId }: SearchDialogProps) {
   useEffect(() => {
     if (!open) return;
     const handleKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") handleClose();
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [open, onClose]);
+  }, [open, handleClose]);
 
   // Local search through content tree
   const results = useCallback(() => {
@@ -77,7 +78,7 @@ export function SearchDialog({ open, onClose, courseId }: SearchDialogProps) {
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center pt-[15vh]">
       {/* Backdrop */}
-      <div className="fixed inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
+      <div className="fixed inset-0 bg-black/40 backdrop-blur-sm" onClick={handleClose} />
 
       {/* Dialog */}
       <div className="relative w-full max-w-lg mx-4 bg-card border border-border rounded-xl shadow-2xl overflow-hidden">
@@ -114,7 +115,7 @@ export function SearchDialog({ open, onClose, courseId }: SearchDialogProps) {
               onClick={() => {
                 const targetCourseId = courseId ?? r.courseId;
                 router.push(`/course/${targetCourseId}/${r.id}`);
-                onClose();
+                handleClose();
               }}
               className="w-full flex items-start gap-3 px-4 py-3 text-left hover:bg-muted/50 transition-colors border-b border-border/40 last:border-0"
             >

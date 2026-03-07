@@ -5,19 +5,30 @@ import { useRouter } from "next/navigation";
 import { useCourseStore } from "@/store/course";
 import {
   getHealthStatus,
+  getCourseProgress,
+  updateCourseLayout,
   getKnowledgeGraph,
   getReviewSession,
+  listAgentTasks,
+  approveAgentTask,
+  rejectAgentTask,
+  logAgentDecision,
+  markTaskNotificationsRead,
   listNotifications,
   type HealthStatus,
   type Course,
   type AppNotification,
+  type AgentTask,
 } from "@/lib/api";
 import { listStudyGoals, type StudyGoal } from "@/lib/api/progress";
 import { ttlCache } from "@/lib/cache";
-import { useLocale, useT } from "@/lib/i18n-context";
+import { useLocale, useT, useTF } from "@/lib/i18n-context";
 import { RuntimeAlert } from "@/components/shared/runtime-alert";
 import { ModeBadge } from "@/components/course/mode-selector";
+import { Button } from "@/components/ui/button";
 import type { LearningMode, SpaceLayout } from "@/lib/block-system/types";
+import { buildLayoutFromMode } from "@/lib/block-system/templates";
+import { updateUnlockContext } from "@/lib/block-system/feature-unlock";
 import { getPersona, getOptimalStudyWindows, formatStudyWindow } from "@/lib/learner-persona";
 import { initStudyNotifications } from "@/lib/study-notifications";
 import {
@@ -39,6 +50,7 @@ const CARD_COLORS = [
   { bg: "bg-info-muted", text: "text-info" },
 ];
 const DASHBOARD_NOW_MS = Date.now();
+const MODE_REC_SNOOZE_MS = 12 * 60 * 60 * 1000;
 
 function getInitials(name: string) {
   return name
@@ -51,6 +63,27 @@ function getInitials(name: string) {
 function formatDate(value?: string | null) {
   if (!value) return null;
   return new Date(value).toLocaleDateString();
+}
+
+function resolveNotificationPath(notification: AppNotification): string | null {
+  const actionUrl = notification.action_url?.trim();
+  if (actionUrl?.startsWith("/")) return actionUrl;
+  const data = notification.data;
+  if (!data || typeof data !== "object") return null;
+  const candidate = (data as Record<string, unknown>).action_url;
+  if (typeof candidate === "string" && candidate.trim().startsWith("/")) {
+    return candidate.trim();
+  }
+  return null;
+}
+
+function notificationMatchesTask(notification: AppNotification, taskId: string): boolean {
+  const data = notification.data;
+  if (!data || typeof data !== "object") return false;
+  const record = data as Record<string, unknown>;
+  return record.task_id === taskId ||
+    record.queued_task_id === taskId ||
+    record.agent_task_id === taskId;
 }
 
 function getCourseMode(course: Course): LearningMode | undefined {
@@ -78,11 +111,49 @@ interface ReviewSummary {
   totalCount: number;
 }
 
+type PendingTaskSummary = AgentTask & { courseName: string };
+
 interface KnowledgeDensitySummary {
   totalConcepts: number;
   sharedConcepts: number;
   densityPct: number;
   topSharedConcepts: string[];
+}
+
+interface ModeRecommendation {
+  courseId: string;
+  courseName: string;
+  currentMode: LearningMode;
+  suggestedMode: LearningMode;
+  recommendationKey: string;
+  reason: string;
+  signals: string[];
+}
+
+function modeRecSnoozeStorageKey(courseId: string, recommendationKey: string): string {
+  return `opentutor_home_mode_rec_snooze_${courseId}_${recommendationKey}`;
+}
+
+function isModeRecommendationSnoozed(courseId: string, recommendationKey: string): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    const raw = localStorage.getItem(modeRecSnoozeStorageKey(courseId, recommendationKey));
+    if (!raw) return false;
+    const ts = Number(raw);
+    if (Number.isNaN(ts)) return false;
+    return Date.now() - ts < MODE_REC_SNOOZE_MS;
+  } catch {
+    return false;
+  }
+}
+
+function snoozeModeRecommendation(courseId: string, recommendationKey: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(modeRecSnoozeStorageKey(courseId, recommendationKey), String(Date.now()));
+  } catch {
+    // ignore storage failures
+  }
 }
 
 function normalizeConceptLabel(label: string): string {
@@ -152,11 +223,13 @@ function DigestFallback({
   reviewSummaries,
   upcomingDeadlines,
   t,
+  tf,
 }: {
   courses: Course[];
   reviewSummaries: ReviewSummary[];
   upcomingDeadlines: Array<{ title: string; target_date: string | null }>;
   t: (key: string) => string;
+  tf: (key: string, vars?: Record<string, string | number | null | undefined>) => string;
 }) {
   const persona = getPersona();
   if (persona.totalSessions === 0) {
@@ -173,8 +246,8 @@ function DigestFallback({
     <div className="space-y-1.5 text-sm text-muted-foreground">
       <p>
         <span className="text-foreground font-medium">{courses.length}</span>{" "}
-        {courses.length === 1 ? "active space" : "active spaces"} ·{" "}
-        <span className="text-foreground font-medium">{persona.totalSessions}</span> sessions tracked
+        {courses.length === 1 ? t("home.digest.activeSpace") : t("home.digest.activeSpaces")} ·{" "}
+        {tf("home.digest.sessionsTracked", { count: persona.totalSessions })}
       </p>
       {totalReviewItems > 0 && (
         <p>
@@ -184,8 +257,8 @@ function DigestFallback({
       )}
       {daysUntilDeadline != null && daysUntilDeadline >= 0 && (
         <p>
-          Next deadline: <span className="text-foreground font-medium">{nextDeadline!.title}</span>{" "}
-          in {daysUntilDeadline}d
+          {t("home.digest.nextDeadline")} <span className="text-foreground font-medium">{nextDeadline!.title}</span>{" "}
+          {tf("home.digest.inDays", { days: daysUntilDeadline })}
         </p>
       )}
     </div>
@@ -193,7 +266,7 @@ function DigestFallback({
 }
 
 /** Learning rhythm visualization from Learner's Persona data. */
-function LearningRhythm() {
+function LearningRhythm({ t }: { t: (key: string) => string }) {
   const persona = getPersona();
   const windows = getOptimalStudyWindows();
 
@@ -220,7 +293,7 @@ function LearningRhythm() {
   }
 
   return (
-    <DashSection title="Study Rhythm" icon={Clock}>
+    <DashSection title={t("home.studyRhythm")} icon={Clock}>
       <div className="space-y-3">
         {/* Heatmap grid */}
         <div className="flex gap-1.5">
@@ -264,7 +337,7 @@ function LearningRhythm() {
         {/* Optimal windows */}
         {windows.length > 0 && (
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-xs text-muted-foreground">Best times:</span>
+            <span className="text-xs text-muted-foreground">{t("home.studyRhythm.bestTimes")}</span>
             {windows.map((w, i) => (
               <span
                 key={i}
@@ -283,6 +356,7 @@ function LearningRhythm() {
 export default function DashboardPage() {
   const router = useRouter();
   const t = useT();
+  const tf = useTF();
   const { locale } = useLocale();
   const { courses, loading, error } = useCourseStore();
   const totalActiveGoals = courses.reduce((sum, c) => sum + (c.active_goal_count ?? 0), 0);
@@ -294,6 +368,10 @@ export default function DashboardPage() {
   );
   const [reviewSummaries, setReviewSummaries] = useState<ReviewSummary[]>([]);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [pendingTasks, setPendingTasks] = useState<PendingTaskSummary[]>([]);
+  const [actingTasks, setActingTasks] = useState<Set<string>>(new Set());
+  const [modeRecommendations, setModeRecommendations] = useState<ModeRecommendation[]>([]);
+  const [actingModeCourses, setActingModeCourses] = useState<Set<string>>(new Set());
   const [upcomingDeadlines, setUpcomingDeadlines] = useState<Array<StudyGoal & { courseName: string }>>([]);
   const [dailyDigest, setDailyDigest] = useState<AppNotification | null>(null);
   const [knowledgeDensity, setKnowledgeDensity] = useState<KnowledgeDensitySummary | null>(null);
@@ -365,6 +443,35 @@ export default function DashboardPage() {
       })
       .catch((e) => console.error("[Dashboard] notifications fetch failed:", e));
   }, []);
+
+  // Fetch pending approval tasks for quick actions on Home.
+  useEffect(() => {
+    if (courses.length === 0) return;
+    let cancelled = false;
+    const fetchPendingTasks = async () => {
+      const pending: PendingTaskSummary[] = [];
+      await Promise.all(
+        courses.map(async (course) => {
+          try {
+            const tasks = await listAgentTasks(course.id);
+            tasks
+              .filter((task) => task.status === "pending_approval")
+              .forEach((task) => pending.push({ ...task, courseName: course.name }));
+          } catch {
+            // ignore per-course task failures
+          }
+        }),
+      );
+      pending.sort((a, b) => new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime());
+      if (!cancelled) {
+        setPendingTasks(pending.slice(0, 8));
+      }
+    };
+    void fetchPendingTasks();
+    return () => {
+      cancelled = true;
+    };
+  }, [courses]);
 
   // Fetch upcoming deadlines from study goals
   useEffect(() => {
@@ -445,7 +552,202 @@ export default function DashboardPage() {
     return () => { cancelled = true; };
   }, [courses]);
 
+  // Cross-course mode recommendations for Command Center.
+  useEffect(() => {
+    if (courses.length === 0) return;
+    let cancelled = false;
+
+    const fetchModeRecommendations = async () => {
+      const next: ModeRecommendation[] = [];
+
+      await Promise.all(
+        courses.map(async (course) => {
+          const currentMode = getCourseMode(course);
+          if (!currentMode) return;
+
+          const goals = await listStudyGoals(course.id, "active").catch(() => [] as StudyGoal[]);
+          const now = Date.now();
+          const deadlines = goals
+            .filter((g) => g.target_date)
+            .map((g) => ({
+              goal: g,
+              daysLeft: Math.ceil((new Date(g.target_date!).getTime() - now) / (1000 * 60 * 60 * 24)),
+            }));
+          const upcoming = deadlines
+            .filter((d) => d.daysLeft >= 0 && d.daysLeft <= 7)
+            .sort((a, b) => a.daysLeft - b.daysLeft)[0];
+          const allDeadlinesPassed = deadlines.length > 0 && deadlines.every((d) => d.daysLeft < 0);
+
+          let mastery: number | null = null;
+          let errorRatePct: number | null = null;
+          if (currentMode === "course_following" || currentMode === "self_paced") {
+            const progress = await getCourseProgress(course.id).catch(() => null);
+            if (progress) {
+              mastery = Math.round((progress.average_mastery ?? 0) * 100);
+              const totalAttempts = progress.mastered + progress.reviewed + progress.in_progress;
+              if (totalAttempts > 10) {
+                errorRatePct = Math.round((progress.in_progress / totalAttempts) * 100);
+              }
+            }
+          }
+
+          if (currentMode === "exam_prep" && allDeadlinesPassed) {
+            if (isModeRecommendationSnoozed(course.id, "exam_passed")) return;
+            next.push({
+              courseId: course.id,
+              courseName: course.name,
+              currentMode,
+              suggestedMode: "maintenance",
+              recommendationKey: "exam_passed",
+              reason: t("course.modeSuggestion.examPassed"),
+              signals: [t("course.modeSuggestion.signal.deadlinesPassed")],
+            });
+            return;
+          }
+
+          if (currentMode === "course_following" || currentMode === "self_paced") {
+            if (upcoming && errorRatePct != null && errorRatePct > 40) {
+              if (isModeRecommendationSnoozed(course.id, "error_rate")) return;
+              next.push({
+                courseId: course.id,
+                courseName: course.name,
+                currentMode,
+                suggestedMode: "exam_prep",
+                recommendationKey: "error_rate",
+                reason: tf("course.modeSuggestion.errorRateDetailed", { rate: errorRatePct, days: upcoming.daysLeft }),
+                signals: [
+                  tf("course.modeSuggestion.signal.errorRate", { rate: errorRatePct }),
+                  tf("course.modeSuggestion.signal.deadline", { days: upcoming.daysLeft }),
+                ],
+              });
+              return;
+            }
+
+            if (upcoming) {
+              if (isModeRecommendationSnoozed(course.id, "deadline")) return;
+              next.push({
+                courseId: course.id,
+                courseName: course.name,
+                currentMode,
+                suggestedMode: "exam_prep",
+                recommendationKey: "deadline",
+                reason: tf("course.modeSuggestion.deadline", { title: upcoming.goal.title, days: upcoming.daysLeft }),
+                signals: [tf("course.modeSuggestion.signal.deadline", { days: upcoming.daysLeft })],
+              });
+              return;
+            }
+
+            if (mastery != null && mastery >= 85) {
+              if (isModeRecommendationSnoozed(course.id, "mastery")) return;
+              next.push({
+                courseId: course.id,
+                courseName: course.name,
+                currentMode,
+                suggestedMode: "maintenance",
+                recommendationKey: "mastery",
+                reason: tf("course.modeSuggestion.mastery", { mastery }),
+                signals: [tf("course.modeSuggestion.signal.mastery", { mastery })],
+              });
+            }
+          }
+        }),
+      );
+
+      if (!cancelled) {
+        setModeRecommendations(next.slice(0, 6));
+      }
+    };
+
+    void fetchModeRecommendations();
+    return () => {
+      cancelled = true;
+    };
+  }, [courses, t, tf]);
+
   const totalUrgentReviews = reviewSummaries.reduce((s, r) => s + r.overdueCount + r.urgentCount, 0);
+  const actOnTask = async (taskId: string, action: "approve" | "reject") => {
+    setActingTasks((prev) => new Set(prev).add(taskId));
+    try {
+      if (action === "approve") {
+        await approveAgentTask(taskId);
+      } else {
+        await rejectAgentTask(taskId);
+      }
+      await markTaskNotificationsRead(taskId).catch(() => undefined);
+      setPendingTasks((prev) => prev.filter((task) => task.id !== taskId));
+      setNotifications((prev) => prev.filter((notification) => !notificationMatchesTask(notification, taskId)));
+    } catch {
+      // keep current state; user can retry
+    } finally {
+      setActingTasks((prev) => {
+        const next = new Set(prev);
+        next.delete(taskId);
+        return next;
+      });
+    }
+  };
+  const applyModeRecommendation = async (item: ModeRecommendation) => {
+    setActingModeCourses((prev) => new Set(prev).add(item.courseId));
+    try {
+      const layout = buildLayoutFromMode(item.suggestedMode);
+      localStorage.setItem(`opentutor_blocks_${item.courseId}`, JSON.stringify(layout));
+      updateUnlockContext(item.courseId, { mode: item.suggestedMode });
+      await updateCourseLayout(item.courseId, layout as unknown as Record<string, unknown>);
+      await logAgentDecision({
+        course_id: item.courseId,
+        action: "apply_mode_recommendation",
+        title: `${t("home.modeRecommendations.apply")} · ${item.courseName}`,
+        reason: item.reason,
+        decision_type: "mode_suggestion",
+        source: "home_command_center",
+        top_signal_type: "manual_override",
+        metadata_json: {
+          recommendation_key: item.recommendationKey,
+          current_mode: item.currentMode,
+          suggested_mode: item.suggestedMode,
+          signals: item.signals,
+        },
+      }).catch(() => undefined);
+      setModeRecommendations((prev) => prev.filter((rec) => rec.courseId !== item.courseId));
+    } catch {
+      // ignore; user can retry
+    } finally {
+      setActingModeCourses((prev) => {
+        const next = new Set(prev);
+        next.delete(item.courseId);
+        return next;
+      });
+    }
+  };
+  const dismissModeRecommendation = (item: ModeRecommendation) => {
+    snoozeModeRecommendation(item.courseId, item.recommendationKey);
+    void logAgentDecision({
+      course_id: item.courseId,
+      action: "snooze_mode_recommendation",
+      title: `${t("home.modeRecommendations.snooze")} · ${item.courseName}`,
+      reason: item.reason,
+      decision_type: "mode_suggestion",
+      source: "home_command_center",
+      top_signal_type: "manual_override",
+      metadata_json: {
+        recommendation_key: item.recommendationKey,
+        current_mode: item.currentMode,
+        suggested_mode: item.suggestedMode,
+        signals: item.signals,
+      },
+    }).catch(() => undefined);
+    setModeRecommendations((prev) =>
+      prev.filter(
+        (rec) =>
+          !(rec.courseId === item.courseId && rec.recommendationKey === item.recommendationKey),
+      ),
+    );
+  };
+  const getDeadlineLabel = (daysUntil: number): string => {
+    if (daysUntil <= 0) return t("home.deadline.overdue");
+    if (daysUntil === 1) return t("home.deadline.tomorrow");
+    return tf("home.deadline.inDays", { days: daysUntil });
+  };
 
   return (
     <div className="min-h-screen bg-background">
@@ -537,53 +839,51 @@ export default function DashboardPage() {
                     reviewSummaries={reviewSummaries}
                     upcomingDeadlines={upcomingDeadlines}
                     t={t}
+                    tf={tf}
                   />
                 )}
               </DashSection>
             )}
 
             {/* Upcoming Deadlines */}
-            {courses.length > 0 && upcomingDeadlines.length > 0 && (
+            {courses.length > 0 && (
               <DashSection
                 title={t("home.upcomingDeadlines")}
                 icon={CalendarDays}
                 badge={upcomingDeadlines.length}
               >
-                <div className="space-y-2">
-                  {upcomingDeadlines.map((d) => {
-                    const daysUntil = Math.ceil(
-                      (new Date(d.target_date!).getTime() - DASHBOARD_NOW_MS) / (1000 * 60 * 60 * 24),
-                    );
-                    const urgencyClass =
-                      daysUntil <= 0
-                        ? "text-destructive font-semibold"
-                        : daysUntil <= 3
-                          ? "text-warning font-medium"
-                          : "text-muted-foreground";
-                    const label =
-                      daysUntil <= 0
-                        ? locale === "zh" ? "已逾期" : "Overdue"
-                        : daysUntil === 1
-                          ? locale === "zh" ? "明天" : "Tomorrow"
-                          : locale === "zh"
-                            ? `${daysUntil} 天后`
-                            : `${daysUntil}d`;
-                    return (
-                      <button
-                        key={d.id}
-                        type="button"
-                        onClick={() => d.course_id && router.push(`/course/${d.course_id}/plan`)}
-                        className="w-full flex items-center gap-3 rounded-lg border border-border p-3 text-left hover:bg-muted/40 transition-colors"
-                      >
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-foreground truncate">{d.title}</p>
-                          <p className="text-xs text-muted-foreground truncate">{d.courseName}</p>
-                        </div>
-                        <span className={`text-xs shrink-0 ${urgencyClass}`}>{label}</span>
-                      </button>
-                    );
-                  })}
-                </div>
+                {upcomingDeadlines.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">{t("home.upcomingDeadlines.empty")}</p>
+                ) : (
+                  <div className="space-y-2">
+                    {upcomingDeadlines.map((d) => {
+                      const daysUntil = Math.ceil(
+                        (new Date(d.target_date!).getTime() - DASHBOARD_NOW_MS) / (1000 * 60 * 60 * 24),
+                      );
+                      const urgencyClass =
+                        daysUntil <= 0
+                          ? "text-destructive font-semibold"
+                          : daysUntil <= 3
+                            ? "text-warning font-medium"
+                            : "text-muted-foreground";
+                      const label = getDeadlineLabel(daysUntil);
+                      return (
+                        <button
+                          key={d.id}
+                          type="button"
+                          onClick={() => d.course_id && router.push(`/course/${d.course_id}/plan`)}
+                          className="w-full flex items-center gap-3 rounded-lg border border-border p-3 text-left hover:bg-muted/40 transition-colors"
+                        >
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-foreground truncate">{d.title}</p>
+                            <p className="text-xs text-muted-foreground truncate">{d.courseName}</p>
+                          </div>
+                          <span className={`text-xs shrink-0 ${urgencyClass}`}>{label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </DashSection>
             )}
 
@@ -609,13 +909,13 @@ export default function DashboardPage() {
                           <p className="text-sm font-medium text-foreground truncate">{rs.courseName}</p>
                           <p className="text-xs text-muted-foreground">
                             {rs.overdueCount > 0 && (
-                              <span className="text-destructive font-medium">{rs.overdueCount} overdue</span>
+                              <span className="text-destructive font-medium">{tf("home.reviews.overdue", { count: rs.overdueCount })}</span>
                             )}
                             {rs.overdueCount > 0 && rs.urgentCount > 0 && " · "}
                             {rs.urgentCount > 0 && (
-                              <span className="text-warning font-medium">{rs.urgentCount} urgent</span>
+                              <span className="text-warning font-medium">{tf("home.reviews.urgent", { count: rs.urgentCount })}</span>
                             )}
-                            {" · "}{rs.totalCount} total
+                            {" · "}{tf("home.reviews.total", { count: rs.totalCount })}
                           </p>
                         </div>
                         <ArrowRight className="size-4 text-muted-foreground shrink-0" />
@@ -673,34 +973,175 @@ export default function DashboardPage() {
             )}
 
             {/* Agent Insights — cross-course notifications */}
-            {courses.length > 0 && notifications.length > 0 && (
+            {courses.length > 0 && (
               <DashSection
                 title={t("home.agentInsights")}
                 icon={Sparkles}
                 badge={notifications.length}
               >
-                <div className="space-y-2">
-                  {notifications.map((n) => (
-                    <div
-                      key={n.id}
-                      className="flex items-start gap-3 rounded-lg border border-border p-3"
-                    >
-                      <Sparkles className="size-4 text-brand shrink-0 mt-0.5" />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-foreground">{n.title}</p>
-                        <p className="text-xs text-muted-foreground mt-0.5">{n.body}</p>
+                {notifications.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">{t("home.agentInsights.empty")}</p>
+                ) : (
+                  <div className="space-y-2">
+                    {notifications.map((n) => {
+                      const path = resolveNotificationPath(n);
+                      const coursePath = n.course_id ? `/course/${n.course_id}` : null;
+                      const ctaPath = path ?? coursePath;
+                      const ctaLabel = n.action_label || t("home.agentInsights.open");
+                      return (
+                        <div
+                          key={n.id}
+                          className="flex items-start gap-3 rounded-lg border border-border p-3"
+                        >
+                          <Sparkles className="size-4 text-brand shrink-0 mt-0.5" />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-foreground">{n.title}</p>
+                            <p className="text-xs text-muted-foreground mt-0.5">{n.body}</p>
+                            {ctaPath ? (
+                              <button
+                                type="button"
+                                onClick={() => router.push(ctaPath)}
+                                className="mt-1.5 text-[11px] font-medium text-brand hover:underline"
+                              >
+                                {ctaLabel}
+                              </button>
+                            ) : null}
+                          </div>
+                          <span className="text-[10px] text-muted-foreground shrink-0">
+                            {formatDate(n.created_at)}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </DashSection>
+            )}
+
+            {/* Pending Approvals — quick Tier-2 decisions */}
+            {courses.length > 0 && (
+              <DashSection
+                title={t("home.pendingApprovals.title")}
+                icon={Sparkles}
+                badge={pendingTasks.length}
+              >
+                {pendingTasks.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">{t("home.pendingApprovals.empty")}</p>
+                ) : (
+                  <div className="space-y-2">
+                    {pendingTasks.map((task) => (
+                      <div key={task.id} className="rounded-lg border border-border p-3">
+                        <div className="flex items-start gap-3">
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-medium text-foreground">{task.title}</p>
+                            {task.summary ? (
+                              <p className="text-xs text-muted-foreground mt-0.5">{task.summary}</p>
+                            ) : null}
+                            <p className="text-[11px] text-muted-foreground mt-1">
+                              {task.courseName || t("home.pendingApprovals.courseUnknown")} ·{" "}
+                              {tf("home.pendingApprovals.source", { taskType: task.task_type, source: task.source })}
+                            </p>
+                            {task.approval_reason ? (
+                              <p className="text-[11px] text-muted-foreground mt-1">
+                                {t("home.pendingApprovals.reason")} {task.approval_reason}
+                              </p>
+                            ) : null}
+                          </div>
+                          <div className="flex shrink-0 gap-1.5">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={actingTasks.has(task.id)}
+                              onClick={() => void actOnTask(task.id, "reject")}
+                            >
+                              {t("home.pendingApprovals.reject")}
+                            </Button>
+                            <Button
+                              size="sm"
+                              disabled={actingTasks.has(task.id)}
+                              onClick={() => void actOnTask(task.id, "approve")}
+                            >
+                              {t("home.pendingApprovals.approve")}
+                            </Button>
+                          </div>
+                        </div>
                       </div>
-                      <span className="text-[10px] text-muted-foreground shrink-0">
-                        {formatDate(n.created_at)}
-                      </span>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
+              </DashSection>
+            )}
+
+            {/* Mode Recommendations — cross-course mode transitions */}
+            {courses.length > 0 && (
+              <DashSection
+                title={t("home.modeRecommendations.title")}
+                icon={Sparkles}
+                badge={modeRecommendations.length}
+              >
+                {modeRecommendations.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">{t("home.modeRecommendations.empty")}</p>
+                ) : (
+                  <div className="space-y-2">
+                    {modeRecommendations.map((item) => (
+                      <div key={item.courseId} className="rounded-lg border border-border p-3">
+                        <div className="flex items-start gap-3">
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-medium text-foreground">{item.courseName}</p>
+                            <div className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                              <span>{t("home.modeRecommendations.current")}</span>
+                              <ModeBadge mode={item.currentMode} />
+                              <ArrowRight className="size-3.5" />
+                              <ModeBadge mode={item.suggestedMode} />
+                            </div>
+                            <p className="text-xs text-muted-foreground mt-1.5">{item.reason}</p>
+                            {item.signals.length > 0 ? (
+                              <div className="mt-1.5 flex flex-wrap gap-1">
+                                {item.signals.map((signal) => (
+                                  <span
+                                    key={`${item.courseId}-${signal}`}
+                                    className="inline-flex rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground"
+                                  >
+                                    {signal}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : null}
+                          </div>
+                          <div className="flex shrink-0 gap-1.5">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={actingModeCourses.has(item.courseId)}
+                              onClick={() => dismissModeRecommendation(item)}
+                            >
+                              {t("home.modeRecommendations.snooze")}
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => router.push(`/course/${item.courseId}`)}
+                            >
+                              {t("home.modeRecommendations.openCourse")}
+                            </Button>
+                            <Button
+                              size="sm"
+                              disabled={actingModeCourses.has(item.courseId)}
+                              onClick={() => void applyModeRecommendation(item)}
+                            >
+                              {t("home.modeRecommendations.apply")}
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </DashSection>
             )}
 
             {/* Learning Rhythm */}
-            {courses.length > 0 && <LearningRhythm />}
+            {courses.length > 0 && <LearningRhythm t={t} />}
 
             {/* Your Spaces */}
             {loading && <CourseCardsSkeleton />}

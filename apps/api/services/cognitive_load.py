@@ -173,3 +173,57 @@ def _build_guidance(level: str, score: float, signals: dict) -> str:
         )
 
     return "\n".join(parts)
+
+
+# Priority order for hiding blocks under high cognitive load (least essential first)
+_BLOCK_HIDE_PRIORITY = [
+    "agent_insight",
+    "forecast",
+    "knowledge_graph",
+    "podcast",
+    "progress",
+    "plan",
+    "wrong_answers",
+    "flashcards",
+    "review",
+    # "quiz", "notes", "chapter_list" — essential, never hidden
+]
+
+
+def suggest_layout_simplification(
+    cognitive_load_score: float,
+    current_block_types: list[str],
+) -> dict:
+    """Suggest which blocks to collapse/hide when cognitive load is high.
+
+    Returns:
+        {
+            "should_simplify": bool,
+            "blocks_to_hide": list of block type strings to collapse,
+            "reason": str,
+        }
+    """
+    if cognitive_load_score < 0.7:
+        return {"should_simplify": False, "blocks_to_hide": [], "reason": ""}
+
+    # Hide non-essential blocks, most dispensable first
+    to_hide: list[str] = []
+    for block_type in _BLOCK_HIDE_PRIORITY:
+        if block_type in current_block_types:
+            to_hide.append(block_type)
+            # Hide enough to reduce visual clutter (max 3)
+            if len(to_hide) >= 3:
+                break
+
+    if not to_hide:
+        return {"should_simplify": False, "blocks_to_hide": [], "reason": ""}
+
+    return {
+        "should_simplify": True,
+        "blocks_to_hide": to_hide,
+        "reason": (
+            f"Cognitive load is high ({cognitive_load_score:.0%}). "
+            f"Consider hiding {', '.join(t.replace('_', ' ') for t in to_hide)} "
+            "to reduce visual clutter and focus on core study."
+        ),
+    }

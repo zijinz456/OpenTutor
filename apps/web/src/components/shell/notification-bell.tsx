@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Bell } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -10,6 +11,7 @@ import {
   type AppNotification,
   type ChatAction,
 } from "@/lib/api";
+import { useT } from "@/lib/i18n-context";
 import { useChatStore } from "@/store/chat";
 
 function timeAgo(iso: string | null): string {
@@ -25,6 +27,8 @@ function timeAgo(iso: string | null): string {
 }
 
 export function NotificationBell() {
+  const router = useRouter();
+  const t = useT();
   const [open, setOpen] = useState(false);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -86,7 +90,7 @@ export function NotificationBell() {
         variant="ghost"
         size="icon-xs"
         className="text-muted-foreground hover:text-foreground"
-        title="Notifications"
+        title={t("notification.title")}
         onClick={() => setOpen((v) => !v)}
       >
         <Bell className="size-3.5" />
@@ -100,14 +104,14 @@ export function NotificationBell() {
       {open && (
         <div className="absolute right-0 top-full mt-1 z-50 w-80 rounded-md border border-border bg-popover shadow-md">
           <div className="flex items-center justify-between px-3 py-2 border-b">
-            <span className="text-xs font-medium">Notifications</span>
+            <span className="text-xs font-medium">{t("notification.title")}</span>
             {unreadCount > 0 && (
               <button
                 type="button"
                 className="text-[10px] text-primary hover:underline"
                 onClick={() => void handleMarkAllRead()}
               >
-                Mark all read
+                {t("notification.markAllRead")}
               </button>
             )}
           </div>
@@ -115,7 +119,7 @@ export function NotificationBell() {
           <div className="max-h-72 overflow-y-auto">
             {notifications.length === 0 ? (
               <div className="px-3 py-6 text-center text-xs text-muted-foreground">
-                No notifications yet
+                {t("notification.empty")}
               </div>
             ) : (
               notifications.map((n) => (
@@ -155,7 +159,26 @@ export function NotificationBell() {
                             setOpen(false);
                           }}
                         >
-                          Show in workspace
+                          {t("notification.showInWorkspace")}
+                        </button>
+                      )}
+                      {(n.action_url?.startsWith("/") || n.course_id) && (
+                        <button
+                          type="button"
+                          className="mt-1 ml-2 text-[10px] font-medium text-primary hover:underline"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const path = n.action_url?.startsWith("/")
+                              ? n.action_url
+                              : n.course_id
+                                ? `/course/${n.course_id}`
+                                : null;
+                            if (path) router.push(path);
+                            if (!n.read) void handleMarkRead(n.id);
+                            setOpen(false);
+                          }}
+                        >
+                          {n.action_label || t("notification.open")}
                         </button>
                       )}
                     </div>

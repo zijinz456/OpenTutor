@@ -31,6 +31,7 @@ SIGNAL_TYPES = (
     "deadline",
     "failed_task",
     "forgetting_risk",
+    "prerequisite_gap",
     "weak_area",
     "content_stale",
     "inactivity",
@@ -425,6 +426,48 @@ async def _collect_guided_session_readiness(
     )]
 
 
+async def _collect_prerequisite_gaps(
+    user_id: uuid.UUID,
+    course_id: uuid.UUID | None,
+    db: AsyncSession,
+) -> list[AgendaSignal]:
+    """Detect prerequisite gaps via LOOM knowledge graph."""
+    if not course_id:
+        return []
+
+    try:
+        from services.loom import check_prerequisite_gaps
+        gaps = await check_prerequisite_gaps(db, user_id, course_id)
+    except Exception:
+        logger.debug("Prerequisite gap check failed (best-effort)")
+        return []
+
+    if not gaps:
+        return []
+
+    # Emit one signal per significant gap (severity > 0.5)
+    signals: list[AgendaSignal] = []
+    for gap in gaps[:5]:
+        if gap["gap_severity"] < 0.5:
+            continue
+        urgency = min(60.0 + gap["gap_severity"] * 30, 85.0)
+        signals.append(AgendaSignal(
+            signal_type="prerequisite_gap",
+            user_id=user_id,
+            course_id=course_id,
+            entity_id=gap["concept_id"],
+            title=f"Prerequisite gap: {gap['concept']} (mastery {gap['mastery']:.0%})",
+            urgency=urgency,
+            detail={
+                "concept": gap["concept"],
+                "concept_id": gap["concept_id"],
+                "mastery": gap["mastery"],
+                "gap_severity": gap["gap_severity"],
+            },
+        ))
+    return signals
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -434,6 +477,7 @@ _COLLECTORS = [
     _collect_deadlines,
     _collect_failed_tasks,
     _collect_forgetting_risk,
+    _collect_prerequisite_gaps,
     _collect_weak_areas,
     _collect_content_stale,
     _collect_inactivity,

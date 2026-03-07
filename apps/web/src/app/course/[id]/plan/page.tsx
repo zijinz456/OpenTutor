@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { useCourseStore } from "@/store/course";
 import { useWorkspaceStore } from "@/store/workspace";
@@ -29,7 +29,6 @@ export default function PlanPage() {
   const [health, setHealth] = useState<HealthStatus | null>(
     () => ttlCache.get<HealthStatus>("course:health") ?? null,
   );
-  const [resolvedMode, setResolvedMode] = useState<LearningMode | undefined>(undefined);
 
   const { activeCourse, courses, fetchCourses, setActiveCourse } = useCourseStore();
   const spaceMode = useWorkspaceStore((s) => s.spaceLayout.mode);
@@ -50,7 +49,7 @@ export default function PlanPage() {
   }, []);
 
   const course = activeCourse ?? courses.find((c) => c.id === courseId) ?? null;
-  useEffect(() => {
+  const resolvedMode = useMemo(() => {
     const metadata = (course?.metadata as Record<string, unknown> | undefined) ?? {};
     const layout = metadata.spaceLayout;
     const layoutMode = layout && typeof layout === "object"
@@ -59,17 +58,19 @@ export default function PlanPage() {
     const metaMode = asLearningMode(metadata.learning_mode);
 
     let localMode: LearningMode | undefined;
-    try {
-      const raw = localStorage.getItem(`opentutor_blocks_${courseId}`);
-      if (raw) {
-        const parsed = JSON.parse(raw) as { mode?: unknown };
-        localMode = asLearningMode(parsed.mode);
+    if (typeof window !== "undefined") {
+      try {
+        const raw = localStorage.getItem(`opentutor_blocks_${courseId}`);
+        if (raw) {
+          const parsed = JSON.parse(raw) as { mode?: unknown };
+          localMode = asLearningMode(parsed.mode);
+        }
+      } catch {
+        // ignore malformed local storage
       }
-    } catch {
-      // ignore malformed local storage
     }
 
-    setResolvedMode(spaceMode ?? localMode ?? layoutMode ?? metaMode);
+    return spaceMode ?? localMode ?? layoutMode ?? metaMode;
   }, [course?.metadata, courseId, spaceMode]);
 
   const requestedTab = searchParams.get("tab");

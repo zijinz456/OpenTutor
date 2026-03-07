@@ -347,6 +347,28 @@ export const useChatStore = create<ChatState>((set, get) => ({
             }
           }
 
+          // Apply layout simplification if cognitive load is high
+          const simplification = event.metadata?.layout_simplification as
+            | { should_simplify: boolean; blocks_to_hide: string[]; reason: string }
+            | undefined;
+          if (simplification?.should_simplify && simplification.blocks_to_hide.length > 0) {
+            try {
+              const { useWorkspaceStore } = await import("@/store/workspace");
+              const ws = useWorkspaceStore.getState();
+              const ops = simplification.blocks_to_hide
+                .map((type: string) => {
+                  const block = ws.spaceLayout.blocks.find((b) => b.type === type);
+                  return block ? { action: "remove" as const, blockId: block.id } : null;
+                })
+                .filter(Boolean) as Array<{ action: "remove"; blockId: string }>;
+              if (ops.length > 0) {
+                ws.batchUpdateBlocks(ops);
+              }
+            } catch {
+              // Best-effort — workspace store may not be available
+            }
+          }
+
           set((s) => {
             const nextMBC = {
               ...s.messagesByCourse,

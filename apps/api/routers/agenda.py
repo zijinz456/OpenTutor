@@ -1,6 +1,7 @@
 """Agenda endpoints — observe and trigger the agent's decision loop."""
 
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
@@ -53,6 +54,21 @@ class AgendaTickResponse(BaseModel):
     decision_json: dict | None
 
 
+class AgendaDecisionLogRequest(BaseModel):
+    course_id: uuid.UUID | None = None
+    goal_id: uuid.UUID | None = None
+    trigger: str = "user_action"
+    status: str = "noop"
+    top_signal_type: str | None = "manual_override"
+    action: str
+    title: str | None = None
+    reason: str | None = None
+    decision_type: str | None = None
+    source: str | None = None
+    metadata_json: dict | None = None
+    dedup_key: str | None = None
+
+
 class CourseAgendaResponse(BaseModel):
     course_id: str
     active_goal: dict | None
@@ -88,6 +104,42 @@ async def trigger_tick(
         top_signal_type=run.top_signal_type,
         decision_json=run.decision_json,
     )
+
+
+@router.post("/log-decision", response_model=AgendaRunResponse)
+async def log_decision(
+    body: AgendaDecisionLogRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Append a user decision entry to agenda history for timeline visibility."""
+    decision_json: dict = {
+        "action": body.action,
+        "reason": body.reason,
+        "decision_type": body.decision_type,
+        "source": body.source,
+    }
+    if body.title:
+        decision_json["task_title"] = body.title
+    if body.metadata_json:
+        decision_json["metadata"] = body.metadata_json
+
+    run = AgendaRun(
+        user_id=user.id,
+        course_id=body.course_id,
+        goal_id=body.goal_id,
+        trigger=body.trigger or "user_action",
+        status=body.status or "noop",
+        top_signal_type=body.top_signal_type,
+        decision_json=decision_json,
+        signals_json=[{"signal_type": body.top_signal_type}] if body.top_signal_type else [],
+        dedup_key=body.dedup_key,
+        completed_at=datetime.now(timezone.utc),
+    )
+    db.add(run)
+    await db.commit()
+    await db.refresh(run)
+    return AgendaRunResponse(**serialize_model(run))
 
 
 @router.get("/runs", response_model=list[AgendaRunResponse])
