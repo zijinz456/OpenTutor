@@ -63,7 +63,7 @@ async def run_scrape_refresh(db: AsyncSession) -> dict:
             else:
                 skipped += 1
         except Exception as e:
-            logger.error("Scrape failed for %s: %s", source.url, e)
+            logger.exception("Scrape failed for %s", source.url)
             source.consecutive_failures = (source.consecutive_failures or 0) + 1
             source.last_status = "failed"
             source.last_error = str(e)[:500]
@@ -264,7 +264,7 @@ async def _try_canvas_reauth(db: AsyncSession, source: ScrapeSource) -> bool:
                 auth_session.last_validated_at = datetime.now(timezone.utc)
                 return False
     except Exception as e:
-        logger.warning("Canvas re-authentication failed: %s", e)
+        logger.exception("Canvas re-authentication failed")
         return False
 
 
@@ -412,7 +412,7 @@ def _fire_background_embed(course_id: uuid.UUID):
                 await embed_course_content(db, course_id)
                 await db.commit()
         except Exception as e:
-            logger.debug("Background embedding failed for course %s: %s", course_id, e)
+            logger.exception("Background embedding failed for course %s", course_id)
 
     track_background_task(asyncio.create_task(_embed()))
 

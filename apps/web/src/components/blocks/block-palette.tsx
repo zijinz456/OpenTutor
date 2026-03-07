@@ -1,14 +1,16 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef } from "react";
 import { Plus, Lock } from "lucide-react";
 import { USER_ADDABLE_BLOCKS, BLOCK_REGISTRY } from "@/lib/block-system/registry";
 import { useWorkspaceStore } from "@/store/workspace";
 import { useCourseStore } from "@/store/course";
 import { isBlockUnlocked, getUnlockContext } from "@/lib/block-system/feature-unlock";
 import { useParams } from "next/navigation";
+import { useT } from "@/lib/i18n-context";
 
 export function BlockPalette() {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const addBlock = useWorkspaceStore((s) => s.addBlock);
   const mode = useWorkspaceStore((s) => s.spaceLayout.mode);
@@ -30,10 +32,10 @@ export function BlockPalette() {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="inline-flex items-center gap-1.5 px-4 py-2 text-sm text-muted-foreground hover:text-foreground border border-dashed border-border rounded-lg hover:border-brand/40 hover:bg-brand-muted/30 transition-colors"
+        className="inline-flex items-center gap-1.5 px-5 py-2.5 text-sm text-muted-foreground hover:text-foreground border border-dashed border-border rounded-full hover:border-brand/40 hover:bg-brand-muted/30 transition-all"
       >
         <Plus className="size-4" />
-        Add Block
+        {t("block.addBlock")}
       </button>
 
       {open && (
@@ -42,7 +44,7 @@ export function BlockPalette() {
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
 
           {/* Palette dropdown */}
-          <div className="absolute bottom-full mb-2 z-50 w-72 max-h-80 overflow-auto rounded-xl border border-border bg-popover shadow-lg p-2">
+          <div role="menu" aria-label="Add block" className="absolute bottom-full mb-2 z-50 w-72 max-h-80 overflow-auto rounded-2xl bg-popover p-2 animate-slide-up" style={{ boxShadow: "var(--shadow-elevated)" }}>
             {USER_ADDABLE_BLOCKS.map((type) => {
               const entry = BLOCK_REGISTRY[type];
               if (!entry) return null;
@@ -51,6 +53,7 @@ export function BlockPalette() {
                 <button
                   key={type}
                   type="button"
+                  role="menuitem"
                   disabled={!unlocked}
                   onClick={() => {
                     if (!unlocked) return;

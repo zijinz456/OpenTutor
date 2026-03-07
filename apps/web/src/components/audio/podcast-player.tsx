@@ -128,7 +128,7 @@ export function PodcastPlayer({
   const progressPct = duration > 0 ? (currentTime / duration) * 100 : 0;
 
   return (
-    <Card className={cn("w-full", className)}>
+    <Card className={cn("w-full rounded-2xl card-shadow", className)}>
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
           <Podcast className="size-5 text-primary" />
@@ -198,7 +198,7 @@ export function PodcastPlayer({
             <button
               type="button"
               onClick={cycleSpeed}
-              className="rounded bg-muted px-2 py-0.5 font-mono text-xs hover:bg-muted/80"
+              className="rounded-full bg-muted px-2 py-0.5 font-mono text-xs hover:bg-muted/80"
               title="Change playback speed"
             >
               {playbackRate}x
@@ -211,7 +211,7 @@ export function PodcastPlayer({
 
         {/* Dialogue script */}
         {script && script.length > 0 && (
-          <div className="mt-4 max-h-64 space-y-3 overflow-y-auto rounded-md border p-3">
+          <div className="mt-4 max-h-64 space-y-3 overflow-y-auto scrollbar-thin rounded-xl bg-muted/30 p-3.5">
             <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
               Transcript
             </p>

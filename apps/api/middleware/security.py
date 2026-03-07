@@ -119,6 +119,13 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     def _get_client_ip(self, request: Request) -> str:
         return _extract_client_ip(request)
 
+    def _get_rate_key(self, request: Request, suffix: str) -> str:
+        """Build rate limit key: per-user when authenticated, else per-IP."""
+        user_id = getattr(request.state, "user_id", None) if hasattr(request, "state") else None
+        if user_id:
+            return f"user:{user_id}:{suffix}"
+        return f"ip:{self._get_client_ip(request)}:{suffix}"
+
     def _maybe_cleanup_buckets(self) -> None:
         """Evict stale rate limit buckets to prevent unbounded memory growth."""
         now = time.monotonic()
@@ -197,7 +204,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             if cost == 0:
                 return await call_next(request)
 
-            key = f"cost:{client_ip}"
+            key = self._get_rate_key(request, "cost")
             allowed, retry_after = self._check_cost_rate(key, cost)
 
             if not allowed:
@@ -219,7 +226,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             # Simple mode (backward-compatible)
             is_llm = any(path.startswith(p) for p in self._LLM_PATHS)
             rpm = self.llm_rpm if is_llm else self.default_rpm
-            key = f"{client_ip}:{'llm' if is_llm else 'general'}"
+            key = self._get_rate_key(request, "llm" if is_llm else "general")
 
             if not self._check_simple_rate(key, rpm):
                 logger.warning("SECURITY | RATE_LIMIT | ip=%s | path=%s | mode=simple | rpm=%d", client_ip, path, rpm)

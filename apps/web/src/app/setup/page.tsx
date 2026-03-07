@@ -14,15 +14,20 @@ function SetupInner() {
 
   return (
     <div className="min-h-screen bg-background flex flex-col items-center justify-center p-6">
-      <div className="w-full max-w-xl flex flex-col gap-8">
+      <div className="w-full max-w-xl flex flex-col gap-8 animate-fade-in">
         {/* Header */}
-        <div className="flex flex-col items-center gap-3">
+        <div className="flex flex-col items-center gap-4">
+          <div className="size-14 rounded-2xl bg-brand flex items-center justify-center shadow-md">
+            <svg className="size-7 text-brand-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" />
+            </svg>
+          </div>
           <h1 className="text-2xl font-bold tracking-tight text-foreground">OpenTutor</h1>
           <SetupProgress currentStep={s.step} t={s.t} />
         </div>
 
         {/* Step content */}
-        <div className="border border-border rounded-xl bg-card p-6">
+        <div className="rounded-2xl bg-card p-8 card-shadow">
           {s.step === "llm" && (
             <LlmCheckStep
               llmReady={s.llmReady}

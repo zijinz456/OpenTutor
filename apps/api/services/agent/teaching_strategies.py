@@ -125,7 +125,7 @@ async def extract_teaching_strategies(
         return valid if valid else None
 
     except Exception as e:
-        logger.warning("Teaching strategy extraction failed: %s", e)
+        logger.exception("Teaching strategy extraction failed: %s", e)
         return None
 
 
@@ -145,7 +145,7 @@ async def get_teaching_strategies(
             return value
         return []
     except Exception as e:
-        logger.warning("Failed to load teaching strategies for user %s: %s", user_id, e)
+        logger.exception("Failed to load teaching strategies for user %s: %s", user_id, e)
         return []
 
 

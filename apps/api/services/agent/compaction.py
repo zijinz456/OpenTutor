@@ -216,7 +216,7 @@ async def incremental_compact(
         logger.info("Incremental compaction: updated summary (%d chars)", len(updated_summary))
         return updated_summary
     except Exception as e:
-        logger.warning("Incremental compaction failed: %s", e)
+        logger.exception("Incremental compaction failed: %s", e)
         return None
 
 
@@ -281,7 +281,7 @@ async def memory_flush(
         return items
 
     except Exception as e:
-        logger.debug("Memory flush failed (non-critical): %s", e)
+        logger.exception("Memory flush failed (non-critical): %s", e)
         return []
 
 
@@ -346,7 +346,7 @@ async def compact_session(
         return [summary_msg] + recent, flushed_items
 
     except Exception as e:
-        logger.warning("LLM compaction failed, using emergency trim: %s", e)
+        logger.exception("LLM compaction failed, using emergency trim: %s", e)
         context_window = get_context_window(model_name)
         return emergency_trim(messages, int(context_window * 0.5)), flushed_items
 

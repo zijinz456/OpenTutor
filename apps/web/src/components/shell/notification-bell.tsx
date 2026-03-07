@@ -102,8 +102,8 @@ export function NotificationBell() {
       </Button>
 
       {open && (
-        <div className="absolute right-0 top-full mt-1 z-50 w-80 rounded-md border border-border bg-popover shadow-md">
-          <div className="flex items-center justify-between px-3 py-2 border-b">
+        <div className="absolute right-0 top-full mt-1 z-50 w-80 rounded-2xl bg-popover card-shadow animate-fade-in">
+          <div className="flex items-center justify-between px-3 py-2 border-b border-border/60">
             <span className="text-xs font-medium">{t("notification.title")}</span>
             {unreadCount > 0 && (
               <button
@@ -116,7 +116,7 @@ export function NotificationBell() {
             )}
           </div>
 
-          <div className="max-h-72 overflow-y-auto">
+          <div className="max-h-72 overflow-y-auto scrollbar-thin">
             {notifications.length === 0 ? (
               <div className="px-3 py-6 text-center text-xs text-muted-foreground">
                 {t("notification.empty")}
@@ -126,7 +126,7 @@ export function NotificationBell() {
                 <button
                   type="button"
                   key={n.id}
-                  className={`w-full text-left px-3 py-2.5 border-b last:border-0 hover:bg-muted/50 transition-colors ${
+                  className={`w-full text-left px-3 py-2.5 border-b border-border/60 last:border-0 hover:bg-muted/50 transition-colors ${
                     !n.read ? "bg-primary/5" : ""
                   }`}
                   onClick={() => {

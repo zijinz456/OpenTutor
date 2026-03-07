@@ -139,7 +139,7 @@ async def reflect_and_improve(ctx: AgentContext) -> AgentContext:
             }
 
     except Exception as e:
-        logger.warning("Reflection failed (non-critical): %s", e)
+        logger.exception("Reflection failed (non-critical): %s", e)
         ctx.metadata["reflection"] = {"error": str(e)}
 
     return ctx

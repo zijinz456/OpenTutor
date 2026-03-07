@@ -163,7 +163,7 @@ async def extract_graph_entities(
         return {"entities": valid_entities, "relationships": valid_rels}
 
     except Exception as e:
-        logger.debug("Graph entity extraction failed: %s", e)
+        logger.exception("Graph entity extraction failed")
         return {"entities": [], "relationships": []}
 
 

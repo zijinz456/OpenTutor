@@ -157,7 +157,7 @@ async def _extract_topic_summary(messages: list[dict]) -> str | None:
         if topic and len(topic) > 3:
             return topic
     except Exception as e:
-        logger.warning("Topic extraction failed: %s", e)
+        logger.exception("Topic extraction failed: %s", e)
 
     return None
 
@@ -216,7 +216,7 @@ async def _auto_recall_memories(
         )
         _add_unique(query_results)
     except Exception as e:
-        logger.warning("Auto-recall query search failed: %s", e)
+        logger.exception("Auto-recall query search failed: %s", e)
 
     # 2. Always fetch latest profile + preference memories
     try:
@@ -227,7 +227,7 @@ async def _auto_recall_memories(
         )
         _add_unique(type_results)
     except Exception as e:
-        logger.warning("Auto-recall type fetch failed: %s", e)
+        logger.exception("Auto-recall type fetch failed: %s", e)
 
     # 3. If conversation history is long, search by topic summary
     if len(conversation_history) > HISTORY_KEEP_RECENT:
@@ -239,7 +239,7 @@ async def _auto_recall_memories(
                 )
                 _add_unique(topic_results)
         except Exception as e:
-            logger.warning("Auto-recall topic search failed: %s", e)
+            logger.exception("Auto-recall topic search failed: %s", e)
 
     return all_memories
 
@@ -275,7 +275,7 @@ async def _summarize_history(messages: list[dict]) -> str | None:
         if summary and len(summary) > 10:
             return summary
     except Exception as e:
-        logger.warning("History summarization failed: %s", e)
+        logger.exception("History summarization failed: %s", e)
 
     return None
 
@@ -316,7 +316,7 @@ async def _flush_memories_before_trim(
         ctx.metadata["memory_flushed"] = True
         logger.info("Pre-compaction memory flush completed for user %s", ctx.user_id)
     except Exception as e:
-        logger.warning("Pre-compaction memory flush failed: %s", e)
+        logger.exception("Pre-compaction memory flush failed: %s", e)
 
 
 async def _apply_context_guard(ctx: AgentContext) -> AgentContext:
@@ -467,7 +467,7 @@ async def load_context(
                     )
                     return resolved
             except Exception as exc:
-                logger.warning("Preference loading failed (parallel): %s", exc)
+                logger.exception("Preference loading failed (parallel): %s", exc)
                 return None
 
         async def _load_memories():
@@ -479,7 +479,7 @@ async def load_context(
                         limit=5, intent=ctx.intent,
                     )
             except Exception as exc:
-                logger.warning("Memory retrieval failed (parallel): %s", exc)
+                logger.exception("Memory retrieval failed (parallel): %s", exc)
                 return None
 
         async def _load_content():
@@ -496,7 +496,7 @@ async def load_context(
                             _db, ctx.course_id, ctx.user_message, limit=5,
                         )
             except Exception as exc:
-                logger.warning("RAG search failed (parallel): %s", exc)
+                logger.exception("RAG search failed (parallel): %s", exc)
                 return None
 
         pref_result, mem_result, content_result = await asyncio.gather(
@@ -527,7 +527,7 @@ async def load_context(
             ctx.preference_sources = resolved.sources
         except Exception as exc:
             await db.rollback()
-            logger.warning("Preference loading failed: %s", exc)
+            logger.exception("Preference loading failed: %s", exc)
 
         try:
             memories = await _auto_recall_memories(
@@ -538,14 +538,14 @@ async def load_context(
             ctx.memories = memories
         except Exception as exc:
             await db.rollback()
-            logger.warning("Memory retrieval failed: %s", exc)
+            logger.exception("Memory retrieval failed: %s", exc)
 
         try:
             content_docs = await search_content()
             ctx.content_docs = content_docs
         except Exception as exc:
             await db.rollback()
-            logger.warning("RAG search failed: %s", exc)
+            logger.exception("RAG search failed: %s", exc)
 
     # Apply context window budget trimming
     ctx = await _trim_context(ctx, db)
@@ -560,7 +560,7 @@ async def load_context(
         if notes:
             ctx.metadata["tutor_notes"] = notes
     except Exception as exc:
-        logger.warning("Tutor notes loading failed: %s", exc)
+        logger.exception("Tutor notes loading failed: %s", exc)
 
     # Load upcoming assignments/deadlines for planner context
     try:
@@ -586,7 +586,7 @@ async def load_context(
                     for row in rows
                 ]
     except Exception as exc:
-        logger.warning("Assignment/deadline loading failed: %s", exc)
+        logger.exception("Assignment/deadline loading failed: %s", exc)
 
     # Load teaching strategies (auto-extracted, Claudeception pattern)
     try:
@@ -595,7 +595,7 @@ async def load_context(
         if strategies:
             ctx.metadata["teaching_strategies"] = strategies
     except Exception as exc:
-        logger.warning("Teaching strategies loading failed: %s", exc)
+        logger.exception("Teaching strategies loading failed: %s", exc)
 
     # Adaptive difficulty guidance for QUIZ intent
     if ctx.intent == IntentType.LEARN:
@@ -607,7 +607,7 @@ async def load_context(
             rec = await get_recommendation_for_node(db, ctx.user_id, ctx.course_id)
             ctx.difficulty_guidance = format_for_prompt(rec)
         except Exception as exc:
-            logger.warning("Difficulty recommendation failed: %s", exc)
+            logger.exception("Difficulty recommendation failed: %s", exc)
 
     # Phase 4-6: Run independent enrichment tasks concurrently
     async def _load_experiment_config() -> None:
@@ -623,7 +623,7 @@ async def load_context(
             if error_patterns:
                 ctx.metadata["error_patterns"] = error_patterns
         except Exception as exc:
-            logger.debug("Error pattern load failed: %s", exc)
+            logger.exception("Error pattern load failed: %s", exc)
 
     async def _load_cross_course_patterns() -> None:
         if ctx.intent not in (IntentType.LEARN, IntentType.GENERAL, IntentType.GENERAL, IntentType.PLAN):
@@ -634,7 +634,7 @@ async def load_context(
             if cross_patterns and isinstance(cross_patterns, dict) and cross_patterns.get("patterns"):
                 ctx.metadata["cross_course_patterns"] = cross_patterns["patterns"]
         except Exception as exc:
-            logger.debug("Cross-course patterns load failed: %s", exc)
+            logger.exception("Cross-course patterns load failed: %s", exc)
 
     async def _run_latex_ocr() -> None:
         if not ctx.images:
@@ -651,30 +651,13 @@ async def load_context(
                 ctx.metadata["latex_ocr"] = latex_results
                 logger.info("LaTeX-OCR extracted %d formula(s)", len(latex_results))
         except Exception as exc:
-            logger.debug("LaTeX-OCR skipped: %s", exc)
-
-    async def _load_screen_context() -> None:
-        try:
-            from services.context.screen import get_screen_context_service
-            screen_svc = get_screen_context_service()
-            if screen_svc.is_enabled:
-                screen_ctx = await screen_svc.get_study_context(minutes=10)
-                if screen_ctx:
-                    ctx.metadata["screen_context"] = screen_ctx
-                    topic_hint = screen_ctx.get("study_topic_hint")
-                    if topic_hint:
-                        ctx.metadata["screen_topic_hint"] = topic_hint
-                    logger.info("Screenpipe context loaded: apps=%s, topic=%s",
-                                screen_ctx.get("app_names", []), topic_hint)
-        except Exception as exc:
-            logger.debug("Screenpipe context skipped: %s", exc)
+            logger.exception("LaTeX-OCR skipped: %s", exc)
 
     await asyncio.gather(
         _load_experiment_config(),
         _load_error_patterns(),
         _load_cross_course_patterns(),
         _run_latex_ocr(),
-        _load_screen_context(),
     )
 
     return ctx

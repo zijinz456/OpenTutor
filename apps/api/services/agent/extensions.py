@@ -1,10 +1,7 @@
-"""Extension/Plugin API for the agent lifecycle.
+"""Extension API for the agent lifecycle.
 
 Provides hook points at each stage of the agent orchestration pipeline,
-allowing plugins to observe or modify behavior without touching core code.
-
-This module maintains backward compatibility with the old Extension ABC
-while delegating to the pluggy-based plugin system (Phase 5) for new hooks.
+allowing extensions to observe or modify behavior without touching core code.
 
 Hook points:
 - PRE_ROUTING: Before intent classification
@@ -36,33 +33,8 @@ class ExtensionHook(str, Enum):
     POST_PROCESS = "post_process"
 
 
-# Mapping from ExtensionHook enum to pluggy hook method names
-_HOOK_TO_PLUGGY = {
-    ExtensionHook.PRE_ROUTING: "on_pre_routing",
-    ExtensionHook.POST_ROUTING: "on_post_routing",
-    ExtensionHook.PRE_AGENT: "on_pre_agent",
-    ExtensionHook.POST_AGENT: "on_post_agent",
-    ExtensionHook.PRE_TOOL: "on_pre_tool",
-    ExtensionHook.POST_TOOL: "on_post_tool",
-    ExtensionHook.POST_PROCESS: "on_post_process",
-}
-
-
 class Extension(ABC):
-    """Base class for agent lifecycle extensions (legacy API).
-
-    For new plugins, prefer using the pluggy hookimpl pattern::
-
-        from services.plugin.hookspec import hookimpl
-
-        class MyPlugin:
-            @hookimpl
-            def on_pre_agent(self, ctx, agent_name):
-                ...
-
-    Legacy Extension subclasses continue to work — they are automatically
-    bridged to the pluggy system.
-    """
+    """Base class for agent lifecycle extensions."""
 
     name: str = "base_extension"
     hooks: list[ExtensionHook] = []  # Which hooks this extension subscribes to
@@ -92,12 +64,7 @@ class Extension(ABC):
 
 
 class ExtensionRegistry:
-    """Central registry for agent lifecycle extensions.
-
-    Combines legacy Extension instances with pluggy-based plugins.
-    When ``run_hooks()`` is called, it fires both legacy extensions
-    and pluggy hooks.
-    """
+    """Central registry for agent lifecycle extensions."""
 
     def __init__(self):
         self._extensions: list[Extension] = []
@@ -135,35 +102,21 @@ class ExtensionRegistry:
         ctx: Any,
         **kwargs: Any,
     ) -> None:
-        """Fire a hook, calling all subscribed extensions + pluggy plugins.
+        """Fire a hook, calling all subscribed extensions.
 
         Errors in individual extensions are logged but don't block others.
         """
-        # 1. Run legacy Extension instances
         extensions = self._by_hook.get(hook, [])
         for ext in extensions:
             try:
                 await ext.on_hook(hook, ctx, **kwargs)
             except Exception as e:
-                logger.warning(
+                logger.exception(
                     "Extension '%s' failed on hook '%s': %s",
                     ext.name,
                     hook.value,
                     e,
                 )
-
-        # 2. Run pluggy hooks (synchronous — plugins should be fast)
-        pluggy_method = _HOOK_TO_PLUGGY.get(hook)
-        if pluggy_method:
-            try:
-                from services.plugin.manager import get_plugin_manager
-
-                pm = get_plugin_manager()
-                hook_caller = getattr(pm.hook, pluggy_method, None)
-                if hook_caller:
-                    hook_caller(ctx=ctx, **kwargs)
-            except Exception as e:
-                logger.debug("Pluggy hook '%s' dispatch failed: %s", pluggy_method, e)
 
     @property
     def registered_extensions(self) -> list[str]:
@@ -185,38 +138,5 @@ def get_extension_registry() -> ExtensionRegistry:
 
 
 def _load_builtin_extensions(registry: ExtensionRegistry) -> None:
-    """Load any built-in extensions (e.g., from plugins/ directory)."""
-    try:
-        from pathlib import Path
-
-        plugins_dir = Path(__file__).parent.parent.parent / "plugins" / "extensions"
-        if not plugins_dir.is_dir():
-            return
-
-        import importlib
-        import sys
-
-        for path in sorted(plugins_dir.glob("*.py")):
-            if path.name.startswith("_"):
-                continue
-            module_name = f"plugins.extensions.{path.stem}"
-            try:
-                if module_name in sys.modules:
-                    mod = sys.modules[module_name]
-                else:
-                    spec = importlib.util.spec_from_file_location(module_name, path)
-                    if spec and spec.loader:
-                        mod = importlib.util.module_from_spec(spec)
-                        sys.modules[module_name] = mod
-                        spec.loader.exec_module(mod)
-                    else:
-                        continue
-
-                # Look for register_extension(registry) function
-                register_fn = getattr(mod, "register_extension", None)
-                if callable(register_fn):
-                    register_fn(registry)
-            except Exception as e:
-                logger.warning("Failed to load extension plugin %s: %s", path.name, e)
-    except Exception as e:
-        logger.debug("Extension plugin loading skipped: %s", e)
+    """Load any built-in extensions. Currently a no-op placeholder."""
+    pass

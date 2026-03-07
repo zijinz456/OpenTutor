@@ -223,6 +223,7 @@ async def eval_retrieval(
                     from services.search.rag_fusion import rag_fusion_search
                     results = await rag_fusion_search(db, case.course_id, case.query, limit=k)
                 except Exception:
+                    logger.warning("rag_fusion_search failed for query '%s', falling back to hybrid_search", case.query[:60])
                     results = await hybrid_search(db, case.course_id, case.query, limit=k)
             else:
                 results = await hybrid_search(db, case.course_id, case.query, limit=k)
@@ -235,7 +236,7 @@ async def eval_retrieval(
             per_query.append(scores)
 
         except Exception as e:
-            logger.error("Retrieval eval failed for query '%s': %s", case.query[:60], e)
+            logger.exception("Retrieval eval failed for query '%s'", case.query[:60])
             per_query.append(RetrievalScores(
                 query=case.query,
                 recall_at_k=0.0,

@@ -98,10 +98,10 @@ export function ProgressView({ courseId }: ProgressViewProps) {
         ].map(({ label, value }) => (
           <div
             key={label}
-            className="rounded-md border border-border bg-card p-3 flex flex-col gap-0.5"
+            className="rounded-2xl card-shadow bg-card p-3.5 flex flex-col gap-0.5"
           >
             <span className="text-xs text-muted-foreground">{label}</span>
-            <span className="text-lg font-semibold tabular-nums">{value}</span>
+            <span className="text-xl font-semibold tabular-nums">{value}</span>
           </div>
         ))}
       </div>
@@ -142,7 +142,7 @@ export function ProgressView({ courseId }: ProgressViewProps) {
           </h4>
           <ul className="space-y-1.5">
             {gapEntries.map(([type, count]) => (
-              <li key={type} className="flex items-center justify-between text-sm">
+              <li key={type} className="flex items-center justify-between text-sm rounded-xl bg-muted/30 p-3.5">
                 <Badge
                   variant="outline"
                   className={GAP_BADGE_COLORS[type] ?? "bg-muted text-muted-foreground"}

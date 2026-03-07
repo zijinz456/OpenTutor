@@ -15,6 +15,7 @@ import {
 } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { useChatStore } from "@/store/chat";
 
 interface ActivityViewProps {
   courseId: string;
@@ -78,6 +79,42 @@ function getVerifierSummary(step: AgentTaskStepResult): string | null {
   const message = typeof verifier?.message === "string" ? verifier.message : null;
   if (code && message) return `${code}: ${message}`;
   return code ?? message;
+}
+
+function isGuidedSessionPaused(task: AgentTask): boolean {
+  const checkpoint = asRecord(task.checkpoint_json);
+  if (checkpoint?.phase && task.status !== "completed" && task.status !== "failed") {
+    return true;
+  }
+  return task.status === "cancelled" || task.status === "rejected";
+}
+
+function GuidedSessionButton({ task, courseId, t }: { task: AgentTask; courseId: string; t: (key: string) => string }) {
+  if (task.task_type !== "guided_session") return null;
+
+  const paused = isGuidedSessionPaused(task);
+  const label = paused ? t("guidedSession.resume") : t("guidedSession.start");
+  const trigger = paused
+    ? `[GUIDED_SESSION:resume:${task.id}]`
+    : `[GUIDED_SESSION:start:${task.id}]`;
+
+  const handleClick = () => {
+    const chatStore = useChatStore.getState();
+    chatStore.sendMessage(courseId, trigger);
+  };
+
+  return (
+    <div className="mt-2">
+      <p className="text-[10px] text-muted-foreground mb-1.5">{t("guidedSession.description")}</p>
+      <button
+        type="button"
+        onClick={handleClick}
+        className="px-4 py-2 rounded-xl bg-brand text-brand-foreground text-sm font-medium hover:opacity-90 transition-opacity"
+      >
+        {label}
+      </button>
+    </div>
+  );
 }
 
 export function ActivityView({ courseId }: ActivityViewProps) {
@@ -163,7 +200,7 @@ export function ActivityView({ courseId }: ActivityViewProps) {
   /* ---------- Render ---------- */
 
   return (
-    <div className="flex-1 flex flex-col gap-4 p-4 overflow-y-auto">
+    <div className="flex-1 flex flex-col gap-4 p-4 overflow-y-auto scrollbar-thin">
       {/* Pending approval */}
       {pending.length > 0 && (
         <section>
@@ -172,12 +209,13 @@ export function ActivityView({ courseId }: ActivityViewProps) {
           </h3>
           <div className="flex flex-col gap-2">
             {pending.map((tk) => (
-              <div key={tk.id} className="rounded-lg border border-zinc-300 dark:border-zinc-600 bg-zinc-50 dark:bg-zinc-800/30 p-3">
+              <div key={tk.id} className="rounded-2xl card-shadow bg-card p-3.5">
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     <p className="text-sm font-medium truncate">{tk.title}</p>
                     {tk.summary && <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{tk.summary}</p>}
                     <p className="text-[10px] text-muted-foreground mt-1">{tk.task_type} &middot; {tk.source}</p>
+                    <GuidedSessionButton task={tk} courseId={courseId} t={t} />
                   </div>
                   <div className="flex gap-1.5 shrink-0">
                     <Button size="sm" disabled={acting.has(tk.id)} onClick={() => act(tk.id, approveAgentTask)}>{t("activity.approve")}</Button>
@@ -199,13 +237,14 @@ export function ActivityView({ courseId }: ActivityViewProps) {
           </h3>
           <div className="flex flex-col gap-1.5">
             {grouped[status].map((tk) => (
-              <div key={tk.id} className="rounded-md border p-2.5 text-sm">
+              <div key={tk.id} className="rounded-xl bg-muted/30 p-3.5 text-sm">
                 <div className="flex items-center gap-2">
                   <span className="font-medium truncate flex-1">{tk.title}</span>
                   <Badge variant="outline" className={statusColor(tk.status)}>{statusLabel(tk.status, t)}</Badge>
                 </div>
                 {tk.summary && <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{tk.summary}</p>}
                 <p className="text-[10px] text-muted-foreground mt-1">{tk.task_type} &middot; {tk.source}</p>
+                <GuidedSessionButton task={tk} courseId={courseId} t={t} />
                 {(() => {
                   const review = getTaskReview(tk);
                   const failedSteps = getFailureSteps(tk);
@@ -213,7 +252,7 @@ export function ActivityView({ courseId }: ActivityViewProps) {
                   if (!showDiagnostics) return null;
 
                   return (
-                    <div className="mt-2 space-y-2 rounded-md bg-muted/40 p-2">
+                    <div className="mt-2 space-y-2 rounded-xl bg-muted/30 p-2.5">
                       {review?.outcome && (
                         <p className="text-[11px] text-foreground/90">{review.outcome}</p>
                       )}
@@ -244,7 +283,7 @@ export function ActivityView({ courseId }: ActivityViewProps) {
                         const verifierSummary = getVerifierSummary(step);
 
                         return (
-                          <div key={`${tk.id}-${step.step_index ?? idx}`} className="rounded border border-border/70 bg-background/70 p-2">
+                          <div key={`${tk.id}-${step.step_index ?? idx}`} className="rounded-xl border border-border/60 bg-background/70 p-2.5">
                             <p className="text-[11px] font-medium">
                               {step.title ?? step.step_type ?? tf("activity.step", { index: idx + 1 })}
                             </p>
@@ -282,7 +321,7 @@ export function ActivityView({ courseId }: ActivityViewProps) {
           </h3>
           <div className="flex flex-col gap-1.5">
             {goals.map((g) => (
-              <div key={g.id} className="rounded-md border p-2.5">
+              <div key={g.id} className="rounded-xl bg-muted/30 p-3.5">
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium truncate flex-1">{g.title}</span>
                   <Badge variant="secondary" className="text-[10px]">{statusLabel(g.status, t)}</Badge>

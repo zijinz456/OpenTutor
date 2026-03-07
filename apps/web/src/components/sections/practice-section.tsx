@@ -22,6 +22,8 @@ interface PracticeSectionProps {
   showReview?: boolean;
   aiActionsEnabled?: boolean;
   defaultTab?: PracticeTab;
+  quizDifficultyHint?: "easy" | "medium" | "hard";
+  quizModeHint?: "course_following" | "self_paced" | "exam_prep" | "maintenance";
 }
 
 type PracticeTab = "quiz" | "flashcards" | "review" | "podcast";
@@ -38,6 +40,8 @@ export function PracticeSection({
   showReview = true,
   aiActionsEnabled = true,
   defaultTab = "quiz",
+  quizDifficultyHint,
+  quizModeHint,
 }: PracticeSectionProps) {
   const tabs = useMemo(
     () => (showReview ? ALL_TABS : ALL_TABS.filter((t) => t.id !== "review")),
@@ -59,7 +63,14 @@ export function PracticeSection({
     >
       {(activeTab) => (
         <>
-          {activeTab === "quiz" ? <QuizView courseId={courseId} aiActionsEnabled={aiActionsEnabled} /> : null}
+          {activeTab === "quiz" ? (
+            <QuizView
+              courseId={courseId}
+              aiActionsEnabled={aiActionsEnabled}
+              modeHint={quizModeHint}
+              difficultyHint={quizDifficultyHint}
+            />
+          ) : null}
           {activeTab === "flashcards" ? <FlashcardView courseId={courseId} aiActionsEnabled={aiActionsEnabled} /> : null}
           {activeTab === "review" && showReview ? <ReviewView courseId={courseId} aiActionsEnabled={aiActionsEnabled} /> : null}
           {activeTab === "podcast" ? <PodcastView courseId={courseId} aiActionsEnabled={aiActionsEnabled} /> : null}

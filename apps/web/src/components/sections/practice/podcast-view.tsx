@@ -133,7 +133,7 @@ export function PodcastView({
   }, [courseId, loadHistory, normalizeScript, style, topic]);
 
   return (
-    <div className="flex-1 flex flex-col p-4 gap-4 overflow-y-auto">
+    <div className="flex-1 flex flex-col p-4 gap-4 overflow-y-auto scrollbar-thin">
       <div className="space-y-3">
         {!aiActionsEnabled ? <AiFeatureBlocked compact /> : null}
         <div>
@@ -146,7 +146,7 @@ export function PodcastView({
             value={topic}
             onChange={(e) => setTopic(e.target.value)}
             placeholder="e.g. Photosynthesis, Linear Algebra..."
-            className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+            className="w-full rounded-xl border border-border/60 bg-background px-3.5 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
             onKeyDown={(e) => {
               if (e.key === "Enter") void handleGenerate();
             }}
@@ -194,7 +194,7 @@ export function PodcastView({
       )}
 
       {history.length > 0 && (
-        <div className="rounded-lg border border-border p-3">
+        <div className="rounded-2xl card-shadow p-3.5">
           <div className="mb-2 flex items-center justify-between">
             <h3 className="text-sm font-medium text-foreground">Recent podcasts</h3>
             <span className="text-xs text-muted-foreground">{history.length} saved</span>
@@ -204,7 +204,7 @@ export function PodcastView({
               <button
                 key={item.id}
                 type="button"
-                className="w-full rounded-md border border-border px-3 py-2 text-left hover:bg-accent"
+                className="w-full rounded-xl bg-muted/30 px-3.5 py-2.5 text-left hover:bg-accent"
                 onClick={() => {
                   setTopic(item.topic);
                   setStyle(item.style);

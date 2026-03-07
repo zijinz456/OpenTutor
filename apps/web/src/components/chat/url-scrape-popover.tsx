@@ -89,7 +89,7 @@ export function UrlScrapePopover({
           )}
         </Button>
       </PopoverTrigger>
-      <PopoverContent side="top" align="start" className="w-80 p-3">
+      <PopoverContent side="top" align="start" className="w-80 rounded-xl border border-border/60 card-shadow p-3">
         <p className="mb-2 text-xs font-medium text-foreground">
           Add URL to course
         </p>
@@ -102,7 +102,7 @@ export function UrlScrapePopover({
             placeholder="https://example.com/lecture-notes"
             disabled={isScraping}
             className={cn(
-              "flex-1 rounded-md border bg-transparent px-2.5 py-1.5 text-sm",
+              "flex-1 rounded-xl border border-border/60 bg-transparent px-2.5 py-1.5 text-sm",
               "placeholder:text-muted-foreground",
               "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
               "disabled:cursor-not-allowed disabled:opacity-50",
@@ -112,7 +112,7 @@ export function UrlScrapePopover({
           <Button
             type="button"
             size="sm"
-            className="h-8 px-3 text-xs"
+            className="h-8 rounded-xl px-3 text-xs"
             disabled={!urlInput.trim() || isScraping}
             onClick={() => void handleUrlSubmit()}
           >

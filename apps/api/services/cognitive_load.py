@@ -23,6 +23,9 @@ from config import settings
 
 logger = logging.getLogger(__name__)
 
+# Track consecutive high-load messages for proactive intervention
+_consecutive_high: dict[str, int] = {}  # user_id -> count
+
 
 async def compute_cognitive_load(
     db: AsyncSession,
@@ -72,7 +75,8 @@ async def compute_cognitive_load(
         error_signal = min(recent_errors / 5.0, 1.0)
         signals["unmastered_errors"] = error_signal
         load += error_signal * settings.cognitive_load_weight_errors
-    except Exception:
+    except Exception as e:
+        logger.exception("Cognitive load: error signal query failed")
         signals["unmastered_errors"] = 0.0
 
     # ── Signal 4: Message complexity drop ──
@@ -116,8 +120,35 @@ async def compute_cognitive_load(
             load += perf_signal * settings.cognitive_load_weight_quiz_performance
         else:
             signals["quiz_performance"] = 0.0
-    except Exception:
+    except Exception as e:
+        logger.exception("Cognitive load: quiz performance query failed")
         signals["quiz_performance"] = 0.0
+
+    # ── Signal 7: NLP-based affect analysis ──
+    from services.cognitive_load_nlp import analyze_student_affect
+
+    affect = await analyze_student_affect(user_message) if user_message else {}
+    frustration = affect.get("frustration", 0.0)
+    confusion = affect.get("confusion", 0.0)
+    nlp_signal = frustration * 0.6 + confusion * 0.4  # Weighted combination
+    signals["nlp_affect"] = nlp_signal
+    load += nlp_signal * 0.15  # 15% weight for NLP signal
+
+    # ── Signal 8: Relative baseline calibration ──
+    from services.cognitive_load_calibrator import (
+        get_or_create_baseline,
+        compute_relative_load,
+    )
+
+    baseline = get_or_create_baseline(user_id)
+    is_help = help_signal > 0
+    relative = compute_relative_load(baseline, len(user_message), is_help)
+    baseline.update(user_message, is_help)
+
+    if relative["calibrated"]:
+        for adj_name, adj_value in relative["adjustments"].items():
+            signals[adj_name] = adj_value
+            load += adj_value * 0.1
 
     # Clamp
     score = max(0.0, min(load, 1.0))
@@ -130,18 +161,29 @@ async def compute_cognitive_load(
     else:
         level = "low"
 
+    # Track consecutive high-load messages for proactive intervention
+    key = str(user_id)
+    if level == "high":
+        _consecutive_high[key] = _consecutive_high.get(key, 0) + 1
+    else:
+        _consecutive_high[key] = 0
+    consecutive = _consecutive_high.get(key, 0)
+
     # Generate teaching guidance
-    guidance = _build_guidance(level, score, signals)
+    guidance = _build_guidance(level, score, signals, consecutive)
 
     return {
         "score": round(score, 3),
         "level": level,
         "guidance": guidance,
         "signals": {k: round(v, 3) for k, v in signals.items()},
+        "consecutive_high": consecutive,
+        "affect": affect if user_message else {},
+        "baseline_calibrated": relative.get("calibrated", False),
     }
 
 
-def _build_guidance(level: str, score: float, signals: dict) -> str:
+def _build_guidance(level: str, score: float, signals: dict, consecutive: int = 0) -> str:
     """Generate a prompt fragment that tells the tutor how to adapt."""
     if level == "low":
         return ""  # No special guidance needed
@@ -163,6 +205,21 @@ def _build_guidance(level: str, score: float, signals: dict) -> str:
             parts.append("- Focus on reviewing fundamentals before new material")
         if signals.get("session_length", 0) > 0.7:
             parts.append("- The session is getting long. Keep responses concise.")
+        # Proactive intervention for sustained high load
+        if consecutive >= 3:
+            parts.append(
+                "- IMPORTANT: The student has been struggling for several messages. "
+                "Consider:\n"
+                "  1. Suggesting a short break\n"
+                "  2. Switching to a simpler scaffolded question\n"
+                "  3. Providing a worked example instead of asking questions"
+            )
+        # NLP-based signal advice
+        if signals.get("nlp_affect", 0) > 0.5:
+            parts.append(
+                "- NLP analysis detects elevated frustration or confusion. "
+                "Prioritize empathy and validation before instruction."
+            )
 
     elif level == "medium":
         parts.append(

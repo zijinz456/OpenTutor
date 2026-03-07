@@ -67,6 +67,12 @@ export function recordSessionVisit(): void {
   const now = new Date();
   const persona = getPersona();
 
+  if (persona.lastSessionAt) {
+    const lastAt = new Date(persona.lastSessionAt);
+    const diffMs = now.getTime() - lastAt.getTime();
+    if (diffMs < 30 * 60 * 1000) return;
+  }
+
   // Update study times histogram
   const dayOfWeek = now.getDay();
   const hour = now.getHours();
@@ -102,9 +108,21 @@ export function getOptimalStudyWindows(): Array<{ dayOfWeek: number; hour: numbe
  * Format a study window for display.
  */
 export function formatStudyWindow(window: { dayOfWeek: number; hour: number }): string {
-  const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  // Use Intl for locale-aware day names when available
+  let dayName: string;
+  try {
+    const locale = typeof globalThis.localStorage !== "undefined"
+      ? localStorage.getItem("opentutor_locale") ?? "en"
+      : "en";
+    // Create a date that falls on the target day of week (Jan 2023 starts on Sun)
+    const refDate = new Date(2023, 0, 1 + window.dayOfWeek);
+    dayName = refDate.toLocaleDateString(locale === "zh" ? "zh-CN" : "en-US", { weekday: "short" });
+  } catch {
+    const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    dayName = days[window.dayOfWeek];
+  }
   const h = window.hour;
   const period = h >= 12 ? "PM" : "AM";
   const displayHour = h === 0 ? 12 : h > 12 ? h - 12 : h;
-  return `${days[window.dayOfWeek]} ${displayHour}${period}`;
+  return `${dayName} ${displayHour}${period}`;
 }

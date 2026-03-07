@@ -77,7 +77,7 @@ async def export_flashcards_to_notion(
             )
             created += 1
         except Exception as e:
-            logger.debug("Notion page creation failed: %s", e)
+            logger.exception("Notion page creation failed for card")
             errors += 1
 
     return {
@@ -140,7 +140,7 @@ async def export_study_plan_to_notion(
             "url": page.get("url", ""),
         }
     except Exception as e:
-        logger.error("Notion study plan export failed: %s", e)
+        logger.exception("Notion study plan export failed")
         return {"status": "error", "error": str(e)}
 
 
@@ -187,6 +187,6 @@ async def export_notes_to_notion(
             )
             created += 1
         except Exception as e:
-            logger.debug("Notion note export failed: %s", e)
+            logger.exception("Notion note export failed")
 
     return {"status": "success", "pages_created": created}

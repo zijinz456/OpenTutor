@@ -86,8 +86,7 @@ async def emit_learning_event(
     """Emit a standardized learning event.
 
     1. Validates and stores the event in the database.
-    2. Dispatches to pluggy ``on_learning_event`` hooks.
-    3. Returns the event ID.
+    2. Returns the event ID.
     """
     # Validate verb
     if event_data.verb not in VALID_VERBS:
@@ -106,22 +105,7 @@ async def emit_learning_event(
         event_data.score,
     )
 
-    # Dispatch to pluggy hooks (non-blocking, errors logged)
-    _dispatch_plugin_hooks(event_data)
-
-    # LearningEvent model removed in Phase 1.3 — return a generated ID
     return uuid.uuid4()
-
-
-def _dispatch_plugin_hooks(event_data: LearningEventData) -> None:
-    """Fire on_learning_event hooks for all registered plugins."""
-    try:
-        from services.plugin.manager import get_plugin_manager
-
-        pm = get_plugin_manager()
-        pm.hook.on_learning_event(event=event_data)
-    except Exception as e:
-        logger.debug("Plugin learning event dispatch failed: %s", e)
 
 
 # ── Convenience emitters for common events ──

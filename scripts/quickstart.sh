@@ -69,7 +69,9 @@ fi
 
 # Source .env for this script
 load_env_file "${ENV_FILE}"
-bash "${ROOT_DIR}/scripts/check_local_mode.sh" --env-file "${ENV_FILE}" --skip-api
+if ! bash "${ROOT_DIR}/scripts/check_local_mode.sh" --env-file "${ENV_FILE}" --skip-api; then
+  fail "Local mode validation failed. Run: bash scripts/check_local_mode.sh --env-file ${ENV_FILE} --skip-api, then follow the reported fix and retry quickstart."
+fi
 
 if [[ -n "${DATABASE_URL:-}" && "${DATABASE_URL}" != sqlite* ]]; then
   fail "SQLite-only local mode: DATABASE_URL must start with sqlite (current: ${DATABASE_URL})"

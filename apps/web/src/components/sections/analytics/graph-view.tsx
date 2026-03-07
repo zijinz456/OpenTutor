@@ -287,7 +287,7 @@ export function GraphView({ courseId, focusTerms, maxNodes = 20 }: GraphViewProp
       </svg>
 
       {selected ? (
-        <div className="absolute bottom-4 left-4 bg-card border rounded-lg shadow-lg p-3 max-w-xs">
+        <div className="absolute bottom-4 left-4 bg-card rounded-2xl card-shadow p-3.5 max-w-xs">
           <h4 className="text-sm font-semibold mb-1">{selected.label}</h4>
           <p className="text-xs text-muted-foreground">
             Mastery: {Math.round(selected.mastery * 100)}% · Level: {selected.level} ·

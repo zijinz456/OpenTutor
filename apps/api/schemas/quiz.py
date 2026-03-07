@@ -13,6 +13,7 @@ class ExtractRequest(BaseModel):
     content_node_id: uuid.UUID | None = None
     count: int | None = None
     mode: str | None = None  # learning mode: course_following, self_paced, exam_prep, maintenance
+    difficulty: str | None = None  # easy | medium | hard
 
 
 class SubmitAnswerRequest(BaseModel):
@@ -33,6 +34,8 @@ class ProblemResponse(BaseModel):
     question: str
     options: dict[str, str] | None
     order_index: int
+    difficulty_layer: int | None = None
+    problem_metadata: dict[str, Any] | None = None
 
     model_config = {"from_attributes": True}
 

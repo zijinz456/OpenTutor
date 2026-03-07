@@ -179,7 +179,7 @@ export function ReviewView({
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden" data-testid="review-panel">
-      <div className="px-3 py-2 border-b flex items-center justify-between text-xs text-muted-foreground">
+      <div className="px-3 py-2 border-b border-border/60 flex items-center justify-between text-xs text-muted-foreground" aria-live="polite">
         <span>{wrongAnswers.length} mistakes ready for review</span>
         <Button size="sm" onClick={() => void handleGenerateReview()} disabled={!aiActionsEnabled || generating}>
           {generating ? <span className="mr-1 animate-pulse">...</span> : null}
@@ -187,10 +187,10 @@ export function ReviewView({
         </Button>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div className="flex-1 overflow-y-auto scrollbar-thin p-4 space-y-4">
         {!aiActionsEnabled ? <AiFeatureBlocked compact /> : null}
         {stats ? (
-          <div className="rounded-lg border bg-card p-4 space-y-3" data-testid="review-stats">
+          <div className="rounded-2xl card-shadow bg-card p-4 space-y-3" data-testid="review-stats">
             <div className="flex flex-wrap gap-2">
               <Badge variant="outline">Total: {stats.total}</Badge>
               <Badge variant="outline">Unmastered: {stats.unmastered}</Badge>
@@ -209,7 +209,7 @@ export function ReviewView({
         ) : null}
 
         {reviewMarkdown ? (
-          <div className="rounded-lg border bg-muted/30 p-4 prose prose-sm max-w-none" data-testid="review-markdown">
+          <div className="rounded-2xl bg-muted/30 p-4 prose prose-sm max-w-none" data-testid="review-markdown">
             <MarkdownRenderer content={reviewMarkdown} />
           </div>
         ) : null}
@@ -219,7 +219,7 @@ export function ReviewView({
           const optionKeys = Object.keys(draft?.options ?? {}).sort();
 
           return (
-            <div key={item.id} className="rounded-lg border bg-card p-4 space-y-2" data-testid={`wrong-answer-${item.id}`}>
+            <div key={item.id} className="rounded-2xl card-shadow bg-card p-4 space-y-2" data-testid={`wrong-answer-${item.id}`}>
               <div className="flex items-start justify-between gap-2">
                 <div>
                   <p className="text-sm font-medium">
@@ -255,14 +255,14 @@ export function ReviewView({
               </div>
 
               {draft ? (
-                <div className="rounded-md border bg-muted/20 p-3 space-y-2" data-testid={`diagnostic-${item.id}`}>
+                <div className="rounded-xl bg-muted/30 p-3.5 space-y-2" data-testid={`diagnostic-${item.id}`}>
                   <p className="text-sm font-medium">{draft.question}</p>
                   {optionKeys.map((key) => (
                     <button
                       key={key}
                       type="button"
                       data-testid={`diagnostic-${item.id}-${key}`}
-                      className="w-full rounded-md border px-3 py-2 text-left text-sm hover:border-primary/50"
+                      className="w-full rounded-xl border px-3.5 py-2.5 text-left text-sm hover:border-primary/50"
                       onClick={() => void handleDiagnosticAnswer(item.id, key)}
                       disabled={!aiActionsEnabled || draft.pending}
                     >

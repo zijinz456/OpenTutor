@@ -45,7 +45,7 @@ def _get_fernet():
         _fernet = Fernet(key.encode() if isinstance(key, str) else key)
     except ImportError:
         logger.warning("cryptography package not installed — encryption disabled")
-    except Exception as exc:
+    except (ValueError, TypeError) as exc:
         logger.error("Invalid ENCRYPTION_KEY: %s", exc)
 
     _init_done = True
@@ -82,5 +82,5 @@ def decrypt_value(stored: str) -> str:
         ciphertext = stored[4:]  # strip "enc:" prefix
         return f.decrypt(ciphertext.encode("utf-8")).decode("utf-8")
     except Exception as exc:
-        logger.error("Decryption failed: %s", exc)
+        logger.exception("Decryption failed")
         return stored

@@ -439,7 +439,7 @@ async def _collect_prerequisite_gaps(
         from services.loom import check_prerequisite_gaps
         gaps = await check_prerequisite_gaps(db, user_id, course_id)
     except Exception:
-        logger.debug("Prerequisite gap check failed (best-effort)")
+        logger.exception("Prerequisite gap check failed (best-effort)")
         return []
 
     if not gaps:

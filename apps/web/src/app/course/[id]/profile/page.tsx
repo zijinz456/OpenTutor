@@ -51,17 +51,17 @@ export default function ProfilePage() {
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
-      <WorkspaceHeader courseName={course?.name || "Profile"} courseId={courseId} />
+      <WorkspaceHeader courseName={course?.name || t("course.profile")} courseId={courseId} />
       <main className="flex-1 max-w-5xl mx-auto w-full px-4 py-6 space-y-6">
         {/* Mode selection section */}
-        <section className="rounded-xl border border-border bg-card p-5">
+        <section className="rounded-2xl bg-card card-shadow p-5">
           <h2 className="text-sm font-semibold text-foreground mb-1">{t("mode.title")}</h2>
           <p className="text-xs text-muted-foreground mb-3">{t("mode.description")}</p>
           <ModeSelector />
         </section>
 
         {/* Full analytics view with mode-aware default tab */}
-        <div className="rounded-xl border border-border bg-card overflow-hidden min-h-[380px]">
+        <div className="rounded-2xl bg-card card-shadow overflow-hidden min-h-[380px]">
           <AnalyticsSection courseId={courseId} defaultTab={tab} />
         </div>
       </main>

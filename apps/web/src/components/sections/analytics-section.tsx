@@ -1,6 +1,7 @@
 "use client";
 
 import { lazy } from "react";
+import { useT } from "@/lib/i18n-context";
 import { TabbedSection, type TabDef } from "./tabbed-section";
 
 const ProgressView = lazy(() =>
@@ -32,21 +33,22 @@ interface AnalyticsSectionProps {
 
 type AnalyticsTab = "progress" | "review" | "blindspots" | "forecast" | "graph" | "agent" | "profile";
 
-const TABS: TabDef<AnalyticsTab>[] = [
-  { id: "progress", label: "Stats", testId: "right-tab-progress" },
-  { id: "review", label: "Review", testId: "right-tab-review" },
-  { id: "blindspots", label: "Blind Spots", testId: "right-tab-blindspots" },
-  { id: "forecast", label: "Forecast", testId: "right-tab-forecast" },
-  { id: "graph", label: "Graph", testId: "right-tab-graph" },
-  { id: "agent", label: "Agent", testId: "right-tab-agent" },
-  { id: "profile", label: "Profile" },
-];
-
 export function AnalyticsSection({ courseId, defaultTab = "progress" }: AnalyticsSectionProps) {
+  const t = useT();
+  const tabs: TabDef<AnalyticsTab>[] = [
+    { id: "progress", label: t("analytics.tab.progress"), testId: "right-tab-progress" },
+    { id: "review", label: t("analytics.tab.review"), testId: "right-tab-review" },
+    { id: "blindspots", label: t("analytics.tab.blindspots"), testId: "right-tab-blindspots" },
+    { id: "forecast", label: t("analytics.tab.forecast"), testId: "right-tab-forecast" },
+    { id: "graph", label: t("analytics.tab.graph"), testId: "right-tab-graph" },
+    { id: "agent", label: t("analytics.tab.agent"), testId: "right-tab-agent" },
+    { id: "profile", label: t("analytics.tab.profile") },
+  ];
+
   return (
     <TabbedSection
-      tabs={TABS}
-      defaultTab={TABS.some((tab) => tab.id === defaultTab) ? defaultTab : "progress"}
+      tabs={tabs}
+      defaultTab={tabs.some((tab) => tab.id === defaultTab) ? defaultTab : "progress"}
       testId="analytics-section"
     >
       {(activeTab) => (

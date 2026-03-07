@@ -15,7 +15,6 @@ from models.generated_asset import GeneratedAsset
 from models.study_plan import StudyPlan
 from models.study_goal import StudyGoal
 from models.agent_task import AgentTask
-from models.study_habit import StudyHabitLog
 from models.agenda_run import AgendaRun
 from models.agent_kv import AgentKV
 from models.mastery_snapshot import MasterySnapshot
@@ -46,7 +45,6 @@ __all__ = [
     "StudyPlan",
     "StudyGoal",
     "AgentTask",
-    "StudyHabitLog",
     "AgendaRun",
     "AgentKV",
     "MasterySnapshot",

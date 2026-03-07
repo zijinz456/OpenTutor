@@ -282,7 +282,7 @@ async def execute_plan_step(
             "provenance": provenance if isinstance(provenance, dict) else None,
         }
     except Exception as e:
-        logger.error("Plan step %s failed: %s", step_type, e)
+        logger.exception("Plan step %s failed: %s", step_type, e)
         return {
             "step_index": step["step_index"],
             "step_type": step_type,

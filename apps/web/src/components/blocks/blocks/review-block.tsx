@@ -50,18 +50,18 @@ export default function ReviewBlock({ courseId }: BlockComponentProps) {
       {topItems.map((item) => (
         <div
           key={item.concept_id}
-          className="flex items-center gap-3 rounded-lg border border-border px-3 py-2"
+          className="flex items-center gap-3 rounded-xl bg-muted/30 p-3.5"
         >
           <div className="flex-1 min-w-0">
             <p className="text-sm font-medium text-foreground truncate">
               {item.concept_label}
             </p>
             <p className="text-xs text-muted-foreground">
-              Mastery: {Math.round(item.mastery * 100)}%
+              Mastery: <span className="tabular-nums">{Math.round(item.mastery * 100)}%</span>
             </p>
           </div>
           <span
-            className={`text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0 ${
+            className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium shrink-0 ${
               URGENCY_COLORS[item.urgency] ?? URGENCY_COLORS.default
             }`}
           >
@@ -78,7 +78,7 @@ export default function ReviewBlock({ courseId }: BlockComponentProps) {
 
       <Link
         href={`/course/${courseId}/review`}
-        className="flex items-center justify-center gap-1.5 w-full py-2 text-sm font-medium text-brand hover:text-brand/80 transition-colors"
+        className="flex items-center justify-center gap-1.5 w-full py-2.5 text-sm font-medium text-brand-foreground bg-brand rounded-xl hover:opacity-90 transition-opacity"
       >
         Start Full Review
         <ArrowRight className="size-3.5" />

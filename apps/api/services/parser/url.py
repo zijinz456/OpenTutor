@@ -30,7 +30,7 @@ def extract_text_from_html(html: str) -> str:
             output_format="txt",
         )
         return text or ""
-    except Exception:
+    except (ImportError, TypeError, ValueError):
         # Best-effort regex fallback
         clean = re.sub(r"<script[\s\S]*?</script>", " ", html, flags=re.IGNORECASE)
         clean = re.sub(r"<style[\s\S]*?</style>", " ", clean, flags=re.IGNORECASE)
@@ -53,7 +53,7 @@ async def scrape_url_to_tree(
     try:
         title, content = await extract_content(url=url)
     except Exception as e:
-        logger.warning("URL extraction failed for %s: %s", url, e)
+        logger.exception("URL extraction failed for %s", url)
         return []
 
     if not content:

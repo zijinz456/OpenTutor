@@ -70,7 +70,7 @@ async def get_health_status() -> dict[str, Any]:
             migration_state = await conn.run_sync(inspect_database_migrations)
         db_ok = True
     except Exception:
-        logger.warning("Health check: database unreachable")
+        logger.exception("Health check: database unreachable")
 
     llm_runtime = await get_llm_runtime_status()
     provider_health = llm_runtime["provider_health"]
@@ -85,10 +85,16 @@ async def get_health_status() -> dict[str, Any]:
         sandbox_available=sandbox_available,
     )
 
+    # Runtime metrics
+    from middleware.metrics import get_metrics
+    runtime_metrics = get_metrics()
+
     overall = "ok" if db_ok and migration_state.schema_ready else "degraded"
     return {
         "status": overall,
         "version": "0.1.0",
+        "uptime_seconds": runtime_metrics["uptime_seconds"],
+        "metrics": runtime_metrics,
         "database_backend": database_backend,
         "database": "connected" if db_ok else "unreachable",
         "schema": (

@@ -114,14 +114,14 @@ export function CalendarView({ courseId }: CalendarViewProps) {
         {cells.map((cell, i) => (
           <div
             key={i}
-            className={`min-h-[48px] rounded-md border text-xs p-1 flex flex-col ${
+            className={`min-h-[48px] rounded-xl text-xs p-1.5 flex flex-col transition-colors ${
               cell.day === null
                 ? "border-transparent"
                 : cell.isToday
-                  ? "border-brand bg-brand-muted/30"
+                  ? "border border-brand bg-brand-muted/30 card-shadow"
                   : cell.isPast
-                    ? "border-border/40 bg-muted/20"
-                    : "border-border/60"
+                    ? "bg-muted/20"
+                    : "bg-muted/10 hover:bg-muted/30"
             }`}
           >
             {cell.day !== null && (
@@ -142,7 +142,7 @@ export function CalendarView({ courseId }: CalendarViewProps) {
                   return (
                     <div
                       key={g.id}
-                      className={`mt-0.5 px-1 py-0.5 rounded text-[9px] leading-tight truncate ${urgencyClass}`}
+                      className={`mt-0.5 px-1 py-0.5 rounded-full text-[9px] leading-tight truncate ${urgencyClass}`}
                       title={g.title}
                     >
                       {g.title}
@@ -157,7 +157,7 @@ export function CalendarView({ courseId }: CalendarViewProps) {
 
       {/* Upcoming list below calendar */}
       {goals.filter((g) => g.target_date).length > 0 && (
-        <div className="mt-4 border-t border-border pt-3 space-y-1.5">
+        <div className="mt-4 border-t border-border/60 pt-3 space-y-1.5">
           <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Upcoming</h4>
           {goals
             .filter((g) => g.target_date)

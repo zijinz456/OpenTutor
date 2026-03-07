@@ -71,8 +71,9 @@ class _RepairingAgent(_StreamingOnlyAgent):
 async def test_run_agent_turn_uses_stream_runtime_and_parses_actions(monkeypatch):
     dummy_agent = _StreamingOnlyAgent(
         [
-            "Switched your workspace. ",
-            "[ACTION:set_layout_preset:quizFocused]",
+            "Switched your workspace for exam prep. ",
+            "[ACTION:apply_template:quick_reviewer]",
+            "[ACTION:agent_insight:exam_prep:7-day countdown, 12 weak concepts]",
             "Let's keep practicing from here.",
         ],
         usage={"input_tokens": 5, "output_tokens": 7},
@@ -91,8 +92,11 @@ async def test_run_agent_turn_uses_stream_runtime_and_parses_actions(monkeypatch
         db_factory=None,
     )
 
-    assert ctx.response == "Switched your workspace. Let's keep practicing from here."
-    assert ctx.actions == [{"action": "set_layout_preset", "value": "quizFocused"}]
+    assert ctx.response == "Switched your workspace for exam prep. Let's keep practicing from here."
+    assert ctx.actions == [
+        {"action": "apply_template", "value": "quick_reviewer"},
+        {"action": "agent_insight", "value": "exam_prep", "extra": "7-day countdown, 12 weak concepts"},
+    ]
     assert ctx.total_tokens == 12
 
 
@@ -323,3 +327,51 @@ async def test_orchestrate_stream_enqueues_durable_post_process_task(monkeypatch
     assert submitted["source"] == "agent"
     assert submitted["max_attempts"] == 3
     assert submitted["input_json"]["context"]["response"] == "Durable background work."
+
+
+@pytest.mark.asyncio
+async def test_orchestrate_stream_guided_session_parses_action_markers(monkeypatch):
+    task_id = str(uuid.uuid4())
+
+    class _GuidedAgent(_StreamingOnlyAgent):
+        async def stream(self, _ctx, _db):
+            yield "Let's jump in. [ACTION:focus_topic:node-42]"
+
+    guided_agent = _GuidedAgent([""], usage={"input_tokens": 1, "output_tokens": 1})
+
+    async def fake_get_session_state(_db, _user_id, _task_id):
+        return {
+            "current_phase": "teach",
+            "topic": {"title": "Binary Search"},
+            "completed_phases": [],
+        }
+
+    async def fake_advance_phase(_db, _user_id, _task_id):
+        return {
+            "current_phase": "practice",
+            "completed_phases": ["teach"],
+        }
+
+    async def fake_load_context(ctx, _db):
+        return ctx
+
+    monkeypatch.setattr("services.agent.orchestrator.get_agent", lambda _intent: guided_agent)
+    monkeypatch.setattr("services.agent.orchestrator.load_context", fake_load_context)
+    monkeypatch.setattr("services.agent.guided_session.get_session_state", fake_get_session_state)
+    monkeypatch.setattr("services.agent.guided_session.advance_phase", fake_advance_phase)
+    monkeypatch.setattr("services.agent.guided_session.build_phase_prompt", lambda *_args, **_kwargs: "Teach this")
+
+    events = []
+    async for event in orchestrate_stream(
+        user_id=uuid.uuid4(),
+        course_id=uuid.uuid4(),
+        message=f"[GUIDED_SESSION:start:{task_id}]",
+        db=None,
+        db_factory=None,
+    ):
+        events.append(event)
+
+    action_events = [event for event in events if event["event"] == "action"]
+    assert action_events
+    payloads = [json.loads(event["data"]) for event in action_events]
+    assert {"action": "focus_topic", "value": "node-42"} in payloads

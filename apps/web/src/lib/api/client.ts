@@ -68,9 +68,27 @@ function isRetryable(status: number): boolean {
   return status >= 500 || status === 429;
 }
 
+function getCsrfToken(): string | undefined {
+  if (typeof document === "undefined") return undefined;
+  const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]*)/);
+  return match?.[1];
+}
+
 export async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const { headers, ...restOptions } = options ?? {};
-  const mergedHeaders = buildAuthHeaders({ "Content-Type": "application/json", ...headers });
+  const csrfHeaders: Record<string, string> = {};
+  const method = (restOptions.method || "GET").toUpperCase();
+  if (["POST", "PUT", "PATCH", "DELETE"].includes(method)) {
+    const csrfToken = getCsrfToken();
+    if (csrfToken) {
+      csrfHeaders["X-CSRF-Token"] = csrfToken;
+    }
+  }
+  const mergedHeaders = buildAuthHeaders({
+    "Content-Type": "application/json",
+    ...csrfHeaders,
+    ...headers,
+  });
 
   let lastError: Error | undefined;
 
@@ -78,6 +96,7 @@ export async function request<T>(path: string, options?: RequestInit): Promise<T
     try {
       const res = await fetch(`${API_BASE}${path}`, {
         ...restOptions,
+        credentials: "include",
         headers: mergedHeaders,
       });
 

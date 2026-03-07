@@ -1,6 +1,7 @@
 """Authentication endpoints: register, login, refresh."""
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from jose import JWTError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -60,8 +61,10 @@ async def refresh(body: RefreshRequest, db: AsyncSession = Depends(get_db)):
         payload = decode_token(body.refresh_token)
         if payload.get("type") != "refresh":
             raise HTTPException(status_code=401, detail="Invalid token type")
-    except Exception:
-        raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
+    except HTTPException:
+        raise
+    except (JWTError, ValueError, KeyError) as exc:
+        raise HTTPException(status_code=401, detail="Invalid or expired refresh token") from exc
 
     user_id = payload["sub"]
     result = await db.execute(select(User).where(User.id == user_id))

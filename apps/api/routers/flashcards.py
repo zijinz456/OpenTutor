@@ -99,7 +99,7 @@ async def review_flashcard_endpoint(
             )
     except Exception:
         import logging
-        logging.getLogger(__name__).debug("Flashcard learning event emission failed (best-effort)")
+        logging.getLogger(__name__).exception("Flashcard learning event emission failed (best-effort)")
 
     # Single commit covers both the FSRS persistence and the analytics event
     await db.commit()

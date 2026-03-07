@@ -6,6 +6,7 @@ source "${SCRIPT_DIR}/_common.sh"
 
 API_BASE="${API_BASE:-http://localhost:8000/api}"
 UPLOAD_FILE="${UPLOAD_FILE:-${ROOT_DIR}/tests/e2e/fixtures/sample-course.md}"
+STRICT_BENCHMARK="${STRICT_BENCHMARK:-1}"
 PY_BIN="$(resolve_python_bin || true)"
 TMP_DIR="$(create_temp_dir)"
 trap 'rm -rf "$TMP_DIR"' EXIT
@@ -41,14 +42,15 @@ upload_status="$(curl -sS -o "${TMP_DIR}/upload.json" -w "%{http_code}" \
   -F "file=@${UPLOAD_FILE}")"
 [[ "${upload_status}" =~ ^2 ]] || fail "Failed to upload regression fixture (HTTP ${upload_status})"
 
-step "[3/3] Running API regression benchmark"
+step "[3/3] Running API regression benchmark (strict=${STRICT_BENCHMARK})"
 payload_file="${TMP_DIR}/payload.json"
-"${PY_BIN}" - <<'PY' "${payload_file}" "${course_id}"
+"${PY_BIN}" - <<'PY' "${payload_file}" "${course_id}" "${STRICT_BENCHMARK}"
 import json
 import sys
 
 payload = {
     "course_id": sys.argv[2],
+    "strict": str(sys.argv[3]).lower() in {"1", "true", "yes", "on"},
     "retrieval_queries": [
         {
             "query": "What are common pitfalls in binary search?",

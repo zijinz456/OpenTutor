@@ -359,7 +359,7 @@ async def vector_search(
         provider = get_embedding_provider()
         query_embedding = await provider.embed(query)
     except Exception as e:
-        logger.debug(f"Embedding unavailable: {e}")
+        logger.warning("Embedding unavailable for vector search: %s", e)
         return []
 
     result = await db.execute(
@@ -381,7 +381,7 @@ async def vector_search(
         if isinstance(emb, str):
             try:
                 emb = json.loads(emb)
-            except Exception:
+            except (ValueError, TypeError):
                 continue
         if not emb:
             continue

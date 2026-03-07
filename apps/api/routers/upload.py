@@ -113,8 +113,8 @@ async def _background_auto_generate(course_id: uuid.UUID, user_id: uuid.UUID):
         from services.ingestion.pipeline import auto_prepare
         summary = await auto_prepare(async_session, course_id, user_id)
         logger.info("auto_prepare complete for course %s: %s", course_id, summary)
-    except Exception as e:
-        logger.debug("Auto-generate flashcards failed (best-effort): %s", e)
+    except Exception:
+        logger.exception("Auto-generate study assets failed (best-effort)")
 
 
 async def _background_import_canvas_quizzes(
@@ -154,8 +154,8 @@ async def _background_import_canvas_quizzes(
             await db.commit()
             logger.info("Imported %d Canvas quiz questions for course %s", created, course_id)
             return created
-    except Exception as e:
-        logger.warning("Canvas quiz import failed (best-effort): %s", e)
+    except Exception:
+        logger.exception("Canvas quiz import failed (best-effort)")
         return 0
 
 
@@ -216,8 +216,8 @@ async def _background_embed(course_id: uuid.UUID, job_id: uuid.UUID, user_id: uu
                     )
                     await db.commit()
         except Exception:
-            logger.debug("Failed to persist embedding failure for job %s", job_id, exc_info=True)
-        logger.debug(f"Background embedding failed: {e}")
+            logger.exception("Failed to persist embedding failure for job %s", job_id)
+        logger.exception("Background embedding failed for job %s", job_id)
 
 
 @router.post("/upload")
@@ -247,6 +247,26 @@ async def upload_file(
     file_bytes = await file.read()
     if len(file_bytes) > settings.max_upload_size_mb * 1024 * 1024:
         raise ValidationError("File too large")
+
+    # Validate magic bytes match declared extension for binary formats
+    import filetype as ft
+    detected = ft.guess(file_bytes)
+    _MAGIC_EXT_MAP = {
+        "application/pdf": {".pdf"},
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation": {".pptx"},
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": {".docx"},
+        "application/zip": {".pptx", ".docx"},  # Office files are ZIP-based
+    }
+    if detected and detected.mime in _MAGIC_EXT_MAP:
+        allowed_exts = _MAGIC_EXT_MAP[detected.mime]
+        if ext not in allowed_exts:
+            logger.warning(
+                "SECURITY | MIME_MISMATCH | declared_ext=%s | detected_mime=%s | filename=%s",
+                ext, detected.mime, file.filename,
+            )
+            raise ValidationError(
+                f"File content ({detected.mime}) does not match extension ({ext})"
+            )
 
     file_hash = hashlib.sha256(file_bytes).hexdigest()[:16]
     os.makedirs(settings.upload_dir, exist_ok=True)

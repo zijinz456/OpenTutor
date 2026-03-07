@@ -1,19 +1,9 @@
-"""Workspace control tools — let agents drive UI state via the action bus.
+"""Workspace control tools — emit PRD-aligned block actions via the action bus.
 
-The agent calls update_workspace with an array of command objects.
-Each command is validated then appended to ctx.actions, which the
-orchestrator forwards as SSE 'action' events to the frontend.
-
-Supported commands:
-  switch_tab        → Navigate to a section (notes, practice, analytics, plan)
-  focus_topic       → Select a content node in the knowledge tree
-  set_layout        → Adjust workspace dimensions (chat height, tree collapse)
-  start_quiz        → Open practice section in quiz mode
-  generate_notes    → Delegate to existing generate_notes tool
-  generate_flashcards → Delegate to existing generate_flashcards tool
+The agent calls update_workspace with command objects. Each command is
+validated and converted into block-system actions, then appended to ctx.actions.
 """
 
-import json
 import logging
 import uuid as _uuid
 from typing import Any
@@ -25,6 +15,12 @@ from services.agent.tools.base import ToolCategory, ToolResult, param, tool
 logger = logging.getLogger(__name__)
 
 VALID_SECTIONS = {"notes", "practice", "analytics", "plan"}
+SECTION_PRIORITY: dict[str, str] = {
+    "notes": "chapter_list,notes,quiz,flashcards,plan,progress,knowledge_graph,review,wrong_answers,forecast,agent_insight",
+    "practice": "quiz,flashcards,wrong_answers,review,notes,progress,plan,knowledge_graph,chapter_list,forecast,agent_insight",
+    "analytics": "progress,forecast,knowledge_graph,notes,quiz,flashcards,plan,review,wrong_answers,chapter_list,agent_insight",
+    "plan": "plan,progress,review,notes,quiz,flashcards,knowledge_graph,chapter_list,wrong_answers,forecast,agent_insight",
+}
 
 VALID_COMMANDS = {
     "switch_tab", "focus_topic", "set_layout",
@@ -35,11 +31,9 @@ VALID_COMMANDS = {
 @tool(
     name="update_workspace",
     description=(
-        "Control the student's workspace UI. Use this to navigate sections, "
-        "focus on specific topics in the knowledge tree, adjust layout, or "
-        "trigger content generation. Pass an array of workspace commands to "
-        "execute in order. Examples: switch to the practice tab, focus on a "
-        "specific chapter, generate notes for a topic and show them."
+        "Control the student's workspace using PRD action markers. "
+        "Use this to prioritize sections, focus specific topics, tune block "
+        "layout emphasis, and trigger content generation."
     ),
     domain="workspace",
     category=ToolCategory.WRITE,
@@ -52,7 +46,7 @@ VALID_COMMANDS = {
                 "plus command-specific fields. Supported commands: "
                 'switch_tab: {"command":"switch_tab","section":"notes|practice|analytics|plan"}. '
                 'focus_topic: {"command":"focus_topic","node_id":"<uuid>","section":"notes"}. '
-                'set_layout: {"command":"set_layout","chat_height":0.4,"tree_collapsed":false}. '
+                'set_layout: {"command":"set_layout","chat_height":0.4,"tree_collapsed":false,"tree_width":240}. '
                 'start_quiz: {"command":"start_quiz","topic":"optional topic name"}. '
                 'generate_notes: {"command":"generate_notes","topic":"topic name"}. '
                 'generate_flashcards: {"command":"generate_flashcards","count":10}.'
@@ -108,8 +102,9 @@ async def _execute_command(
         section = cmd.get("section", "")
         if section not in VALID_SECTIONS:
             raise ValueError(f"Invalid section: {section!r}. Valid: {VALID_SECTIONS}")
-        ctx.actions.append({"action": "switch_tab", "value": section})
-        return f"switch_tab({section})"
+        ctx.actions.append({"action": "reorder_blocks", "value": SECTION_PRIORITY[section]})
+        ctx.actions.append({"action": "data_updated", "value": section})
+        return f"prioritize_section({section})"
 
     if command_type == "focus_topic":
         node_id = str(cmd.get("node_id", "")).strip()
@@ -127,29 +122,42 @@ async def _execute_command(
             raise ValueError(f"Node {node_id} not found in current course")
         ctx.actions.append({"action": "focus_topic", "value": node_id})
         if section in VALID_SECTIONS:
-            ctx.actions.append({"action": "switch_tab", "value": section})
+            ctx.actions.append({"action": "data_updated", "value": section})
         return f"focus_topic({node.title!r})"
 
     if command_type == "set_layout":
-        layout_payload: dict[str, Any] = {}
+        emitted: list[str] = []
         if "chat_height" in cmd:
             h = float(cmd["chat_height"])
-            layout_payload["chat_height"] = max(0.15, min(0.7, h))
+            h = max(0.15, min(0.7, h))
+            size = "large" if h <= 0.25 else "medium"
+            ctx.actions.append({"action": "resize_block", "value": f"notes:{size}"})
+            emitted.append(f"notes->{size}")
         if "tree_collapsed" in cmd:
-            layout_payload["tree_collapsed"] = bool(cmd["tree_collapsed"])
+            collapsed = bool(cmd["tree_collapsed"])
+            order = (
+                "notes,quiz,flashcards,progress,plan,chapter_list,knowledge_graph,review,wrong_answers,forecast,agent_insight"
+                if collapsed
+                else "chapter_list,notes,quiz,flashcards,progress,plan,knowledge_graph,review,wrong_answers,forecast,agent_insight"
+            )
+            ctx.actions.append({"action": "reorder_blocks", "value": order})
+            emitted.append("reordered")
         if "tree_width" in cmd:
             w = int(cmd["tree_width"])
-            layout_payload["tree_width"] = max(140, min(480, w))
-        if layout_payload:
-            ctx.actions.append({
-                "action": "set_layout",
-                "value": json.dumps(layout_payload),
-            })
-            return f"set_layout({layout_payload})"
+            w = max(140, min(480, w))
+            chapter_size = "full" if w >= 320 else "medium"
+            ctx.actions.append({"action": "resize_block", "value": f"chapter_list:{chapter_size}"})
+            emitted.append(f"chapter_list->{chapter_size}")
+        if emitted:
+            ctx.actions.append({"action": "data_updated", "value": "notes"})
+            return f"set_layout_via_blocks({', '.join(emitted)})"
         return None
 
     if command_type == "start_quiz":
-        ctx.actions.append({"action": "switch_tab", "value": "practice"})
+        ctx.actions.append({
+            "action": "reorder_blocks",
+            "value": "quiz,flashcards,wrong_answers,review,notes,progress,plan,chapter_list,knowledge_graph,forecast,agent_insight",
+        })
         ctx.actions.append({"action": "data_updated", "value": "practice"})
         return "start_quiz()"
 

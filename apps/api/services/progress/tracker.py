@@ -142,7 +142,7 @@ async def update_quiz_result(
         )
         db.add(snap)
     except Exception as e:
-        logger.debug("Mastery snapshot failed: %s", e)
+        logger.exception("Mastery snapshot failed (best-effort)")
 
     # FSRS spaced repetition scheduling
     _apply_fsrs_review(progress, is_correct)

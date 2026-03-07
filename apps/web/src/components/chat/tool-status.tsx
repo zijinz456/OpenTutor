@@ -25,11 +25,11 @@ export function ToolStatus({ status }: ToolStatusProps) {
   return (
     <div
       className={cn(
-        "flex shrink-0 items-center gap-2 border-t px-3 py-1.5 text-xs",
+        "flex shrink-0 items-center gap-2 border-t border-border/60 px-3 py-1.5 text-xs",
         "animate-in fade-in slide-in-from-bottom-1 duration-200",
         isRunning
-          ? "bg-muted/50 text-muted-foreground"
-          : "bg-zinc-100 text-zinc-700 dark:bg-zinc-800/30 dark:text-zinc-400",
+          ? "bg-muted/30 text-muted-foreground"
+          : "bg-muted/20 text-muted-foreground",
       )}
     >
       {isRunning ? (

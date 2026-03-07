@@ -330,8 +330,8 @@ async def get_greeting(
             greeting_parts.append("Want me to start a quick review session?")
         else:
             greeting_parts.append("You're all caught up on reviews!")
-    except Exception as e:
-        logger.warning("Failed to fetch review summary for greeting: %s", e)
+    except Exception:
+        logger.exception("Failed to fetch review summary for greeting")
 
     try:
         from services.loom import get_mastery_graph
@@ -349,8 +349,8 @@ async def get_greeting(
                 greeting_parts.append(
                     f"You've mastered {mastered}/{total} concepts so far."
                 )
-    except Exception as e:
-        logger.warning("Failed to fetch mastery graph for greeting: %s", e)
+    except Exception:
+        logger.exception("Failed to fetch mastery graph for greeting")
 
     # Check for upcoming deadlines
     try:
@@ -373,8 +373,8 @@ async def get_greeting(
                 greeting_parts.append(
                     f"Heads up: **{upcoming.title}** is due in {days_until} day(s)!"
                 )
-    except Exception as e:
-        logger.warning("Failed to fetch upcoming deadlines for greeting: %s", e)
+    except Exception:
+        logger.exception("Failed to fetch upcoming deadlines for greeting")
 
     greeting_parts.append("What would you like to work on?")
 
@@ -387,8 +387,8 @@ async def get_greeting(
                 "value": "review_needed",
                 "extra": f"{review['urgent_count']} concept(s) at risk",
             })
-    except Exception:
-        pass
+    except NameError:
+        logger.debug("review variable not available for suggested actions")
     try:
         if upcoming and days_until <= 7:
             suggested_actions.append({
@@ -396,8 +396,8 @@ async def get_greeting(
                 "value": "exam_prep",
                 "extra": f"{upcoming.title} due in {days_until} day(s)",
             })
-    except Exception:
-        pass
+    except NameError:
+        logger.debug("upcoming variable not available for suggested actions")
 
     return {
         "greeting": " ".join(greeting_parts),

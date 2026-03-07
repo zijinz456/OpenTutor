@@ -39,7 +39,7 @@ export function PdfViewerOverlay({ courseId }: PdfViewerOverlayProps) {
       data-testid="pdf-viewer-overlay"
     >
       {/* Header */}
-      <div className="px-3 py-1.5 border-b flex items-center gap-2 shrink-0 bg-[var(--section-header)]">
+      <div className="px-3 py-1.5 border-b border-border/60 flex items-center gap-2 shrink-0 glass">
         <FileText className="size-3.5 text-muted-foreground shrink-0" />
         <span className="text-xs font-medium truncate flex-1">
           {pdfOverlay.fileName}

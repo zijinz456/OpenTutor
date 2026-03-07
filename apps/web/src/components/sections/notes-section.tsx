@@ -218,9 +218,9 @@ export function NotesSection({
   return (
     <div className="flex-1 flex overflow-hidden" data-testid="notes-panel">
       <div className="flex-1 flex flex-col overflow-hidden">
-        <div className="px-3 py-1.5 border-b flex items-center gap-2 shrink-0">
+        <div className="px-3 py-1.5 border-b border-border/60 flex items-center gap-2 shrink-0">
           {/* AI / Source toggle */}
-          <div className="flex items-center gap-0.5 rounded-md border p-0.5">
+          <div className="flex items-center gap-0.5 rounded-xl bg-muted/30 p-0.5">
             <button
               className={`px-2 py-0.5 text-xs rounded ${
                 viewMode === "ai"
@@ -286,7 +286,7 @@ export function NotesSection({
 
         {!aiActionsEnabled ? <AiFeatureBlocked compact className="mx-4 mt-4" /> : null}
 
-        <ScrollArea className="flex-1 p-4">
+        <ScrollArea className="flex-1 p-4 scrollbar-thin">
           {viewMode === "ai" ? (
             <>
               {aiNoteLoading ? (
@@ -294,7 +294,7 @@ export function NotesSection({
                   <p className="text-sm text-muted-foreground animate-pulse">Loading AI notes...</p>
                 </div>
               ) : hasAiNotes ? (
-                <div className="rounded-lg border bg-muted/20 p-4" data-testid="notes-preview">
+                <div className="rounded-2xl card-shadow bg-muted/20 p-4" data-testid="notes-preview">
                   <div className="mb-2 flex items-center justify-between gap-2">
                     <div>
                       <p className="text-sm font-medium">{aiTitle}</p>

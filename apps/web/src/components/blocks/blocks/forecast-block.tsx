@@ -60,11 +60,11 @@ export default function ForecastBlock({ courseId }: BlockComponentProps) {
     <div className="p-4 space-y-4">
       {/* Readiness score */}
       <div className="flex items-center gap-4">
-        <div className="flex items-center justify-center w-14 h-14 rounded-xl bg-muted">
+        <div className="flex items-center justify-center w-14 h-14 rounded-2xl bg-muted/30">
           <TrendingUp className={`size-6 ${readinessColor}`} />
         </div>
         <div>
-          <p className="text-2xl font-bold text-foreground">
+          <p className="text-2xl font-bold text-foreground tabular-nums">
             <span className={readinessColor}>{Math.round(masteryPct)}%</span>
           </p>
           <p className="text-xs text-muted-foreground">
@@ -74,7 +74,7 @@ export default function ForecastBlock({ courseId }: BlockComponentProps) {
       </div>
 
       {/* Progress bar */}
-      <div className="w-full h-2.5 bg-muted rounded-full overflow-hidden">
+      <div className="w-full h-2 bg-muted/40 rounded-full overflow-hidden">
         <div
           className={`h-full rounded-full transition-all duration-500 ${
             masteryPct >= 80 ? "bg-success" : masteryPct >= 50 ? "bg-warning" : "bg-destructive"
@@ -89,10 +89,10 @@ export default function ForecastBlock({ courseId }: BlockComponentProps) {
           <p className="text-xs font-medium text-muted-foreground mb-2">At-risk concepts</p>
           <div className="space-y-1.5">
             {riskConcepts.slice(0, 5).map((c, i) => (
-              <div key={i} className="flex items-center gap-2 text-xs">
+              <div key={i} className="flex items-center gap-2 text-xs rounded-xl bg-muted/30 p-3.5">
                 <BarChart3 className="size-3 text-destructive shrink-0" />
                 <span className="text-foreground flex-1 truncate">{c.label}</span>
-                <span className="text-muted-foreground">{Math.round(c.retrievability * 100)}%</span>
+                <span className="text-muted-foreground tabular-nums">{Math.round(c.retrievability * 100)}%</span>
               </div>
             ))}
           </div>

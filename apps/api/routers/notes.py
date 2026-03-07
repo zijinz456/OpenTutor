@@ -115,7 +115,7 @@ async def save_generated_notes(
         ))
         await db.commit()
     except Exception:
-        logger.debug("Notes learning event emission failed (best-effort)")
+        logger.exception("Notes learning event emission failed (best-effort)")
 
     return result
 

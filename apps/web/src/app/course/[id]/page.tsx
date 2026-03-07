@@ -234,8 +234,15 @@ export default function CoursePage() {
     return true;
   }, [courseId]);
 
-  // Initialize blocks from course metadata or localStorage
+  // Initialize blocks from course metadata or localStorage.
+  // Uses a lastCourseId ref to detect course changes and avoid a separate
+  // reset effect that could race with this one.
+  const lastCourseIdRef = useRef<string | null>(null);
   useEffect(() => {
+    if (lastCourseIdRef.current !== courseId) {
+      lastCourseIdRef.current = courseId;
+      blocksInitialized.current = false;
+    }
     if (blocksInitialized.current) return;
     blocksInitialized.current = true;
 
@@ -264,11 +271,6 @@ export default function CoursePage() {
       loadBlocks(buildLayoutFromMode(savedMode));
     }
   }, [courseId, course, loadBlocks]);
-
-  // Reset on courseId change
-  useEffect(() => {
-    blocksInitialized.current = false;
-  }, [courseId]);
 
   // Persist blocks to localStorage + backend (debounced)
   const persistTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -573,7 +575,7 @@ export default function CoursePage() {
     <div className="min-h-screen bg-background flex flex-col">
       <WorkspaceHeader courseName={course?.name || t("course.defaultTitle")} courseId={courseId} />
 
-      <div className="px-4 pt-3 max-w-5xl mx-auto w-full space-y-2">
+      <div className="px-5 pt-4 max-w-5xl mx-auto w-full space-y-2">
         <RuntimeAlert health={health} />
         <IngestionProgress
           courseId={courseId}
@@ -586,7 +588,7 @@ export default function CoursePage() {
         />
       </div>
 
-      <main className="flex-1 max-w-5xl mx-auto w-full px-4 py-6 space-y-6">
+      <main className="flex-1 max-w-5xl mx-auto w-full px-5 py-8 space-y-6">
         {hasBlocks ? (
           /* Block-based layout */
           <BlockGrid courseId={courseId} aiActionsEnabled={aiActionsEnabled} />
@@ -606,7 +608,7 @@ export default function CoursePage() {
                     type="button"
                     key={t.id}
                     onClick={() => applyBlockTemplate(t.id)}
-                    className="p-4 rounded-xl border border-border bg-card hover:border-brand/40 hover:bg-brand-muted/20 transition-colors text-left"
+                    className="p-5 rounded-2xl bg-card card-lift text-left group"
                   >
                     <p className="text-sm font-medium text-foreground">{t.name}</p>
                     <p className="text-xs text-muted-foreground mt-1">{t.description}</p>
@@ -616,7 +618,7 @@ export default function CoursePage() {
                         .map((b, i) => (
                           <span
                             key={i}
-                            className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground"
+                            className="text-[10px] px-2 py-0.5 rounded-full bg-muted text-muted-foreground"
                           >
                             {b.type.replace("_", " ")}
                           </span>

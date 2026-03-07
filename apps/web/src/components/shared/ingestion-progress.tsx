@@ -80,7 +80,7 @@ export function IngestionProgress({ courseId, onIngestionComplete }: IngestionPr
   }
 
   return (
-    <div className="rounded-lg border border-blue-200/60 bg-blue-50/70 px-3 py-2 text-sm">
+    <div className="rounded-2xl border border-blue-200/60 bg-blue-50/70 px-3 py-2.5 text-sm card-shadow">
       {activeJobs.length > 0 && (
         <div className="flex items-center gap-2">
           <Loader2 className="size-3.5 shrink-0 animate-spin text-blue-600" />
@@ -95,9 +95,9 @@ export function IngestionProgress({ courseId, onIngestionComplete }: IngestionPr
         <div className="mt-1.5 space-y-1 pl-5">
           {activeJobs.map((job) => (
             <div key={job.id} className="flex items-center gap-2 text-xs text-blue-800/80">
-              <div className="h-1 w-16 overflow-hidden rounded-full bg-blue-200">
+              <div className="h-2.5 w-16 overflow-hidden rounded-full bg-blue-200">
                 <div
-                  className="h-full rounded-full bg-blue-500 transition-all duration-500"
+                  className="h-full rounded-full bg-brand transition-all duration-500"
                   style={{ width: `${job.progress_percent || 0}%` }}
                 />
               </div>

@@ -9,7 +9,7 @@ from __future__ import annotations
 import uuid
 from collections import Counter
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,8 +18,10 @@ from database import get_db
 from models.content import CourseContentTree
 from models.ingestion import WrongAnswer
 from models.practice import PracticeProblem
+from models.study_plan import StudyPlan
 from models.user import User
 from services.auth.dependency import get_current_user
+from schemas.study_plan import StudyPlanResponse
 from services.course_access import get_course_or_404
 from services.generated_assets import list_generated_asset_batches, save_generated_asset
 
@@ -171,6 +173,24 @@ async def list_study_plans(
         course_id=course_id,
         asset_type="study_plan",
     )
+
+
+@router.get("/courses/{course_id}/study-plans", response_model=list[StudyPlanResponse])
+async def list_persisted_study_plans(
+    course_id: uuid.UUID,
+    limit: int = Query(default=5, ge=1, le=20),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return AI-generated StudyPlan records for the given course."""
+    await get_course_or_404(db, course_id, user_id=user.id)
+    result = await db.execute(
+        select(StudyPlan)
+        .where(StudyPlan.course_id == course_id, StudyPlan.user_id == user.id)
+        .order_by(StudyPlan.created_at.desc())
+        .limit(limit)
+    )
+    return result.scalars().all()
 
 
 @router.get("/wrong-answer-review", response_model=WrongAnswerReviewResponse)

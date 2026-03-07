@@ -15,13 +15,14 @@ export function ChatFab({ open, onToggle, hasUnread }: ChatFabProps) {
       type="button"
       onClick={onToggle}
       aria-label={open ? "Close chat" : "Open chat"}
+      aria-expanded={open}
       className={cn(
         "fixed bottom-6 right-6 z-50 flex items-center justify-center",
-        "w-14 h-14 rounded-full shadow-lg transition-all duration-200",
+        "w-14 h-14 rounded-full transition-all duration-300",
         "hover:scale-105 active:scale-95",
         open
-          ? "bg-muted text-muted-foreground hover:bg-muted/80"
-          : "bg-primary text-primary-foreground hover:bg-primary/90",
+          ? "bg-muted text-muted-foreground hover:bg-muted/80 shadow-md"
+          : "bg-brand text-brand-foreground hover:bg-brand/90 shadow-lg hover:shadow-xl",
       )}
     >
       {open ? <X className="size-5" /> : <MessageCircle className="size-5" />}

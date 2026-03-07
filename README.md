@@ -5,9 +5,8 @@
 # OpenTutor
 
 **Your self-hosted AI learning platform.**<br/>
-Upload any material — get notes, quizzes, flashcards, and an AI tutor that remembers you.
+Upload any material — get notes, quizzes, flashcards, and an AI tutor that adapts to you.
 
-[![CI](https://img.shields.io/github/actions/workflow/status/zijinz456/OpenTutor/ci.yml?branch=main&label=CI&logo=githubactions&logoColor=white&style=flat-square)](https://github.com/zijinz456/OpenTutor/actions/workflows/ci.yml)
 [![License](https://img.shields.io/github/license/zijinz456/OpenTutor?style=flat-square&labelColor=black)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white&labelColor=black)](https://www.python.org/)
 [![Next.js](https://img.shields.io/badge/Next.js-16-000000?style=flat-square&logo=nextdotjs&logoColor=white&labelColor=black)](https://nextjs.org/)
@@ -17,7 +16,7 @@ Upload any material — get notes, quizzes, flashcards, and an AI tutor that rem
 
 </div>
 
-<!-- DEMO_SCREENSHOT_PLACEHOLDER: Replace with actual screenshot -->
+<!-- Replace with actual screenshot when available -->
 <!-- <p align="center"><img src="docs/assets/screenshot.png" alt="OpenTutor Screenshot" width="800" /></p> -->
 
 ## What is OpenTutor?
@@ -28,40 +27,27 @@ Drop in a PDF, and within 30 seconds you have structured notes, flashcards, quiz
 Upload → AI Teaches → You Practice → AI Remembers → AI Reminds → Repeat
 ```
 
-<details>
-<summary><kbd>Table of Contents</kbd></summary>
-
-- [What is OpenTutor?](#what-is-opentutor)
-- [Features](#features)
-- [Quick Start](#quick-start)
-- [LLM Configuration](#llm-configuration)
-- [Architecture](#architecture)
-- [Tech Stack](#tech-stack)
-- [Research](#research)
-- [Contributing](#contributing)
-- [License](#license)
-
-</details>
-
 ## Features
 
-- 📄 **30-Second Ingestion** — Upload PDF, DOCX, PPTX, or paste a URL. Get a structured content tree, AI-generated notes, flashcards, and quiz questions — all indexed and searchable.
+- **30-Second Ingestion** — Upload PDF, DOCX, PPTX, or paste a URL. Get structured notes, AI-generated flashcards, and quiz questions.
 
-- 🎓 **AI Tutor with Source Citations** — Every answer cites the original material `[Source: Lecture_02.pdf]`. Adapts depth based on real-time cognitive load detection.
+- **AI Tutor with Source Citations** — Every answer cites the original material. Adapts depth based on behavioral signals (fatigue, error patterns, message brevity).
 
-- 🧠 **Knowledge Graph (LOOM)** — Every interaction updates a personal knowledge graph: what you know, what you don't, what you're forgetting. Concept relationships, prerequisites, and confusion pairs — all tracked automatically.
+- **Block-Based Adaptive Workspace** — 12 composable learning blocks (notes, quiz, flashcards, knowledge graph, study plan, analytics, etc). The system progressively unlocks features based on your learning behavior and suggests layout changes via AI.
 
-- 🔁 **Semantic Spaced Repetition (LECTOR)** — Not just interval scheduling — reviews related concepts together, prioritizes weak prerequisites, and contrasts confused pairs. 7 question types: MCQ, short answer, fill-in-blank, true/false, matching, ordering, coding.
+- **Knowledge Graph (LOOM)** — Tracks concept mastery, prerequisite relationships, and weak areas. *Experimental — active development.*
 
-- 🔔 **Proactive Review Reminders** — Checks every 6 hours for concepts at risk of being forgotten. Sends in-app notifications: *"Your Chain Rule is decaying — do 2 quick problems?"*
+- **Spaced Repetition (FSRS 4.5 + LECTOR)** — FSRS scheduling for flashcards. LECTOR adds semantic review prioritization based on knowledge graph relationships. *LECTOR is experimental.*
 
-- 📊 **Adaptive Difficulty** — 6 behavioral signals (fatigue, error patterns, help-seeking, message brevity, quiz performance, session length) dynamically adjust explanation depth and problem difficulty.
+- **Proactive Review Reminders** — Checks for concepts at risk of being forgotten and sends in-app notifications.
 
-- 🔗 **Canvas LMS Integration** — Import courses, assignments, modules, and files directly from Canvas.
+- **Quiz System** — 7 question types: MCQ, short answer, fill-in-blank, true/false, matching, ordering, coding. Wrong-answer tracking with diagnostic feedback.
 
-- 🤖 **10+ LLM Providers** — OpenAI, Anthropic, DeepSeek, Ollama, Gemini, Groq, vLLM, LM Studio, OpenRouter, or any OpenAI-compatible endpoint. Local-first with Ollama by default.
+- **Canvas LMS Integration** — Import courses, modules, assignments, and files directly from Canvas.
 
-- 🔒 **Self-Hosted & Private** — Runs entirely on your machine. No data leaves your environment. Single-user mode by default — no sign-in needed.
+- **10+ LLM Providers** — OpenAI, Anthropic, DeepSeek, Ollama, Gemini, Groq, vLLM, LM Studio, OpenRouter, or any OpenAI-compatible endpoint. Local-first with Ollama by default.
+
+- **Self-Hosted & Private** — Runs entirely on your machine. No data leaves your environment. Single-user mode by default.
 
 ## Quick Start
 
@@ -70,7 +56,7 @@ Upload → AI Teaches → You Practice → AI Remembers → AI Reminds → Repea
 ```bash
 git clone https://github.com/zijinz456/OpenTutor.git && cd OpenTutor
 cp .env.example .env
-bash scripts/dev_local.sh up --build
+docker compose up -d --build
 ```
 
 ### One-Command Local
@@ -125,8 +111,8 @@ See [.env.example](.env.example) for the full list of supported providers and op
 OpenTutor/
 ├── apps/
 │   ├── api/              # FastAPI backend
-│   │   ├── routers/           # 22 API route modules
-│   │   ├── models/            # 23 SQLAlchemy ORM models
+│   │   ├── routers/           # 23 API route modules
+│   │   ├── models/            # 24 SQLAlchemy ORM models
 │   │   ├── services/
 │   │   │   ├── agent/              # 3 specialist agents + orchestrator
 │   │   │   ├── ingestion/          # Content processing pipeline
@@ -134,17 +120,17 @@ OpenTutor/
 │   │   │   ├── search/             # Hybrid keyword + vector RAG
 │   │   │   ├── spaced_repetition/  # FSRS scheduler + flashcards
 │   │   │   ├── learning_science/   # BKT, difficulty selection
-│   │   │   ├── loom.py             # LOOM knowledge graph
-│   │   │   ├── lector.py           # LECTOR semantic review
-│   │   │   └── cognitive_load.py   # Cognitive load detection
+│   │   │   ├── loom.py             # Knowledge graph (experimental)
+│   │   │   ├── lector.py           # Semantic review (experimental)
+│   │   │   └── cognitive_load.py   # Behavioral signal analysis
 │   │   └── alembic/           # Database migrations
 │   └── web/              # Next.js 16 frontend
 │       └── src/
-│           ├── app/                # 6 pages (App Router)
-│           ├── components/         # 63 React components
+│           ├── app/                # 13 pages (App Router)
+│           ├── components/         # 84 React components
 │           ├── store/              # Zustand state stores
-│           └── lib/                # API client + utilities
-├── tests/                # 23 pytest + 23 Playwright E2E
+│           └── lib/                # API client, block system, i18n
+├── tests/                # pytest + Playwright E2E
 └── scripts/              # Dev, CI, deployment
 ```
 
@@ -167,8 +153,8 @@ Agents use a ReAct tool loop with access to content search, quiz generation, fla
 | **Frontend** | Next.js 16, React 19, TypeScript, Tailwind CSS 4, Zustand, shadcn/ui |
 | **Backend** | FastAPI, Python 3.11+, Pydantic 2, SQLAlchemy 2 (async), Alembic |
 | **Database** | SQLite (aiosqlite, local-first) |
-| **Learning Science** | FSRS 4.5 · BKT · LECTOR · LOOM · Cognitive Load Theory |
-| **CI/CD** | GitHub Actions · Docker Compose · Playwright |
+| **Learning Science** | FSRS 4.5, BKT, LECTOR (experimental), LOOM (experimental), Cognitive Load Theory |
+| **CI/CD** | GitHub Actions, Docker Compose, Playwright |
 
 ## Research
 
@@ -183,7 +169,7 @@ OpenTutor builds on these papers:
 
 ## Contributing
 
-Contributions are welcome! Please see the [issues](https://github.com/zijinz456/OpenTutor/issues) page for open tasks.
+Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for setup instructions and guidelines.
 
 ```bash
 # Run tests
@@ -192,12 +178,6 @@ python -m pytest tests/ -q -k "not llm_router"
 # E2E tests (requires running stack)
 npx playwright test
 ```
-
-<!-- Uncomment when contributors grow:
-<a href="https://github.com/zijinz456/OpenTutor/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=zijinz456/OpenTutor" />
-</a>
--->
 
 ## License
 

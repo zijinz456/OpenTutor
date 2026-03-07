@@ -378,9 +378,7 @@ def get_tool_registry() -> ToolRegistry:
 
     Registration order (later overrides earlier):
     1. Built-in education tools
-    2. Python plugins (plugins/ directory)
-    3. YAML declarative tools (config/tools/)
-    4. MCP Server tools (config/mcp_servers.yaml)
+    2. YAML declarative tools (config/tools/)
     """
     global _tool_registry
     if _tool_registry is not None:
@@ -390,7 +388,6 @@ def get_tool_registry() -> ToolRegistry:
             return _tool_registry
         registry = ToolRegistry()
         _register_builtin_tools(registry)
-        _register_plugins(registry)
         _register_yaml_tools(registry)
         _tool_registry = registry
     return _tool_registry
@@ -408,7 +405,7 @@ def _register_builtin_tools(registry: ToolRegistry) -> None:
             len(registry.get_by_domain("education")),
         )
     except Exception as e:
-        logger.warning("Failed to load built-in tools: %s", e)
+        logger.exception("Failed to load built-in tools: %s", e)
 
     _register_web_tools(registry)
     _register_export_tools(registry)
@@ -425,7 +422,7 @@ def _register_web_tools(registry: ToolRegistry) -> None:
         registry.register(WebSearchTool())
         logger.info("Registered web search tool")
     except Exception as e:
-        logger.warning("Failed to load web tools: %s", e)
+        logger.exception("Failed to load web tools: %s", e)
 
 
 def _register_export_tools(registry: ToolRegistry) -> None:
@@ -435,13 +432,13 @@ def _register_export_tools(registry: ToolRegistry) -> None:
 
         registry.register(ExportAnkiTool())
     except Exception as e:
-        logger.warning("Failed to load Anki export tool: %s", e)
+        logger.exception("Failed to load Anki export tool: %s", e)
     try:
         from services.agent.tools.calendar import ExportCalendarTool
 
         registry.register(ExportCalendarTool())
     except Exception as e:
-        logger.warning("Failed to load calendar export tool: %s", e)
+        logger.exception("Failed to load calendar export tool: %s", e)
     logger.info("Registered export tools")
 
 
@@ -459,7 +456,7 @@ def _register_file_tools(registry: ToolRegistry) -> None:
         registry.register(ReadFileTool())
         logger.info("Registered %d file tools", len(registry.get_by_domain("file")))
     except Exception as e:
-        logger.warning("Failed to load file tools: %s", e)
+        logger.exception("Failed to load file tools: %s", e)
 
 
 def _register_mutation_tools(registry: ToolRegistry) -> None:
@@ -474,7 +471,7 @@ def _register_mutation_tools(registry: ToolRegistry) -> None:
     except ImportError:
         logger.debug("content_mutations module removed; skipping mutation tools")
     except Exception as e:
-        logger.warning("Failed to load content mutation tools: %s", e)
+        logger.exception("Failed to load content mutation tools: %s", e)
 
 
 def _register_workspace_tools(registry: ToolRegistry) -> None:
@@ -485,17 +482,8 @@ def _register_workspace_tools(registry: ToolRegistry) -> None:
         registry.register(update_workspace)
         logger.info("Registered workspace control tool")
     except Exception as e:
-        logger.warning("Failed to load workspace tools: %s", e)
+        logger.exception("Failed to load workspace tools: %s", e)
 
-
-def _register_plugins(registry: ToolRegistry) -> None:
-    """Register tools from Python plugins in plugins/ directory."""
-    try:
-        from plugins.loader import load_plugins
-
-        load_plugins(registry)
-    except Exception as e:
-        logger.warning("Failed to load plugins: %s", e)
 
 
 def _register_yaml_tools(registry: ToolRegistry) -> None:
@@ -505,4 +493,4 @@ def _register_yaml_tools(registry: ToolRegistry) -> None:
 
         load_yaml_tools(registry)
     except Exception as e:
-        logger.warning("Failed to load YAML tools: %s", e)
+        logger.exception("Failed to load YAML tools: %s", e)

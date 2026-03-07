@@ -81,9 +81,9 @@ export function SearchDialog({ open, onClose, courseId }: SearchDialogProps) {
       <div className="fixed inset-0 bg-black/40 backdrop-blur-sm" onClick={handleClose} />
 
       {/* Dialog */}
-      <div className="relative w-full max-w-lg mx-4 bg-card border border-border rounded-xl shadow-2xl overflow-hidden">
+      <div className="relative w-full max-w-lg mx-4 bg-card rounded-2xl card-shadow overflow-hidden animate-fade-in">
         {/* Search input */}
-        <div className="flex items-center gap-3 px-4 py-3 border-b border-border">
+        <div className="flex items-center gap-3 px-4 py-3 border-b border-border/60">
           <Search className="size-4 text-muted-foreground shrink-0" />
           <input
             ref={inputRef}
@@ -98,11 +98,11 @@ export function SearchDialog({ open, onClose, courseId }: SearchDialogProps) {
               <X className="size-3.5" />
             </button>
           )}
-          <kbd className="text-[10px] text-muted-foreground border border-border rounded px-1.5 py-0.5">ESC</kbd>
+          <kbd className="text-[10px] text-muted-foreground border border-border/60 rounded-full px-1.5 py-0.5">ESC</kbd>
         </div>
 
         {/* Results */}
-        <div className="max-h-[50vh] overflow-y-auto">
+        <div className="max-h-[50vh] overflow-y-auto scrollbar-thin">
           {query.length >= 2 && results.length === 0 && (
             <div className="px-4 py-8 text-center">
               <p className="text-sm text-muted-foreground">No results found for &quot;{query}&quot;</p>
@@ -117,7 +117,7 @@ export function SearchDialog({ open, onClose, courseId }: SearchDialogProps) {
                 router.push(`/course/${targetCourseId}/${r.id}`);
                 handleClose();
               }}
-              className="w-full flex items-start gap-3 px-4 py-3 text-left hover:bg-muted/50 transition-colors border-b border-border/40 last:border-0"
+              className="w-full flex items-start gap-3 px-4 py-3 text-left hover:bg-muted/50 transition-colors border-b border-border/60 last:border-0"
             >
               <FileText className="size-4 text-muted-foreground shrink-0 mt-0.5" />
               <div className="flex-1 min-w-0">

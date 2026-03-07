@@ -6,7 +6,7 @@ import { MessageBubble } from "@/components/chat/message-bubble";
 import { ClarifyCard } from "@/components/chat/clarify-card";
 import { StreamingIndicator } from "@/components/chat/streaming-indicator";
 import { useChatStore, type ChatMessage } from "@/store/chat";
-import { MessageSquare } from "lucide-react";
+import { MessageSquare, AlertCircle } from "lucide-react";
 
 interface MessageListProps {
   messages: ChatMessage[];
@@ -16,11 +16,21 @@ interface MessageListProps {
  * Virtualized scrollable message list with auto-scroll-to-bottom.
  * Uses @tanstack/react-virtual for efficient rendering of long conversations.
  */
+const ERROR_LABELS: Record<string, string> = {
+  rate_limit: "Rate limit reached. Please wait a moment and try again.",
+  auth_error: "Authentication error. Check your API key configuration.",
+  timeout: "Request timed out. The LLM may be overloaded.",
+  llm_unavailable: "LLM provider is unavailable. Check your connection or configuration.",
+  generic: "Something went wrong. Please try again.",
+};
+
 export function MessageList({ messages }: MessageListProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const isStreaming = useChatStore((s) => s.isStreaming);
   const clarifyOptions = useChatStore((s) => s.clarifyOptions);
   const activeCourseId = useChatStore((s) => s.activeCourseId);
+  const error = useChatStore((s) => s.error);
+  const errorCategory = useChatStore((s) => s.errorCategory);
 
   // Extra items: clarify card + streaming indicator + bottom spacer
   const extraCount =
@@ -48,9 +58,9 @@ export function MessageList({ messages }: MessageListProps) {
 
   if (messages.length === 0) {
     return (
-      <div className="flex flex-1 items-center justify-center p-6">
+      <div className="flex flex-1 items-center justify-center p-6 animate-fade-in">
         <div className="text-center">
-          <MessageSquare className="mx-auto mb-2 size-8 text-muted-foreground/40" />
+          <MessageSquare className="mx-auto mb-3 size-8 text-muted-foreground/30" />
           <p className="text-sm text-muted-foreground">
             No messages yet
           </p>
@@ -63,7 +73,7 @@ export function MessageList({ messages }: MessageListProps) {
   }
 
   return (
-    <div ref={parentRef} className="flex-1 overflow-auto">
+    <div ref={parentRef} className="flex-1 overflow-auto scrollbar-thin" role="log" aria-live="polite" aria-label="Chat messages">
       <div
         className="relative w-full p-3"
         style={{ height: `${virtualizer.getTotalSize()}px` }}
@@ -107,6 +117,19 @@ export function MessageList({ messages }: MessageListProps) {
           );
         })}
       </div>
+
+      {/* Error banner */}
+      {error && !isStreaming && (
+        <div className="sticky bottom-0 mx-3 mb-2 flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive animate-fade-in">
+          <AlertCircle className="size-4 shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <p className="font-medium">{ERROR_LABELS[errorCategory ?? "generic"]}</p>
+            {errorCategory === "generic" && error !== ERROR_LABELS.generic && (
+              <p className="mt-0.5 opacity-70 truncate">{error}</p>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

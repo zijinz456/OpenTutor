@@ -79,7 +79,7 @@ export function UploadDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-w-md animate-fade-in">
         <DialogHeader>
           <DialogTitle>{t("upload.title")}</DialogTitle>
         </DialogHeader>
@@ -100,8 +100,8 @@ export function UploadDialog({
 
           <TabsContent value="file" className="space-y-4 pt-4">
             <div
-              className={`rounded-lg border-2 border-dashed p-8 text-center transition-colors ${
-                dragging ? "border-primary bg-primary/5" : "border-border"
+              className={`rounded-2xl border-2 border-dashed p-8 text-center transition-colors ${
+                dragging ? "border-primary bg-primary/5" : "border-border/60"
               }`}
               onDragOver={(e) => {
                 e.preventDefault();
@@ -162,9 +162,9 @@ export function UploadDialog({
               </label>
               {uploading && (
                 <div className="mt-3 w-full">
-                  <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
+                  <div className="h-2.5 w-full rounded-full bg-muted overflow-hidden">
                     <div
-                      className="h-full rounded-full bg-primary transition-all duration-300"
+                      className="h-full rounded-full bg-brand transition-all duration-300"
                       style={{ width: `${progress}%` }}
                     />
                   </div>

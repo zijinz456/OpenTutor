@@ -69,7 +69,7 @@ async def lookup_progress(parameters: dict[str, Any], ctx: Any, db: AsyncSession
             return ToolResult(success=True, output=f"No progress data matching '{topic_filter}'.")
         return ToolResult(success=True, output=f"Student progress ({len(lines)} topics):\n" + "\n".join(lines))
     except Exception as e:
-        logger.error("lookup_progress failed: %s", e)
+        logger.exception("lookup_progress failed: %s", e)
         return ToolResult(success=False, output="", error=str(e))
 
 
@@ -103,7 +103,7 @@ async def search_content(parameters: dict[str, Any], ctx: Any, db: AsyncSession)
 
         return ToolResult(success=True, output=f"Found {len(results)} relevant sections:\n\n" + "\n".join(lines))
     except Exception as e:
-        logger.error("search_content failed: %s", e)
+        logger.exception("search_content failed: %s", e)
         return ToolResult(success=False, output="", error=str(e))
 
 
@@ -153,7 +153,7 @@ async def list_wrong_answers(parameters: dict[str, Any], ctx: Any, db: AsyncSess
 
         return ToolResult(success=True, output=f"Wrong answers ({len(rows)} results):\n" + "\n".join(lines))
     except Exception as e:
-        logger.error("list_wrong_answers failed: %s", e)
+        logger.exception("list_wrong_answers failed: %s", e)
         return ToolResult(success=False, output="", error=str(e))
 
 
@@ -224,7 +224,7 @@ async def get_mastery_report(parameters: dict[str, Any], ctx: Any, db: AsyncSess
 
         return ToolResult(success=True, output="\n".join(parts))
     except Exception as e:
-        logger.error("get_mastery_report failed: %s", e)
+        logger.exception("get_mastery_report failed: %s", e)
         return ToolResult(success=False, output="", error=str(e))
 
 
@@ -292,7 +292,7 @@ async def get_forgetting_forecast(parameters: dict[str, Any], ctx: Any, db: Asyn
 
         return ToolResult(success=True, output="\n".join(lines))
     except Exception as e:
-        logger.error("get_forgetting_forecast failed: %s", e)
+        logger.exception("get_forgetting_forecast failed: %s", e)
         return ToolResult(success=False, output="", error=str(e))
 
 
@@ -326,7 +326,7 @@ async def get_course_outline(parameters: dict[str, Any], ctx: Any, db: AsyncSess
 
         return ToolResult(success=True, output="Course outline:\n" + "\n".join(lines[:20]))
     except Exception as e:
-        logger.error("get_course_outline failed: %s", e)
+        logger.exception("get_course_outline failed: %s", e)
         return ToolResult(success=False, output="", error=str(e))
 
 
@@ -358,7 +358,7 @@ async def list_study_goals(parameters: dict[str, Any], ctx: Any, db: AsyncSessio
         ]
         return ToolResult(success=True, output="Study goals:\n" + "\n".join(lines))
     except Exception as e:
-        logger.error("list_study_goals failed: %s", e)
+        logger.exception("list_study_goals failed: %s", e)
         return ToolResult(success=False, output="", error=str(e))
 
 
@@ -388,7 +388,7 @@ async def list_recent_tasks(parameters: dict[str, Any], ctx: Any, db: AsyncSessi
         ]
         return ToolResult(success=True, output="Recent tasks:\n" + "\n".join(lines))
     except Exception as e:
-        logger.error("list_recent_tasks failed: %s", e)
+        logger.exception("list_recent_tasks failed: %s", e)
         return ToolResult(success=False, output="", error=str(e))
 
 
@@ -434,7 +434,7 @@ async def list_assignments(parameters: dict[str, Any], ctx: Any, db: AsyncSessio
             lines.append(line)
         return ToolResult(success=True, output="Assignments:\n" + "\n".join(lines))
     except Exception as e:
-        logger.error("list_assignments failed: %s", e)
+        logger.exception("list_assignments failed: %s", e)
         return ToolResult(success=False, output="", error=str(e))
 
 
@@ -468,7 +468,7 @@ async def sync_deadlines_to_calendar_tool(parameters: dict[str, Any], ctx: Any, 
         lines.append("END:VCALENDAR")
         return ToolResult(success=True, output=f"Generated .ics calendar for {len(assignments)} deadline(s).")
     except Exception as e:
-        logger.error("sync_deadlines_to_calendar failed: %s", e)
+        logger.exception("sync_deadlines_to_calendar failed: %s", e)
         return ToolResult(success=False, output="", error=str(e))
 
 
@@ -514,7 +514,7 @@ async def generate_flashcards_tool(parameters: dict[str, Any], ctx: Any, db: Asy
         return ToolResult(success=True, output=f"Generated {len(cards)} flashcards:\n" + "\n".join(summary_lines))
     except Exception as e:
         await db.rollback()
-        logger.error("generate_flashcards tool failed: %s", e)
+        logger.exception("generate_flashcards tool failed: %s", e)
         return ToolResult(success=False, output="", error=str(e))
 
 
@@ -568,7 +568,7 @@ async def generate_quiz_tool(parameters: dict[str, Any], ctx: Any, db: AsyncSess
         return ToolResult(success=True, output=f"Generated {len(problems)} quiz questions:\n" + "\n".join(summary_lines))
     except Exception as e:
         await db.rollback()
-        logger.error("generate_quiz tool failed: %s", e)
+        logger.exception("generate_quiz tool failed: %s", e)
         return ToolResult(success=False, output="", error=str(e))
 
 
@@ -627,7 +627,7 @@ async def generate_notes_tool(parameters: dict[str, Any], ctx: Any, db: AsyncSes
         return ToolResult(success=True, output=f"Generated {note_format} notes for '{topic}':\n\n{preview}")
     except Exception as e:
         await db.rollback()
-        logger.error("generate_notes tool failed: %s", e)
+        logger.exception("generate_notes tool failed: %s", e)
         return ToolResult(success=False, output="", error=str(e))
 
 
@@ -678,7 +678,7 @@ async def create_study_plan_tool(parameters: dict[str, Any], ctx: Any, db: Async
         return ToolResult(success=True, output=f"Created {days}-day study plan:\n\n{preview}")
     except Exception as e:
         await db.rollback()
-        logger.error("create_study_plan tool failed: %s", e)
+        logger.exception("create_study_plan tool failed: %s", e)
         return ToolResult(success=False, output="", error=str(e))
 
 
@@ -744,17 +744,16 @@ async def derive_diagnostic_tool(parameters: dict[str, Any], ctx: Any, db: Async
         return ToolResult(success=True, output=f"Created diagnostic question: {new_problem.question[:100]}")
     except Exception as e:
         await db.rollback()
-        logger.error("derive_diagnostic tool failed: %s", e)
+        logger.exception("derive_diagnostic tool failed: %s", e)
         return ToolResult(success=False, output="", error=str(e))
 
 
 @tool(
     name="update_workspace_layout",
     description=(
-        "Update the user's workspace layout. Can apply a preset (daily_study, exam_prep, "
-        "assignment, minimal) or toggle individual sections on/off. "
-        "Use when the user asks to change their workspace layout, hide/show sections, "
-        "or switch to a different study mode."
+        "Update the user's workspace layout using PRD-aligned block actions. "
+        "Legacy preset/toggle inputs are mapped to block actions such as "
+        "apply_template, add_block, and remove_block."
     ),
     category=ToolCategory.WRITE,
     params=[
@@ -771,12 +770,38 @@ async def update_workspace_layout(parameters: dict[str, Any], ctx: Any, db: Asyn
     visible = parameters.get("visible", True)
 
     if preset:
-        ctx.actions.append({"action": "set_layout_preset", "value": preset})
-        return ToolResult(success=True, output=f"Applied layout preset: {preset}")
+        preset_to_template = {
+            "daily_study": "stem_student",
+            "exam_prep": "quick_reviewer",
+            "assignment": "stem_student",
+            "minimal": "blank_canvas",
+        }
+        template_id = preset_to_template.get(preset, preset)
+        ctx.actions.append({"action": "apply_template", "value": template_id})
+        return ToolResult(success=True, output=f"Applied template: {template_id}")
     elif section:
-        action_value = f"{section}:{'show' if visible else 'hide'}"
-        ctx.actions.append({"action": "toggle_section", "value": action_value})
-        return ToolResult(success=True, output=f"{'Showing' if visible else 'Hiding'} section: {section}")
+        section_to_block = {
+            "notes": "notes",
+            "practice": "quiz",
+            "analytics": "progress",
+            "plan": "plan",
+        }
+        default_size = {
+            "notes": "large",
+            "quiz": "large",
+            "progress": "small",
+            "plan": "medium",
+        }
+        block_type = section_to_block.get(section)
+        if not block_type:
+            return ToolResult(success=False, output="", error=f"Unsupported section: {section}")
+
+        if visible:
+            ctx.actions.append({"action": "add_block", "value": f"{block_type}:{default_size[block_type]}"})
+            return ToolResult(success=True, output=f"Added block for section: {section}")
+
+        ctx.actions.append({"action": "remove_block", "value": block_type})
+        return ToolResult(success=True, output=f"Removed block for section: {section}")
     else:
         return ToolResult(success=False, output="", error="Provide either 'preset' or 'toggle_section' parameter.")
 
@@ -930,7 +955,7 @@ async def record_comprehension_tool(parameters: dict[str, Any], ctx: Any, db: As
             )
 
     except Exception as e:
-        logger.error("record_comprehension failed: %s", e)
+        logger.exception("record_comprehension failed: %s", e)
         return ToolResult(success=False, output="", error=str(e))
 
 

@@ -820,7 +820,7 @@ def _build_registry() -> ProviderRegistry:
         except ImportError:
             logger.warning("LiteLLM requested but not installed. Run: pip install litellm")
         except Exception as e:
-            logger.warning("LiteLLM registration failed: %s", e)
+            logger.exception("LiteLLM registration failed")
 
     # --- Model size variants (agent preference routing) ---
     for attr, hint in [("llm_model_large", "large"), ("llm_model_small", "small"),

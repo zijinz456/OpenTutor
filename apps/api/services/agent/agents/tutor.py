@@ -526,7 +526,7 @@ class TutorAgent(ReActMixin, BaseAgent):
                     gap_str = ", ".join(f"{k}: {v}" for k, v in sorted(gap_counts.items(), key=lambda x: -x[1]))
                     parts.append(f"\n## Difficulty Layer Gap Analysis\n- Gap types: {gap_str}")
         except Exception as e:
-            logger.debug("Assessment progress loading failed: %s", e)
+            logger.exception("Assessment progress loading failed: %s", e)
 
         # 2. Error analysis
         try:
@@ -556,7 +556,7 @@ class TutorAgent(ReActMixin, BaseAgent):
                     f"- Error categories: {cat_str}"
                 )
         except Exception as e:
-            logger.debug("Assessment error loading failed: %s", e)
+            logger.exception("Assessment error loading failed: %s", e)
 
         # 3. Study sessions
         try:
@@ -581,6 +581,6 @@ class TutorAgent(ReActMixin, BaseAgent):
                     f"- Problems correct: {total_correct_sess}"
                 )
         except Exception as e:
-            logger.debug("Assessment session loading failed: %s", e)
+            logger.exception("Assessment session loading failed: %s", e)
 
         return "\n".join(parts) if parts else "No assessment data available yet."

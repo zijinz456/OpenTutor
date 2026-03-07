@@ -49,7 +49,7 @@ const CARD_COLORS = [
   { bg: "bg-warning-muted", text: "text-warning" },
   { bg: "bg-info-muted", text: "text-info" },
 ];
-const DASHBOARD_NOW_MS = Date.now();
+function getDashboardNowMs() { return Date.now(); }
 const MODE_REC_SNOOZE_MS = 12 * 60 * 60 * 1000;
 
 function getInitials(name: string) {
@@ -164,15 +164,15 @@ function CourseCardsSkeleton() {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
       {Array.from({ length: 3 }).map((_, i) => (
-        <div key={i} className="p-5 border border-border rounded-xl flex flex-col gap-3 animate-pulse">
+        <div key={i} className="p-5 rounded-2xl flex flex-col gap-3 animate-pulse bg-card card-shadow">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-muted rounded-lg" />
+            <div className="w-10 h-10 bg-muted rounded-xl" />
             <div className="flex flex-col gap-1.5 flex-1">
-              <div className="h-4 bg-muted rounded w-3/4" />
-              <div className="h-3 bg-muted rounded w-1/2" />
+              <div className="h-4 bg-muted rounded-lg w-3/4" />
+              <div className="h-3 bg-muted rounded-lg w-1/2" />
             </div>
           </div>
-          <div className="h-3 bg-muted rounded w-2/3" />
+          <div className="h-3 bg-muted rounded-lg w-2/3" />
         </div>
       ))}
     </div>
@@ -193,26 +193,34 @@ function DashSection({
 }) {
   const [collapsed, setCollapsed] = useState(false);
   return (
-    <section className="rounded-xl border border-border bg-card overflow-hidden">
+    <section className="rounded-2xl bg-card card-shadow overflow-hidden animate-slide-up">
       <button
         type="button"
         onClick={() => setCollapsed((v) => !v)}
-        className="w-full flex items-center gap-2 px-4 py-3 text-left hover:bg-muted/40 transition-colors"
+        className="w-full flex items-center gap-2.5 px-5 py-3.5 text-left hover:bg-muted/30 transition-colors"
       >
-        <Icon className="size-4 text-muted-foreground shrink-0" />
+        <div className="size-7 rounded-lg bg-brand-muted flex items-center justify-center shrink-0">
+          <Icon className="size-3.5 text-brand" />
+        </div>
         <span className="text-sm font-semibold text-foreground flex-1">{title}</span>
         {badge != null && badge > 0 && (
-          <span className="text-[11px] font-medium bg-destructive/10 text-destructive px-2 py-0.5 rounded-full">
+          <span className="text-[11px] font-medium bg-brand-muted text-brand px-2.5 py-0.5 rounded-full tabular-nums">
             {badge}
           </span>
         )}
-        <span className={`text-muted-foreground transition-transform ${collapsed ? "" : "rotate-180"}`}>
+        <span className={`text-muted-foreground transition-transform duration-200 ${collapsed ? "" : "rotate-180"}`}>
           <svg className="size-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path d="M19 9l-7 7-7-7" />
           </svg>
         </span>
       </button>
-      {!collapsed && <div className="px-4 pb-4">{children}</div>}
+      <div
+        className={`grid transition-all duration-300 ease-out ${collapsed ? "grid-rows-[0fr]" : "grid-rows-[1fr]"}`}
+      >
+        <div className="overflow-hidden">
+          <div className="px-5 pb-5">{children}</div>
+        </div>
+      </div>
     </section>
   );
 }
@@ -239,7 +247,7 @@ function DigestFallback({
   const totalReviewItems = reviewSummaries.reduce((s, r) => s + r.overdueCount + r.urgentCount, 0);
   const nextDeadline = upcomingDeadlines[0];
   const daysUntilDeadline = nextDeadline?.target_date
-    ? Math.ceil((new Date(nextDeadline.target_date).getTime() - DASHBOARD_NOW_MS) / (1000 * 60 * 60 * 24))
+    ? Math.ceil((new Date(nextDeadline.target_date).getTime() - getDashboardNowMs()) / (1000 * 60 * 60 * 24))
     : null;
 
   return (
@@ -325,7 +333,7 @@ function LearningRhythm({ t }: { t: (key: string) => string }) {
                 return (
                   <div
                     key={`${dayIdx}-${blockIdx}`}
-                    className={`h-5 rounded-sm ${bg} transition-colors`}
+                    className={`h-5 rounded-md ${bg} transition-colors`}
                     title={`${dayLabels[dayIdx]} ${timeBlocks[blockIdx].label}: ${count} sessions`}
                   />
                 );
@@ -407,24 +415,28 @@ export default function DashboardPage() {
   useEffect(() => {
     if (courses.length === 0) return;
     const fetchReviews = async () => {
-      const summaries: ReviewSummary[] = [];
-      for (const course of courses) {
-        try {
+      const results = await Promise.allSettled(
+        courses.map(async (course) => {
           const session = await getReviewSession(course.id, 50);
           const items = session?.items ?? [];
           const overdue = items.filter((i) => i.urgency === "overdue").length;
           const urgent = items.filter((i) => i.urgency === "urgent").length;
           if (overdue > 0 || urgent > 0) {
-            summaries.push({
+            return {
               courseId: course.id,
               courseName: course.name,
               overdueCount: overdue,
               urgentCount: urgent,
               totalCount: items.length,
-            });
+            } as ReviewSummary;
           }
-        } catch { /* ignore */ }
-      }
+          return null;
+        }),
+      );
+      const summaries = results
+        .filter((r): r is PromiseFulfilledResult<ReviewSummary | null> => r.status === "fulfilled")
+        .map((r) => r.value)
+        .filter((s): s is ReviewSummary => s !== null);
       summaries.sort((a, b) => b.overdueCount - a.overdueCount);
       setReviewSummaries(summaries);
     };
@@ -753,45 +765,49 @@ export default function DashboardPage() {
     <div className="min-h-screen bg-background">
       <div className="flex min-h-screen flex-col md:flex-row">
         {/* Left Navigation */}
-        <aside className="w-full shrink-0 border-b border-border bg-sidebar p-4 md:w-[200px] md:border-b-0 md:border-r md:flex md:flex-col md:gap-6">
-          <div className="flex items-center gap-2 px-2 py-1">
-            <span className="text-base font-bold text-sidebar-foreground tracking-tight">OpenTutor</span>
+        <aside className="w-full shrink-0 border-b border-border/60 bg-card p-4 md:w-[220px] md:border-b-0 md:border-r md:flex md:flex-col md:gap-6 md:p-5">
+          <div className="flex items-center gap-2.5 px-1 py-1">
+            <div className="size-8 rounded-xl bg-brand flex items-center justify-center">
+              <BookOpen className="size-4 text-brand-foreground" />
+            </div>
+            <span className="text-base font-bold text-foreground tracking-tight">OpenTutor</span>
           </div>
-          <nav className="mt-3 flex flex-wrap gap-1 md:mt-0 md:flex-col">
-            <span className="px-3 py-2 rounded-md text-sm font-semibold bg-sidebar-accent text-sidebar-accent-foreground">
+          <nav className="mt-3 flex flex-wrap gap-1 md:mt-2 md:flex-col">
+            <span className="px-3 py-2.5 rounded-xl text-sm font-medium bg-brand-muted text-brand flex items-center gap-2">
+              <Sparkles className="size-3.5" />
               {t("nav.dashboard")}
             </span>
             <button
               type="button"
               onClick={() => router.push("/settings")}
-              className="px-3 py-2 rounded-md text-sm text-sidebar-foreground hover:bg-sidebar-accent transition-colors text-left"
+              className="px-3 py-2.5 rounded-xl text-sm text-muted-foreground hover:bg-muted/60 hover:text-foreground transition-colors text-left flex items-center gap-2"
             >
-              <Settings className="size-3.5 inline mr-1.5" />
+              <Settings className="size-3.5" />
               {t("nav.settings")}
             </button>
           </nav>
           {health?.deployment_mode === "single_user" && (
-            <span className="mt-3 inline-flex w-fit rounded-md bg-muted px-3 py-1.5 text-center text-[11px] font-medium text-muted-foreground md:mt-auto">
+            <span className="mt-3 inline-flex w-fit rounded-full bg-muted px-3 py-1.5 text-center text-[11px] font-medium text-muted-foreground md:mt-auto">
               {t("dashboard.singleUser")}
             </span>
           )}
         </aside>
 
         {/* Main Content — Command Center */}
-        <main className="flex-1 overflow-y-auto">
-          <div className="mx-auto flex max-w-4xl flex-col gap-5 px-4 py-6 sm:px-6 md:px-10 md:py-10">
+        <main className="flex-1 overflow-y-auto scrollbar-thin">
+          <div className="mx-auto flex max-w-4xl flex-col gap-6 px-4 py-8 sm:px-6 md:px-10 md:py-12">
             <RuntimeAlert health={health} />
 
             {error && (
-              <div className="rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+              <div className="rounded-2xl bg-destructive/5 px-5 py-4 text-sm text-destructive card-shadow">
                 {t("dashboard.loadErrorPrefix")}: {error}
               </div>
             )}
 
             {/* Title + New Space */}
             <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-              <div className="flex flex-col gap-1">
-                <h1 className="text-2xl font-semibold tracking-tight text-foreground">
+              <div className="flex flex-col gap-1.5">
+                <h1 className="text-2xl font-bold tracking-tight text-foreground">
                   {t("dashboard.title")}
                 </h1>
                 <p className="text-sm text-muted-foreground">
@@ -801,7 +817,7 @@ export default function DashboardPage() {
               <button
                 type="button"
                 onClick={() => router.push("/new")}
-                className="h-9 px-5 bg-brand text-brand-foreground rounded-lg text-sm font-medium hover:opacity-90 transition-opacity shrink-0 self-start sm:self-auto"
+                className="h-10 px-6 bg-brand text-brand-foreground rounded-full text-sm font-medium hover:opacity-90 transition-all hover:shadow-md shrink-0 self-start sm:self-auto"
               >
                 + {t("dashboard.create")}
               </button>
@@ -809,18 +825,18 @@ export default function DashboardPage() {
 
             {/* Overview stats */}
             {courses.length > 0 && (
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                <div className="rounded-xl border border-border bg-card p-4">
-                  <div className="text-xs text-muted-foreground mb-1">{t("dashboard.activeGoals")}</div>
-                  <div className="text-xl font-semibold text-foreground">{totalActiveGoals}</div>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                <div className="rounded-2xl bg-card p-5 card-shadow">
+                  <div className="text-xs text-muted-foreground mb-1.5">{t("dashboard.activeGoals")}</div>
+                  <div className="text-2xl font-bold text-foreground tabular-nums">{totalActiveGoals}</div>
                 </div>
-                <div className="rounded-xl border border-border bg-card p-4">
-                  <div className="text-xs text-muted-foreground mb-1">{t("dashboard.pendingApprovals")}</div>
-                  <div className="text-xl font-semibold text-foreground">{totalPendingApprovals}</div>
+                <div className="rounded-2xl bg-card p-5 card-shadow">
+                  <div className="text-xs text-muted-foreground mb-1.5">{t("dashboard.pendingApprovals")}</div>
+                  <div className="text-2xl font-bold text-foreground tabular-nums">{totalPendingApprovals}</div>
                 </div>
-                <div className="rounded-xl border border-border bg-card p-4">
-                  <div className="text-xs text-muted-foreground mb-1">{t("dashboard.runningTasks")}</div>
-                  <div className="text-xl font-semibold text-foreground">{totalRunningTasks}</div>
+                <div className="rounded-2xl bg-card p-5 card-shadow">
+                  <div className="text-xs text-muted-foreground mb-1.5">{t("dashboard.runningTasks")}</div>
+                  <div className="text-2xl font-bold text-foreground tabular-nums">{totalRunningTasks}</div>
                 </div>
               </div>
             )}
@@ -858,7 +874,7 @@ export default function DashboardPage() {
                   <div className="space-y-2">
                     {upcomingDeadlines.map((d) => {
                       const daysUntil = Math.ceil(
-                        (new Date(d.target_date!).getTime() - DASHBOARD_NOW_MS) / (1000 * 60 * 60 * 24),
+                        (new Date(d.target_date!).getTime() - getDashboardNowMs()) / (1000 * 60 * 60 * 24),
                       );
                       const urgencyClass =
                         daysUntil <= 0
@@ -872,7 +888,7 @@ export default function DashboardPage() {
                           key={d.id}
                           type="button"
                           onClick={() => d.course_id && router.push(`/course/${d.course_id}/plan`)}
-                          className="w-full flex items-center gap-3 rounded-lg border border-border p-3 text-left hover:bg-muted/40 transition-colors"
+                          className="w-full flex items-center gap-3 rounded-xl bg-muted/30 p-3.5 text-left hover:bg-muted/50 transition-colors"
                         >
                           <div className="flex-1 min-w-0">
                             <p className="text-sm font-medium text-foreground truncate">{d.title}</p>
@@ -903,7 +919,7 @@ export default function DashboardPage() {
                         key={rs.courseId}
                         type="button"
                         onClick={() => router.push(`/course/${rs.courseId}/review`)}
-                        className="w-full flex items-center gap-3 rounded-lg border border-border p-3 text-left hover:bg-muted/40 transition-colors"
+                        className="w-full flex items-center gap-3 rounded-xl bg-muted/30 p-3.5 text-left hover:bg-muted/50 transition-colors"
                       >
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium text-foreground truncate">{rs.courseName}</p>
@@ -934,23 +950,23 @@ export default function DashboardPage() {
                 ) : (
                   <div className="space-y-3">
                     <div className="grid grid-cols-3 gap-2">
-                      <div className="rounded-lg border border-border p-3">
+                      <div className="rounded-xl bg-muted/30 p-3.5">
                         <p className="text-[11px] text-muted-foreground">{t("home.knowledgeDensity.shared")}</p>
                         <p className="text-base font-semibold text-foreground">{knowledgeDensity.sharedConcepts}</p>
                       </div>
-                      <div className="rounded-lg border border-border p-3">
+                      <div className="rounded-xl bg-muted/30 p-3.5">
                         <p className="text-[11px] text-muted-foreground">{t("home.knowledgeDensity.total")}</p>
                         <p className="text-base font-semibold text-foreground">{knowledgeDensity.totalConcepts}</p>
                       </div>
-                      <div className="rounded-lg border border-border p-3">
+                      <div className="rounded-xl bg-muted/30 p-3.5">
                         <p className="text-[11px] text-muted-foreground">{t("home.knowledgeDensity.overlap")}</p>
                         <p className="text-base font-semibold text-brand">{knowledgeDensity.densityPct}%</p>
                       </div>
                     </div>
 
-                    <div className="h-2 rounded-full bg-muted overflow-hidden">
+                    <div className="h-2.5 rounded-full bg-muted/60 overflow-hidden">
                       <div
-                        className="h-full bg-brand transition-all"
+                        className="h-full bg-brand rounded-full transition-all duration-500"
                         style={{ width: `${knowledgeDensity.densityPct}%` }}
                       />
                     </div>
@@ -991,7 +1007,7 @@ export default function DashboardPage() {
                       return (
                         <div
                           key={n.id}
-                          className="flex items-start gap-3 rounded-lg border border-border p-3"
+                          className="flex items-start gap-3 rounded-xl bg-muted/30 p-3.5"
                         >
                           <Sparkles className="size-4 text-brand shrink-0 mt-0.5" />
                           <div className="flex-1 min-w-0">
@@ -1030,7 +1046,7 @@ export default function DashboardPage() {
                 ) : (
                   <div className="space-y-2">
                     {pendingTasks.map((task) => (
-                      <div key={task.id} className="rounded-lg border border-border p-3">
+                      <div key={task.id} className="rounded-xl bg-muted/30 p-3.5">
                         <div className="flex items-start gap-3">
                           <div className="min-w-0 flex-1">
                             <p className="text-sm font-medium text-foreground">{task.title}</p>
@@ -1084,7 +1100,7 @@ export default function DashboardPage() {
                 ) : (
                   <div className="space-y-2">
                     {modeRecommendations.map((item) => (
-                      <div key={item.courseId} className="rounded-lg border border-border p-3">
+                      <div key={item.courseId} className="rounded-xl bg-muted/30 p-3.5">
                         <div className="flex items-start gap-3">
                           <div className="min-w-0 flex-1">
                             <p className="text-sm font-medium text-foreground">{item.courseName}</p>
@@ -1148,7 +1164,7 @@ export default function DashboardPage() {
 
             {courses.length > 0 && (
               <DashSection title={t("home.yourSpaces")} icon={BookOpen}>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {courses.map((course, idx) => {
                     const color = CARD_COLORS[idx % CARD_COLORS.length];
                     const initials = getInitials(course.name);
@@ -1158,18 +1174,19 @@ export default function DashboardPage() {
                         type="button"
                         key={course.id}
                         onClick={() => router.push(`/course/${course.id}`)}
-                        className="p-4 border border-border rounded-xl flex flex-col gap-2.5 text-left hover:border-brand hover:shadow-sm transition-all bg-card"
+                        className="p-5 rounded-2xl flex flex-col gap-3 text-left card-lift bg-card group"
                       >
                         <div className="flex items-center gap-3 w-full">
-                          <div className={`w-9 h-9 ${color.bg} rounded-lg flex items-center justify-center shrink-0`}>
+                          <div className={`w-10 h-10 ${color.bg} rounded-xl flex items-center justify-center shrink-0`}>
                             <span className={`font-bold text-xs ${color.text}`}>{initials}</span>
                           </div>
                           <div className="flex flex-col gap-0.5 flex-1 min-w-0">
-                            <span className="font-semibold text-sm text-foreground truncate">{course.name}</span>
+                            <span className="font-semibold text-sm text-foreground truncate group-hover:text-brand transition-colors">{course.name}</span>
                             <span className="text-[11px] text-muted-foreground">
                               {formatDate(course.updated_at ?? course.created_at)}
                             </span>
                           </div>
+                          <ArrowRight className="size-4 text-muted-foreground/0 group-hover:text-muted-foreground transition-all shrink-0" />
                         </div>
                         <div className="flex items-center gap-1.5">
                           <span className="text-xs text-muted-foreground line-clamp-1 flex-1">
@@ -1193,15 +1210,18 @@ export default function DashboardPage() {
 
             {/* Empty State */}
             {!loading && courses.length === 0 && (
-              <div className="text-center py-20 flex flex-col items-center gap-4">
-                <h2 className="text-lg font-semibold text-foreground">{t("dashboard.empty")}</h2>
-                <p className="text-sm text-muted-foreground max-w-sm">
+              <div className="text-center py-24 flex flex-col items-center gap-5 animate-fade-in">
+                <div className="size-16 rounded-2xl bg-brand-muted flex items-center justify-center">
+                  <BookOpen className="size-7 text-brand" />
+                </div>
+                <h2 className="text-lg font-bold text-foreground">{t("dashboard.empty")}</h2>
+                <p className="text-sm text-muted-foreground max-w-sm leading-relaxed">
                   {t("dashboard.emptyDescription")}
                 </p>
                 <button
                   type="button"
                   onClick={() => router.push("/setup?step=content")}
-                  className="h-10 px-6 bg-brand text-brand-foreground rounded-lg text-sm font-medium hover:opacity-90 transition-opacity"
+                  className="h-11 px-7 bg-brand text-brand-foreground rounded-full text-sm font-medium hover:opacity-90 transition-all hover:shadow-md"
                 >
                   {t("dashboard.create")}
                 </button>

@@ -324,7 +324,7 @@ class BaseAgent(ABC):
             logger.info("Agent '%s' spawned background task: %s (%s)", self.name, title, task.id)
             return task.id
         except Exception as e:
-            logger.warning("Failed to spawn background task '%s': %s", title, e)
+            logger.exception("Failed to spawn background task '%s': %s", title, e)
             return None
 
     async def stream(self, ctx: AgentContext, db: AsyncSession) -> AsyncIterator[str]:
@@ -482,7 +482,7 @@ class BaseAgent(ABC):
                 skills_text = "\n\n".join(s.content for s in matched)
                 parts.append(f"\n## Teaching Strategies\n{skills_text}")
         except Exception as e:
-            logger.debug("Skills matching skipped: %s", e)
+            logger.exception("Skills matching skipped: %s", e)
 
         # Phase 4: Experiment strategy override — inject variant-specific skill
         exp_config = ctx.metadata.get("experiment_config")
@@ -500,7 +500,7 @@ class BaseAgent(ABC):
                             parts.append(f"\n## Active Teaching Strategy\n{s.content}")
                             break
                 except Exception as e:
-                    logger.debug("Experiment strategy skill injection skipped: %s", e)
+                    logger.exception("Experiment strategy skill injection skipped: %s", e)
 
         # Phase 4: Cross-course concept connections
         cross_patterns = ctx.metadata.get("cross_course_patterns")

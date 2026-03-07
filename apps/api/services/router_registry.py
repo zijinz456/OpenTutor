@@ -16,12 +16,14 @@ from routers import (
     goals,
     health,
     integrations,
+    knowledge_graph,
     notes,
     notifications,  # noqa: F401
     preferences,
     progress,
     quiz,
     scrape,
+    system_analytics,
     tasks,
     upload,
     usage,
@@ -53,6 +55,8 @@ CORE_ROUTERS = (
     (notifications.router, "/api", ["notifications"]),
     (evaluation.router, "/api/eval", ["evaluation"]),
     (workflows.router, "/api/workflows", ["workflows"]),
+    (knowledge_graph.router, "/api", ["knowledge-graph"]),
+    (system_analytics.router, "/api", ["system-analytics"]),
 )
 
 

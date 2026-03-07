@@ -18,6 +18,18 @@ REPORT_DIR="${REPORT_DIR:-${ROOT_DIR}/tmp}"
 REPORT_FILE="${REPORT_FILE:-${REPORT_DIR}/verification-summary.md}"
 REPORT_JSON_FILE="${REPORT_JSON_FILE:-${REPORT_DIR}/verification-summary.json}"
 REPORT_TMP_FILE=""
+CI_API_TEST_TARGETS=(
+  tests/test_api_unit_basics.py
+  tests/test_services.py
+  tests/test_agent_runtime_regressions.py
+  tests/test_code_execution_agent.py
+  tests/test_eval_regressions.py
+  tests/test_ingestion_regressions.py
+  tests/test_canvas_parser.py
+  tests/test_canvas_router_unit.py
+  tests/test_scrape_services.py
+  tests/test_scrape_router_unit.py
+)
 
 usage() {
   cat <<'EOF'
@@ -27,7 +39,7 @@ Usage:
   scripts/dev_local.sh beta-check
   scripts/dev_local.sh migrate-host
   scripts/dev_local.sh preflight
-  scripts/dev_local.sh verify-host
+  scripts/dev_local.sh verify-host [--ci-parity]
   scripts/dev_local.sh verify [--all-e2e] [--with-real-llm]
   scripts/dev_local.sh status
   scripts/dev_local.sh logs [service]
@@ -50,6 +62,9 @@ Commands:
 Flags for verify:
   --all-e2e       Run the full Playwright suite instead of the representative course-flow spec.
   --with-real-llm Also run the real-provider API and browser validation checks.
+
+Flags for verify-host:
+  --ci-parity     Run CI-equivalent host checks (coverage gate, web build, compileall, strict benchmark).
 
 Important environment variables:
   API_PORT=8000
@@ -285,7 +300,7 @@ prepare_real_llm_env() {
   done
 
   provider="${PLAYWRIGHT_REAL_LLM_PROVIDER:-${REAL_LLM_PROVIDER:-${LLM_PROVIDER:-}}}"
-  provider="${provider,,}"
+  provider="$(to_lower "${provider}")"
   if [[ -z "${provider}" ]]; then
     provider="$(detect_local_llm_provider || true)"
   fi
@@ -527,7 +542,69 @@ run_preflight() {
   fi
 }
 
+run_ci_parity_consistency_check() {
+  [[ -n "${PY_BIN}" ]] || fail "Python interpreter not found for CI parity consistency check."
+  "${PY_BIN}" - <<'PY' "${ROOT_DIR}/pytest.ini" "${ROOT_DIR}/.github/workflows/ci.yml" "${ROOT_DIR}/scripts/dev_local.sh"
+import re
+import sys
+from pathlib import Path
+
+pytest_ini = Path(sys.argv[1]).read_text(encoding="utf-8")
+ci_workflow = Path(sys.argv[2]).read_text(encoding="utf-8")
+dev_local = Path(sys.argv[3]).read_text(encoding="utf-8")
+
+cov_match = re.search(r"--cov-fail-under=(\d+)", pytest_ini)
+if cov_match is None:
+    raise SystemExit("pytest.ini does not define --cov-fail-under.")
+if int(cov_match.group(1)) < 25:
+    raise SystemExit("pytest coverage gate must be at least 25 for this release phase.")
+
+api_tests_section = re.search(
+    r"- name:\s*Run API unit tests(?P<body>.*?)(?:\n\s*-\s+name:|\Z)",
+    ci_workflow,
+    flags=re.S,
+)
+if api_tests_section is None:
+    raise SystemExit("Unable to find 'Run API unit tests' step in CI workflow.")
+if "-o addopts=" in api_tests_section.group("body"):
+    raise SystemExit("Run API unit tests step must not bypass addopts coverage gate.")
+
+parity_line = None
+for line in dev_local.splitlines():
+    if "CI parity API tests" in line:
+        parity_line = line
+        break
+if parity_line is None:
+    raise SystemExit("scripts/dev_local.sh is missing the CI parity API tests command.")
+if "-o addopts=" in parity_line:
+    raise SystemExit("CI parity API tests command must not bypass addopts coverage gate.")
+
+print("Coverage gate and pytest addopts parity checks passed.")
+PY
+}
+
 run_host_verify() {
+  local ci_parity=0
+  local arg
+  local regression_label="Regression benchmark against running stack"
+  local strict_benchmark="0"
+
+  for arg in "$@"; do
+    case "${arg}" in
+      --ci-parity)
+        ci_parity=1
+        ;;
+      *)
+        fail "Unknown verify-host flag: ${arg}"
+        ;;
+    esac
+  done
+
+  if (( ci_parity )); then
+    regression_label="Strict regression benchmark against running stack"
+    strict_benchmark="1"
+  fi
+
   require_cmd curl npx npm
   [[ -n "${PY_BIN}" ]] || fail "Python interpreter not found. Expected apps/api/.venv/bin/python or python3.11."
   require_python_311 "${PY_BIN}"
@@ -535,18 +612,25 @@ run_host_verify() {
   init_report
   refresh_stack_endpoints_from_compose
 
-  run_reported "Service-layer tests" "${PY_BIN}" -m pytest tests/test_services.py -q -o addopts=
-  run_reported "Agent regression tests" "${PY_BIN}" -m pytest tests/test_eval_regressions.py tests/test_agent_runtime_regressions.py -q -o addopts=
-  run_reported "Frontend lint" bash -lc "cd '${ROOT_DIR}/apps/web' && npm run lint"
-  run_reported "Playwright spec discovery" npx playwright test tests/e2e/activity-tasks.spec.ts --list
-
-  run_reported "SQLite integration spot check" "${PY_BIN}" -m pytest tests/test_sqlite_mode.py -q -o addopts=
+  if (( ci_parity )); then
+    run_reported "CI parity gate consistency" run_ci_parity_consistency_check
+    run_reported "CI parity API tests" "${PY_BIN}" -m pytest "${CI_API_TEST_TARGETS[@]}" -q
+    run_reported "CI parity compile API sources" "${PY_BIN}" -m compileall apps/api
+    run_reported "CI parity frontend lint" bash -lc "cd '${ROOT_DIR}/apps/web' && npm run lint"
+    run_reported "CI parity frontend build" bash -lc "cd '${ROOT_DIR}/apps/web' && npm run build"
+  else
+    run_reported "Service-layer tests" "${PY_BIN}" -m pytest tests/test_services.py -q -o addopts=
+    run_reported "Agent regression tests" "${PY_BIN}" -m pytest tests/test_eval_regressions.py tests/test_agent_runtime_regressions.py -q -o addopts=
+    run_reported "Frontend lint" bash -lc "cd '${ROOT_DIR}/apps/web' && npm run lint"
+    run_reported "Playwright spec discovery" npx playwright test tests/e2e/activity-tasks.spec.ts --list
+    run_reported "SQLite integration spot check" "${PY_BIN}" -m pytest tests/test_sqlite_mode.py -q -o addopts=
+  fi
 
   if is_url_ready "${API_BASE}/health" && is_url_ready "${WEB_BASE_URL}"; then
     CURRENT_CHECK="Stack smoke/regression"
     guard_stack_health
     run_reported "Smoke test against running stack" bash -lc "API_BASE='${API_HOST}' UPLOAD_FILE='${UPLOAD_FILE}' SCRAPE_URL='${SCRAPE_URL}' STRICT_LLM='${STRICT_LLM:-0}' bash '${ROOT_DIR}/scripts/smoke_test.sh'"
-    run_reported "Regression benchmark against running stack" bash -lc "API_BASE='${API_BASE}' UPLOAD_FILE='${UPLOAD_FILE}' PYTHON_BIN='${PY_BIN}' bash '${ROOT_DIR}/scripts/run_regression_benchmark.sh'"
+    run_reported "${regression_label}" bash -lc "API_BASE='${API_BASE}' UPLOAD_FILE='${UPLOAD_FILE}' PYTHON_BIN='${PY_BIN}' STRICT_BENCHMARK='${strict_benchmark}' bash '${ROOT_DIR}/scripts/run_regression_benchmark.sh'"
   else
     CURRENT_CHECK="Stack smoke/regression"
     record_skip "Stack smoke/regression skipped because API or web is not running"
@@ -706,7 +790,7 @@ case "${command}" in
     run_preflight
     ;;
   verify-host)
-    run_host_verify
+    run_host_verify "$@"
     ;;
   verify)
     run_verify "$@"

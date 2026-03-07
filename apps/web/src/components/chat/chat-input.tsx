@@ -68,6 +68,26 @@ export function ChatInput({ courseId, disabled }: ChatInputProps) {
   const isDisabled = disabled || false;
   const canSend = (input.trim().length > 0 || pendingImages.length > 0) && !isDisabled;
 
+  // Virtual keyboard avoidance — keep input visible on iOS Safari
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+
+    const onResize = () => {
+      const el = textareaRef.current;
+      if (!el) return;
+      // When viewport height shrinks (keyboard opens), scroll input into view
+      if (vv.height < window.innerHeight * 0.85) {
+        requestAnimationFrame(() => {
+          el.scrollIntoView({ block: "end", behavior: "smooth" });
+        });
+      }
+    };
+
+    vv.addEventListener("resize", onResize);
+    return () => vv.removeEventListener("resize", onResize);
+  }, []);
+
   useEffect(() => {
     const syncAccessToken = () => {
       setAccessToken(getStoredAccessToken() ?? undefined);
@@ -122,7 +142,7 @@ export function ChatInput({ courseId, disabled }: ChatInputProps) {
   return (
     <div
       className={cn(
-        "shrink-0 border-t bg-background px-3 py-2",
+        "shrink-0 border-t border-border/60 bg-background px-3 py-2",
         isDragOver && "ring-2 ring-primary ring-inset bg-primary/5",
       )}
       onDragOver={handleDragOver}
@@ -145,7 +165,7 @@ export function ChatInput({ courseId, disabled }: ChatInputProps) {
         onRemove={removeImage}
       />
 
-      <div className="flex items-end gap-1.5">
+      <div className="flex items-end gap-1.5 rounded-2xl border border-border/60 bg-muted/20 px-2 py-1.5">
         <AttachmentButtons
           courseId={courseId}
           disabled={isDisabled || isStreaming}
@@ -155,6 +175,9 @@ export function ChatInput({ courseId, disabled }: ChatInputProps) {
         />
 
         {/* Auto-growing textarea */}
+        <span id="chat-input-hint" className="sr-only">
+          Press Enter to send, Shift+Enter for new line
+        </span>
         <textarea
           ref={textareaRef}
           data-testid="chat-input"
@@ -163,6 +186,8 @@ export function ChatInput({ courseId, disabled }: ChatInputProps) {
           onChange={handleInput}
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
+          aria-label="Message input"
+          aria-describedby="chat-input-hint"
           placeholder={
             isDisabled
               ? t("chat.disabledNeedLlm")
@@ -173,7 +198,7 @@ export function ChatInput({ courseId, disabled }: ChatInputProps) {
           rows={1}
           disabled={isDisabled}
           className={cn(
-            "flex-1 resize-none rounded-md border bg-transparent px-3 py-1.5 text-sm",
+            "flex-1 resize-none rounded-xl border-0 bg-transparent px-3 py-1.5 text-sm",
             "placeholder:text-muted-foreground",
             "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
             "disabled:cursor-not-allowed disabled:opacity-50",

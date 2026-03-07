@@ -62,6 +62,7 @@ export interface WrongAnswer {
   knowledge_points: string[] | null;
   review_count: number;
   mastered: boolean;
+  created_at?: string | null;
 }
 
 export async function listWrongAnswers(
@@ -107,6 +108,8 @@ export interface QuizProblem {
   question: string;
   options: Record<string, string> | null;
   order_index: number;
+  difficulty_layer?: number | null;
+  problem_metadata?: Record<string, unknown> | null;
 }
 
 export interface GeneratedQuizBatchSummary {
@@ -137,10 +140,20 @@ export interface AnswerResult {
   prerequisite_gaps?: PrerequisiteGap[] | null;
 }
 
-export async function extractQuiz(courseId: string, contentNodeId?: string, mode?: string): Promise<{ problems_created: number }> {
+export async function extractQuiz(
+  courseId: string,
+  contentNodeId?: string,
+  mode?: string,
+  difficulty?: "easy" | "medium" | "hard",
+): Promise<{ problems_created: number }> {
   return request("/quiz/extract", {
     method: "POST",
-    body: JSON.stringify({ course_id: courseId, content_node_id: contentNodeId, mode }),
+    body: JSON.stringify({
+      course_id: courseId,
+      content_node_id: contentNodeId,
+      mode,
+      difficulty,
+    }),
   });
 }
 

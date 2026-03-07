@@ -48,10 +48,10 @@ export function MessageBubble({ message }: MessageBubbleProps) {
       >
         <div
           className={cn(
-            "max-w-[85%] rounded-lg px-3 py-2 text-sm",
+            "max-w-[85%] rounded-2xl px-4 py-2.5 text-sm",
             isUser
-              ? "bg-[var(--chat-user-bg,hsl(var(--primary)))] text-[var(--chat-user-fg,hsl(var(--primary-foreground)))]"
-              : "bg-[var(--chat-assistant-bg,hsl(var(--muted)))] text-[var(--chat-assistant-fg,hsl(var(--foreground)))]",
+              ? "bg-[var(--chat-user-bg,hsl(var(--primary)))] text-[var(--chat-user-fg,hsl(var(--primary-foreground)))] rounded-br-md"
+              : "bg-[var(--chat-assistant-bg,hsl(var(--muted)))] text-[var(--chat-assistant-fg,hsl(var(--foreground)))] rounded-bl-md",
           )}
         >
           {/* Attached images (user messages) */}

@@ -56,7 +56,7 @@ def load_skills() -> list[Skill]:
                 content=content,
             ))
         except Exception as e:
-            logger.warning("Failed to load skill %s: %s", path.name, e)
+            logger.exception("Failed to load skill %s: %s", path.name, e)
 
     logger.info("Loaded %d teaching skills", len(skills))
     return skills

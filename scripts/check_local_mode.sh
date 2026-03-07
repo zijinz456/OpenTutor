@@ -26,7 +26,7 @@ EOF
 
 normalize_bool() {
   local value="${1:-false}"
-  value="${value,,}"
+  value="$(to_lower "${value}")"
   case "${value}" in
     1|true|yes|on) printf 'true\n' ;;
     *) printf 'false\n' ;;

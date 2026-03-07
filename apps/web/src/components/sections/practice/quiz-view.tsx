@@ -19,9 +19,22 @@ import { updateUnlockContext, getUnlockContext } from "@/lib/block-system/featur
 interface QuizViewProps {
   courseId: string;
   aiActionsEnabled?: boolean;
+  modeHint?: "course_following" | "self_paced" | "exam_prep" | "maintenance";
+  difficultyHint?: "easy" | "medium" | "hard";
 }
 
-export function QuizView({ courseId, aiActionsEnabled = true }: QuizViewProps) {
+function layerBadgeClass(layer: number): string {
+  if (layer >= 3) return "bg-destructive/10 text-destructive";
+  if (layer === 2) return "bg-warning/10 text-warning";
+  return "bg-success/10 text-success";
+}
+
+export function QuizView({
+  courseId,
+  aiActionsEnabled = true,
+  modeHint,
+  difficultyHint,
+}: QuizViewProps) {
   const t = useT();
   const refreshKey = useWorkspaceStore((s) => s.sectionRefreshKey["practice"]);
   const [problems, setProblems] = useState<QuizProblem[]>([]);
@@ -31,6 +44,7 @@ export function QuizView({ courseId, aiActionsEnabled = true }: QuizViewProps) {
   const [extracting, setExtracting] = useState(false);
   const [extractStatus, setExtractStatus] = useState<string | null>(null);
   const [selectedOption, setSelectedOption] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [result, setResult] = useState<AnswerResult | null>(null);
   const [score, setScore] = useState({ correct: 0, total: 0 });
   const consecutiveWrongRef = useRef(0);
@@ -60,12 +74,14 @@ export function QuizView({ courseId, aiActionsEnabled = true }: QuizViewProps) {
     setExtracting(true);
     setExtractStatus(null);
     try {
-      const mode = useWorkspaceStore.getState().spaceLayout.mode ?? undefined;
-      const res = await extractQuiz(courseId, undefined, mode);
-      setExtractStatus(`Generated ${res.problems_created} questions`);
+      const layoutMode = useWorkspaceStore.getState().spaceLayout.mode ?? undefined;
+      const mode = modeHint ?? layoutMode;
+      const res = await extractQuiz(courseId, undefined, mode, difficultyHint);
+      setExtractStatus(t("quiz.extract.success").replace("{count}", String(res.problems_created)));
       await fetchData();
     } catch (error) {
-      setExtractStatus(`Extraction failed: ${(error as Error).message}`);
+      const message = (error as Error).message;
+      setExtractStatus(`${t("quiz.extract.failed")} ${message}`);
     } finally {
       setExtracting(false);
     }
@@ -73,6 +89,7 @@ export function QuizView({ courseId, aiActionsEnabled = true }: QuizViewProps) {
 
   const handleOptionClick = async (option: string) => {
     if (result || submitting) return;
+    setSubmitError(null);
     setSelectedOption(option);
     setSubmitting(true);
     try {
@@ -109,6 +126,7 @@ export function QuizView({ courseId, aiActionsEnabled = true }: QuizViewProps) {
       }
     } catch {
       setSelectedOption(null);
+      setSubmitError(t("quiz.submitFailed"));
     } finally {
       setSubmitting(false);
     }
@@ -143,6 +161,10 @@ export function QuizView({ courseId, aiActionsEnabled = true }: QuizViewProps) {
   const problem = problems[currentIdx];
   const optionKeys = problem.options ? Object.keys(problem.options).sort() : [];
   const accuracy = score.total > 0 ? Math.round((score.correct / score.total) * 100) : null;
+  const difficultyLayer = problem.difficulty_layer ?? null;
+  const metadata = (problem.problem_metadata ?? {}) as Record<string, unknown>;
+  const coreConcept = typeof metadata.core_concept === "string" ? metadata.core_concept : null;
+  const bloomLevel = typeof metadata.bloom_level === "string" ? metadata.bloom_level : null;
 
   const optionStyle = (key: string) => {
     if (!result) {
@@ -159,26 +181,57 @@ export function QuizView({ courseId, aiActionsEnabled = true }: QuizViewProps) {
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden" data-testid="quiz-panel">
-      <div className="flex items-center gap-2 px-3 py-2 border-b shrink-0">
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-border/60 shrink-0">
         {accuracy !== null ? <Badge variant="outline">{accuracy}%</Badge> : null}
         <span className="ml-auto text-xs text-muted-foreground">
           {t("quiz.question")} {currentIdx + 1} {t("quiz.of")} {problems.length}
         </span>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div className="flex-1 overflow-y-auto scrollbar-thin p-4 space-y-4">
+        <div className="flex flex-wrap items-center gap-1.5">
+          {difficultyHint ? (
+            <Badge variant="outline" className="text-[10px]">
+              {t("quiz.strategy")}: {t(`quiz.difficulty.${difficultyHint}`)}
+            </Badge>
+          ) : null}
+          {difficultyLayer ? (
+            <Badge variant="outline" className={`text-[10px] ${layerBadgeClass(difficultyLayer)}`}>
+              {t("quiz.layer").replace("{layer}", String(difficultyLayer))}
+            </Badge>
+          ) : null}
+          {coreConcept ? (
+            <Badge variant="outline" className="text-[10px]">
+              {coreConcept}
+            </Badge>
+          ) : null}
+          {bloomLevel ? (
+            <Badge variant="outline" className="text-[10px]">
+              {t("quiz.bloom").replace("{level}", bloomLevel)}
+            </Badge>
+          ) : null}
+        </div>
+
         <p className="text-sm font-medium leading-relaxed" data-testid="quiz-question">
           {problem.question}
         </p>
 
-        <div className="space-y-2">
+        <div className="space-y-3" role="radiogroup" aria-label="Answer options">
           {optionKeys.map((key) => (
             <button
               key={key}
+              role="radio"
+              aria-checked={selectedOption === key}
               data-testid={`quiz-option-${key}`}
               disabled={!!result || submitting}
               onClick={() => void handleOptionClick(key)}
-              className={`w-full text-left rounded-md border px-3 py-2 text-sm transition-colors ${optionStyle(key)} disabled:cursor-default`}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  if (!result && !submitting) void handleOptionClick(key);
+                }
+              }}
+              className={`w-full text-left rounded-xl border px-3.5 py-3 text-sm min-h-[44px] transition-colors ${optionStyle(key)} disabled:cursor-default`}
             >
               <span className="font-medium mr-2">{key.toUpperCase()}.</span>
               {problem.options?.[key]}
@@ -186,8 +239,12 @@ export function QuizView({ courseId, aiActionsEnabled = true }: QuizViewProps) {
           ))}
         </div>
 
+        {submitError && (
+          <p className="text-xs text-destructive mt-2">{submitError}</p>
+        )}
+
         {result?.explanation ? (
-          <div className="space-y-1.5 pt-1">
+          <div className="space-y-1.5 pt-1" aria-live="assertive">
             <Badge variant={result.is_correct ? "default" : "destructive"}>
               {result.is_correct ? t("quiz.correct") : result.correct_answer?.toUpperCase()}
             </Badge>
@@ -198,7 +255,7 @@ export function QuizView({ courseId, aiActionsEnabled = true }: QuizViewProps) {
         ) : null}
 
         {result?.prerequisite_gaps && result.prerequisite_gaps.length > 0 ? (
-          <div className="rounded-lg border border-warning/30 bg-warning-muted/20 p-3 space-y-2">
+          <div className="rounded-2xl border border-warning/30 bg-warning-muted/20 p-3.5 space-y-2">
             <p className="text-xs font-semibold text-warning">
               {t("quiz.prerequisiteGaps") !== "quiz.prerequisiteGaps"
                 ? t("quiz.prerequisiteGaps")
@@ -229,7 +286,7 @@ export function QuizView({ courseId, aiActionsEnabled = true }: QuizViewProps) {
         ) : null}
       </div>
 
-      <div className="flex items-center justify-between px-3 py-2 border-t shrink-0">
+      <div className="flex items-center justify-between px-3 py-2 border-t border-border/60 shrink-0">
         <Button
           type="button"
           variant="outline"

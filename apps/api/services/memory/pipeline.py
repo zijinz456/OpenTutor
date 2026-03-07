@@ -123,7 +123,7 @@ async def generate_embedding(text_content: str) -> list[float] | None:
         provider = get_embedding_provider()
         return await provider.embed(text_content)
     except Exception as e:
-        logger.debug("Embedding generation failed: %s", e)
+        logger.exception("Embedding generation failed")
         return None
 
 

@@ -62,7 +62,7 @@ def _get_fernet():
         if settings.encryption_key:
             from cryptography.fernet import Fernet
             return Fernet(settings.encryption_key.encode() if isinstance(settings.encryption_key, str) else settings.encryption_key)
-    except (ImportError, Exception) as e:
+    except (ImportError, ValueError, TypeError) as e:
         logger.debug("Fernet encryption unavailable: %s", e)
     return None
 
@@ -81,7 +81,7 @@ def _decrypt_data(data: str) -> str:
     if fernet:
         try:
             return fernet.decrypt(data.encode()).decode()
-        except Exception:
+        except (ValueError, TypeError):
             # Data is not encrypted (legacy file) — return as-is
             return data
     return data
@@ -213,7 +213,7 @@ class SessionManager:
             await context.close()
             return is_valid
         except Exception as e:
-            logger.warning("Session validation failed for %s: %s", session_name, e)
+            logger.exception("Session validation failed for %s", session_name)
             return False
 
     @staticmethod
@@ -254,7 +254,7 @@ class SessionManager:
             logger.info("Re-authentication succeeded for %s", session_name)
             return True
         except Exception as e:
-            logger.error("Re-authentication failed for %s: %s", session_name, e)
+            logger.exception("Re-authentication failed for %s", session_name)
             return False
 
     @staticmethod
@@ -275,5 +275,5 @@ class SessionManager:
             await context.close()
             return content
         except Exception as e:
-            logger.warning("Session fetch failed for %s: %s", url, e)
+            logger.exception("Session fetch failed for %s", url)
             return None

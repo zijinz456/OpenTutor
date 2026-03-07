@@ -46,7 +46,7 @@ function PredictionRow({ prediction }: { prediction: ForgettingPrediction }) {
     : "—";
 
   return (
-    <div className="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-muted/50 transition-colors">
+    <div className="flex items-center gap-3 px-3.5 py-2.5 rounded-xl bg-muted/30 hover:bg-muted/50 transition-colors">
       <div className="flex-1 min-w-0">
         <p className="text-xs font-medium truncate">{prediction.title}</p>
         <p className="text-[10px] text-muted-foreground">
@@ -55,7 +55,7 @@ function PredictionRow({ prediction }: { prediction: ForgettingPrediction }) {
       </div>
       <RetrievabilityBar value={prediction.current_retrievability} />
       <span
-        className={`shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded ${style.bg} ${style.text}`}
+        className={`shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded-full ${style.bg} ${style.text}`}
       >
         {prediction.urgency === "ok" ? daysText : style.label}
       </span>
@@ -111,19 +111,19 @@ export function ForecastView({ courseId }: ForecastViewProps) {
     <div className="flex-1 flex flex-col overflow-y-auto" data-testid="forecast-panel">
       {/* Summary cards */}
       <div className="grid grid-cols-3 gap-2 p-4 pb-2">
-        <div className="rounded-md border border-border bg-card p-3 flex flex-col gap-0.5">
+        <div className="rounded-2xl card-shadow bg-card p-3.5 flex flex-col gap-0.5">
           <span className="text-xs text-muted-foreground">Tracked</span>
-          <span className="text-lg font-semibold tabular-nums">{data.total_items}</span>
+          <span className="text-xl font-semibold tabular-nums">{data.total_items}</span>
         </div>
-        <div className="rounded-md border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-900/20 p-3 flex flex-col gap-0.5">
+        <div className="rounded-2xl card-shadow bg-red-50 dark:bg-red-900/20 p-3.5 flex flex-col gap-0.5">
           <span className="text-xs text-red-600 dark:text-red-400">Urgent</span>
-          <span className="text-lg font-semibold tabular-nums text-red-700 dark:text-red-400">
+          <span className="text-xl font-semibold tabular-nums text-red-700 dark:text-red-400">
             {data.urgent_count}
           </span>
         </div>
-        <div className="rounded-md border border-yellow-200 dark:border-yellow-900/50 bg-yellow-50 dark:bg-yellow-900/20 p-3 flex flex-col gap-0.5">
+        <div className="rounded-2xl card-shadow bg-yellow-50 dark:bg-yellow-900/20 p-3.5 flex flex-col gap-0.5">
           <span className="text-xs text-yellow-600 dark:text-yellow-400">Warning</span>
-          <span className="text-lg font-semibold tabular-nums text-yellow-700 dark:text-yellow-400">
+          <span className="text-xl font-semibold tabular-nums text-yellow-700 dark:text-yellow-400">
             {data.warning_count}
           </span>
         </div>

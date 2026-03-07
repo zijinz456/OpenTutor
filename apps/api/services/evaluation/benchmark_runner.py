@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import asdict, dataclass
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = logging.getLogger(__name__)
 
 from services.evaluation.eval_recovery import run_recovery_evaluation
 from services.evaluation.eval_response import ResponseEvalCase, eval_responses_batch
@@ -59,6 +62,7 @@ async def run_regression_benchmark(
     course_id=None,
     retrieval_queries: list[dict] | None = None,
     response_cases: list[dict] | None = None,
+    strict: bool = False,
 ) -> dict[str, Any]:
     suites: list[BenchmarkSuite] = []
 
@@ -186,6 +190,7 @@ async def run_regression_benchmark(
                 )
             )
         except Exception as exc:
+            logger.exception("Recovery evaluation suite failed")
             suites.append(
                 BenchmarkSuite(
                     name="recovery",
@@ -208,9 +213,24 @@ async def run_regression_benchmark(
             )
         )
 
+    strict_failures: list[dict[str, str]] = []
+    if strict:
+        for suite in suites:
+            if suite.name in {"retrieval", "recovery"} and suite.skipped:
+                reason = str(suite.details.get("reason", "suite was skipped"))
+                suite.passed = False
+                suite.skipped = False
+                suite.details["strict_mode"] = "failed"
+                suite.details["strict_reason"] = (
+                    f"{suite.name} suite was skipped in strict mode: {reason}"
+                )
+                strict_failures.append({"suite": suite.name, "reason": reason})
+
     failed = [suite.name for suite in suites if not suite.passed and not suite.skipped]
     return {
         "passed": not failed,
         "failed_suites": failed,
+        "strict": strict,
+        "strict_failures": strict_failures,
         "suites": [asdict(suite) for suite in suites],
     }
