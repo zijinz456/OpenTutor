@@ -214,6 +214,17 @@ export async function getReviewSession(
   return request(`/progress/courses/${courseId}/review-session?max_items=${maxItems}`);
 }
 
+export async function submitReviewRating(
+  courseId: string,
+  conceptId: string,
+  rating: "again" | "hard" | "good" | "easy",
+): Promise<{ concept_id: string; rating: string; new_mastery: number; new_stability_days: number }> {
+  return request(`/progress/courses/${courseId}/review-session/rate`, {
+    method: "POST",
+    body: JSON.stringify({ concept_id: conceptId, rating }),
+  });
+}
+
 // ── Exam Prep & Study Plans ──
 
 interface ExamPrepPlan {

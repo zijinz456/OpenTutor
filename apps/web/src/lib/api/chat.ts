@@ -26,6 +26,18 @@ interface ChatTaskLink {
 }
 
 type ChatActionType =
+  // Block system actions
+  | "data_updated"
+  | "focus_topic"
+  | "add_block"
+  | "remove_block"
+  | "reorder_blocks"
+  | "resize_block"
+  | "apply_template"
+  | "agent_insight"
+  | "set_learning_mode"
+  | "suggest_mode"
+  // Legacy (backward compat)
   | "set_layout_preset"
   | "toggle_section"
   | "set_preference"
@@ -33,8 +45,7 @@ type ChatActionType =
   | "open_flashcards"
   | "load_wrong_answers"
   | "generate_study_plan"
-  | "set_note_format"
-  | "data_updated";
+  | "set_note_format";
 
 export interface ChatAction {
   action: ChatActionType | string;  // Known actions + extensible
@@ -196,6 +207,8 @@ interface ChatStreamOptions {
   images?: ImageAttachment[];
   /** When true, indicates the user interrupted a previous streaming response. */
   interrupt?: boolean;
+  /** Current learning mode from workspace store. */
+  learningMode?: string;
 }
 
 // ── Chat (SSE streaming) ──
@@ -215,6 +228,7 @@ export async function* streamChat(
       history: opts.history ?? [],
       images: opts.images ?? [],
       ...(opts.interrupt ? { interrupt: true } : {}),
+      ...(opts.learningMode ? { learning_mode: opts.learningMode } : {}),
     }),
     signal: opts.signal,
   });

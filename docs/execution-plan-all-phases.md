@@ -2,6 +2,7 @@
 
 > Revised based on a deep code audit. Investigation revealed some "missing" features were actually already implemented (FSRS algorithm, MotivationAgent).
 > This plan only targets **issues that truly need modification**.
+> Note: Historical planning document. Current repository runtime and local deployment are SQLite-only.
 
 ---
 

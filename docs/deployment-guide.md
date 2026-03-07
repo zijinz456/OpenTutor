@@ -2,6 +2,8 @@
 
 OpenTutor is a local-first, single-user AI tutoring platform. This guide covers every way to get it running on your machine.
 
+> Local deployment is **SQLite-only** in this repository.
+
 ---
 
 ## Table of Contents
@@ -24,7 +26,7 @@ The fastest way to get OpenTutor running. Choose one of two paths:
 
 ### Option A: Quickstart Script (recommended for first-time setup)
 
-This script checks prerequisites, creates the database, runs migrations, and starts both servers.
+This script checks prerequisites, prepares SQLite, and starts both servers.
 
 **macOS / Linux:**
 
@@ -43,14 +45,14 @@ cd OpenTutor
 ```
 
 The script will:
-1. Verify prerequisites (Node.js 20+, Python 3.11, PostgreSQL, curl)
+1. Verify prerequisites (Node.js 20+, Python 3.11, curl)
 2. Create `.env` from `.env.example` if it does not exist
 3. Auto-detect Ollama and configure it as the LLM provider if no cloud API key is set (bash script only)
 4. Create a Python virtual environment at `apps/api/.venv/` and install dependencies
-5. Create the `opentutor` database and enable the pgvector extension
-6. Run Alembic migrations
+5. Prepare the local SQLite path
+6. Bootstrap schema at app startup
 7. Install frontend npm packages
-8. Start the API server (port 8000) and the web server (port 3000)
+8. Start the API server (port 8000) and the web server (port 3001)
 
 Once ready, open **http://localhost:3001** in your browser.
 
@@ -69,7 +71,7 @@ cp .env.example .env
 docker compose up -d
 ```
 
-This starts four services: PostgreSQL (pgvector), Redis, the API, and the web frontend. First build takes a few minutes to download images and install dependencies; subsequent starts are fast.
+This starts three services: Redis, the API, and the web frontend. SQLite is persisted in a Docker named volume. First build takes a few minutes to download images and install dependencies; subsequent starts are fast.
 
 Verify everything is healthy:
 
@@ -101,7 +103,7 @@ bash scripts/dev_local.sh logs api    # single service
 # Stop
 bash scripts/dev_local.sh down
 
-# Stop and delete all data (pgdata, redis, uploads)
+# Stop and delete all data (sqlite_data, redis, uploads)
 bash scripts/dev_local.sh reset
 ```
 
@@ -117,8 +119,6 @@ Step-by-step setup for development without Docker.
 |------|---------|-------------|---------------------|-------------|---------|
 | Python | 3.11 (required; 3.14 breaks tiktoken) | `brew install python@3.11` | `sudo apt install python3.11 python3.11-venv` | `sudo dnf install python3.11` | [python.org](https://www.python.org/downloads/) |
 | Node.js | 20+ | `brew install node` | [nodesource.com](https://nodesource.com/) | `sudo dnf install nodejs` | [nodejs.org](https://nodejs.org/) |
-| PostgreSQL | 16+ | `brew install postgresql@16` | `sudo apt install postgresql` | `sudo dnf install postgresql-server` | [postgresql.org](https://www.postgresql.org/download/windows/) |
-| pgvector | latest | `brew install pgvector` | See [pgvector install docs](https://github.com/pgvector/pgvector#installation) | See [pgvector install docs](https://github.com/pgvector/pgvector#installation) | [pgvector Windows](https://github.com/pgvector/pgvector#windows) |
 | curl | any | pre-installed | `sudo apt install curl` | pre-installed | built into Windows 10+ |
 
 ### Step 1: Clone and configure
@@ -149,31 +149,22 @@ pip install -r requirements-full.txt
 ### Step 3: Database
 
 ```bash
-# Start PostgreSQL
-brew services start postgresql@16          # macOS
-# sudo systemctl start postgresql          # Ubuntu / Fedora (systemd)
-# sudo service postgresql start            # Ubuntu (SysV init)
-# Start-Service postgresql-x64-16          # Windows (PowerShell, run as admin)
-
-# Create database and user
-createdb opentutor
-psql -d opentutor -c "CREATE EXTENSION IF NOT EXISTS vector;"
+# SQLite local mode (default)
+# Keep DATABASE_URL empty or set it explicitly:
+# DATABASE_URL=sqlite+aiosqlite:///~/.opentutor/data.db
 ```
 
-If you need a dedicated user (the default `.env` uses `opentutor:REDACTED_DEV_PASSWORD`):
+Create the local data directory once:
 
 ```bash
-psql -U postgres -c "CREATE USER opentutor WITH PASSWORD 'REDACTED_DEV_PASSWORD';"
-psql -U postgres -c "CREATE DATABASE opentutor OWNER opentutor;"
-psql -U postgres -d opentutor -c "CREATE EXTENSION IF NOT EXISTS vector;"
+mkdir -p ~/.opentutor
 ```
 
-### Step 4: Run migrations
+### Step 4: Schema bootstrap
 
 ```bash
-cd apps/api
-source .venv/bin/activate
-alembic upgrade head
+# Tables are created on startup when APP_AUTO_CREATE_TABLES=true (default).
+# No manual migration step is required in SQLite local mode.
 ```
 
 ### Step 5: Frontend dependencies
@@ -214,19 +205,18 @@ Open **http://localhost:3001**. The API is at **http://localhost:8000/api**.
 docker compose up
 ```
 
-starts four containers:
+starts three containers:
 
 | Service | Image | Port | Purpose |
 |---------|-------|------|---------|
-| `db` | `pgvector/pgvector:pg17` | 5432 | PostgreSQL with pgvector |
 | `redis` | `redis:7-alpine` | 6379 | Background task queue (optional) |
 | `api` | Built from `apps/api/Dockerfile` | 8000 | FastAPI backend |
-| `web` | Built from `apps/web/Dockerfile` | 3000 | Next.js frontend |
+| `web` | Built from `apps/web/Dockerfile` | 3001 | Next.js frontend |
 
 ### Startup sequence
 
-1. `db` and `redis` start first and expose health checks.
-2. `api` waits for both to be healthy, runs `alembic upgrade head`, then starts uvicorn.
+1. `redis` starts first and exposes health checks.
+2. `api` waits for `redis` to be healthy, then starts uvicorn (SQLite schema bootstrap happens at app startup when enabled).
 3. `web` waits for `api` to be healthy, then serves the Next.js app.
 
 ### Environment variables
@@ -252,7 +242,7 @@ OLLAMA_BASE_URL=http://host.docker.internal:11434
 
 | Volume | Purpose |
 |--------|---------|
-| `pgdata` | PostgreSQL data directory |
+| `sqlite_data` | SQLite database file storage (`/app/data`) |
 | `redisdata` | Redis persistence |
 | `uploads` | Uploaded course materials |
 
@@ -284,9 +274,9 @@ All variables are defined in `apps/api/config.py` (via pydantic-settings) and do
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ENVIRONMENT` | `development` | `development` or `production` |
-| `DATABASE_URL` | `postgresql+asyncpg://opentutor:REDACTED_DEV_PASSWORD@localhost:5432/opentutor` | Async PostgreSQL connection string |
+| `DATABASE_URL` | `sqlite+aiosqlite:///~/.opentutor/data.db` | Async SQLite connection string for local mode |
 | `REDIS_URL` | `redis://localhost:6379/0` | Redis connection (needed for scheduler/activity engine) |
-| `CORS_ORIGINS` | `http://localhost:3001,http://127.0.0.1:3000` | Comma-separated allowed origins, or `*` for all |
+| `CORS_ORIGINS` | `http://localhost:3001,http://127.0.0.1:3001` | Comma-separated allowed origins, or `*` for all |
 
 ### LLM
 
@@ -408,91 +398,47 @@ Channel-specific variables (WhatsApp, iMessage/BlueBubbles, Telegram, Discord) a
 
 ## 5. Database
 
-### PostgreSQL + pgvector
+### SQLite local mode
 
-OpenTutor requires PostgreSQL 16+ with the [pgvector](https://github.com/pgvector/pgvector) extension for vector similarity search (used for RAG and knowledge graph features).
+OpenTutor local deployment uses SQLite only.
 
-**Docker:** The `pgvector/pgvector:pg17` image includes pgvector pre-installed. No extra steps needed.
+- Default DB URL: `sqlite+aiosqlite:///~/.opentutor/data.db`
+- Docker DB path: `sqlite+aiosqlite:////app/data/opentutor.db` (persisted in `sqlite_data` volume)
+- Schema bootstrap: handled automatically at API startup when `APP_AUTO_CREATE_TABLES=true` (default)
 
-**Manual install (macOS):**
+### Schema bootstrap behavior
 
-```bash
-brew install postgresql@16 pgvector
-brew services start postgresql@16
-```
+No manual migration command is required for local mode.
 
-**Manual install (Ubuntu):**
-
-```bash
-sudo apt install postgresql-16
-# Install pgvector from source or apt (see https://github.com/pgvector/pgvector#linux)
-```
-
-**Create the database:**
+If health reports `"schema": "missing"`:
 
 ```bash
-createdb opentutor
-psql -d opentutor -c "CREATE EXTENSION IF NOT EXISTS vector;"
+bash scripts/check_local_mode.sh --env-file .env --skip-api
+bash scripts/dev_local.sh down
+bash scripts/dev_local.sh up --build
 ```
-
-### Alembic Migrations
-
-The API uses Alembic for database schema management. Migration files live in `apps/api/alembic/versions/`.
-
-```bash
-cd apps/api
-source .venv/bin/activate   # if running outside Docker (Windows: .venv\Scripts\activate)
-
-# Apply all migrations
-alembic upgrade head
-
-# Check current migration state
-alembic current
-
-# View migration history
-alembic history --verbose
-
-# Generate a new migration after model changes
-alembic revision --autogenerate -m "description of change"
-```
-
-**Docker:** The API container runs `alembic upgrade head` automatically on startup. You can also run migrations manually:
-
-```bash
-docker compose exec api alembic upgrade head
-```
-
-**Using the dev_local.sh helper:**
-
-```bash
-bash scripts/dev_local.sh migrate-host
-```
-
-### Auto-create tables
-
-If you prefer not to use Alembic during development, set `APP_AUTO_CREATE_TABLES=true` in `.env`. This runs `Base.metadata.create_all()` on startup to create any missing tables. Alembic is still the recommended approach for production and for tracking schema changes.
 
 ### Backup and Restore
 
 **Backup:**
 
 ```bash
-# Local PostgreSQL
-pg_dump -Fc opentutor > opentutor_backup_$(date +%Y%m%d).dump
+# Host local SQLite
+cp ~/.opentutor/data.db ~/opentutor_backup_$(date +%Y%m%d).db
 
-# Docker
-docker compose exec db pg_dump -U opentutor -Fc opentutor > opentutor_backup_$(date +%Y%m%d).dump
+# Docker SQLite volume snapshot
+docker compose exec api sh -lc 'cp /app/data/opentutor.db /app/uploads/opentutor_backup.db'
+docker cp opentutor-api:/app/uploads/opentutor_backup.db ./opentutor_backup_$(date +%Y%m%d).db
 ```
 
 **Restore:**
 
 ```bash
-# Local PostgreSQL
-pg_restore -d opentutor --clean --if-exists opentutor_backup_20260302.dump
+# Host local SQLite
+cp ./opentutor_backup_20260302.db ~/.opentutor/data.db
 
-# Docker (copy dump into container first)
-docker cp opentutor_backup_20260302.dump opentutor-db:/tmp/
-docker compose exec db pg_restore -U opentutor -d opentutor --clean --if-exists /tmp/opentutor_backup_20260302.dump
+# Docker SQLite
+docker cp ./opentutor_backup_20260302.db opentutor-api:/app/data/opentutor.db
 ```
 
 **Backup uploads directory:**
@@ -503,15 +449,6 @@ tar czf uploads_backup_$(date +%Y%m%d).tar.gz apps/api/uploads/
 
 # Docker
 docker cp opentutor-api:/app/uploads ./uploads_backup/
-```
-
-### Stamping an existing database
-
-If the database tables exist but Alembic's `alembic_version` table is missing (e.g., tables were created via `APP_AUTO_CREATE_TABLES=true`), stamp the current revision so Alembic knows the schema is up to date:
-
-```bash
-cd apps/api
-alembic stamp head
 ```
 
 ---
@@ -752,7 +689,7 @@ server {
     }
 
     location / {
-        proxy_pass http://127.0.0.1:3000;
+        proxy_pass http://127.0.0.1:3001;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -803,7 +740,7 @@ Returns a JSON payload with detailed system status:
   "database": "connected",
   "schema": "ready",
   "migration_required": false,
-  "migration_status": "up_to_date",
+  "migration_status": "ready",
   "llm_providers": ["openai"],
   "llm_primary": "openai",
   "llm_required": false,
@@ -822,11 +759,11 @@ Key fields to monitor:
 - `database`: `connected` or `unreachable`
 - `schema`: `ready`, `missing`, or a migration status string
 - `llm_status`: `ready`, `mock_fallback`, `configuration_required`, or `degraded`
-- `migration_required`: `true` means you need to run `alembic upgrade head`
+- `migration_required`: should normally be `false` in SQLite local mode
 
 ### Docker Health Checks
 
-All four Docker services have built-in health checks:
+All three Docker services have built-in health checks:
 
 ```bash
 docker compose ps   # STATUS column shows health
@@ -886,20 +823,19 @@ See [troubleshooting.md](troubleshooting.md) for detailed solutions. Here is a s
 
 ### "Port already in use"
 
-Another service is using port 5432, 6379, 8000, or 3000.
+Another service is using port 6379, 8000, or 3001.
 
 ```bash
 # Find what's using the port
-lsof -i :5432                              # macOS / Linux
-# Get-NetTCPConnection -LocalPort 5432     # Windows (PowerShell)
-
-# Stop the conflicting service
-brew services stop postgresql@16           # macOS
-# sudo systemctl stop postgresql           # Linux
-# Stop-Service postgresql-x64-16           # Windows (PowerShell, run as admin)
+lsof -i :3001                              # macOS / Linux
+# Get-NetTCPConnection -LocalPort 3001     # Windows (PowerShell)
 ```
 
-Or change the port mapping in `docker-compose.yml` (e.g., `"5433:5432"`).
+Or change published ports when starting local stack:
+
+```bash
+API_PORT=38000 WEB_PORT=33000 bash scripts/dev_local.sh up --build
+```
 
 ### API container keeps restarting
 
@@ -907,19 +843,7 @@ Or change the port mapping in `docker-compose.yml` (e.g., `"5433:5432"`).
 docker compose logs api --tail 50
 ```
 
-Common causes: database not ready yet (wait 30s), broken Alembic migration.
-
-### "extension vector does not exist"
-
-pgvector is not installed. Docker users should not see this (the image includes it). Manual install:
-
-```bash
-# macOS
-brew install pgvector
-
-# Ubuntu: build from source
-# See https://github.com/pgvector/pgvector#linux
-```
+Common causes: invalid `DATABASE_URL` (non-SQLite) or SQLite file permission issue.
 
 ### Mock/placeholder AI responses
 
@@ -954,19 +878,12 @@ pyenv install 3.11
 pyenv local 3.11
 ```
 
-### Database migration errors
+### Schema bootstrap errors
 
 ```bash
-cd apps/api
-
-# Check current state
-alembic current
-
-# Re-run migrations
-alembic upgrade head
-
-# If tables exist but alembic_version is missing
-alembic stamp head
+bash scripts/check_local_mode.sh --env-file .env --skip-api
+bash scripts/dev_local.sh down
+bash scripts/dev_local.sh up --build
 ```
 
 ### "Failed to fetch" in browser

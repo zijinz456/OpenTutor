@@ -1,13 +1,17 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
+import { GraduationCap, Compass, Clock, Shield } from "lucide-react";
 import type { Mode, FileItem } from "./types";
+import type { LearningMode } from "@/lib/block-system/types";
 import { formatSize } from "./types";
 import { StepIndicator } from "./step-indicator";
 import { UrlSection, AutoScrapeSection } from "./url-section";
 
 interface ContentUploadStepProps {
   mode: Mode;
+  learningMode: LearningMode;
+  onLearningModeChange: (mode: LearningMode) => void;
   projectName: string;
   onProjectNameChange: (value: string) => void;
   nameError: string | null;
@@ -30,6 +34,8 @@ interface ContentUploadStepProps {
 
 export function ContentUploadStep({
   mode,
+  learningMode,
+  onLearningModeChange,
   projectName,
   onProjectNameChange,
   nameError,
@@ -137,6 +143,43 @@ export function ContentUploadStep({
           maxLength={100}
         />
         {nameError && <p className="text-xs text-destructive mt-1">{nameError}</p>}
+      </div>
+
+      {/* Learning Mode */}
+      <div className="flex flex-col gap-2">
+        <label className="font-semibold text-sm text-foreground">
+          {t("mode.title") !== "mode.title" ? t("mode.title") : "Learning Mode"}
+        </label>
+        <div className="grid grid-cols-2 gap-2">
+          {(
+            [
+              { id: "course_following", icon: GraduationCap },
+              { id: "self_paced", icon: Compass },
+              { id: "exam_prep", icon: Clock },
+              { id: "maintenance", icon: Shield },
+            ] as const
+          ).map((item) => {
+            const Icon = item.icon;
+            const active = learningMode === item.id;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => onLearningModeChange(item.id)}
+                className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-left transition-colors ${
+                  active
+                    ? "border-brand bg-brand-muted/30 text-foreground"
+                    : "border-border bg-card hover:border-brand/40"
+                }`}
+              >
+                <Icon className={`size-3.5 ${active ? "text-brand" : "text-muted-foreground"}`} />
+                <span className="text-xs font-medium">
+                  {t(`mode.${item.id}`) !== `mode.${item.id}` ? t(`mode.${item.id}`) : item.id}
+                </span>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {/* Upload Section */}
@@ -269,4 +312,3 @@ function UploadSection({
     </div>
   );
 }
-

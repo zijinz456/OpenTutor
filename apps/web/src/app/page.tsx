@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCourseStore } from "@/store/course";
 import {
   getHealthStatus,
+  getKnowledgeGraph,
   getReviewSession,
   listNotifications,
   type HealthStatus,
@@ -24,6 +25,7 @@ import {
   RotateCcw,
   CalendarDays,
   BookOpen,
+  GitBranch,
   ArrowRight,
   Settings,
   Clock,
@@ -51,16 +53,21 @@ function formatDate(value?: string | null) {
   return new Date(value).toLocaleDateString();
 }
 
-function getCourseMode(courseId: string): LearningMode | undefined {
+function getCourseMode(course: Course): LearningMode | undefined {
   if (typeof window === "undefined") return undefined;
   try {
-    const raw = localStorage.getItem(`opentutor_blocks_${courseId}`);
-    if (!raw) return undefined;
-    const layout = JSON.parse(raw) as SpaceLayout;
-    return layout.mode;
+    const raw = localStorage.getItem(`opentutor_blocks_${course.id}`);
+    if (raw) {
+      const layout = JSON.parse(raw) as SpaceLayout;
+      if (layout.mode) return layout.mode;
+    }
   } catch {
-    return undefined;
+    // Ignore local parse failures and fall back to server metadata.
   }
+  const metadata = (course.metadata ?? {}) as Record<string, unknown>;
+  const layout = metadata.spaceLayout as SpaceLayout | undefined;
+  const mode = layout?.mode ?? metadata.learning_mode;
+  return typeof mode === "string" ? (mode as LearningMode) : undefined;
 }
 
 interface ReviewSummary {
@@ -69,6 +76,17 @@ interface ReviewSummary {
   overdueCount: number;
   urgentCount: number;
   totalCount: number;
+}
+
+interface KnowledgeDensitySummary {
+  totalConcepts: number;
+  sharedConcepts: number;
+  densityPct: number;
+  topSharedConcepts: string[];
+}
+
+function normalizeConceptLabel(label: string): string {
+  return label.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
 function CourseCardsSkeleton() {
@@ -278,6 +296,7 @@ export default function DashboardPage() {
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [upcomingDeadlines, setUpcomingDeadlines] = useState<Array<StudyGoal & { courseName: string }>>([]);
   const [dailyDigest, setDailyDigest] = useState<AppNotification | null>(null);
+  const [knowledgeDensity, setKnowledgeDensity] = useState<KnowledgeDensitySummary | null>(null);
 
   // Onboarding + single-course redirect
   useEffect(() => {
@@ -299,7 +318,7 @@ export default function DashboardPage() {
     const refreshHealth = () =>
       getHealthStatus()
         .then((d) => { ttlCache.set("dash:health", d, 30_000); setHealth(d); })
-        .catch(() => {});
+        .catch((e) => console.error("[Dashboard] health check failed:", e));
     refreshHealth();
     const id = setInterval(refreshHealth, 30_000);
     const cleanupNotif = initStudyNotifications();
@@ -344,7 +363,7 @@ export default function DashboardPage() {
         const digest = all.find((n) => n.category === "daily_brief");
         if (digest) setDailyDigest(digest);
       })
-      .catch(() => {});
+      .catch((e) => console.error("[Dashboard] notifications fetch failed:", e));
   }, []);
 
   // Fetch upcoming deadlines from study goals
@@ -371,6 +390,59 @@ export default function DashboardPage() {
       setUpcomingDeadlines(deadlines.slice(0, 10));
     };
     fetchDeadlines();
+  }, [courses]);
+
+  // Cross-course knowledge density (concept overlap across spaces)
+  useEffect(() => {
+    if (courses.length < 2) return;
+
+    let cancelled = false;
+    const fetchDensity = async () => {
+      const conceptFreq = new Map<string, { count: number; display: string }>();
+
+      for (const course of courses) {
+        try {
+          const graph = await getKnowledgeGraph(course.id);
+          const seenInCourse = new Set<string>();
+          for (const node of graph.nodes ?? []) {
+            const normalized = normalizeConceptLabel(node.label ?? "");
+            if (!normalized || seenInCourse.has(normalized)) continue;
+            seenInCourse.add(normalized);
+            const prev = conceptFreq.get(normalized);
+            conceptFreq.set(normalized, {
+              count: (prev?.count ?? 0) + 1,
+              display: prev?.display ?? node.label,
+            });
+          }
+        } catch {
+          // Ignore per-course graph failures; compute from available graphs.
+        }
+      }
+
+      const allConcepts = [...conceptFreq.values()];
+      const shared = allConcepts.filter((v) => v.count >= 2);
+      const topShared = [...shared]
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 6)
+        .map((v) => v.display);
+      const totalConcepts = allConcepts.length;
+      const sharedConcepts = shared.length;
+      const densityPct = totalConcepts > 0
+        ? Math.round((sharedConcepts / totalConcepts) * 100)
+        : 0;
+
+      if (!cancelled) {
+        setKnowledgeDensity({
+          totalConcepts,
+          sharedConcepts,
+          densityPct,
+          topSharedConcepts: topShared,
+        });
+      }
+    };
+
+    void fetchDensity();
+    return () => { cancelled = true; };
   }, [courses]);
 
   const totalUrgentReviews = reviewSummaries.reduce((s, r) => s + r.overdueCount + r.urgentCount, 0);
@@ -554,6 +626,52 @@ export default function DashboardPage() {
               </DashSection>
             )}
 
+            {/* Cross-course Knowledge Density */}
+            {courses.length > 1 && (
+              <DashSection title={t("home.knowledgeDensity")} icon={GitBranch}>
+                {!knowledgeDensity || knowledgeDensity.totalConcepts === 0 ? (
+                  <p className="text-sm text-muted-foreground">{t("home.knowledgeDensity.empty")}</p>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-3 gap-2">
+                      <div className="rounded-lg border border-border p-3">
+                        <p className="text-[11px] text-muted-foreground">{t("home.knowledgeDensity.shared")}</p>
+                        <p className="text-base font-semibold text-foreground">{knowledgeDensity.sharedConcepts}</p>
+                      </div>
+                      <div className="rounded-lg border border-border p-3">
+                        <p className="text-[11px] text-muted-foreground">{t("home.knowledgeDensity.total")}</p>
+                        <p className="text-base font-semibold text-foreground">{knowledgeDensity.totalConcepts}</p>
+                      </div>
+                      <div className="rounded-lg border border-border p-3">
+                        <p className="text-[11px] text-muted-foreground">{t("home.knowledgeDensity.overlap")}</p>
+                        <p className="text-base font-semibold text-brand">{knowledgeDensity.densityPct}%</p>
+                      </div>
+                    </div>
+
+                    <div className="h-2 rounded-full bg-muted overflow-hidden">
+                      <div
+                        className="h-full bg-brand transition-all"
+                        style={{ width: `${knowledgeDensity.densityPct}%` }}
+                      />
+                    </div>
+
+                    {knowledgeDensity.topSharedConcepts.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5">
+                        {knowledgeDensity.topSharedConcepts.map((name) => (
+                          <span
+                            key={name}
+                            className="text-[11px] px-2 py-0.5 rounded-full bg-brand-muted text-brand"
+                          >
+                            {name}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </DashSection>
+            )}
+
             {/* Agent Insights — cross-course notifications */}
             {courses.length > 0 && notifications.length > 0 && (
               <DashSection
@@ -616,7 +734,7 @@ export default function DashboardPage() {
                           <span className="text-xs text-muted-foreground line-clamp-1 flex-1">
                             {course.description || `${t("dashboard.scenePrefix")}: ${course.last_scene_id || "study_session"}`}
                           </span>
-                          <ModeBadge mode={getCourseMode(course.id)} />
+                          <ModeBadge mode={getCourseMode(course)} />
                         </div>
                         {hasPending && (
                           <span className="inline-flex w-fit rounded-full px-2.5 py-0.5 text-[11px] font-medium bg-warning-muted text-warning">

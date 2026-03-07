@@ -1,8 +1,8 @@
 """Local embedding provider using sentence-transformers (384 dimensions).
 
 Optional dependency: install via `pip install sentence-transformers`.
-Since pgvector requires exact dimension match, this provider zero-pads
-to 1536 dimensions to stay compatible with the default schema.
+This provider zero-pads to 1536 dimensions to stay compatible with
+the fixed-length embedding schema used by local SQLite mode.
 """
 
 import asyncio
@@ -14,7 +14,7 @@ TARGET_DIM = 1536
 
 
 class LocalEmbedding(EmbeddingProvider):
-    dimension = TARGET_DIM  # Zero-padded to match pgvector column
+    dimension = TARGET_DIM  # Zero-padded to match the embedding column size
 
     def __init__(self, model_name: str = "all-MiniLM-L6-v2"):
         from sentence_transformers import SentenceTransformer

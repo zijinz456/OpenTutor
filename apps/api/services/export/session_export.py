@@ -3,7 +3,7 @@
 Exports user's learning data (memories, preferences, progress, KV store,
 tool calls, chat messages) to a standalone SQLite file for backup or transfer.
 
-Reads from the PostgreSQL database via SQLAlchemy async queries and writes
+Reads from the application database via SQLAlchemy async queries and writes
 the results into a self-contained SQLite file that can be downloaded.
 """
 
@@ -136,16 +136,16 @@ async def _export_table(
     db: AsyncSession,
     conn: sqlite3.Connection,
     *,
-    pg_query: str,
-    pg_params: dict,
+    query: str,
+    params: dict,
     sqlite_table: str,
     columns: list[str],
 ) -> int:
-    """Run a PostgreSQL query and insert results into the SQLite table.
+    """Run a query and insert results into the SQLite table.
 
     Returns the number of rows exported.
     """
-    result = await db.execute(text(pg_query), pg_params)
+    result = await db.execute(text(query), params)
     rows = result.fetchall()
     if not rows:
         return 0
@@ -187,7 +187,7 @@ async def export_session_state(
     - chat_messages: recent chat history (via chat_sessions join)
 
     Args:
-        db: Async SQLAlchemy session connected to PostgreSQL.
+        db: Async SQLAlchemy session connected to the application database.
         user_id: The user whose data to export.
         course_id: Optional course filter. When provided, only data
                    associated with that course is exported.
@@ -217,7 +217,7 @@ async def export_session_state(
             n = await _export_table(
                 db,
                 sqlite_conn,
-                pg_query=f"""
+                query=f"""
                     SELECT id, user_id, course_id, memory_type, category,
                            summary, importance, access_count, source_message,
                            metadata_json, created_at, updated_at
@@ -225,7 +225,7 @@ async def export_session_state(
                     WHERE user_id = :user_id {course_frag}
                     ORDER BY created_at
                 """,
-                pg_params=params,
+                params=params,
                 sqlite_table="memories",
                 columns=[
                     "id", "user_id", "course_id", "memory_type", "category",
@@ -243,7 +243,7 @@ async def export_session_state(
             n = await _export_table(
                 db,
                 sqlite_conn,
-                pg_query=f"""
+                query=f"""
                     SELECT id, user_id, course_id, scope, scene_type,
                            dimension, value, source, confidence,
                            created_at, updated_at
@@ -251,7 +251,7 @@ async def export_session_state(
                     WHERE user_id = :user_id {course_frag}
                     ORDER BY created_at
                 """,
-                pg_params=params,
+                params=params,
                 sqlite_table="preferences",
                 columns=[
                     "id", "user_id", "course_id", "scope", "scene_type",
@@ -269,7 +269,7 @@ async def export_session_state(
             n = await _export_table(
                 db,
                 sqlite_conn,
-                pg_query=f"""
+                query=f"""
                     SELECT id, user_id, course_id, content_node_id,
                            status, mastery_score, time_spent_minutes,
                            review_count, quiz_attempts, quiz_correct,
@@ -281,7 +281,7 @@ async def export_session_state(
                     WHERE user_id = :user_id {course_frag}
                     ORDER BY created_at
                 """,
-                pg_params=params,
+                params=params,
                 sqlite_table="progress",
                 columns=[
                     "id", "user_id", "course_id", "content_node_id",
@@ -303,14 +303,14 @@ async def export_session_state(
             n = await _export_table(
                 db,
                 sqlite_conn,
-                pg_query=f"""
+                query=f"""
                     SELECT id, user_id, course_id, namespace, key,
                            value_json, version, created_at, updated_at
                     FROM agent_kv
                     WHERE user_id = :user_id {course_frag}
                     ORDER BY created_at
                 """,
-                pg_params=params,
+                params=params,
                 sqlite_table="kv_store",
                 columns=[
                     "id", "user_id", "course_id", "namespace", "key",
@@ -328,7 +328,7 @@ async def export_session_state(
             n = await _export_table(
                 db,
                 sqlite_conn,
-                pg_query=f"""
+                query=f"""
                     SELECT id, session_id, user_id, course_id,
                            agent_name, tool_name, status, error_message,
                            duration_ms, iteration, created_at
@@ -336,7 +336,7 @@ async def export_session_state(
                     WHERE user_id = :user_id {tool_call_course_frag}
                     ORDER BY created_at
                 """,
-                pg_params=params,
+                params=params,
                 sqlite_table="tool_calls",
                 columns=[
                     "id", "session_id", "user_id", "course_id",
@@ -361,7 +361,7 @@ async def export_session_state(
             n = await _export_table(
                 db,
                 sqlite_conn,
-                pg_query=f"""
+                query=f"""
                     SELECT cml.id, cml.session_id, cs.course_id,
                            cml.role, cml.content, cml.metadata_json,
                            cml.created_at
@@ -370,7 +370,7 @@ async def export_session_state(
                     WHERE cs.user_id = :user_id {chat_course_frag}
                     ORDER BY cml.created_at
                 """,
-                pg_params=chat_params,
+                params=chat_params,
                 sqlite_table="chat_messages",
                 columns=[
                     "id", "session_id", "course_id",

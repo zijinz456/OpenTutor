@@ -5,7 +5,7 @@ Simplified memory types (3 types):
 - knowledge:   About course content (concepts understood, questions asked)
 - plan:        About learning plans (deadlines, progress, goals)
 
-Uses pgvector for semantic similarity + PostgreSQL full-text search for BM25.
+Uses embedding + keyword fallback retrieval in SQLite local mode.
 """
 
 import uuid
@@ -76,8 +76,5 @@ class ConversationMemory(Base):
     )
 
 
-# GIN index for fast full-text search (PostgreSQL only; SQLite uses LIKE fallback)
-from database import is_sqlite
-
-if not is_sqlite():
-    Index("ix_mem_search_vector", ConversationMemory.search_vector, postgresql_using="gin")
+# Keep index for faster keyword fallback scans on local datasets.
+Index("ix_mem_search_vector", ConversationMemory.search_vector)

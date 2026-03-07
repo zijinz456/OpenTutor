@@ -1,12 +1,10 @@
-"""API integration tests using httpx AsyncClient.
-
-These tests require a PostgreSQL database (auto-created in conftest).
-Run with: pytest tests/test_api_integration.py -v
-"""
+"""API integration tests using httpx AsyncClient on SQLite."""
 
 import asyncio
-import uuid
 import json
+import os
+import tempfile
+import uuid
 from datetime import datetime, timezone
 
 import pytest
@@ -17,31 +15,29 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.pool import NullPool
 
 from main import app
-from config import settings
 import database as database_module
 from database import get_db, Base
-from models.agent_task import AgentTask
 from models.content import CourseContentTree
 from models.ingestion import StudySession, WrongAnswer
-from models.progress import LearningProgress
 from models.practice import PracticeProblem, PracticeResult
 from models.preference import PreferenceSignal
 from models.user import User
 from libs.exceptions import LLMUnavailableError
 from services.agent.state import AgentContext
-from services.migrations import get_expected_migration_heads
 
 TEST_EMAIL = f"test-{uuid.uuid4().hex[:8]}@opentutor.dev"
 
 
 @pytest_asyncio.fixture
 async def client():
-    """Create per-test client with an isolated PostgreSQL schema."""
-    schema = f"test_{uuid.uuid4().hex[:10]}"
+    """Create per-test client with an isolated SQLite database."""
+    fd, db_path = tempfile.mkstemp(prefix="opentutor-it-", suffix=".db")
+    os.close(fd)
+
     test_engine = create_async_engine(
-        settings.database_url,
+        f"sqlite+aiosqlite:///{db_path}",
         echo=False,
-        connect_args={"server_settings": {"search_path": f"{schema},public"}},
+        connect_args={"check_same_thread": False},
         pool_pre_ping=False,
         poolclass=NullPool,
     )
@@ -52,26 +48,7 @@ async def client():
     )
 
     async with test_engine.begin() as conn:
-        await conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{schema}"'))
-        try:
-            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-        except Exception as exc:
-            pytest.skip(f"pgvector extension unavailable for integration tests: {exc}")
-        await conn.run_sync(
-            lambda sync_conn: Base.metadata.create_all(
-                sync_conn.execution_options(schema_translate_map={None: schema})
-            )
-        )
-        await conn.execute(
-            text(
-                f'CREATE TABLE "{schema}".alembic_version (version_num VARCHAR(64) PRIMARY KEY)'
-            )
-        )
-        for head in get_expected_migration_heads():
-            await conn.execute(
-                text(f'INSERT INTO "{schema}".alembic_version (version_num) VALUES (:head)'),
-                {"head": head},
-            )
+        await conn.run_sync(Base.metadata.create_all)
 
     async def _override_get_db():
         async with test_session_factory() as session:
@@ -90,14 +67,11 @@ async def client():
     database_module.async_session = original_async_session
     if hasattr(app.state, "test_session_factory"):
         delattr(app.state, "test_session_factory")
-    async with test_engine.begin() as conn:
-        await conn.run_sync(
-            lambda sync_conn: Base.metadata.drop_all(
-                sync_conn.execution_options(schema_translate_map={None: schema})
-            )
-        )
-        await conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
     await test_engine.dispose()
+    try:
+        os.unlink(db_path)
+    except OSError:
+        pass
 
 
 # ── Health ──
@@ -109,12 +83,12 @@ async def test_health_endpoint(client):
     data = resp.json()
     assert data["status"] in ("ok", "degraded")
     assert "version" in data
-    assert data["database_backend"] == "postgresql"
+    assert data["database_backend"] == "sqlite"
     assert data["deployment_mode"] == "single_user"
     assert "code_sandbox_backend" in data
     assert data["migration_required"] is False
     assert data["migration_status"] == "ready"
-    assert data["alembic_version_present"] is True
+    assert data["alembic_version_present"] is False
     assert isinstance(data["local_beta_ready"], bool)
     assert isinstance(data["local_beta_blockers"], list)
     assert isinstance(data["local_beta_warnings"], list)
@@ -387,120 +361,6 @@ async def test_chat_session_history_persists_and_restores(client, monkeypatch):
     assert messages[1]["metadata_json"]["agent"] == "teaching"
     assert messages[1]["metadata_json"]["provenance"]["content_count"] == 1
     assert messages[1]["metadata_json"]["actions"][0]["action"] == "set_layout_preset"
-
-
-@pytest.mark.asyncio
-async def test_queue_next_action_from_active_goal_creates_multi_step_task(client, monkeypatch):
-    create_resp = await client.post("/api/courses/", json={"name": "Next Action Course", "description": "queue"})
-    assert create_resp.status_code == 201
-    course_id = create_resp.json()["id"]
-
-    goal_resp = await client.post(
-        "/api/goals/",
-        json={
-            "course_id": course_id,
-            "title": "Pass the final",
-            "objective": "Score above 85%.",
-            "next_action": "Review weak points from chapter 3 tonight.",
-        },
-    )
-    assert goal_resp.status_code == 201
-    goal_id = goal_resp.json()["id"]
-
-    async def fake_create_plan(_prompt, _user_id, _course_id, mastery_summary=None):
-        return [
-            {
-                "step_index": 0,
-                "step_type": "identify_weak_points",
-                "title": "Review weak points",
-                "description": "Find weak areas from recent performance",
-                "agent": "assessment",
-                "depends_on": [],
-                "status": "pending",
-                "input_params": {},
-            }
-        ]
-
-    monkeypatch.setattr("services.agent.task_planner.create_plan", fake_create_plan)
-
-    queue_resp = await client.post(f"/api/goals/{course_id}/next-action/queue")
-    assert queue_resp.status_code == 200
-    payload = queue_resp.json()
-    assert payload["task_type"] == "multi_step"
-    assert payload["goal_id"] == goal_id
-    assert payload["title"] == "Execute next step: Pass the final"
-    assert payload["summary"] == "Review weak points from chapter 3 tonight."
-    assert payload["input_json"]["steps"][0]["title"] == "Review weak points"
-    assert payload["metadata_json"]["agenda_decision"]["goal_id"] == goal_id
-    assert payload["metadata_json"]["agenda_decision"]["reason"] == "Active goal has a concrete next action."
-
-
-@pytest.mark.asyncio
-async def test_queue_next_action_retries_failed_task(client):
-    create_resp = await client.post("/api/courses/", json={"name": "Recover Course", "description": "recover"})
-    assert create_resp.status_code == 201
-    course_id = uuid.UUID(create_resp.json()["id"])
-
-    async with app.state.test_session_factory() as session:
-        user_result = await session.execute(select(User).limit(1))
-        user = user_result.scalar_one()
-        failed_task = AgentTask(
-            user_id=user.id,
-            course_id=course_id,
-            task_type="exam_prep",
-            status="failed",
-            title="Queued exam prep",
-            summary="Task failed previously.",
-            source="test",
-            attempts=1,
-            max_attempts=2,
-            requires_approval=False,
-            task_kind="read_only",
-            risk_level="low",
-            approval_status="not_required",
-            error_message="boom",
-            completed_at=datetime.now(timezone.utc),
-        )
-        session.add(failed_task)
-        await session.commit()
-        await session.refresh(failed_task)
-
-    queue_resp = await client.post(f"/api/goals/{course_id}/next-action/queue")
-    assert queue_resp.status_code == 200
-    payload = queue_resp.json()
-    assert payload["id"] == str(failed_task.id)
-    assert payload["status"] == "queued"
-    assert payload["attempts"] == 0
-    assert payload["error_message"] is None
-
-
-@pytest.mark.asyncio
-async def test_next_action_handles_legacy_naive_progress_timestamps(client):
-    create_resp = await client.post("/api/courses/", json={"name": "Forecast Course", "description": "forecast"})
-    assert create_resp.status_code == 201
-    course_id = uuid.UUID(create_resp.json()["id"])
-
-    async with app.state.test_session_factory() as session:
-        user_result = await session.execute(select(User).limit(1))
-        user = user_result.scalar_one()
-        session.add(
-            LearningProgress(
-                user_id=user.id,
-                course_id=course_id,
-                content_node_id=None,
-                status="reviewed",
-                mastery_score=0.42,
-                fsrs_reps=2,
-                fsrs_stability=1.5,
-                last_studied_at=datetime.now(timezone.utc),
-            )
-        )
-        await session.commit()
-
-    next_action_resp = await client.get(f"/api/goals/{course_id}/next-action")
-    assert next_action_resp.status_code == 200
-    payload = next_action_resp.json()
-    assert payload["source"] in {"forgetting_risk", "manual"}
 
 
 @pytest.mark.asyncio

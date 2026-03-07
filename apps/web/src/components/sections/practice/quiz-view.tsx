@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useT } from "@/lib/i18n-context";
 import {
   extractQuiz,
@@ -10,6 +10,7 @@ import {
   type AnswerResult,
 } from "@/lib/api";
 import { useWorkspaceStore } from "@/store/workspace";
+import type { BlockType } from "@/lib/block-system/types";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { AiFeatureBlocked } from "@/components/shared/ai-feature-blocked";
@@ -32,6 +33,7 @@ export function QuizView({ courseId, aiActionsEnabled = true }: QuizViewProps) {
   const [selectedOption, setSelectedOption] = useState<string | null>(null);
   const [result, setResult] = useState<AnswerResult | null>(null);
   const [score, setScore] = useState({ correct: 0, total: 0 });
+  const consecutiveWrongRef = useRef(0);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -85,6 +87,25 @@ export function QuizView({ courseId, aiActionsEnabled = true }: QuizViewProps) {
         practiceAttempts: ctx.practiceAttempts + 1,
         hasWrongAnswer: ctx.hasWrongAnswer || !res.is_correct,
       });
+      // Track consecutive wrong answers to surface wrong_answers block
+      if (!res.is_correct) {
+        consecutiveWrongRef.current += 1;
+        if (consecutiveWrongRef.current >= 3) {
+          const store = useWorkspaceStore.getState();
+          const blocks = store.spaceLayout.blocks;
+          const hasWrongAnswersBlock = blocks.some(b => b.type === "wrong_answers");
+          if (!hasWrongAnswersBlock) {
+            store.addBlock("wrong_answers", {}, "agent");
+          } else {
+            // Move wrong_answers to front by reordering
+            const wrongFirst = ["wrong_answers", ...blocks.filter(b => b.type !== "wrong_answers").map(b => b.type)];
+            store.reorderBlocks(wrongFirst as BlockType[]);
+          }
+          consecutiveWrongRef.current = 0;
+        }
+      } else {
+        consecutiveWrongRef.current = 0;
+      }
     } catch {
       setSelectedOption(null);
     } finally {

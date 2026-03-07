@@ -2,6 +2,7 @@
 
 import uuid
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -22,6 +23,13 @@ class CourseAutoScrapeSettings(BaseModel):
 class CourseMetadata(BaseModel):
     workspace_features: CourseWorkspaceFeatures | None = None
     auto_scrape: CourseAutoScrapeSettings | None = None
+    # Block layout persisted by frontend (/courses/{id}/layout endpoint)
+    spaceLayout: dict[str, Any] | None = None
+    # Optional explicit learning mode marker for dashboard fallback
+    learning_mode: str | None = None
+
+    # Preserve unknown metadata keys so frontend experiments don't get dropped.
+    model_config = {"extra": "allow"}
 
 
 class CourseCreate(BaseModel):

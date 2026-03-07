@@ -394,7 +394,7 @@ Same hues, adjusted lightness. Maintain oklch format throughout.
 - localStorage for block layout persistence (per course)
 
 ### Backend (Existing, No Changes Required for Phase 1)
-- FastAPI (Python 3.14), PostgreSQL, asyncpg + SQLAlchemy async
+- FastAPI (Python 3.11), SQLite (aiosqlite) + SQLAlchemy async
 - Multi-provider LLM router with circuit breaker
 - LOOM knowledge graph engine
 - LECTOR semantic spaced repetition

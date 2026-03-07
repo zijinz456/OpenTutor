@@ -37,8 +37,12 @@ export function BlockGrid({ courseId, aiActionsEnabled }: BlockGridProps) {
       >
         {visibleBlocks
           .sort((a, b) => a.position - b.position)
-          .map((block) => (
-            <div key={block.id} className={sizeToSpan(block.size, columns)}>
+          .map((block, index) => (
+            <div
+              key={block.id}
+              className={sizeToSpan(block.size, columns)}
+              style={{ animation: "block-appear 0.4s ease-out both", animationDelay: `${index * 100}ms` }}
+            >
               <BlockWrapper
                 block={block}
                 courseId={courseId}

@@ -19,7 +19,7 @@ dependencies = [
     "pydantic>=2.11.0,<3.0.0",
     "pydantic-settings>=2.7.0,<3.0.0",
 
-    # Database core (PostgreSQL and SQLite supported)
+    # Database core (SQLite local mode)
     "sqlalchemy[asyncio]>=2.0.30",
     "aiosqlite>=0.20.0",
 
@@ -48,16 +48,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-postgres = [
-    "asyncpg>=0.29.0",
-    "pgvector>=0.3.0",
-    "langgraph-checkpoint-postgres>=3.0.0",
-]
 cloud = [
     "anthropic>=0.40.0",
 ]
 full = [
-    "opentutor[postgres,cloud]",
+    "opentutor[cloud]",
     "crawl4ai>=0.4.0",
     "trafilatura>=2.0.0",
     "python-magic>=0.4.27",

@@ -1,6 +1,6 @@
-"""SQLite lite mode integration tests.
+"""SQLite local mode integration tests.
 
-Verify the full app works end-to-end with SQLite instead of PostgreSQL.
+Verify the full app works end-to-end with SQLite.
 Covers: table creation, health check, course CRUD, chat (mock LLM), search.
 
 NOTE: Must run in isolation — SQLAlchemy model classes bind to Base at import

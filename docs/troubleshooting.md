@@ -12,22 +12,14 @@ plugin, you can substitute that command in the examples below. The repo-local
 
 ### `docker compose up` fails with "port already in use"
 
-Another service is using port 5432 (PostgreSQL), 6379 (Redis), 8000 (API), or 3000 (Web).
+Another service is using port 6379 (Redis), 8000 (API), or 3001 (Web).
 
 ```bash
-# Find what's using the port (example: 5432)
-lsof -i :5432                              # macOS / Linux
-# ss -tlnp | grep 5432                     # Linux alternative
-# Get-NetTCPConnection -LocalPort 5432     # Windows (PowerShell)
-# netstat -ano | findstr :5432             # Windows (Command Prompt)
-
-# Option 1: Stop the conflicting service
-brew services stop postgresql@17           # macOS
-# sudo systemctl stop postgresql           # Linux (systemd)
-# Stop-Service postgresql-x64-17           # Windows (PowerShell, run as admin)
-
-# Option 2: Change the port mapping in docker-compose.yml
-# e.g., "5433:5432" to expose PostgreSQL on 5433 instead
+# Find what's using a port (example: 3001)
+lsof -i :3001                              # macOS / Linux
+# ss -tlnp | grep 3001                     # Linux alternative
+# Get-NetTCPConnection -LocalPort 3001     # Windows (PowerShell)
+# netstat -ano | findstr :3001             # Windows (Command Prompt)
 ```
 
 ### API container keeps restarting
@@ -39,8 +31,8 @@ docker compose logs api --tail 50
 ```
 
 **Common causes:**
-- Database not ready yet — wait 30 seconds and check again. The API depends on `db` being healthy.
-- Missing Alembic migration — the API runs `alembic upgrade head` on startup. If a migration file is missing or broken, it will fail.
+- SQLite file path permission issue (container cannot write database file).
+- `.env` has a non-SQLite `DATABASE_URL`, but local mode expects SQLite.
 
 ### Web container shows "ECONNREFUSED" or blank page
 
@@ -63,86 +55,48 @@ docker compose build --no-cache
 
 ---
 
-## Database Issues
+## Database Issues (SQLite local mode)
 
-### "connection refused" to PostgreSQL
+### API health says schema is missing
 
-```bash
-# Docker setup — check if db container is running
-docker compose ps db
-
-# Manual setup — check if PostgreSQL is running
-pg_isready -h localhost -p 5432
-
-# Start PostgreSQL
-brew services start postgresql@17          # macOS
-# sudo systemctl start postgresql          # Linux (systemd)
-# sudo service postgresql start            # Linux (SysV init)
-# Start-Service postgresql-x64-17          # Windows (PowerShell, run as admin)
-```
-
-### "database opentutor does not exist"
+For local mode, schema is created automatically at startup. If `GET /api/health` returns
+`"schema": "missing"`:
 
 ```bash
-# Docker setup — db is auto-created by the container. Try:
-docker compose down -v && docker compose up -d   # Warning: this deletes data
+# 1) Ensure local mode flags are correct
+bash scripts/check_local_mode.sh --env-file .env --skip-api
 
-# Manual setup — create the database manually:
-createdb -U opentutor opentutor
-# Or if using the default superuser:
-psql -U postgres -c "CREATE DATABASE opentutor OWNER opentutor;"
+# 2) Restart the stack
+bash scripts/dev_local.sh down
+bash scripts/dev_local.sh up --build
 ```
 
-### "extension vector does not exist"
-
-pgvector is not installed. See [pgvector-install.md](pgvector-install.md) for installation instructions.
-
-If using Docker, this should not happen — the `pgvector/pgvector:pg17` image includes the extension.
-
-### Alembic migration errors
+If you run host mode:
 
 ```bash
-# Check current migration state
-cd apps/api
-python -m alembic current
-
-# Try upgrading again
-python -m alembic upgrade head
-
-# If tables already exist but alembic_version is missing, stamp the current schema
-# after confirming the database matches the latest migrations.
-python -m alembic stamp head
+bash scripts/quickstart.sh
 ```
 
-### API health says schema is missing or migration is required
+### SQLite path or permission issue
 
-If `GET /api/health` returns `"schema": "missing"` or `"migration_required": true`, the
-database is reachable but the tables are either missing or not tracked by Alembic yet.
+Check your configured DB path:
 
 ```bash
-# Preferred repo-local command
-bash scripts/dev_local.sh migrate-host
-
-# Equivalent manual command
-cd apps/api
-python -m alembic upgrade head
+grep '^DATABASE_URL=' .env
 ```
 
-If health reports `"migration_status": "version_table_missing"`, the schema exists but the
-`alembic_version` table does not. In that case, verify the schema is current and then run:
+It should be empty or start with `sqlite`, for example:
 
-```bash
-cd apps/api
-python -m alembic stamp head
+```env
+DATABASE_URL=sqlite+aiosqlite:///~/.opentutor/data.db
 ```
 
-You can also run:
+If using Docker, the DB file is stored in the `sqlite_data` named volume.
 
-```bash
-bash scripts/dev_local.sh verify-host
-```
+### Unexpected non-SQLite database error in local mode
 
-This now fails with a direct migration hint instead of a generic stack error.
+This usually means a stale non-SQLite `DATABASE_URL` is still configured.
+Set it back to SQLite in `.env`, then restart the stack.
 
 ---
 
@@ -254,19 +208,19 @@ pyenv install 3.11
 pyenv local 3.11
 ```
 
-### pip install fails on psycopg / asyncpg
+### pip install fails on dependency build
 
-These packages need PostgreSQL client libraries:
+OpenTutor local mode is SQLite-only. Usually this means a system build toolchain issue:
 
 ```bash
 # macOS
-brew install postgresql@17
+xcode-select --install
 
 # Ubuntu
-sudo apt install libpq-dev
+sudo apt install build-essential python3-dev
 
-# Windows — ensure PostgreSQL bin directory is in your PATH
-# Typically: C:\Program Files\PostgreSQL\16\bin
+# Windows
+# Install "Microsoft C++ Build Tools" if wheels are unavailable
 ```
 
 ---
@@ -298,17 +252,14 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 powershell -ExecutionPolicy Bypass -File scripts\quickstart.ps1
 ```
 
-### PostgreSQL service won't start
+### SQLite file is locked or not writable (Windows)
 
 ```powershell
-# Check service status
-Get-Service postgresql*
+# Check current DB URL
+Select-String -Path .env -Pattern '^DATABASE_URL='
 
-# Start the service (run PowerShell as Administrator)
-Start-Service postgresql-x64-16
-
-# Or use pg_ctl directly
-pg_ctl -D "C:\Program Files\PostgreSQL\16\data" start
+# Ensure the parent directory exists and is writable
+New-Item -ItemType Directory -Force -Path "$HOME\\.opentutor" | Out-Null
 ```
 
 ### Docker Desktop: "docker.sock" not found

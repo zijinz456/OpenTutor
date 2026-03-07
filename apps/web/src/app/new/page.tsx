@@ -17,6 +17,8 @@ export default function NewProjectPage() {
       {(p.step === "mode" || p.step === "upload") && (
         <ContentUploadStep
           mode="both"
+          learningMode={p.learningMode}
+          onLearningModeChange={p.setLearningMode}
           projectName={p.projectName}
           onProjectNameChange={p.setProjectName}
           nameError={p.nameError}

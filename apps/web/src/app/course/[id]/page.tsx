@@ -1,14 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useCourseStore } from "@/store/course";
 import { useChatStore } from "@/store/chat";
 import { useWorkspaceStore } from "@/store/workspace";
-import { getHealthStatus, type ChatAction, type HealthStatus } from "@/lib/api";
+import { getHealthStatus, updateCourseLayout, type ChatAction, type HealthStatus } from "@/lib/api";
 import { ttlCache } from "@/lib/cache";
-import type { BlockType, LearningMode } from "@/lib/block-system/types";
-import { TEMPLATE_LIST } from "@/lib/block-system/templates";
+import type { BlockType, BlockSize, LearningMode } from "@/lib/block-system/types";
+import { TEMPLATE_LIST, buildLayoutFromMode } from "@/lib/block-system/templates";
+import { BLOCK_REGISTRY } from "@/lib/block-system/registry";
 import { WorkspaceHeader } from "@/components/shell/workspace-header";
 import { RuntimeAlert } from "@/components/shared/runtime-alert";
 import { IngestionProgress } from "@/components/shared/ingestion-progress";
@@ -16,16 +17,85 @@ import { ContinueLearningCta } from "@/components/course/continue-learning-cta";
 import { BlockGrid } from "@/components/blocks/block-grid";
 import { ChatFab } from "@/components/chat/chat-fab";
 import { ChatDrawer } from "@/components/chat/chat-drawer";
-import { incrementSessionCount, updateUnlockContext } from "@/lib/block-system/feature-unlock";
+import { SearchDialog } from "@/components/shared/search-dialog";
+import {
+  getUnlockContext,
+  incrementSessionCount,
+  isBlockUnlocked,
+  updateUnlockContext,
+} from "@/lib/block-system/feature-unlock";
 import { recordSessionVisit } from "@/lib/learner-persona";
+
+// Check for newly unlockable blocks and suggest them via agent insight
+function checkAndSuggestUnlockedBlocks(
+  courseId: string,
+  totalCourses: number,
+  mode: LearningMode | undefined,
+  aiActionsEnabled: boolean,
+) {
+  if (!aiActionsEnabled) return;
+  const ctx = { ...getUnlockContext(courseId, totalCourses), mode };
+  if ((ctx.sessionCount ?? 0) < 3) return; // Agent insights unlock after 3+ sessions
+
+  const store = useWorkspaceStore.getState();
+  const currentBlocks = store.spaceLayout.blocks;
+  const suggestedKey = `opentutor_suggested_unlocks_${courseId}`;
+
+  let alreadySuggested: string[] = [];
+  try {
+    const raw = localStorage.getItem(suggestedKey);
+    if (raw) alreadySuggested = JSON.parse(raw);
+  } catch { /* ignore */ }
+
+  const UNLOCK_SUGGESTIONS: Array<{ type: BlockType; message: string }> = [
+    { type: "knowledge_graph", message: "You now have enough content to generate your Knowledge Graph." },
+    { type: "wrong_answers", message: "Wrong Answers is now available to track recurring mistakes." },
+    { type: "forecast", message: "Forecast is now available to predict readiness and retention." },
+    { type: "plan", message: "Study Plan is now available to track deadlines and targets." },
+  ];
+
+  for (const suggestion of UNLOCK_SUGGESTIONS) {
+    if (!isBlockUnlocked(suggestion.type, ctx).unlocked) continue;
+    if (alreadySuggested.includes(suggestion.type)) continue;
+    if (currentBlocks.some((b) => b.type === suggestion.type)) continue;
+
+    const blockLabel = BLOCK_REGISTRY[suggestion.type]?.label ?? suggestion.type.replace(/_/g, " ");
+
+    // Add agent insight block suggesting this feature
+    store.agentAddBlock(
+      "agent_insight",
+      {
+        insightType: "feature_unlock",
+        suggestedBlockType: suggestion.type,
+        reason: suggestion.message,
+      },
+      {
+        reason: suggestion.message,
+        needsApproval: true,
+        dismissible: true,
+        approvalCta: `Add ${blockLabel}`,
+      },
+    );
+
+    // Mark as suggested so we don't re-suggest
+    alreadySuggested.push(suggestion.type);
+    try {
+      localStorage.setItem(suggestedKey, JSON.stringify(alreadySuggested));
+    } catch { /* ignore */ }
+
+    break; // Only suggest one at a time
+  }
+}
 
 export default function CoursePage() {
   const params = useParams();
+  const router = useRouter();
   const courseId = params.id as string;
   const [health, setHealth] = useState<HealthStatus | null>(
     () => ttlCache.get<HealthStatus>("course:health") ?? null,
   );
   const [chatOpen, setChatOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const blocksInitialized = useRef(false);
 
   const {
@@ -39,6 +109,7 @@ export default function CoursePage() {
   } = useCourseStore();
 
   const blocks = useWorkspaceStore((s) => s.spaceLayout.blocks);
+  const spaceMode = useWorkspaceStore((s) => s.spaceLayout.mode);
   const applyBlockTemplate = useWorkspaceStore((s) => s.applyBlockTemplate);
   const loadBlocks = useWorkspaceStore((s) => s.loadBlocks);
 
@@ -66,19 +137,39 @@ export default function CoursePage() {
         ttlCache.set("course:health", data, 30_000);
         setHealth(data);
       })
-      .catch(() => {});
+      .catch((e) => console.error("[Course] health check failed:", e));
+  }, []);
+
+  // Global search shortcut (Cmd+K / Ctrl+K)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        setSearchOpen((v) => !v);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
   // Track session for progressive complexity + learner persona
   useEffect(() => {
     incrementSessionCount(courseId);
     recordSessionVisit();
-    // Update source doc count from content tree
-    const tree = useCourseStore.getState().contentTree;
-    if (tree.length > 0) {
-      updateUnlockContext(courseId, { sourceDocCount: tree.length });
-    }
   }, [courseId]);
+
+  // Keep source doc count synced for feature unlock logic.
+  useEffect(() => {
+    if (!blocksInitialized.current) return;
+    if (courses.length === 0) return;
+
+    if (contentTree.length > 0) {
+      updateUnlockContext(courseId, { sourceDocCount: contentTree.length });
+    }
+    // After unlock context is updated, check for newly unlockable blocks
+    const llmReady = health?.llm_status !== "mock_fallback" && health?.llm_status !== "configuration_required";
+    checkAndSuggestUnlockedBlocks(courseId, courses.length, spaceMode, llmReady);
+  }, [courseId, contentTree.length, courses.length, spaceMode, health?.llm_status]);
 
   const course = activeCourse ?? courses.find((item) => item.id === courseId) ?? null;
   const aiActionsEnabled =
@@ -107,6 +198,13 @@ export default function CoursePage() {
         return;
       } catch { /* ignore */ }
     }
+
+    // Fall back to persisted learning mode in metadata (if present).
+    const savedMode = (course?.metadata as Record<string, unknown> | undefined)
+      ?.learning_mode as LearningMode | undefined;
+    if (savedMode) {
+      loadBlocks(buildLayoutFromMode(savedMode));
+    }
   }, [courseId, course, loadBlocks]);
 
   // Reset on courseId change
@@ -114,7 +212,7 @@ export default function CoursePage() {
     blocksInitialized.current = false;
   }, [courseId]);
 
-  // Persist blocks to localStorage (debounced)
+  // Persist blocks to localStorage + backend (debounced)
   const persistTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => {
     if (!blocksInitialized.current || blocks.length === 0) return;
@@ -122,36 +220,60 @@ export default function CoursePage() {
     persistTimer.current = setTimeout(() => {
       const layout = useWorkspaceStore.getState().spaceLayout;
       localStorage.setItem(`opentutor_blocks_${courseId}`, JSON.stringify(layout));
-    }, 1000);
+      updateCourseLayout(courseId, layout as unknown as Record<string, unknown>).catch((e) => console.error("[Course] layout persist failed:", e));
+    }, 2000);
     return () => clearTimeout(persistTimer.current);
   }, [blocks, courseId]);
 
   // Handle chat actions — including block manipulation
   const handleAction = useCallback((action: ChatAction) => {
     const store = useWorkspaceStore.getState();
+    const parseSize = (raw?: string): BlockSize | undefined =>
+      raw === "small" || raw === "medium" || raw === "large" || raw === "full"
+        ? raw
+        : undefined;
+    const normalizeTemplateId = (raw?: string): string | undefined =>
+      raw
+        ? raw.trim().toLowerCase().replace(/\s+/g, "_")
+        : undefined;
 
     if (action.action === "data_updated") {
       const section = action.value as string;
       if (section) store.triggerRefresh(section as "notes" | "practice" | "analytics" | "plan");
     } else if (action.action === "focus_topic") {
       const nodeId = action.value as string | undefined;
-      if (nodeId) store.setSelectedNodeId(nodeId);
+      if (nodeId) {
+        store.setSelectedNodeId(nodeId);
+        router.push(`/course/${courseId}/unit/${nodeId}`);
+      }
     } else if (action.action === "add_block") {
-      const [type] = (action.value ?? "").split(":");
-      if (type) store.addBlock(type as BlockType, {}, "agent");
+      // Supports both:
+      // [ACTION:add_block:flashcards:medium]
+      // [ACTION:add_block:flashcards] + optional extra=size
+      const [typeFromValue, inlineSize] = (action.value ?? "").split(":");
+      const type = typeFromValue as BlockType | undefined;
+      const size = parseSize(action.extra) ?? parseSize(inlineSize);
+      if (type) store.addBlock(type, {}, "agent", size);
     } else if (action.action === "remove_block") {
       if (action.value) store.removeBlockByType(action.value as BlockType);
     } else if (action.action === "reorder_blocks") {
       const types = (action.value ?? "").split(",").filter(Boolean) as BlockType[];
       if (types.length) store.reorderBlocks(types);
     } else if (action.action === "resize_block") {
+      // Supports both:
+      // [ACTION:resize_block:notes:large]
+      // [ACTION:resize_block:notes] + extra=large
+      const [typeFromValue, inlineSize] = (action.value ?? "").split(":");
+      const targetType = (typeFromValue || action.value) as BlockType | undefined;
+      const nextSize = parseSize(action.extra) ?? parseSize(inlineSize);
       const blocks = store.spaceLayout.blocks;
-      const target = blocks.find((b) => b.type === action.value);
-      if (target && action.extra) {
-        store.resizeBlock(target.id, action.extra as "small" | "medium" | "large" | "full");
+      const target = targetType ? blocks.find((b) => b.type === targetType) : undefined;
+      if (target && nextSize) {
+        store.resizeBlock(target.id, nextSize);
       }
     } else if (action.action === "apply_template") {
-      if (action.value) store.applyBlockTemplate(action.value);
+      const templateId = normalizeTemplateId(action.value);
+      if (templateId) store.applyBlockTemplate(templateId);
     } else if (action.action === "agent_insight") {
       store.agentAddBlock(
         "agent_insight",
@@ -160,7 +282,10 @@ export default function CoursePage() {
       );
     } else if (action.action === "set_learning_mode") {
       const mode = action.value as LearningMode;
-      if (mode) store.setLearningMode(mode);
+      if (mode) {
+        store.setLearningMode(mode);
+        updateUnlockContext(courseId, { mode });
+      }
     } else if (action.action === "suggest_mode") {
       const mode = action.value as LearningMode;
       if (mode) {
@@ -176,7 +301,7 @@ export default function CoursePage() {
         );
       }
     }
-  }, []);
+  }, [courseId, router]);
 
   useEffect(() => {
     useChatStore.getState().setOnAction(handleAction);
@@ -212,7 +337,7 @@ export default function CoursePage() {
             }
           }
         })
-        .catch(() => {});
+        .catch((e) => console.error("[Course] LECTOR review check failed:", e));
     });
   }, [course, courseId, aiActionsEnabled]);
 
@@ -261,8 +386,107 @@ export default function CoursePage() {
             }
           }
         })
-        .catch(() => {});
+        .catch((e) => console.error("[Course] mode check goals fetch failed:", e));
     });
+  }, [course, courseId, aiActionsEnabled]);
+
+  // Agent autonomy: suggest maintenance mode (exam passed or all mastered)
+  useEffect(() => {
+    if (!course || !aiActionsEnabled) return;
+    const maintenanceKey = `agent_maintenance_check_${courseId}`;
+    if (sessionStorage.getItem(maintenanceKey) === "true") return;
+    sessionStorage.setItem(maintenanceKey, "true");
+
+    const currentMode = useWorkspaceStore.getState().spaceLayout.mode as string | undefined;
+    if (currentMode === "maintenance") return;
+
+    // Check 1: Exam prep → maintenance when deadline has passed
+    if (currentMode === "exam_prep") {
+      import("@/lib/api/progress").then(({ listStudyGoals }) => {
+        listStudyGoals(courseId, "active")
+          .then((goals) => {
+            const now = Date.now();
+            const allPassed = goals.length > 0 && goals.every((g) => {
+              if (!g.target_date) return false;
+              return new Date(g.target_date).getTime() < now;
+            });
+            if (allPassed) {
+              const store = useWorkspaceStore.getState();
+              if (!store.spaceLayout.blocks.some((b) => b.config.insightType === "mode_suggestion")) {
+                store.agentAddBlock(
+                  "agent_insight",
+                  { insightType: "mode_suggestion", suggestedMode: "maintenance", reason: "Exam deadlines have passed" },
+                  { reason: "Your exam deadlines have passed. Switch to Maintenance mode to retain knowledge?", dismissible: true, needsApproval: true, approvalCta: "Switch to Maintenance" },
+                );
+              }
+            }
+          })
+          .catch((e) => console.error("[Course] exam deadline check failed:", e));
+      });
+    }
+
+    // Check 2: Self-paced/course_following → maintenance when mastery is high
+    if (currentMode === "self_paced" || currentMode === "course_following") {
+      import("@/lib/api/progress").then(({ getCourseProgress }) => {
+        getCourseProgress(courseId)
+          .then((progress) => {
+            const mastery = Math.round((progress?.average_mastery ?? 0) * 100);
+            if (mastery >= 85) {
+              const store = useWorkspaceStore.getState();
+              if (!store.spaceLayout.blocks.some((b) => b.config.insightType === "mode_suggestion")) {
+                store.agentAddBlock(
+                  "agent_insight",
+                  { insightType: "mode_suggestion", suggestedMode: "maintenance", reason: `Mastery at ${mastery}%` },
+                  { reason: `You've mastered ${mastery}% of concepts. Switch to Maintenance mode?`, dismissible: true, needsApproval: true, approvalCta: "Switch to Maintenance" },
+                );
+              }
+            }
+          })
+          .catch((e) => console.error("[Course] mastery check failed:", e));
+      });
+    }
+  }, [course, courseId, aiActionsEnabled]);
+
+  // Agent autonomy: suggest exam_prep when error rate is high + upcoming deadline (Tier 2)
+  useEffect(() => {
+    if (!course || !aiActionsEnabled) return;
+    const errRateKey = `agent_error_rate_check_${courseId}`;
+    if (sessionStorage.getItem(errRateKey) === "true") return;
+    sessionStorage.setItem(errRateKey, "true");
+
+    const currentMode = useWorkspaceStore.getState().spaceLayout.mode as string | undefined;
+    if (currentMode !== "course_following" && currentMode !== "self_paced") return;
+
+    Promise.all([
+      import("@/lib/api/progress").then(({ getCourseProgress }) => getCourseProgress(courseId)),
+      import("@/lib/api/progress").then(({ listStudyGoals }) => listStudyGoals(courseId, "active")),
+    ])
+      .then(([progress, goals]) => {
+        if (!progress) return;
+        const totalAttempts = progress.mastered + progress.reviewed + progress.in_progress;
+        const errorRate = totalAttempts > 10 ? (progress.in_progress / totalAttempts) : 0;
+        const hasUpcomingDeadline = goals.some((g: { target_date?: string | null }) => {
+          if (!g.target_date) return false;
+          const days = Math.ceil((new Date(g.target_date).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+          return days >= 0 && days <= 7;
+        });
+        if (errorRate > 0.4 && hasUpcomingDeadline) {
+          const store = useWorkspaceStore.getState();
+          if (!store.spaceLayout.blocks.some((b) => b.config.insightType === "mode_suggestion")) {
+            store.agentAddBlock(
+              "agent_insight",
+              { insightType: "mode_suggestion", suggestedMode: "exam_prep", reason: "High error rate with upcoming deadline" },
+              {
+                reason: "Your error rate is above 40% with a deadline approaching. Exam Prep mode focuses on weak spots.",
+                needsApproval: true,
+                dismissible: true,
+                approvalCta: "Switch to Exam Prep",
+              },
+            );
+          }
+        }
+      })
+      .catch((e) => console.error("[Course] error rate check failed:", e));
   }, [course, courseId, aiActionsEnabled]);
 
   // Consume init prompt if any
@@ -296,7 +520,7 @@ export default function CoursePage() {
 
     import("@/lib/api/chat").then(({ getChatGreeting }) => {
       getChatGreeting(courseId)
-        .then((result) => {
+        .then((result: { greeting: string; course_name: string; suggested_actions?: ChatAction[] }) => {
           const store = useChatStore.getState();
           const msgs = store.messagesByCourse[courseId] || [];
           if (msgs.length === 0) {
@@ -310,6 +534,12 @@ export default function CoursePage() {
               messagesByCourse: { ...s.messagesByCourse, [courseId]: [greetingMsg] },
               messages: s.activeCourseId === courseId ? [greetingMsg] : s.messages,
             }));
+          }
+          // Fire suggested actions from greeting
+          if (result.suggested_actions?.length) {
+            for (const action of result.suggested_actions) {
+              handleAction(action);
+            }
           }
         })
         .catch(() => {
@@ -332,7 +562,7 @@ export default function CoursePage() {
           }
         });
     });
-  }, [course, courseId]);
+  }, [course, courseId, handleAction]);
 
   const hasBlocks = blocks.length > 0;
 
@@ -342,7 +572,15 @@ export default function CoursePage() {
 
       <div className="px-4 pt-3 max-w-5xl mx-auto w-full space-y-2">
         <RuntimeAlert health={health} />
-        <IngestionProgress courseId={courseId} />
+        <IngestionProgress
+          courseId={courseId}
+          onIngestionComplete={() => {
+            const store = useWorkspaceStore.getState();
+            if (store.spaceLayout.blocks.length === 0) {
+              store.applyBlockTemplate("stem_student");
+            }
+          }}
+        />
       </div>
 
       <main className="flex-1 max-w-5xl mx-auto w-full px-4 py-6 space-y-6">
@@ -392,6 +630,9 @@ export default function CoursePage() {
       {/* Chat FAB + Drawer */}
       <ChatFab open={chatOpen} onToggle={() => setChatOpen((v) => !v)} />
       <ChatDrawer courseId={courseId} open={chatOpen} aiActionsEnabled={aiActionsEnabled} />
+
+      {/* Global search */}
+      <SearchDialog open={searchOpen} onClose={() => setSearchOpen(false)} courseId={courseId} />
     </div>
   );
 }

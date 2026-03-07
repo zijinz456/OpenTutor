@@ -6,7 +6,7 @@ WORKDIR /build
 ARG PYTHON_REQUIREMENTS=requirements-full.txt
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential libpq-dev \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements-core.txt requirements-full.txt requirements.txt ./
@@ -17,9 +17,9 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Runtime-only system deps (libpq for psycopg2, curl for healthcheck, docker CLI for sandbox)
+# Runtime-only system deps (curl for healthcheck, docker CLI for sandbox)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpq5 curl docker.io \
+    curl docker.io \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy installed Python packages from builder
@@ -38,4 +38,4 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:8000/api/health || exit 1
 
-CMD ["bash", "-lc", "alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port 8000"]
+CMD ["bash", "-lc", "uvicorn main:app --host 0.0.0.0 --port 8000"]

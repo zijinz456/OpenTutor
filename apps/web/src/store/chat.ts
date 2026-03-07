@@ -19,6 +19,7 @@ import {
   type ImageAttachment,
 } from "@/lib/api";
 import { ttlCache } from "@/lib/cache";
+import { useWorkspaceStore } from "@/store/workspace";
 
 /** TTL for cached chat session lists (per course). */
 const SESSIONS_TTL_MS = 30_000; // 30 seconds
@@ -289,6 +290,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         signal: controller.signal,
         images: options?.images,
         interrupt: wasInterrupted ? true : undefined,
+        learningMode: useWorkspaceStore.getState().spaceLayout?.mode,
       })) {
         if (event.type === "content") {
           set((s) => {

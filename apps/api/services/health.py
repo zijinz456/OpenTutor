@@ -31,10 +31,7 @@ def _default_migration_state() -> MigrationState:
 
 
 def _database_backend() -> str:
-    try:
-        return database_module.engine.url.get_backend_name()
-    except Exception:
-        return "sqlite" if database_module.is_sqlite() else "unknown"
+    return "sqlite"
 
 
 def _local_beta_readiness(

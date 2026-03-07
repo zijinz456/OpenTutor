@@ -8,7 +8,9 @@ import {
   markNotificationRead,
   markAllNotificationsRead,
   type AppNotification,
+  type ChatAction,
 } from "@/lib/api";
+import { useChatStore } from "@/store/chat";
 
 function timeAgo(iso: string | null): string {
   if (!iso) return "";
@@ -139,6 +141,23 @@ export function NotificationBell() {
                       <span className="text-[10px] text-muted-foreground/60 mt-0.5 block">
                         {timeAgo(n.created_at)}
                       </span>
+                      {n.category === "insight" && !!n.data?.action && (
+                        <button
+                          type="button"
+                          className="mt-1 text-[10px] font-medium text-primary hover:underline"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const onAction = useChatStore.getState().onAction;
+                            if (onAction) {
+                              onAction(n.data as unknown as ChatAction);
+                            }
+                            if (!n.read) void handleMarkRead(n.id);
+                            setOpen(false);
+                          }}
+                        >
+                          Show in workspace
+                        </button>
+                      )}
                     </div>
                   </div>
                 </button>

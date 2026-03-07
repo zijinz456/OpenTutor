@@ -1,7 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
 const useExistingServer = process.env.PLAYWRIGHT_USE_EXISTING_SERVER === "1";
-const frontendPort = Number(process.env.PLAYWRIGHT_FRONTEND_PORT || (useExistingServer ? "3000" : "3005"));
+const frontendPort = Number(process.env.PLAYWRIGHT_FRONTEND_PORT || (useExistingServer ? "3001" : "3005"));
 const backendPort = Number(process.env.PLAYWRIGHT_BACKEND_PORT || (useExistingServer ? "8000" : "8005"));
 const frontendBaseUrl = process.env.PLAYWRIGHT_BASE_URL || `http://127.0.0.1:${frontendPort}`;
 const apiBaseUrl = process.env.PLAYWRIGHT_API_URL || `http://127.0.0.1:${backendPort}/api`;

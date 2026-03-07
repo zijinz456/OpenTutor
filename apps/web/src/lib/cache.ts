@@ -73,35 +73,3 @@ class TtlCache {
 
 /** Singleton cache instance shared across all stores. */
 export const ttlCache = new TtlCache();
-
-/* ── Convenience: cached fetcher factory ──────────────────────────── */
-
-export interface CachedResult<T> {
-  data: T;
-  /** True when the returned data came from cache. */
-  fromCache: boolean;
-}
-
-/**
- * Create a thin wrapper around a fetcher that transparently caches results.
- *
- * ```ts
- * const fetchCourses = createCachedFetcher("courses", listCourseOverview, 60_000);
- * const { data, fromCache } = await fetchCourses();
- * ```
- */
-export function createCachedFetcher<T>(
-  key: string,
-  fetcher: () => Promise<T>,
-  ttlMs: number,
-): () => Promise<CachedResult<T>> {
-  return async () => {
-    const cached = ttlCache.get<T>(key);
-    if (cached !== undefined) {
-      return { data: cached, fromCache: true };
-    }
-    const data = await fetcher();
-    ttlCache.set(key, data, ttlMs);
-    return { data, fromCache: false };
-  };
-}

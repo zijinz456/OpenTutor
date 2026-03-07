@@ -22,7 +22,8 @@ def _parse_action_marker(marker: str) -> dict:
     if len(parts) >= 2:
         action_data["value"] = parts[1]
     if len(parts) >= 3:
-        action_data["extra"] = parts[2]
+        # Preserve additional colons in free-form text payloads.
+        action_data["extra"] = ":".join(parts[2:])
     return action_data
 
 

@@ -25,6 +25,9 @@ import { useT } from "@/lib/i18n-context";
 const PracticeSection = lazy(() =>
   import("@/components/sections/practice-section").then((m) => ({ default: m.PracticeSection })),
 );
+const GraphView = lazy(() =>
+  import("@/components/sections/analytics/graph-view").then((m) => ({ default: m.GraphView })),
+);
 
 function findNodeById(nodes: ContentNode[], nodeId: string): ContentNode | null {
   for (const node of nodes) {
@@ -151,7 +154,7 @@ export default function ChapterPage() {
   useEffect(() => {
     getHealthStatus()
       .then((data) => { ttlCache.set("course:health", data, 30_000); setHealth(data); })
-      .catch(() => {});
+      .catch((e) => console.error("[Node] health check failed:", e));
   }, []);
 
   // Fetch wrong answers and review data scoped to this node
@@ -175,7 +178,7 @@ export default function ChapterPage() {
         });
         setWrongAnswers((filtered.length > 0 ? filtered : items).slice(0, 10));
       })
-      .catch(() => {});
+      .catch((e) => console.error("[Node] wrong answers fetch failed:", e));
 
     getReviewSession(courseId)
       .then((session) => {
@@ -187,7 +190,7 @@ export default function ChapterPage() {
         });
         setReviewItems(filtered.length > 0 ? filtered : allItems);
       })
-      .catch(() => {});
+      .catch((e) => console.error("[Node] review session fetch failed:", e));
   }, [courseId, nodeId, contentTree]);
 
   // Register action handler
@@ -253,6 +256,16 @@ export default function ChapterPage() {
           </section>
         )}
 
+        {/* Knowledge Graph Sub-view */}
+        <section className="border-t border-border pt-8">
+          <h2 className="text-lg font-semibold mb-4">Related Concepts</h2>
+          <div className="rounded-xl border border-border bg-card overflow-hidden h-[300px]">
+            <Suspense fallback={<div className="p-4 text-sm text-muted-foreground animate-pulse">Loading graph...</div>}>
+              <GraphView courseId={courseId} />
+            </Suspense>
+          </div>
+        </section>
+
         {/* Related Chapters / Sub-sections */}
         {node.children && node.children.length > 0 && (
           <section className="border-t border-border pt-8">
@@ -261,7 +274,7 @@ export default function ChapterPage() {
               {node.children.map((child) => (
                 <a
                   key={child.id}
-                  href={`/course/${courseId}/${child.id}`}
+                  href={`/course/${courseId}/unit/${child.id}`}
                   className="flex items-center gap-3 p-3 rounded-lg border border-border hover:bg-accent/50 transition-colors text-sm"
                 >
                   <span className="text-foreground">{child.title}</span>

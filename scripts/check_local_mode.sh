@@ -17,6 +17,7 @@ Usage:
 Validates that OpenTutor is configured for the intended local-only deployment mode:
   - AUTH_ENABLED=false
   - DEPLOYMENT_MODE=single_user
+  - DATABASE_URL is unset/empty or starts with sqlite
 
 When the API is already running, the script also checks /api/health to confirm the
 effective runtime matches the local single-user configuration.
@@ -89,6 +90,7 @@ fi
 
 auth_enabled="$(normalize_bool "${AUTH_ENABLED:-false}")"
 deployment_mode="${DEPLOYMENT_MODE:-single_user}"
+database_url="${DATABASE_URL:-}"
 
 step "Checking local deployment mode"
 log "  ENV_FILE=${ENV_FILE}"
@@ -99,6 +101,10 @@ fi
 
 if [[ "${auth_enabled}" != "false" ]]; then
   fail "AUTH_ENABLED=${auth_enabled}. Local deployments must keep AUTH_ENABLED=false."
+fi
+
+if [[ -n "${database_url}" && "${database_url}" != sqlite* ]]; then
+  fail "DATABASE_URL=${database_url}. Local SQLite mode requires DATABASE_URL to be empty or start with sqlite."
 fi
 
 log "  PASS: .env is configured for single-user local deployment"
@@ -121,6 +127,7 @@ import sys
 data = json.loads(os.environ["HEALTH_JSON"])
 deployment_mode = data.get("deployment_mode")
 auth_enabled = bool(data.get("auth_enabled"))
+database_backend = data.get("database_backend")
 
 if deployment_mode != "single_user":
     raise SystemExit(
@@ -130,7 +137,12 @@ if deployment_mode != "single_user":
 if auth_enabled:
     raise SystemExit("Running API reports auth_enabled=true. Expected false for local deployment.")
 
-print("  PASS: running API also reports single-user local mode")
+if database_backend != "sqlite":
+    raise SystemExit(
+        f"Running API reports database_backend={database_backend!r}. Expected 'sqlite' in local mode."
+    )
+
+print("  PASS: running API also reports single-user local mode (sqlite backend)")
 PY
 else
   log "  SKIP: API health check skipped because ${API_BASE}/health is not reachable"

@@ -3,22 +3,19 @@
 Combines PageIndex tree search + vector similarity search using
 Reciprocal Rank Fusion: score = 1/(k + rank), k=60 (standard).
 
-Supports both PostgreSQL (pgvector + TSVECTOR) and SQLite (LIKE fallback).
-
 Reference:
 - spec Phase 1: RRF fusion ranking
 - PageIndex: tree-based reasoning search (98.7% accuracy on FinanceBench)
-- pgvector / sqlite-vec: cosine distance for semantic similarity
+- cosine distance for semantic similarity
 """
 
 import uuid
 import logging
 import re
 
-from sqlalchemy import select, func, text
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database import is_sqlite
 from models.content import CourseContentTree
 from services.search.compat import cosine_similarity
 
@@ -34,10 +31,6 @@ _ASCII_TERM_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_\-]{1,}")
 def rrf_score(rank: int) -> float:
     """Reciprocal Rank Fusion score: 1/(k + rank)."""
     return 1.0 / (RRF_K + rank)
-
-
-def _contains_cjk(text: str) -> bool:
-    return bool(_CJK_RE.search(text))
 
 
 def _normalize_text(text: str) -> str:
@@ -305,50 +298,14 @@ async def keyword_search(
     query: str,
     limit: int = 10,
 ) -> list[dict]:
-    """BM25-style keyword search.
-
-    PostgreSQL: Uses ts_rank_cd (cover density ranking) via TSVECTOR.
-    SQLite: Falls back to LIKE-based term matching.
-    """
-    # Try full-text search first (PostgreSQL only)
-    rows = []
-    if not is_sqlite() and not _contains_cjk(query):
-        result = await db.execute(
-            text("""
-                SELECT id, title, content, level,
-                       ts_rank_cd(search_vector, plainto_tsquery('simple', :query), 32) AS rank
-                FROM course_content_tree
-                WHERE course_id = :course_id
-                  AND search_vector IS NOT NULL
-                  AND search_vector @@ plainto_tsquery('simple', :query)
-                ORDER BY rank DESC
-                LIMIT :limit
-            """),
-            {"course_id": str(course_id), "query": query, "limit": limit},
-        )
-        rows = result.fetchall()
-
-    if rows:
-        return [
-            {
-                "id": str(row.id),
-                "title": row.title,
-                "content": (row.content or "")[:1500],
-                "level": row.level,
-                "parent_id": str(getattr(row, "parent_id", "") or ""),
-                "source_file": getattr(row, "source_file", None),
-                "score": float(row.rank),
-                "source": "bm25",
-            }
-            for row in rows
-        ]
-
-    # Fallback: LIKE-based search (SQLite default, PG fallback)
+    """Keyword search using LIKE-based term matching."""
     terms = _tokenize_query(query)
     for facet in decompose_search_query(query):
         for token in _tokenize_query(facet):
             if token not in terms:
                 terms.append(token)
+    if not terms:
+        return []
 
     from sqlalchemy import or_
     conditions = [
@@ -396,12 +353,7 @@ async def vector_search(
     query: str,
     limit: int = 10,
 ) -> list[dict]:
-    """Cosine similarity search on content tree embeddings.
-
-    PostgreSQL: Uses pgvector cosine_distance operator.
-    SQLite: Falls back to brute-force Python cosine similarity
-            (sufficient for small personal datasets).
-    """
+    """Cosine similarity search on content tree embeddings."""
     try:
         from services.embedding.registry import get_embedding_provider
         provider = get_embedding_provider()
@@ -410,78 +362,46 @@ async def vector_search(
         logger.debug(f"Embedding unavailable: {e}")
         return []
 
-    if is_sqlite():
-        # SQLite: no native vector ops — load all embeddings and compute in Python.
-        # This is fine for personal-scale datasets (< 10k nodes).
-        result = await db.execute(
-            select(CourseContentTree)
-            .where(
-                CourseContentTree.course_id == course_id,
-                CourseContentTree.embedding.isnot(None),
-            )
-        )
-        nodes = result.scalars().all()
-        if not nodes:
-            return []
-
-        import json
-
-        scored = []
-        for n in nodes:
-            emb = n.embedding
-            if isinstance(emb, str):
-                try:
-                    emb = json.loads(emb)
-                except Exception:
-                    continue
-            if not emb:
-                continue
-            sim = cosine_similarity(query_embedding, emb)
-            scored.append((n, sim))
-        scored.sort(key=lambda x: x[1], reverse=True)
-
-        return [
-            {
-                "id": str(n.id),
-                "title": n.title,
-                "content": (n.content or "")[:1500],
-                "level": n.level,
-                "parent_id": str(n.parent_id) if n.parent_id else None,
-                "source_file": n.source_file,
-                "score": sim,
-                "source": "vector",
-            }
-            for n, sim in scored[:limit]
-        ]
-
-    # PostgreSQL: use pgvector cosine distance
     result = await db.execute(
         select(CourseContentTree)
         .where(
             CourseContentTree.course_id == course_id,
             CourseContentTree.embedding.isnot(None),
         )
-        .order_by(CourseContentTree.embedding.cosine_distance(query_embedding))
-        .limit(limit)
     )
     nodes = result.scalars().all()
+    if not nodes:
+        return []
 
-    if nodes:
-        return [
-            {
-                "id": str(n.id),
-                "title": n.title,
-                "content": (n.content or "")[:1500],
-                "level": n.level,
-                "parent_id": str(n.parent_id) if n.parent_id else None,
-                "source_file": n.source_file,
-                "score": 1.0,
-                "source": "vector",
-            }
-            for n in nodes
-        ]
+    import json
 
-    return []
+    scored = []
+    for n in nodes:
+        emb = n.embedding
+        if isinstance(emb, str):
+            try:
+                emb = json.loads(emb)
+            except Exception:
+                continue
+        if not emb:
+            continue
+        sim = cosine_similarity(query_embedding, emb)
+        scored.append((n, sim))
+    scored.sort(key=lambda x: x[1], reverse=True)
+
+    return [
+        {
+            "id": str(n.id),
+            "title": n.title,
+            "content": (n.content or "")[:1500],
+            "level": n.level,
+            "parent_id": str(n.parent_id) if n.parent_id else None,
+            "source_file": n.source_file,
+            "score": sim,
+            "source": "vector",
+        }
+        for n, sim in scored[:limit]
+    ]
 
 
 async def tree_search(

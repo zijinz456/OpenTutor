@@ -8,7 +8,6 @@ from pathlib import Path
 
 import sqlalchemy as sa
 from alembic.config import Config
-from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 
 
@@ -74,54 +73,18 @@ def summarize_migration_state(
 
 
 def inspect_database_migrations(connection) -> MigrationState:
-    dialect = connection.dialect.name
-    if dialect == "sqlite":
-        # SQLite uses create_all(), not Alembic migrations.
-        # Check if schema exists via presence of core tables.
-        users_table = connection.execute(
-            sa.text("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
-        ).scalar()
-        return MigrationState(
-            migration_status="ready" if users_table else "schema_missing",
-            schema_ready=bool(users_table),
-            migration_required=False,  # SQLite never needs Alembic
-            alembic_version_present=False,
-            current_revisions=[],
-            expected_revisions=[],
-        )
-    else:
-        # PostgreSQL: use to_regclass for table existence
-        users_table = connection.execute(sa.text("SELECT to_regclass('users')")).scalar()
-        version_table = connection.execute(sa.text("SELECT to_regclass('alembic_version')")).scalar()
-    table_names = {
-        name
-        for name, present in (
-            ("users", users_table is not None),
-            ("alembic_version", version_table is not None),
-        )
-        if present
-    }
-    current_heads: tuple[str, ...] = ()
-
-    try:
-        if "alembic_version" in table_names:
-            context = MigrationContext.configure(connection)
-            current_heads = tuple(context.get_current_heads())
-        expected_heads = get_expected_migration_heads()
-    except Exception:
-        return MigrationState(
-            migration_status="inspection_error",
-            schema_ready=False,
-            migration_required=True,
-            alembic_version_present="alembic_version" in table_names,
-            current_revisions=sorted(set(current_heads)),
-            expected_revisions=[],
-        )
-
-    return summarize_migration_state(
-        table_names=table_names,
-        current_heads=current_heads,
-        expected_heads=expected_heads,
+    # SQLite uses create_all(), not Alembic migrations.
+    # Check if schema exists via presence of core tables.
+    users_table = connection.execute(
+        sa.text("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
+    ).scalar()
+    return MigrationState(
+        migration_status="ready" if users_table else "schema_missing",
+        schema_ready=bool(users_table),
+        migration_required=False,  # SQLite local mode never needs Alembic
+        alembic_version_present=False,
+        current_revisions=[],
+        expected_revisions=[],
     )
 
 

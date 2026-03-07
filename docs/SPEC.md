@@ -2,6 +2,8 @@
 
 > Generated: 2026-02-27
 > Scope: All code on the main branch (2 commits, ~12,110 LOC, 110+ source files)
+>
+> Note: This is a historical reverse-engineering snapshot. Current repository runtime is SQLite-only local mode.
 
 ---
 

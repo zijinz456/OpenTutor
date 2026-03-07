@@ -14,11 +14,10 @@ import re
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import select, text, func
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database import is_sqlite
-from models.memory import ConversationMemory, MEMCELL_TYPES
+from models.memory import ConversationMemory
 from services.search.compat import cosine_similarity, update_search_vector
 
 logger = logging.getLogger(__name__)
@@ -257,8 +256,8 @@ async def retrieve_memories(
 ) -> list[dict]:
     """Stage 3: Hybrid BM25 + Vector retrieval with RRF fusion.
 
-    - BM25 keyword search via PostgreSQL ts_rank (weight 0.3)
-    - Vector cosine similarity via pgvector (weight 0.7)
+    - Keyword retrieval via lightweight BM25-style fallback (weight 0.3)
+    - Vector cosine similarity in Python (weight 0.7)
     - RRF fusion ranking
     - minScore filtering (0.35 threshold)
     """
@@ -315,93 +314,46 @@ async def _vector_memory_search(
     if not query_embedding:
         return []
 
-    if is_sqlite():
-        base_query = (
-            select(ConversationMemory)
-            .where(
-                ConversationMemory.user_id == user_id,
-                ConversationMemory.embedding.isnot(None),
-                ConversationMemory.dismissed_at.is_(None),
-            )
+    base_query = (
+        select(ConversationMemory)
+        .where(
+            ConversationMemory.user_id == user_id,
+            ConversationMemory.embedding.isnot(None),
+            ConversationMemory.dismissed_at.is_(None),
         )
-        if course_id:
-            base_query = base_query.where(ConversationMemory.course_id == course_id)
-        if memory_types:
-            base_query = base_query.where(ConversationMemory.memory_type.in_(memory_types))
-
-        result = await db.execute(base_query)
-        memories = result.scalars().all()
-
-        scored = []
-        for mem in memories:
-            emb = mem.embedding
-            if isinstance(emb, str):
-                try:
-                    emb = json.loads(emb)
-                except (json.JSONDecodeError, TypeError):
-                    continue
-            if not emb:
-                continue
-            sim = _cosine_similarity(query_embedding, emb)
-            if sim > 0.3:
-                scored.append({
-                    "id": str(mem.id),
-                    "summary": mem.summary,
-                    "memory_type": mem.memory_type,
-                    "importance": mem.importance,
-                    "similarity": sim,
-                    "category": mem.category,
-                    "created_at": mem.created_at.isoformat(),
-                    "source": "vector",
-                })
-        scored.sort(key=lambda x: x["similarity"], reverse=True)
-        return scored[:limit]
-
-    # PostgreSQL: pgvector cosine distance
-    params = {
-        "embedding": str(query_embedding),
-        "user_id": str(user_id),
-        "limit": limit,
-    }
-    filters = [
-        "user_id = :user_id",
-        "embedding IS NOT NULL",
-        "dismissed_at IS NULL",
-    ]
-    if course_id:
-        filters.append("course_id = :course_id")
-        params["course_id"] = str(course_id)
-    if memory_types:
-        filters.append("memory_type = ANY(:types)")
-        params["types"] = memory_types
-
-    result = await db.execute(
-        text(f"""
-            SELECT id, summary, memory_type, importance, access_count, created_at, category,
-                   1 - (embedding <=> :embedding::vector) as similarity
-            FROM conversation_memories
-            WHERE {" AND ".join(filters)}
-            ORDER BY embedding <=> :embedding::vector
-            LIMIT :limit
-        """),
-        params,
     )
-    rows = result.fetchall()
+    if course_id:
+        base_query = base_query.where(ConversationMemory.course_id == course_id)
+    if memory_types:
+        base_query = base_query.where(ConversationMemory.memory_type.in_(memory_types))
 
-    return [
-        {
-            "id": str(row.id),
-            "summary": row.summary,
-            "memory_type": row.memory_type,
-            "importance": row.importance,
-            "similarity": row.similarity,
-            "category": row.category,
-            "created_at": row.created_at.isoformat(),
-            "source": "vector",
-        }
-        for row in rows
-        if row.similarity > 0.3
-    ]
+    result = await db.execute(base_query)
+    memories = result.scalars().all()
+
+    scored = []
+    for mem in memories:
+        emb = mem.embedding
+        if isinstance(emb, str):
+            try:
+                emb = json.loads(emb)
+            except (json.JSONDecodeError, TypeError):
+                continue
+        if not emb:
+            continue
+        sim = _cosine_similarity(query_embedding, emb)
+        if sim > 0.3:
+            scored.append({
+                "id": str(mem.id),
+                "summary": mem.summary,
+                "memory_type": mem.memory_type,
+                "importance": mem.importance,
+                "similarity": sim,
+                "category": mem.category,
+                "created_at": mem.created_at.isoformat(),
+                "source": "vector",
+            })
+    scored.sort(key=lambda x: x["similarity"], reverse=True)
+    return scored[:limit]
 
 
 async def _bm25_memory_search(
@@ -413,54 +365,7 @@ async def _bm25_memory_search(
     memory_types: list[str] | None,
 ) -> list[dict]:
     """BM25 keyword search on memory content."""
-    if not is_sqlite():
-        params = {
-            "user_id": str(user_id),
-            "query": query,
-            "limit": limit,
-        }
-        filters = [
-            "user_id = :user_id",
-            "search_vector IS NOT NULL",
-            "dismissed_at IS NULL",
-            "search_vector @@ plainto_tsquery('simple', :query)",
-        ]
-        if course_id:
-            filters.append("course_id = :course_id")
-            params["course_id"] = str(course_id)
-        if memory_types:
-            filters.append("memory_type = ANY(:types)")
-            params["types"] = memory_types
-
-        result = await db.execute(
-            text(f"""
-                SELECT id, summary, memory_type, importance, access_count, created_at, category,
-                       ts_rank_cd(search_vector, plainto_tsquery('simple', :query), 32) AS rank
-                FROM conversation_memories
-                WHERE {" AND ".join(filters)}
-                ORDER BY rank DESC
-                LIMIT :limit
-            """),
-            params,
-        )
-        rows = result.fetchall()
-
-        if rows:
-            return [
-                {
-                    "id": str(row.id),
-                    "summary": row.summary,
-                    "memory_type": row.memory_type,
-                    "importance": row.importance,
-                    "bm25_rank": float(row.rank),
-                    "category": row.category,
-                    "created_at": row.created_at.isoformat(),
-                    "source": "bm25",
-                }
-                for row in rows
-            ]
-
-    # Fallback (SQLite always, PG when no FTS matches): simple keyword matching
+    # SQLite mode: simple keyword matching fallback
     search_words = query.lower().split()[:5]
     base_query = (
         select(ConversationMemory)

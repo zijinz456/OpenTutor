@@ -44,7 +44,7 @@ fi
 # Python 3.11
 PY_BIN="$(resolve_python_bin || true)"
 if [[ -z "${PY_BIN}" ]]; then
-  fail "Python not found. OpenTutor requires Python 3.11. Install: $(install_hint python)"
+  fail "Python not found. OpenTutor requires Python 3.11. Install: https://www.python.org/downloads/"
 fi
 
 require_python_311 "${PY_BIN}"

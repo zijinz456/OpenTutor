@@ -70,6 +70,8 @@ function SetupInner() {
             <TemplateStep
               selectedTemplate={s.selectedTemplate}
               onSelect={s.setSelectedTemplate}
+              selectedMode={s.selectedMode}
+              onModeSelect={s.setSelectedMode}
               onConfirm={s.confirmTemplate}
               onBack={() => s.setStep("content")}
               t={s.t}

@@ -102,9 +102,7 @@ export function RuntimeStatusSection({
                 {t("settings.databaseBackend")}:{" "}
                 {databaseBackend === "sqlite"
                   ? t("settings.databaseBackendSqlite")
-                  : databaseBackend === "postgresql"
-                    ? t("settings.databaseBackendPostgres")
-                    : databaseBackend}
+                  : databaseBackend}
               </Badge>
             </div>
             <div className="flex items-center gap-2">

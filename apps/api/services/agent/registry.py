@@ -45,6 +45,7 @@ def build_agent_context(
     tab_context: dict | None = None,
     scene: str | None = None,
     images: list[dict] | None = None,
+    learning_mode: str | None = None,
 ) -> AgentContext:
     """Create a normalized AgentContext for chat or workflow entry points."""
     ctx = AgentContext(
@@ -57,6 +58,7 @@ def build_agent_context(
         active_tab=active_tab,
         tab_context=tab_context or {},
         images=images or [],
+        learning_mode=learning_mode,
     )
     if scene:
         ctx.scene = scene

@@ -24,7 +24,6 @@ from datetime import datetime, timezone
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database import is_sqlite
 from services.llm.router import get_llm_client
 from services.search.compat import cosine_similarity as _cosine
 
@@ -32,66 +31,37 @@ logger = logging.getLogger(__name__)
 
 
 async def _find_similar_memory(db, user_id, embedding) -> dict | None:
-    """Find the most similar knowledge memory by embedding.
-
-    PostgreSQL: uses pgvector <=> operator.
-    SQLite: loads embeddings and computes cosine similarity in Python.
-    """
+    """Find the most similar knowledge memory by embedding."""
     from models.memory import ConversationMemory
 
-    if is_sqlite():
-        result = await db.execute(
-            select(ConversationMemory).where(
-                ConversationMemory.user_id == user_id,
-                ConversationMemory.memory_type == "knowledge",
-                ConversationMemory.embedding.isnot(None),
-            )
-        )
-        memories = result.scalars().all()
-
-        best, best_sim = None, 0.0
-        for mem in memories:
-            emb = mem.embedding
-            if isinstance(emb, str):
-                try:
-                    emb = json.loads(emb)
-                except (json.JSONDecodeError, TypeError):
-                    continue
-            if not emb:
-                continue
-            sim = _cosine(embedding, emb)
-            if sim > best_sim:
-                best, best_sim = mem, sim
-        if best:
-            return {
-                "id": str(best.id),
-                "summary": best.summary,
-                "metadata_json": best.metadata_json,
-                "similarity": best_sim,
-            }
-        return None
-
-    # PostgreSQL: pgvector cosine distance
     result = await db.execute(
-        text("""
-            SELECT id, summary, metadata_json,
-                   1 - (embedding <=> :embedding::vector) as similarity
-            FROM conversation_memories
-            WHERE user_id = :user_id
-              AND memory_type = 'knowledge'
-              AND embedding IS NOT NULL
-            ORDER BY embedding <=> :embedding::vector
-            LIMIT 1
-        """),
-        {"embedding": str(embedding), "user_id": str(user_id)},
+        select(ConversationMemory).where(
+            ConversationMemory.user_id == user_id,
+            ConversationMemory.memory_type == "knowledge",
+            ConversationMemory.embedding.isnot(None),
+        )
     )
-    row = result.fetchone()
-    if row:
+    memories = result.scalars().all()
+
+    best, best_sim = None, 0.0
+    for mem in memories:
+        emb = mem.embedding
+        if isinstance(emb, str):
+            try:
+                emb = json.loads(emb)
+            except (json.JSONDecodeError, TypeError):
+                continue
+        if not emb:
+            continue
+        sim = _cosine(embedding, emb)
+        if sim > best_sim:
+            best, best_sim = mem, sim
+    if best:
         return {
-            "id": str(row.id),
-            "summary": row.summary,
-            "metadata_json": row.metadata_json,
-            "similarity": row.similarity,
+            "id": str(best.id),
+            "summary": best.summary,
+            "metadata_json": best.metadata_json,
+            "similarity": best_sim,
         }
     return None
 
@@ -197,7 +167,7 @@ async def extract_graph_entities(
         return {"entities": [], "relationships": []}
 
 
-# ── Graph Storage (PostgreSQL JSONB-based, upgradeable to Neo4j) ──
+# ── Graph Storage (JSON-based, upgradeable to graph DB) ──
 
 async def store_graph_entities(
     db: AsyncSession,
@@ -207,11 +177,10 @@ async def store_graph_entities(
 ) -> dict:
     """Store extracted entities and relationships in the knowledge graph.
 
-    Uses PostgreSQL JSONB for now (mem0 pattern: supports multiple backends).
     The existing knowledge graph (CourseContentTree → edges) represents static structure.
     This stores dynamic, student-specific graph data alongside it.
 
-    Storage approach: JSONB in a dedicated table with embedding for similarity search.
+    Storage approach: JSON in a dedicated table with embedding for similarity search.
     Can be upgraded to Neo4j/Kuzu following mem0's graph_store pattern.
     """
     from models.memory import ConversationMemory

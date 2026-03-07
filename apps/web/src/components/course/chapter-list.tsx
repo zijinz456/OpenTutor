@@ -15,7 +15,7 @@ function ChapterCard({ courseId, node }: { courseId: string; node: ContentNode }
 
   return (
     <Link
-      href={`/course/${courseId}/${node.id}`}
+      href={`/course/${courseId}/unit/${node.id}`}
       className="group flex items-center gap-4 p-4 rounded-xl border border-border bg-card hover:bg-accent/50 hover:border-accent transition-colors"
     >
       <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-muted shrink-0">
