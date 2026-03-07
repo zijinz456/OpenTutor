@@ -2,8 +2,7 @@
 
 All learning activities should flow through this module to ensure:
 1. Persistent storage in ``learning_events`` table.
-2. Pluggy hook dispatch (``on_learning_event``) for plugin reactions.
-3. Future: BKT mastery update, FSRS scheduling refresh, analytics cache.
+2. Future: BKT mastery update, FSRS scheduling refresh, analytics cache.
 
 Usage::
 

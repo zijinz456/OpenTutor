@@ -269,9 +269,7 @@ class ToolRegistry:
 
     Supports registration from multiple sources:
     - Built-in education tools
-    - Python plugins (plugins/ directory)
     - YAML declarative tools (config/tools/)
-    - MCP Server tools (config/mcp_servers.yaml)
 
     Later registrations override earlier ones (user tools > built-in).
     """
