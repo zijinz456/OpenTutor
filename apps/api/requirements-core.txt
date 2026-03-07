@@ -48,6 +48,9 @@ python-jose[cryptography]>=3.3.0
 # YAML parsing
 pyyaml>=6.0
 
+# Observability
+structlog>=24.4.0
+
 # Utilities
 tenacity==9.0.0
 httpx==0.28.1

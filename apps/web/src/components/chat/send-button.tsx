@@ -26,10 +26,11 @@ export function SendButton({
         type="button"
         variant="destructive"
         size="icon-xs"
-        className="mb-0.5"
+        className="mb-0.5 rounded-full"
         data-testid="chat-stop"
         onClick={onStop}
         title="Stop generating"
+        aria-label="Stop generating"
       >
         <Square className="size-3" />
       </Button>
@@ -41,11 +42,12 @@ export function SendButton({
       type="button"
       variant="default"
       size="icon-xs"
-      className="mb-0.5"
+      className="mb-0.5 rounded-full"
       data-testid="chat-send"
       onClick={onSend}
       disabled={!canSend}
       title="Send message"
+      aria-label="Send message"
     >
       <SendHorizontal className="size-3.5" />
     </Button>

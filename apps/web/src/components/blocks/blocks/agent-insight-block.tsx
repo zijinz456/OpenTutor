@@ -7,6 +7,7 @@ import { useWorkspaceStore } from "@/store/workspace";
 import type { BlockComponentProps } from "@/lib/block-system/registry";
 import type { BlockType, LearningMode } from "@/lib/block-system/types";
 import { updateUnlockContext } from "@/lib/block-system/feature-unlock";
+import { logAgentDecision } from "@/lib/api";
 import { useT } from "@/lib/i18n-context";
 
 const MODE_ICONS: Record<string, typeof GraduationCap> = {
@@ -87,6 +88,19 @@ export default function AgentInsightBlock({ courseId, blockId, config }: BlockCo
     if (insightType === "review_needed") {
       router.push(`/course/${courseId}/review`);
     } else if (insightType === "mode_suggestion" && suggestedMode) {
+      void logAgentDecision({
+        course_id: courseId,
+        action: "apply_mode_suggestion_direct",
+        title: t("mode.switch"),
+        reason,
+        decision_type: "mode_suggestion",
+        source: "agent_insight_block",
+        top_signal_type: "manual_override",
+        metadata_json: {
+          suggested_mode: suggestedMode,
+          signals: suggestionSignals,
+        },
+      }).catch(() => undefined);
       setLearningMode(suggestedMode);
       updateUnlockContext(courseId, { mode: suggestedMode });
       dismissAgentBlock(blockId);
@@ -99,7 +113,7 @@ export default function AgentInsightBlock({ courseId, blockId, config }: BlockCo
     } else if (insightType === "feature_unlock") {
       const blockType = config.suggestedBlockType as string | undefined;
       if (blockType) {
-        addBlock(blockType as BlockType, {}, "user");
+        addBlock(blockType as BlockType, {}, "agent");
         dismissAgentBlock(blockId);
       }
     }
@@ -133,8 +147,8 @@ export default function AgentInsightBlock({ courseId, blockId, config }: BlockCo
       : undefined;
 
   return (
-    <div className="flex items-center gap-4 p-4">
-      <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-brand-muted shrink-0">
+    <div className="flex items-center gap-4 p-4 bg-brand-muted/20 rounded-2xl">
+      <div className="flex items-center justify-center w-10 h-10 rounded-2xl bg-brand-muted shrink-0">
         <ModeIcon className="size-5 text-brand" />
       </div>
 
@@ -160,7 +174,7 @@ export default function AgentInsightBlock({ courseId, blockId, config }: BlockCo
       {ctaLabel && !needsApproval && (
         <button
           onClick={handleCta}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-brand-foreground bg-brand rounded-lg hover:opacity-90 transition-opacity shrink-0"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-brand-foreground bg-brand rounded-xl hover:opacity-90 transition-opacity shrink-0"
         >
           {ctaLabel}
           <ArrowRight className="size-3.5" />

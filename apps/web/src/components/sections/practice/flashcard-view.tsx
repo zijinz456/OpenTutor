@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useT } from "@/lib/i18n-context";
 import {
   generateFlashcards,
@@ -45,10 +45,18 @@ export function FlashcardView({
   const [index, setIndex] = useState(0);
   const [flipped, setFlipped] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reviewError, setReviewError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [reviewed, setReviewed] = useState(0);
   const [dueCount, setDueCount] = useState(0);
   const [useLector, setUseLector] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
+
+  // Swipe gesture refs (handlers defined after handleRate)
+  const cardRef = useRef<HTMLDivElement>(null);
+  const swipeState = useRef<{ startX: number; currentX: number } | null>(null);
+  const [swipeOffset, setSwipeOffset] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -86,6 +94,7 @@ export function FlashcardView({
           if (!cancelled) {
             setCards([]);
             setDueCount(0);
+            setLoadError(t("flashcard.loadFailed"));
           }
         }
       } finally {
@@ -98,7 +107,7 @@ export function FlashcardView({
     return () => {
       cancelled = true;
     };
-  }, [courseId, refreshKey]);
+  }, [courseId, refreshKey, retryCount]);
 
   const handleGenerate = useCallback(async () => {
     setLoading(true);
@@ -139,7 +148,8 @@ export function FlashcardView({
       try {
         await reviewFlashcard(card, value);
       } catch {
-        // best-effort
+        setReviewError(t("flashcard.reviewFailed"));
+        setTimeout(() => setReviewError(null), 3000);
       }
       setSubmitting(false);
       setFlipped(false);
@@ -148,6 +158,36 @@ export function FlashcardView({
     },
     [cards, index, submitting],
   );
+
+  // Swipe gesture handlers (must be after handleRate)
+  const SWIPE_THRESHOLD = 80;
+
+  const handleCardPointerDown = useCallback((e: React.PointerEvent) => {
+    if (!flipped) return; // Only swipe when answer is visible
+    swipeState.current = { startX: e.clientX, currentX: e.clientX };
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+  }, [flipped]);
+
+  const handleCardPointerMove = useCallback((e: React.PointerEvent) => {
+    if (!swipeState.current) return;
+    swipeState.current.currentX = e.clientX;
+    const dx = e.clientX - swipeState.current.startX;
+    setSwipeOffset(dx);
+  }, []);
+
+  const handleCardPointerUp = useCallback(() => {
+    if (!swipeState.current) return;
+    const dx = swipeState.current.currentX - swipeState.current.startX;
+    swipeState.current = null;
+    setSwipeOffset(0);
+    if (dx > SWIPE_THRESHOLD) {
+      // Swipe right = correct (rating 3 "Good")
+      void handleRate(3);
+    } else if (dx < -SWIPE_THRESHOLD) {
+      // Swipe left = wrong (rating 1 "Again")
+      void handleRate(1);
+    }
+  }, [handleRate]);
 
   if (loading) {
     return (
@@ -166,13 +206,25 @@ export function FlashcardView({
           </Badge>
         ) : null}
         <h3 className="text-sm font-medium mb-1">{t("flashcard.title")}</h3>
-        <p className="text-xs text-muted-foreground max-w-xs">
-          {t("flashcard.empty")}
-        </p>
-        {!aiActionsEnabled ? <AiFeatureBlocked compact className="mt-3 w-full max-w-sm text-left" /> : null}
-        <Button className="mt-3" size="sm" onClick={() => void handleGenerate()} disabled={!aiActionsEnabled}>
-          {t("flashcard.generate")}
-        </Button>
+        {loadError ? (
+          <div className="text-center space-y-2">
+            <p className="text-sm text-destructive">{loadError}</p>
+            <button type="button" onClick={() => { setLoadError(null); setLoading(true); setRetryCount((c) => c + 1); }}
+              className="text-xs text-brand hover:underline">
+              {t("common.retry")}
+            </button>
+          </div>
+        ) : (
+          <>
+            <p className="text-xs text-muted-foreground max-w-xs">
+              {t("flashcard.empty")}
+            </p>
+            {!aiActionsEnabled ? <AiFeatureBlocked compact className="mt-3 w-full max-w-sm text-left" /> : null}
+            <Button className="mt-3" size="sm" onClick={() => void handleGenerate()} disabled={!aiActionsEnabled}>
+              {t("flashcard.generate")}
+            </Button>
+          </>
+        )}
       </div>
     );
   }
@@ -226,21 +278,33 @@ export function FlashcardView({
       </div>
 
       <div
-        className="flashcard-perspective w-full max-w-md cursor-pointer"
+        ref={cardRef}
+        className="flashcard-perspective w-full max-w-md cursor-pointer touch-none"
         onClick={handleFlip}
         role="button"
         tabIndex={0}
+        aria-label={flipped ? "Flashcard showing answer. Press Enter or Space to show question." : "Flashcard showing question. Press Enter or Space to reveal answer."}
         onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") handleFlip();
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            handleFlip();
+          }
+        }}
+        onPointerDown={handleCardPointerDown}
+        onPointerMove={handleCardPointerMove}
+        onPointerUp={handleCardPointerUp}
+        style={{
+          transform: swipeOffset ? `translateX(${swipeOffset}px) rotate(${swipeOffset * 0.05}deg)` : undefined,
+          transition: swipeOffset ? "none" : "transform 0.3s ease",
         }}
       >
         <div className={`flashcard-inner relative w-full min-h-[200px] ${flipped ? "flipped" : ""}`}>
-          <div className="flashcard-face absolute inset-0 flex flex-col items-center justify-center rounded-lg border border-border bg-card p-6 text-center">
+          <div className="flashcard-face absolute inset-0 flex flex-col items-center justify-center rounded-2xl card-shadow bg-card p-6 text-center">
             <p className="text-xs text-muted-foreground mb-2">Question</p>
             <p className="text-sm font-medium whitespace-pre-wrap">{card.front}</p>
           </div>
 
-          <div className="flashcard-back absolute inset-0 flex flex-col items-center justify-center rounded-lg border border-border bg-card p-6 text-center">
+          <div className="flashcard-back absolute inset-0 flex flex-col items-center justify-center rounded-2xl card-shadow bg-card p-6 text-center">
             <p className="text-xs text-muted-foreground mb-2">Answer</p>
             <p className="text-sm font-medium whitespace-pre-wrap">{card.back}</p>
           </div>
@@ -266,6 +330,9 @@ export function FlashcardView({
             </Button>
           ))}
         </div>
+      )}
+      {reviewError && (
+        <p className="text-xs text-warning-foreground text-center mt-2">{reviewError}</p>
       )}
     </div>
   );

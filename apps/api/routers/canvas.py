@@ -4,8 +4,11 @@ Keeps legacy `/api/canvas/*` endpoints available while delegating to the
 new scrape/session pipeline.
 """
 
+import logging
 from urllib.parse import urlparse
 from datetime import datetime, timezone
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends
 from libs.exceptions import PermissionDeniedError, ValidationError
@@ -126,13 +129,10 @@ async def canvas_browser_login(
     session cookies are saved for subsequent authenticated scraping.
     """
     import asyncio
-    import logging
 
     from playwright.async_api import async_playwright
     from routers.scrape import _default_session_name
     from services.browser.session_manager import SessionManager
-
-    logger = logging.getLogger(__name__)
 
     canvas_url = str(body.canvas_url).rstrip("/")
     domain = urlparse(canvas_url).netloc
@@ -163,6 +163,7 @@ async def canvas_browser_login(
             try:
                 current_url = page.url.lower()
             except Exception:
+                logger.debug("Browser closed during Canvas login polling")
                 break  # browser was closed by user
 
             parsed = urlparse(current_url)

@@ -235,7 +235,7 @@ async def apply_verifier(ctx: AgentContext, agent: BaseAgent) -> AgentContext:
         ctx = await verify_and_repair(ctx, agent)
         ctx.metadata["verifier_replaced"] = ctx.response != original_response
     except Exception as exc:
-        logger.warning("Verifier failed (non-critical): %s", exc)
+        logger.exception("Verifier failed (non-critical): %s", exc)
     return ctx
 
 
@@ -257,5 +257,5 @@ async def apply_reflection(ctx: AgentContext) -> AgentContext:
             and ctx.metadata.get("reflection", {}).get("improved")
         )
     except Exception as exc:
-        logger.warning("Reflection failed (non-critical): %s", exc)
+        logger.exception("Reflection failed (non-critical): %s", exc)
     return ctx

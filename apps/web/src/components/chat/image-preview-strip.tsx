@@ -17,7 +17,7 @@ export function ImagePreviewStrip({ images, onRemove }: ImagePreviewStripProps) 
   if (images.length === 0) return null;
 
   return (
-    <div className="mb-2 flex gap-2 overflow-x-auto pb-1">
+    <div className="mb-2 flex gap-2 overflow-x-auto scrollbar-thin pb-1">
       {images.map((img, i) => (
         <div
           key={`${img.filename ?? "img"}-${i}`}
@@ -29,7 +29,7 @@ export function ImagePreviewStrip({ images, onRemove }: ImagePreviewStripProps) 
             width={64}
             height={64}
             unoptimized
-            className="h-16 w-16 rounded-md object-cover border"
+            className="h-16 w-16 rounded-xl object-cover border border-border/60"
           />
           <button
             type="button"

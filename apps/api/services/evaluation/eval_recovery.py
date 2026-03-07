@@ -8,11 +8,14 @@ Tests the system's ability to handle failures gracefully:
 
 from __future__ import annotations
 
+import logging
 import uuid
 from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import select, update
+
+logger = logging.getLogger(__name__)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.agent_task import AgentTask
@@ -89,6 +92,7 @@ async def eval_task_retry(
             },
         )
     except Exception as exc:
+        logger.exception("Recovery eval task_retry failed for task %s", task_id)
         return RecoveryTestResult(
             name="task_retry",
             passed=False,
@@ -193,6 +197,7 @@ async def run_recovery_evaluation(
             result = await eval_fn()
             results.append(result)
         except Exception as exc:
+            logger.exception("Recovery evaluation '%s' failed", name)
             results.append(RecoveryTestResult(
                 name=name,
                 passed=False,

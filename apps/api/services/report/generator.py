@@ -216,7 +216,7 @@ async def generate_daily_brief(
             json.dumps(data, default=str),
         )
     except Exception as e:
-        logger.warning("Daily brief LLM failed: %s", e)
+        logger.exception("Daily brief LLM call failed")
         report_text = _format_fallback_report(data, "daily")
 
     now = datetime.now(timezone.utc)
@@ -232,7 +232,7 @@ async def generate_daily_brief(
             data_snapshot=data,
         )
     except Exception as e:
-        logger.warning("Failed to persist daily brief: %s", e)
+        logger.exception("Failed to persist daily brief")
         if raise_on_persist_failure:
             raise
 
@@ -263,7 +263,7 @@ async def generate_weekly_report(
             json.dumps(data, default=str),
         )
     except Exception as e:
-        logger.warning("Weekly report LLM failed: %s", e)
+        logger.exception("Weekly report LLM call failed")
         report_text = _format_fallback_report(data, "weekly")
 
     now = datetime.now(timezone.utc)
@@ -279,7 +279,7 @@ async def generate_weekly_report(
             data_snapshot=data,
         )
     except Exception as e:
-        logger.warning("Failed to persist weekly report: %s", e)
+        logger.exception("Failed to persist weekly report")
         if raise_on_persist_failure:
             raise
 

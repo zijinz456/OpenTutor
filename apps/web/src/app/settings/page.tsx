@@ -87,20 +87,20 @@ export default function SettingsPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      <header className="border-b border-border px-6 py-3 flex items-center gap-3">
+      <header className="border-b border-border/60 px-6 py-4 flex items-center gap-3 glass sticky top-0 z-10">
         <button
           type="button"
           onClick={() => router.push("/")}
-          className="text-sm text-muted-foreground hover:text-foreground"
+          className="text-sm text-muted-foreground hover:text-foreground transition-colors"
         >
           &larr; {t("settings.back")}
         </button>
-        <h1 className="text-lg font-semibold text-foreground">
+        <h1 className="text-lg font-bold text-foreground">
           {t("nav.settings")}
         </h1>
       </header>
 
-      <div className="max-w-4xl mx-auto p-6 space-y-8">
+      <div className="max-w-4xl mx-auto p-6 md:p-10 space-y-8">
         <RuntimeAlert health={health} />
 
         <RuntimeStatusSection

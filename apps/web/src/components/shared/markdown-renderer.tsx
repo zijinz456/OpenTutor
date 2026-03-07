@@ -62,7 +62,7 @@ export function MarkdownRenderer({
 
             if (language) {
               return (
-                <pre className="my-2 overflow-x-auto rounded-md bg-muted p-3 text-sm">
+                <pre className="my-2 overflow-x-auto rounded-xl bg-muted/30 p-3.5 text-sm">
                   <code className={codeClassName} {...props}>
                     {children}
                   </code>
@@ -71,7 +71,7 @@ export function MarkdownRenderer({
             }
 
             return (
-              <code className="rounded bg-muted px-1 py-0.5 text-sm" {...props}>
+              <code className="rounded-md bg-muted/30 px-1 py-0.5 text-sm" {...props}>
                 {children}
               </code>
             );
@@ -79,7 +79,7 @@ export function MarkdownRenderer({
           table({ children }) {
             return (
               <div className="my-4 overflow-x-auto">
-                <table className="w-full border-collapse border border-border text-sm">
+                <table className="w-full border-collapse border border-border/60 text-sm">
                   {children}
                 </table>
               </div>
@@ -87,13 +87,13 @@ export function MarkdownRenderer({
           },
           th({ children }) {
             return (
-              <th className="border border-border bg-muted px-3 py-2 text-left font-medium">
+              <th className="border border-border/60 bg-muted/30 px-3 py-2 text-left font-medium">
                 {children}
               </th>
             );
           },
           td({ children }) {
-            return <td className="border border-border px-3 py-2">{children}</td>;
+            return <td className="border border-border/60 px-3 py-2">{children}</td>;
           },
         }}
       >

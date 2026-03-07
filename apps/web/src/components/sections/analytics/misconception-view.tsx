@@ -47,7 +47,7 @@ function MisconceptionCard({ item, rank }: { item: MisconceptionItem; rank: numb
 
   return (
     <div
-      className="rounded-md border border-border bg-card p-3 space-y-2 cursor-pointer hover:bg-accent/50 transition-colors"
+      className="rounded-2xl card-shadow bg-card p-3.5 space-y-2 cursor-pointer hover:bg-accent/50 transition-colors"
       onClick={() => setExpanded(!expanded)}
       data-testid={`misconception-card-${rank}`}
     >
@@ -88,7 +88,7 @@ function MisconceptionCard({ item, rank }: { item: MisconceptionItem; rank: numb
       </div>
 
       {expanded && item.sample_questions.length > 0 ? (
-        <div className="mt-2 space-y-2 border-t border-border pt-2">
+        <div className="mt-2 space-y-2 border-t border-border/60 pt-2">
           <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
             Sample errors
           </span>
@@ -185,17 +185,17 @@ export function MisconceptionView({ courseId }: MisconceptionViewProps) {
 
       {/* Summary cards */}
       <div className="grid grid-cols-3 gap-2">
-        <div className="rounded-md border border-border bg-card p-2.5 flex flex-col gap-0.5">
+        <div className="rounded-2xl card-shadow bg-card p-3 flex flex-col gap-0.5">
           <span className="text-[10px] text-muted-foreground uppercase tracking-wide">Active</span>
-          <span className="text-lg font-semibold tabular-nums">{summary.total_active_errors}</span>
+          <span className="text-xl font-semibold tabular-nums">{summary.total_active_errors}</span>
         </div>
-        <div className="rounded-md border border-border bg-card p-2.5 flex flex-col gap-0.5">
+        <div className="rounded-2xl card-shadow bg-card p-3 flex flex-col gap-0.5">
           <span className="text-[10px] text-muted-foreground uppercase tracking-wide">Resolved</span>
-          <span className="text-lg font-semibold tabular-nums">{summary.total_resolved}</span>
+          <span className="text-xl font-semibold tabular-nums">{summary.total_resolved}</span>
         </div>
-        <div className="rounded-md border border-border bg-card p-2.5 flex flex-col gap-0.5">
+        <div className="rounded-2xl card-shadow bg-card p-3 flex flex-col gap-0.5">
           <span className="text-[10px] text-muted-foreground uppercase tracking-wide">Rate</span>
-          <span className="text-lg font-semibold tabular-nums">{summary.resolution_rate}%</span>
+          <span className="text-xl font-semibold tabular-nums">{summary.resolution_rate}%</span>
         </div>
       </div>
 

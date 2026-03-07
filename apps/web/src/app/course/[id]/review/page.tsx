@@ -9,12 +9,15 @@ import {
   type ReviewItem,
   type ReviewSession,
 } from "@/lib/api/progress";
+import { useT, useTF } from "@/lib/i18n-context";
 
 type Rating = "again" | "hard" | "good" | "easy";
 
 export default function ReviewPage() {
   const params = useParams();
   const router = useRouter();
+  const t = useT();
+  const tf = useTF();
   const courseId = params.id as string;
 
   const [sessionByCourse, setSessionByCourse] = useState<Record<string, ReviewSession>>({});
@@ -35,17 +38,17 @@ export default function ReviewPage() {
         if (cancelled) return;
         setSessionByCourse((prev) => ({ ...prev, [courseId]: data }));
         if (data.items.length === 0) {
-          setErrorByCourse((prev) => ({ ...prev, [courseId]: "No items to review right now." }));
+          setErrorByCourse((prev) => ({ ...prev, [courseId]: t("review.noItems") }));
         }
       })
       .catch(() => {
         if (cancelled) return;
-        setErrorByCourse((prev) => ({ ...prev, [courseId]: "Failed to load review session." }));
+        setErrorByCourse((prev) => ({ ...prev, [courseId]: t("review.loadFailed") }));
       });
     return () => {
       cancelled = true;
     };
-  }, [courseId, errorByCourse, sessionByCourse]);
+  }, [courseId, errorByCourse, sessionByCourse, t]);
 
   const items = session?.items ?? [];
   const current = items[currentIndex] as ReviewItem | undefined;
@@ -85,7 +88,7 @@ export default function ReviewPage() {
   if (loading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
-        <p className="text-muted-foreground animate-pulse">Loading review session...</p>
+        <p className="text-muted-foreground animate-pulse">{t("review.loading")}</p>
       </div>
     );
   }
@@ -93,13 +96,13 @@ export default function ReviewPage() {
   if (error || !session) {
     return (
       <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-4">
-        <p className="text-muted-foreground">{error || "No review data available."}</p>
+        <p className="text-muted-foreground">{error || t("review.noData")}</p>
         <button
           type="button"
           onClick={goBack}
           className="text-sm text-brand hover:underline"
         >
-          Back to course
+          {t("review.backToCourse")}
         </button>
       </div>
     );
@@ -109,16 +112,16 @@ export default function ReviewPage() {
     return (
       <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-6">
         <CheckCircle2 className="size-16 text-success" />
-        <h1 className="text-2xl font-bold text-foreground">Review Complete</h1>
+        <h1 className="text-2xl font-bold text-foreground">{t("review.complete")}</h1>
         <p className="text-muted-foreground text-center max-w-md">
-          You reviewed {total} concept{total !== 1 ? "s" : ""}. Keep it up!
+          {tf("review.completeMessage", { count: total })}
         </p>
         <button
           type="button"
           onClick={goBack}
-          className="px-6 py-2.5 rounded-lg bg-brand text-brand-foreground font-medium hover:opacity-90 transition-opacity"
+          className="px-6 py-2.5 rounded-full bg-brand text-brand-foreground font-medium hover:opacity-90 transition-opacity"
         >
-          Back to course
+          {t("review.backToCourse")}
         </button>
       </div>
     );
@@ -127,14 +130,14 @@ export default function ReviewPage() {
   return (
     <div className="min-h-screen bg-background flex flex-col">
       {/* Header */}
-      <header className="border-b border-border px-4 py-3 flex items-center gap-4">
+      <header className="border-b border-border/60 px-4 py-3 flex items-center gap-4 glass">
         <button type="button" onClick={goBack} className="text-muted-foreground hover:text-foreground transition-colors">
           <ArrowLeft className="size-5" />
         </button>
-        <h1 className="text-sm font-semibold text-foreground">Review Session</h1>
+        <h1 className="text-sm font-semibold text-foreground">{t("review.sessionTitle")}</h1>
         <div className="flex-1" />
         <span className="text-xs text-muted-foreground">
-          {reviewed} / {total} reviewed
+          {tf("review.reviewed", { reviewed, total })}
         </span>
       </header>
 
@@ -159,12 +162,12 @@ export default function ReviewPage() {
                   setCurrentIndex((i) => Math.max(0, i - 1));
                 }}
                 disabled={currentIndex === 0}
-                className="p-2 rounded-lg hover:bg-muted disabled:opacity-30 transition-colors"
+                className="p-2 rounded-xl hover:bg-muted disabled:opacity-30 transition-colors"
               >
                 <ChevronLeft className="size-5" />
               </button>
               <span className="text-sm text-muted-foreground">
-                {currentIndex + 1} of {total}
+                {tf("review.of", { current: currentIndex + 1, total })}
               </span>
               <button
                 type="button"
@@ -173,14 +176,14 @@ export default function ReviewPage() {
                   setCurrentIndex((i) => Math.min(total - 1, i + 1));
                 }}
                 disabled={currentIndex === total - 1}
-                className="p-2 rounded-lg hover:bg-muted disabled:opacity-30 transition-colors"
+                className="p-2 rounded-xl hover:bg-muted disabled:opacity-30 transition-colors"
               >
                 <ChevronRight className="size-5" />
               </button>
             </div>
 
             {/* Card */}
-            <div className="rounded-2xl border border-border bg-card p-8 text-center space-y-4 min-h-[240px] flex flex-col items-center justify-center">
+            <div className="rounded-2xl bg-card card-shadow p-8 text-center space-y-4 min-h-[240px] flex flex-col items-center justify-center">
               <h2 className="text-xl font-semibold text-foreground">
                 {current.concept_label}
               </h2>
@@ -190,10 +193,10 @@ export default function ReviewPage() {
                   {current.urgency}
                 </span>
                 <span className="text-xs text-muted-foreground">
-                  Mastery: {Math.round(current.mastery * 100)}%
+                  {tf("review.mastery", { value: Math.round(current.mastery * 100) })}
                 </span>
                 <span className="text-xs text-muted-foreground">
-                  Stability: {current.stability_days.toFixed(1)}d
+                  {tf("review.stability", { value: current.stability_days.toFixed(1) })}
                 </span>
               </div>
 
@@ -201,16 +204,16 @@ export default function ReviewPage() {
                 <button
                   type="button"
                   onClick={() => setRevealed(true)}
-                  className="mt-4 px-5 py-2 rounded-lg bg-brand text-brand-foreground text-sm font-medium hover:opacity-90 transition-opacity"
+                  className="mt-4 px-5 py-2 rounded-full bg-brand text-brand-foreground text-sm font-medium hover:opacity-90 transition-opacity"
                 >
-                  Show Details
+                  {t("review.showDetails")}
                 </button>
               ) : (
                 <div className="mt-4 space-y-2 text-sm text-muted-foreground">
-                  <p>Retrievability: {Math.round(current.retrievability * 100)}%</p>
-                  {current.cluster && <p>Cluster: {current.cluster}</p>}
+                  <p>{tf("review.retrievability", { value: Math.round(current.retrievability * 100) })}</p>
+                  {current.cluster && <p>{tf("review.cluster", { value: current.cluster })}</p>}
                   {current.last_reviewed && (
-                    <p>Last reviewed: {new Date(current.last_reviewed).toLocaleDateString()}</p>
+                    <p>{tf("review.lastReviewed", { value: new Date(current.last_reviewed).toLocaleDateString() })}</p>
                   )}
                 </div>
               )}
@@ -221,19 +224,19 @@ export default function ReviewPage() {
               <div className="grid grid-cols-4 gap-2">
                 {(
                   [
-                    { key: "again", label: "Again", color: "bg-destructive/10 text-destructive hover:bg-destructive/20" },
-                    { key: "hard", label: "Hard", color: "bg-warning-muted text-warning-foreground hover:bg-warning-muted/80" },
-                    { key: "good", label: "Good", color: "bg-success-muted text-success hover:bg-success-muted/80" },
-                    { key: "easy", label: "Easy", color: "bg-brand-muted text-brand hover:bg-brand-muted/80" },
+                    { key: "again", labelKey: "review.again", color: "bg-destructive/10 text-destructive hover:bg-destructive/20" },
+                    { key: "hard", labelKey: "review.hard", color: "bg-warning-muted text-warning-foreground hover:bg-warning-muted/80" },
+                    { key: "good", labelKey: "review.good", color: "bg-success-muted text-success hover:bg-success-muted/80" },
+                    { key: "easy", labelKey: "review.easy", color: "bg-brand-muted text-brand hover:bg-brand-muted/80" },
                   ] as const
-                ).map(({ key, label, color }) => (
+                ).map(({ key, labelKey, color }) => (
                   <button
                     type="button"
                     key={key}
                     onClick={() => handleRate(key)}
-                    className={`py-2.5 rounded-lg text-sm font-medium transition-colors ${color}`}
+                    className={`py-2.5 rounded-xl text-sm font-medium transition-colors ${color}`}
                   >
-                    {label}
+                    {t(labelKey)}
                   </button>
                 ))}
               </div>
@@ -242,7 +245,7 @@ export default function ReviewPage() {
             {/* Already rated indicator */}
             {ratings.has(current.concept_id) && (
               <p className="text-xs text-center text-success">
-                Rated: {ratings.get(current.concept_id)}
+                {tf("review.rated", { value: ratings.get(current.concept_id)! })}
               </p>
             )}
           </div>

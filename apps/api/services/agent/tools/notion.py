@@ -142,5 +142,5 @@ class ExportNotionTool(Tool):
         except ImportError:
             return ToolResult(success=False, output="", error="notion-client package is not installed.")
         except Exception as e:
-            logger.error("Notion export failed: %s", e)
+            logger.exception("Notion export failed: %s", e)
             return ToolResult(success=False, output="", error=f"Notion export failed: {e}")

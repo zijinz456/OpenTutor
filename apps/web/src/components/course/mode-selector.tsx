@@ -86,7 +86,7 @@ export function ModeSelector({ onModeChange }: ModeSelectorProps) {
       <button
         type="button"
         onClick={() => { setOpen((v) => !v); setConfirming(null); }}
-        className="flex items-center gap-1 rounded-md px-2 py-1 text-xs hover:bg-muted transition-colors"
+        className="flex items-center gap-1 rounded-full px-2.5 py-1 text-xs hover:bg-muted/50 transition-colors"
         title={t("mode.title")}
       >
         {currentMode ? (
@@ -106,11 +106,12 @@ export function ModeSelector({ onModeChange }: ModeSelectorProps) {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full mt-1 z-50 w-[280px] rounded-lg border border-border bg-popover p-1.5 shadow-lg">
+        <div className="absolute right-0 top-full mt-1 z-50 w-[280px] rounded-2xl bg-popover p-1.5 card-shadow animate-fade-in">
           <div className="px-2 py-1.5 mb-1">
             <p className="text-xs font-semibold text-foreground">{t("mode.title")}</p>
             <p className="text-[10px] text-muted-foreground">{t("mode.description")}</p>
           </div>
+          <div role="tablist" aria-label="Learning modes">
           {LEARNING_MODE_LIST.map((m) => {
             const Icon = MODE_ICONS[m.id];
             const isActive = m.id === currentMode;
@@ -119,14 +120,16 @@ export function ModeSelector({ onModeChange }: ModeSelectorProps) {
               <button
                 type="button"
                 key={m.id}
+                role="tab"
+                aria-selected={isActive}
                 onClick={() => handleSelect(m.id)}
-                className={`flex w-full items-start gap-2.5 rounded-md px-2 py-2 text-left transition-colors ${
+                className={`flex w-full items-start gap-2.5 rounded-xl px-2 py-2 text-left transition-colors ${
                   isActive
-                    ? "bg-primary/10 ring-1 ring-primary/20"
-                    : "hover:bg-muted"
+                    ? "bg-muted/30 ring-1 ring-primary/20"
+                    : "hover:bg-muted/50"
                 }`}
               >
-                <div className={`mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md ${MODE_BG_COLORS[m.id]}`}>
+                <div className={`mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-xl ${MODE_BG_COLORS[m.id]}`}>
                   <Icon className={`size-3.5 ${MODE_COLORS[m.id]}`} />
                 </div>
                 <div className="flex-1 min-w-0">
@@ -145,6 +148,7 @@ export function ModeSelector({ onModeChange }: ModeSelectorProps) {
               </button>
             );
           })}
+          </div>
         </div>
       )}
     </div>

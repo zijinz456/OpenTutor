@@ -18,6 +18,17 @@ async def test_regression_benchmark_runs_offline_suites_without_optional_inputs(
     assert response_suite["details"]["fixture_source"] == "default"
 
 
+@pytest.mark.asyncio
+async def test_regression_benchmark_strict_mode_fails_when_retrieval_or_recovery_is_skipped():
+    result = await run_regression_benchmark(strict=True)
+
+    assert result["strict"] is True
+    assert result["passed"] is False
+    assert {"retrieval", "recovery"} <= set(result["failed_suites"])
+    strict_failures = {entry["suite"] for entry in result["strict_failures"]}
+    assert {"retrieval", "recovery"} <= strict_failures
+
+
 def test_retrieval_ground_truth_prefers_searchable_content_nodes():
     nodes = [
         _CourseNodeSnapshot(id="root", title="sample-course.md", content=None, parent_id=None),

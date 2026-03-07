@@ -7,12 +7,14 @@ import { Input } from "@/components/ui/input";
 import {
   getExamPrepPlan,
   getReviewSession,
+  getStudyPlans,
   listStudyGoals,
   listStudyPlanBatches,
   saveStudyPlan,
   submitAgentTask,
   type ReviewItem,
   type StudyGoal,
+  type StudyPlanResponse,
 } from "@/lib/api";
 import { AiFeatureBlocked } from "@/components/shared/ai-feature-blocked";
 import { useBatchManager } from "@/hooks/use-batch-manager";
@@ -95,7 +97,7 @@ function ExamCountdown({
   if (upcoming.length === 0) return null;
 
   return (
-    <div className="border-b bg-amber-50 dark:bg-amber-950/30 px-3 py-2 space-y-1">
+    <div className="border-b border-border/60 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 space-y-1">
       {upcoming.map((g) => {
         const urgent = g.daysLeft <= 3;
         return (
@@ -159,7 +161,7 @@ function CourseFollowingTimeline({
                 ? "text-warning"
                 : "text-muted-foreground";
         return (
-          <div key={goal.id} className="rounded-lg border border-border p-3">
+          <div key={goal.id} className="rounded-2xl card-shadow p-3.5">
             <div className="flex items-start gap-3">
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium text-foreground">{goal.title}</p>
@@ -221,13 +223,13 @@ function SelfPacedPath({
           </p>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <div className="rounded-lg border border-border p-2.5 space-y-2">
+            <div className="rounded-2xl card-shadow p-3 space-y-2">
               <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{t("plan.path.nextUp")}</p>
               {nextUp.length === 0 ? (
                 <p className="text-xs text-muted-foreground">{t("plan.path.nextUp.empty")}</p>
               ) : (
                 nextUp.map((goal) => (
-                  <div key={goal.id} className="rounded-md border border-border/70 p-2">
+                  <div key={goal.id} className="rounded-xl bg-muted/30 p-2.5">
                     <p className="text-xs font-medium">{goal.title}</p>
                     <p className="text-[11px] text-muted-foreground mt-0.5">
                       {goal.target_date
@@ -238,13 +240,13 @@ function SelfPacedPath({
                 ))
               )}
             </div>
-            <div className="rounded-lg border border-border p-2.5 space-y-2">
+            <div className="rounded-2xl card-shadow p-3 space-y-2">
               <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{t("plan.path.inProgress")}</p>
               {inProgress.length === 0 ? (
                 <p className="text-xs text-muted-foreground">{t("plan.path.inProgress.empty")}</p>
               ) : (
                 inProgress.slice(0, 6).map((goal) => (
-                  <div key={goal.id} className="rounded-md border border-border/70 p-2">
+                  <div key={goal.id} className="rounded-xl bg-muted/30 p-2.5">
                     <p className="text-xs font-medium">{goal.title}</p>
                     {goal.next_action ? (
                       <p className="text-[11px] text-brand mt-0.5">{t("plan.path.nextPrefix")} {goal.next_action}</p>
@@ -255,13 +257,13 @@ function SelfPacedPath({
                 ))
               )}
             </div>
-            <div className="rounded-lg border border-border p-2.5 space-y-2">
+            <div className="rounded-2xl card-shadow p-3 space-y-2">
               <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{t("plan.path.done")}</p>
               {completed.length === 0 ? (
                 <p className="text-xs text-muted-foreground">{t("plan.path.done.empty")}</p>
               ) : (
                 completed.map((goal) => (
-                  <div key={goal.id} className="rounded-md border border-border/70 p-2">
+                  <div key={goal.id} className="rounded-xl bg-muted/30 p-2.5">
                     <p className="text-xs font-medium">{goal.title}</p>
                     <p className="text-[11px] text-muted-foreground mt-0.5">{t("plan.path.completed")}</p>
                   </div>
@@ -281,7 +283,7 @@ function SelfPacedPath({
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             {weakConcepts.map((item) => (
-              <div key={item.concept_id} className="rounded-lg border border-border p-2.5">
+              <div key={item.concept_id} className="rounded-xl bg-muted/30 p-3.5">
                 <p className="text-sm font-medium truncate">{item.concept_label}</p>
                 <p className="text-xs text-muted-foreground mt-0.5">
                   {t("plan.metric.mastery")} {Math.round(item.mastery * 100)}% · {t("plan.metric.stability")} {item.stability_days}d
@@ -301,13 +303,13 @@ function ExamCoverageChecklist({ reviewItems, t }: { reviewItems: ReviewItem[]; 
     .slice(0, 8);
   if (weakConcepts.length === 0) {
     return (
-      <div className="rounded-lg border border-border p-3">
+      <div className="rounded-2xl card-shadow p-3.5">
         <p className="text-xs text-muted-foreground">{t("plan.exam.coverage.empty")}</p>
       </div>
     );
   }
   return (
-    <div className="rounded-lg border border-border p-3 space-y-2.5">
+    <div className="rounded-2xl card-shadow p-3.5 space-y-2.5">
       <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t("plan.exam.coverage")}</p>
       {weakConcepts.map((item) => (
         <div key={`${item.concept_id}-exam`} className="flex items-center gap-2">
@@ -348,7 +350,7 @@ function MaintenanceQueue({ reviewItems, t }: { reviewItems: ReviewItem[]; t: Tr
               : "text-muted-foreground";
 
         return (
-          <div key={`${item.concept_id}-${item.urgency}`} className="rounded-lg border border-border p-3">
+          <div key={`${item.concept_id}-${item.urgency}`} className="rounded-2xl card-shadow p-3.5">
             <div className="flex items-start gap-3">
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium text-foreground truncate">{item.concept_label}</p>
@@ -361,6 +363,43 @@ function MaintenanceQueue({ reviewItems, t }: { reviewItems: ReviewItem[]; t: Tr
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// ── Saved Plans ──
+
+function SavedPlansList({
+  plans,
+  t,
+  tf,
+}: {
+  plans: StudyPlanResponse[];
+  t: TranslateFn;
+  tf: TranslateFormatFn;
+}) {
+  if (plans.length === 0) {
+    return (
+      <p className="text-sm text-muted-foreground">{t("plan.noPlans")}</p>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      {plans.map((plan) => (
+        <div key={plan.id} className="rounded-2xl card-shadow p-3.5">
+          <p className="text-sm font-medium text-foreground">{plan.name}</p>
+          <p className="text-xs text-muted-foreground mt-1">
+            {tf("plan.createdAt", {
+              date: new Date(plan.created_at).toLocaleDateString(undefined, {
+                month: "short",
+                day: "numeric",
+                year: "numeric",
+              }),
+            })}
+          </p>
+        </div>
+      ))}
     </div>
   );
 }
@@ -393,6 +432,7 @@ export function PlanView({
   const [queueing, setQueueing] = useState(false);
   const [goals, setGoals] = useState<StudyGoal[]>([]);
   const [reviewItems, setReviewItems] = useState<ReviewItem[]>([]);
+  const [savedPlans, setSavedPlans] = useState<StudyPlanResponse[]>([]);
   const [loadingContext, setLoadingContext] = useState(true);
 
   useEffect(() => {
@@ -402,11 +442,13 @@ export function PlanView({
     Promise.all([
       listStudyGoals(courseId).catch(() => [] as StudyGoal[]),
       getReviewSession(courseId, 30).then((r) => r.items).catch(() => [] as ReviewItem[]),
+      getStudyPlans(courseId).catch(() => [] as StudyPlanResponse[]),
     ])
-      .then(([nextGoals, nextReviewItems]) => {
+      .then(([nextGoals, nextReviewItems, nextPlans]) => {
         if (cancelled) return;
         setGoals(nextGoals);
         setReviewItems(nextReviewItems);
+        setSavedPlans(nextPlans);
         if (nextGoals.some((g) => g.target_date)) {
           updateUnlockContext(courseId, { hasDeadline: true });
         }
@@ -470,7 +512,7 @@ export function PlanView({
     return (
       <div className="flex-1 flex flex-col overflow-hidden" data-testid="study-plan-panel">
         <ExamCountdown courseId={courseId} t={t} tf={tf} />
-        <div className="px-3 py-2 border-b flex items-center gap-2 text-xs text-muted-foreground">
+        <div className="px-3 py-2 border-b border-border/60 flex items-center gap-2 text-xs text-muted-foreground">
           <div>
             <p className="text-foreground font-medium">{modeLabel}</p>
             <p>{modeDesc}</p>
@@ -526,7 +568,7 @@ export function PlanView({
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4">
+        <div className="flex-1 overflow-y-auto scrollbar-thin p-4">
           {!aiActionsEnabled ? <AiFeatureBlocked compact className="mb-4" /> : null}
           {planMarkdown ? (
             <div className="space-y-4">
@@ -561,12 +603,12 @@ export function PlanView({
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden" data-testid="study-plan-panel">
-      <div className="px-3 py-2 border-b">
+      <div className="px-3 py-2 border-b border-border/60">
         <p className="text-sm font-medium text-foreground">{modeLabel}</p>
         <p className="text-xs text-muted-foreground mt-0.5">{modeDesc}</p>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4">
+      <div className="flex-1 overflow-y-auto scrollbar-thin p-4">
         {loadingContext ? (
           <div className="space-y-2">
             <div className="h-8 rounded bg-muted animate-pulse" />
@@ -583,6 +625,15 @@ export function PlanView({
         ) : null}
         {!loadingContext && mode === "maintenance" ? (
           <MaintenanceQueue reviewItems={reviewItems} t={t} />
+        ) : null}
+
+        {!loadingContext && savedPlans.length > 0 ? (
+          <div className="mt-4">
+            <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
+              {t("plan.savedPlans")}
+            </h4>
+            <SavedPlansList plans={savedPlans} t={t} tf={tf} />
+          </div>
         ) : null}
       </div>
     </div>

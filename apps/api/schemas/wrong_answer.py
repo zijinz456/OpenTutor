@@ -1,6 +1,7 @@
 """Pydantic schemas for wrong answer endpoints."""
 
 import uuid
+from datetime import datetime
 
 from pydantic import BaseModel
 
@@ -19,6 +20,7 @@ class WrongAnswerResponse(BaseModel):
     knowledge_points: list | None
     review_count: int
     mastered: bool
+    created_at: datetime | None = None
 
     model_config = {"from_attributes": True}
 

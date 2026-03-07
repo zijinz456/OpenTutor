@@ -20,7 +20,7 @@ export function AiFeatureBlocked({
   return (
     <div
       className={cn(
-        "rounded-lg border border-amber-300/60 bg-amber-50/80 text-amber-950 shadow-sm",
+        "rounded-2xl border border-amber-300/60 bg-amber-50/80 text-amber-950 card-shadow",
         compact ? "px-3 py-2" : "px-4 py-3",
         className,
       )}

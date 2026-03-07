@@ -76,7 +76,7 @@ async def _for_each_user(processor, label: str) -> int:
                 if result:
                     count += 1
         except Exception as e:
-            logger.error("%s failed for user %s: %s", label, user_id, e)
+            logger.exception("%s failed for user %s", label, user_id)
     return count
 
 
@@ -103,7 +103,7 @@ async def _push_notification(
             await db.commit()
             logger.debug("Notification stored: [%s] %s for user %s", category, title, user_id)
     except Exception as e:
-        logger.error("Failed to store notification for user %s: %s", user_id, e)
+        logger.exception("Failed to store notification for user %s", user_id)
 
 
 async def weekly_prep_job():
@@ -151,7 +151,7 @@ async def weekly_prep_job():
                 category="weekly_prep",
             )
         except Exception as e:
-            logger.error("Weekly prep failed for user %s: %s", user_id, e)
+            logger.exception("Weekly prep failed for user %s", user_id)
 
 
 async def agenda_tick_job():
@@ -206,7 +206,7 @@ async def agenda_tick_job():
                     skipped_users += 1
     except Exception:
         active_user_ids = list(user_ids)  # Fallback: process everyone
-        logger.debug("Activity filter skipped (table may not exist)")
+        logger.warning("Activity filter skipped (table may not exist)", exc_info=True)
 
     if skipped_users:
         logger.info("Agenda tick: skipping %d inactive users", skipped_users)
@@ -239,9 +239,9 @@ async def agenda_tick_job():
                     if run.status not in ("noop", "failed"):
                         u_tasks += 1
                 except Exception as e:
-                    logger.error(
-                        "Agenda tick failed for user=%s course=%s: %s",
-                        user_id, course_id, e,
+                    logger.exception(
+                        "Agenda tick failed for user=%s course=%s",
+                        user_id, course_id,
                     )
 
             # --- Ambient Study Monitor (LLM deliberation layer) ---
@@ -267,7 +267,7 @@ async def agenda_tick_job():
                         user_id, decision.get("action"), status, decision.get("reason", ""),
                     )
             except Exception as e:
-                logger.debug("Ambient monitor skipped for user %s: %s", user_id, e)
+                logger.exception("Ambient monitor skipped for user %s", user_id)
 
         return u_ticks, u_tasks, u_ambient
 
@@ -306,7 +306,7 @@ async def scrape_refresh_job():
                 result["scraped"], result["skipped"], result["failed"],
             )
     except Exception as e:
-        logger.error("Scrape refresh job failed: %s", e)
+        logger.exception("Scrape refresh job failed")
 
 
 async def memory_consolidation_job():
@@ -336,7 +336,7 @@ async def memory_consolidation_job():
                 total_categorized += consolidation.get("categorized", 0)
 
         except Exception as e:
-            logger.error("Memory consolidation failed for user %s: %s", user_id, e)
+            logger.exception("Memory consolidation failed for user %s", user_id)
 
     logger.info(
         "Memory consolidation complete: deduped=%d decayed=%d categorized=%d",
@@ -603,10 +603,10 @@ async def bkt_training_job():
                         if fitted:
                             trained_bkt += 1
                     except Exception as e:
-                        logger.debug("BKT training skipped for user=%s course=%s: %s", user_id, course_id, e)
+                        logger.warning("BKT training skipped for user=%s course=%s: %s", user_id, course_id, e)
 
         except Exception as e:
-            logger.error("BKT training failed for user %s: %s", user_id, e)
+            logger.exception("BKT training failed for user %s", user_id)
 
     logger.info("BKT training complete: bkt_fitted=%d", trained_bkt)
 
@@ -723,7 +723,7 @@ async def cross_course_linking_job():
                     links_found += len(patterns)
 
         except Exception as e:
-            logger.debug("Cross-course linking failed for user %s: %s", user_id, e)
+            logger.exception("Cross-course linking failed for user %s", user_id)
 
     logger.info("Cross-course linking complete: links_found=%d", links_found)
 
@@ -769,7 +769,7 @@ async def heartbeat_review_job():
                 )
                 user_notified = True
             except Exception as e:
-                logger.debug("Heartbeat check failed for course %s: %s", course_id, e)
+                logger.exception("Heartbeat check failed for course %s", course_id)
 
         return user_notified
 

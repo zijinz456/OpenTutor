@@ -74,40 +74,7 @@ class Settings(BaseSettings):
     app_auto_seed_system: bool = True
     app_run_scheduler: bool = False
     app_run_activity_engine: bool = False
-    mcp_enabled: bool = False
-    plugin_system_enabled: bool = False
-    ambient_monitor_enabled: bool = False
-
-    # Multi-channel messaging
-    channels_enabled: str = ""  # Comma-separated: "whatsapp,imessage"
-    channel_auto_create_users: bool = True
-    channel_default_scene: str = "study_session"
-
-    # WhatsApp Cloud API
-    whatsapp_phone_number_id: str = ""
-    whatsapp_access_token: str = ""
-    whatsapp_app_secret: str = ""
-    whatsapp_verify_token: str = ""
-
-    # iMessage via BlueBubbles
-    bluebubbles_server_url: str = ""  # e.g. http://localhost:1234
-    bluebubbles_password: str = ""
-    bluebubbles_webhook_secret: str = ""
-
-    # Telegram Bot API
-    telegram_bot_token: str = ""
-    telegram_chat_id: str = ""  # Default chat ID for outbound notifications
-
-    # Discord Bot
-    discord_bot_token: str = ""
-    discord_application_id: str = ""
-    discord_public_key: str = ""
-
-    # Notification push
-    push_notifications_enabled: bool = False
-    vapid_private_key: str = ""
-    vapid_public_key: str = ""
-    vapid_claims_email: str = ""
+    ambient_monitor_enabled: bool = True
 
     # Rate limiting
     rate_limit_mode: str = "simple"  # "simple" | "cost_aware"
@@ -122,9 +89,6 @@ class Settings(BaseSettings):
     parallel_context_loading: bool = True
     activity_engine_max_concurrency: int = 3
     activity_use_redis_notify: bool = False
-
-    # Phase 3: Multi-modal (TODO: not yet implemented — no referencing code)
-    screenpipe_enabled: bool = False
 
     # Web search
     tavily_api_key: str = ""
@@ -177,12 +141,6 @@ class Settings(BaseSettings):
     @staticmethod
     def _split_csv(value: str) -> list[str]:
         return [item.strip() for item in value.split(",") if item.strip()]
-
-    @property
-    def enabled_channels(self) -> list[str]:
-        if not self.channels_enabled.strip():
-            return []
-        return self._split_csv(self.channels_enabled)
 
     @property
     def cors_origin_list(self) -> list[str]:

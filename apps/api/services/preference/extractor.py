@@ -132,7 +132,7 @@ async def extract_preference_signal(
         logger.debug(f"No valid JSON in extraction result: {result[:100]}")
         return None
     except Exception as e:
-        logger.warning(f"Signal extraction failed: {e}")
+        logger.exception("Signal extraction failed")
         return None
 
 
@@ -310,7 +310,7 @@ async def collect_behavior_signals(
             s["course_id"] = course_id
         signals.extend(quiz_signals)
     except Exception as e:
-        logger.debug("Quiz performance inference skipped: %s", e)
+        logger.exception("Quiz performance inference skipped")
 
     # Interaction pattern signals
     try:
@@ -320,6 +320,6 @@ async def collect_behavior_signals(
             s["course_id"] = course_id
         signals.extend(pattern_signals)
     except Exception as e:
-        logger.debug("Interaction pattern inference skipped: %s", e)
+        logger.exception("Interaction pattern inference skipped")
 
     return signals

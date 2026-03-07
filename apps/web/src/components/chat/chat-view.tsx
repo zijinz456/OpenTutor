@@ -28,6 +28,7 @@ export function ChatView({ courseId, aiActionsEnabled = true }: ChatViewProps) {
   const loadSessions = useChatStore((s) => s.loadSessions);
   const setOnAction = useChatStore((s) => s.setOnAction);
   const setActiveSection = useWorkspaceStore((s) => s.setActiveSection);
+  const setSelectedNodeId = useWorkspaceStore((s) => s.setSelectedNodeId);
   const triggerRefresh = useWorkspaceStore((s) => s.triggerRefresh);
 
   // Set course context and load sessions on mount / courseId change.
@@ -38,33 +39,22 @@ export function ChatView({ courseId, aiActionsEnabled = true }: ChatViewProps) {
 
   // Register the onAction handler to bridge chat actions to workspace sections.
   useEffect(() => {
+    // Course pages with block-based layouts register a richer action handler.
+    // Only install this fallback when nothing else is registered.
+    const existingHandler = useChatStore.getState().onAction;
+    if (existingHandler) return;
+
+    const blockTypeToSection = (blockType: string): SectionId => {
+      if (blockType === "plan") return "plan";
+      if (blockType === "progress" || blockType === "forecast") return "analytics";
+      if (blockType === "quiz" || blockType === "flashcards" || blockType === "wrong_answers" || blockType === "review") {
+        return "practice";
+      }
+      return "notes";
+    };
+
     const handleAction = (action: ChatAction) => {
       const type = action.action;
-
-      if (type === "switch_tab" || type === "open_section") {
-        const target = action.value as SectionId | undefined;
-        if (target) {
-          setActiveSection(target);
-        }
-        return;
-      }
-
-      if (type === "open_quiz" || type === "add_to_quiz") {
-        setActiveSection("practice");
-        return;
-      }
-
-      if (type === "open_plan" || type === "show_plan") {
-        setActiveSection("plan");
-        return;
-      }
-
-      if (type === "open_notes" || type === "add_to_notes") {
-        setActiveSection("notes");
-        return;
-      }
-
-      // Agent tool completed — refresh the target section and switch to it.
       if (type === "data_updated") {
         const section = action.value as SectionId | undefined;
         if (section) {
@@ -73,14 +63,54 @@ export function ChatView({ courseId, aiActionsEnabled = true }: ChatViewProps) {
         }
         return;
       }
+
+      if (type === "focus_topic") {
+        const nodeId = action.value;
+        if (nodeId) {
+          setSelectedNodeId(nodeId);
+          setActiveSection("notes");
+        }
+        return;
+      }
+
+      if (type === "set_learning_mode" || type === "suggest_mode") {
+        setActiveSection("plan");
+        triggerRefresh("plan");
+        return;
+      }
+
+      if (type === "add_block" || type === "remove_block") {
+        const [blockType] = (action.value ?? "").split(":");
+        const section = blockTypeToSection(blockType);
+        setActiveSection(section);
+        triggerRefresh(section);
+        return;
+      }
+
+      if (type === "resize_block") {
+        const [blockType] = (action.value ?? "").split(":");
+        const section = blockTypeToSection(blockType);
+        setActiveSection(section);
+        triggerRefresh(section);
+        return;
+      }
+
+      if (type === "reorder_blocks" || type === "apply_template" || type === "agent_insight") {
+        setActiveSection("notes");
+        triggerRefresh("notes");
+      }
     };
 
     setOnAction(handleAction);
-    return () => setOnAction(() => {});
-  }, [setOnAction, setActiveSection, triggerRefresh]);
+    return () => {
+      if (useChatStore.getState().onAction === handleAction) {
+        setOnAction(() => {});
+      }
+    };
+  }, [setOnAction, setActiveSection, setSelectedNodeId, triggerRefresh]);
 
   return (
-    <div className="flex h-full flex-col bg-background">
+    <div className="flex h-full flex-col bg-background/80">
       <ChatHeader courseId={courseId} />
 
       <MessageList messages={messages} />

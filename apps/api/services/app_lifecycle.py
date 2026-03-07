@@ -112,7 +112,7 @@ async def _detect_local_llm() -> None:
                 if resp.status_code == 200:
                     models = resp.json().get("models", [])
                     return {"provider": "ollama", "url": settings.ollama_base_url, "models": [m.get("name", "?") for m in models]}
-        except Exception:
+        except (httpx.HTTPError, OSError, ValueError):
             pass
         return None
 
@@ -124,7 +124,7 @@ async def _detect_local_llm() -> None:
                     data = resp.json()
                     models = [m["id"] for m in data.get("data", [])]
                     return {"provider": "lmstudio", "url": settings.lmstudio_base_url, "models": models}
-        except Exception:
+        except (httpx.HTTPError, OSError, ValueError):
             pass
         return None
 
@@ -173,46 +173,12 @@ async def _stop_health_monitor() -> None:
 
 
 
-async def _start_plugin_system() -> None:
-    """Initialize pluggy-based plugin system and call startup hooks."""
-    if not settings.plugin_system_enabled:
-        logger.info("Plugin system disabled by configuration")
-        return
-
-    try:
-        from services.plugin.manager import get_plugin_manager
-
-        pm = get_plugin_manager()
-        pm.load_all()
-        await pm.startup()
-        logger.info(
-            "Plugin system started (%d plugin(s): %s)",
-            len(pm.manifests),
-            ", ".join(pm.manifests.keys()) or "none",
-        )
-    except Exception as exc:
-        logger.warning("Plugin system startup failed (graceful degradation): %s", exc)
-
-
-async def _stop_plugin_system() -> None:
-    if not settings.plugin_system_enabled:
-        return
-
-    try:
-        from services.plugin.manager import get_plugin_manager
-
-        pm = get_plugin_manager()
-        await pm.shutdown()
-    except Exception as exc:
-        logger.debug("Plugin system shutdown: %s", exc)
-
 
 async def run_startup_hooks() -> None:
     await _maybe_create_tables()
     await _maybe_bootstrap_migration_tracking()
     await _maybe_seed_system_data()
     await _detect_local_llm()
-    await _start_plugin_system()
     _maybe_start_scheduler()
     _maybe_start_activity_engine()
     _start_health_monitor()
@@ -225,7 +191,6 @@ async def run_shutdown_hooks() -> None:
     await _maybe_stop_activity_engine()
     _maybe_stop_scheduler()
     await wait_for_background_tasks()
-    await _stop_plugin_system()
     await engine.dispose()
 
 

@@ -54,7 +54,7 @@ async def generate_query_variants(
         if isinstance(variants, list):
             return [str(v) for v in variants[:n]]
     except Exception as e:
-        logger.debug("Query variant generation failed: %s", e)
+        logger.warning("Query variant generation failed: %s", e)
 
     return []
 

@@ -328,6 +328,7 @@ async def extract_deadlines_llm(
     try:
         client = get_llm_client("fast")
     except Exception:
+        logger.warning("LLM client unavailable for deadline extraction", exc_info=True)
         return []
 
     context_hint = ""
@@ -375,7 +376,7 @@ async def extract_deadlines_llm(
         return deadlines
 
     except Exception as e:
-        logger.debug("LLM deadline extraction failed: %s", e)
+        logger.warning("LLM deadline extraction failed: %s", e)
         return []
 
 

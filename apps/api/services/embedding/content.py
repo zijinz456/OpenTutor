@@ -53,7 +53,7 @@ async def embed_course_content(db: AsyncSession, course_id: uuid.UUID) -> int:
                 node.embedding = emb
                 count += 1
         except Exception as e:
-            logger.warning(f"Batch embedding failed: {e}")
+            logger.exception("Batch embedding failed for course %s", course_id)
             continue
 
     await db.flush()

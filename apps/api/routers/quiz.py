@@ -159,7 +159,12 @@ async def extract_quiz(body: ExtractRequest, user: User = Depends(get_current_us
                 raise NotFoundError("Content node not found or empty")
 
             problems = await extract_questions(
-                node.content, node.title, body.course_id, body.content_node_id, mode=body.mode
+                node.content,
+                node.title,
+                body.course_id,
+                body.content_node_id,
+                mode=body.mode,
+                difficulty=body.difficulty,
             )
         else:
             import asyncio
@@ -182,7 +187,14 @@ async def extract_quiz(body: ExtractRequest, user: User = Depends(get_current_us
                 async with sem:
                     try:
                         return await asyncio.wait_for(
-                            extract_questions(n.content, n.title, body.course_id, n.id, mode=body.mode),
+                            extract_questions(
+                                n.content,
+                                n.title,
+                                body.course_id,
+                                n.id,
+                                mode=body.mode,
+                                difficulty=body.difficulty,
+                            ),
                             timeout=60,
                         )
                     except asyncio.TimeoutError:
@@ -216,7 +228,13 @@ async def extract_quiz(body: ExtractRequest, user: User = Depends(get_current_us
 
 
 @router.get("/{course_id}", response_model=list[ProblemResponse])
-async def list_problems(course_id: uuid.UUID, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def list_problems(
+    course_id: uuid.UUID,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     """List user-facing practice problems for a course."""
     result = await db.execute(
         select(PracticeProblem)
@@ -224,6 +242,8 @@ async def list_problems(course_id: uuid.UUID, user: User = Depends(get_current_u
         .where(PracticeProblem.is_diagnostic == False)
         .where(PracticeProblem.is_archived == False)
         .order_by(PracticeProblem.order_index)
+        .offset(offset)
+        .limit(limit)
     )
     return result.scalars().all()
 
@@ -256,8 +276,8 @@ async def _auto_derive_diagnostic(wrong_answer_id: uuid.UUID, user_id: uuid.UUID
             await derive_diagnostic(db, wa, problem)
             await db.commit()
             logger.info("Auto-generated diagnostic pair for wrong answer %s", wrong_answer_id)
-    except Exception as e:
-        logger.warning("Auto-derive diagnostic failed (best-effort): %s", e)
+    except Exception:
+        logger.exception("Auto-derive diagnostic failed (best-effort)")
 
 
 @router.post("/submit", response_model=AnswerResponse)
@@ -301,8 +321,8 @@ async def submit_answer(
             )
             error_category = classification["category"]
             pr.error_category = error_category
-        except Exception as e:
-            logger.warning("Error classification failed (best-effort): %s", e)
+        except Exception:
+            logger.exception("Error classification failed (best-effort)")
 
     db.add(pr)
 
@@ -329,8 +349,8 @@ async def submit_answer(
             is_correct=is_correct,
             error_category=error_category,
         )
-    except Exception as e:
-        logger.warning("Progress update failed (best-effort): %s", e)
+    except Exception:
+        logger.exception("Progress update failed (best-effort)")
 
     # Experiment system removed in Phase 1.3
 
@@ -350,7 +370,7 @@ async def submit_answer(
         )
         await db.commit()
     except Exception:
-        logger.debug("Learning event emission failed (best-effort)")
+        logger.exception("Learning event emission failed (best-effort)")
 
     if not is_correct and wa:
         background_tasks.add_task(_auto_derive_diagnostic, wa.id, user.id)
@@ -369,8 +389,8 @@ async def submit_answer(
                 )
                 if gaps:
                     prerequisite_gaps = gaps[:3]
-        except Exception as e:
-            logger.debug("Prerequisite gap check failed (best-effort): %s", e)
+        except Exception:
+            logger.exception("Prerequisite gap check failed (best-effort)")
 
     return AnswerResponse(
         is_correct=is_correct,

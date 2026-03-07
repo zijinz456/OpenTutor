@@ -26,6 +26,7 @@ class RegressionBenchmarkRequest(BaseModel):
     course_id: uuid.UUID | None = None
     retrieval_queries: list[RetrievalQueryPayload] | None = None
     response_cases: list[dict] | None = None
+    strict: bool = False
 
 
 @router.post("/regression")
@@ -48,5 +49,5 @@ async def regression_benchmark(
         course_id=body.course_id,
         retrieval_queries=retrieval_queries,
         response_cases=body.response_cases,
+        strict=body.strict,
     )
-

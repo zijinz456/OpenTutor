@@ -85,7 +85,7 @@ def get_embedding_provider() -> EmbeddingProvider:
             providers.append(("openai", OpenAIEmbedding(settings.openai_api_key)))
             logger.info("Embedding provider registered: OpenAI text-embedding-3-small")
         except Exception as e:
-            logger.warning("Failed to init OpenAI embedding: %s", e)
+            logger.exception("Failed to init OpenAI embedding")
 
     # Fallback: local sentence-transformers
     try:
@@ -93,7 +93,7 @@ def get_embedding_provider() -> EmbeddingProvider:
         providers.append(("local", LocalEmbedding()))
         logger.info("Embedding provider registered: local sentence-transformers")
     except (ImportError, Exception) as e:
-        logger.debug("Local embedding unavailable: %s", e)
+        logger.warning("Local embedding unavailable: %s", e)
 
     if not providers:
         raise RuntimeError(

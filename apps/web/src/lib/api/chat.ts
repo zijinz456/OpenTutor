@@ -36,16 +36,7 @@ type ChatActionType =
   | "apply_template"
   | "agent_insight"
   | "set_learning_mode"
-  | "suggest_mode"
-  // Legacy (backward compat)
-  | "set_layout_preset"
-  | "toggle_section"
-  | "set_preference"
-  | "switch_tab"
-  | "open_flashcards"
-  | "load_wrong_answers"
-  | "generate_study_plan"
-  | "set_note_format";
+  | "suggest_mode";
 
 export interface ChatAction {
   action: ChatActionType | string;  // Known actions + extensible

@@ -62,5 +62,5 @@ class ExportCalendarTool(Tool):
         except ValueError as e:
             return ToolResult(success=False, output="", error=str(e))
         except Exception as e:
-            logger.error("export_calendar failed: %s", e)
+            logger.exception("export_calendar failed: %s", e)
             return ToolResult(success=False, output="", error=f"Calendar export failed: {e}")

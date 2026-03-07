@@ -18,7 +18,7 @@ fail() {
 require_cmd() {
   local cmd
   for cmd in "$@"; do
-    command -v "$cmd" >/dev/null 2>&1 || fail "Missing required command: ${cmd}"
+    command -v "$cmd" >/dev/null 2>&1 || fail "Missing required command: ${cmd}. Install '${cmd}' and re-run this command."
   done
 }
 
@@ -29,6 +29,11 @@ create_temp_dir() {
 # ---------------------------------------------------------------------------
 # Cross-platform helpers
 # ---------------------------------------------------------------------------
+
+# Bash 3.2-compatible lowercase conversion.
+to_lower() {
+  printf '%s' "${1:-}" | LC_ALL=C tr '[:upper:]' '[:lower:]'
+}
 
 # Detect the running OS. Returns: "macos", "linux", or "windows" (Git Bash/MSYS2/Cygwin).
 detect_os() {

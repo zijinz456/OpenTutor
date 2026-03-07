@@ -132,7 +132,7 @@ async def categorize_uncategorized(
         return {"categorized": categorized}
 
     except Exception as e:
-        logger.warning("Memory categorization failed: %s", e)
+        logger.exception("Memory categorization failed: %s", e)
         return {"categorized": 0}
 
 
@@ -247,7 +247,7 @@ async def create_session_episodic_memory(
         return memory
 
     except Exception as e:
-        logger.warning("Session episodic summary failed: %s", e)
+        logger.exception("Session episodic summary failed: %s", e)
         return None
 
 

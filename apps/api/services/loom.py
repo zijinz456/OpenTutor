@@ -33,6 +33,15 @@ logger = logging.getLogger(__name__)
 
 # ── Concept Extraction ──
 
+_BLOOM_LEVELS = {
+    "remember": 1,
+    "understand": 2,
+    "apply": 3,
+    "analyze": 4,
+    "evaluate": 5,
+    "create": 6,
+}
+
 _EXTRACT_PROMPT = """Analyze this educational content and extract the key concepts being taught.
 
 For each concept, provide:
@@ -40,11 +49,18 @@ For each concept, provide:
 2. description: One sentence describing what it is
 3. prerequisites: List of concept names this concept depends on (from this same content)
 4. related: List of concept names that are closely related
+5. bloom_level: The Bloom's taxonomy level — one of: remember, understand, apply, analyze, evaluate, create
+   - "remember" = recall facts/definitions
+   - "understand" = explain concepts
+   - "apply" = use in new situations
+   - "analyze" = break down, compare
+   - "evaluate" = judge, critique
+   - "create" = produce new work
 
 Output valid JSON array. Example:
 [
-  {"name": "Derivative", "description": "Rate of change of a function", "prerequisites": [], "related": ["Limit"]},
-  {"name": "Chain Rule", "description": "Derivative of composed functions", "prerequisites": ["Derivative"], "related": ["Product Rule"]}
+  {{"name": "Derivative", "description": "Rate of change of a function", "prerequisites": [], "related": ["Limit"], "bloom_level": "understand"}},
+  {{"name": "Chain Rule", "description": "Derivative of composed functions", "prerequisites": ["Derivative"], "related": ["Product Rule"], "bloom_level": "apply"}}
 ]
 
 Content title: {title}
@@ -116,7 +132,7 @@ async def extract_course_concepts(
 
         concepts_data = json.loads(raw[json_start:json_end])
     except Exception as e:
-        logger.warning("Concept extraction failed: %s", e)
+        logger.exception("Concept extraction LLM call failed")
         return []
 
     # Create nodes
@@ -128,12 +144,17 @@ async def extract_course_concepts(
         if not name or len(name) > 200:
             continue
 
+        bloom_raw = (item.get("bloom_level") or "understand").lower()
+        bloom_level = _BLOOM_LEVELS.get(bloom_raw, 2)
+
         node = KnowledgeNode(
             course_id=course_id,
             name=name,
             description=(item.get("description") or "")[:500],
             metadata_={
                 "source": "auto_extracted",
+                "bloom_level": bloom_level,
+                "bloom_label": bloom_raw if bloom_raw in _BLOOM_LEVELS else "understand",
                 "prerequisites_raw": item.get("prerequisites", []),
                 "related_raw": item.get("related", []),
             },
@@ -229,16 +250,101 @@ async def update_concept_mastery(
     result_score = 1.0 if correct else 0.0
     mastery.mastery_score = alpha * result_score + (1 - alpha) * mastery.mastery_score
 
-    # Stability: increases with consecutive correct, resets on wrong
-    if correct:
-        mastery.stability_days = min(mastery.stability_days * 1.5 + 1, 90)
-    else:
-        mastery.stability_days = max(mastery.stability_days * 0.3, 0)
+    # FSRS-based stability and scheduling
+    from services.spaced_repetition.fsrs import FSRSCard, review_card as fsrs_review
 
-    mastery.last_practiced_at = datetime.now(timezone.utc)
+    fsrs_card = FSRSCard(
+        difficulty=5.0,
+        stability=mastery.stability_days if mastery.stability_days > 0 else 0.0,
+        reps=mastery.practice_count - 1,  # -1 because we already incremented
+        lapses=mastery.wrong_count,
+        last_review=mastery.last_practiced_at,
+        state="review" if mastery.practice_count > 1 else "new",
+    )
+
+    # Map correct/incorrect to FSRS ratings
+    if correct:
+        rating = 3  # Good
+    else:
+        rating = 1  # Again
+
+    now = datetime.now(timezone.utc)
+    updated_card, _ = fsrs_review(fsrs_card, rating, now)
+    mastery.stability_days = updated_card.stability
+    mastery.last_practiced_at = now
+    mastery.next_review_at = updated_card.due  # Now properly set via FSRS scheduling
+
+    # FIRe: Fractional Implicit Repetitions — propagate partial credit to prerequisites
+    await _fire_propagate(db, user_id, node.id, course_id, correct)
 
     await db.flush()
     return mastery
+
+
+# ── FIRe: Fractional Implicit Repetitions ──
+
+async def _fire_propagate(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    practiced_node_id: uuid.UUID,
+    course_id: uuid.UUID,
+    correct: bool,
+    max_depth: int = 3,
+) -> None:
+    """Propagate fractional review credit to prerequisite concepts.
+
+    When a student practices concept A, prerequisite concepts B, C, ...
+    receive implicit review credit proportional to 1/(depth+1).
+    Reference: "Fractional Implicit Repetitions in Knowledge Graphs" (2024)
+    """
+    if not correct:
+        return  # Only propagate on successful recall
+
+    # Get prerequisite edges from practiced node
+    edges_result = await db.execute(
+        select(KnowledgeEdge).where(
+            KnowledgeEdge.source_id == practiced_node_id,
+            KnowledgeEdge.relation_type == "prerequisite",
+        )
+    )
+    prereq_edges = edges_result.scalars().all()
+    if not prereq_edges:
+        return
+
+    visited: set[uuid.UUID] = {practiced_node_id}
+    queue: list[tuple[uuid.UUID, int]] = [(e.target_id, 1) for e in prereq_edges]
+
+    while queue:
+        prereq_id, depth = queue.pop(0)
+        if prereq_id in visited or depth > max_depth:
+            continue
+        visited.add(prereq_id)
+
+        # Apply fractional credit
+        fraction = 1.0 / (depth + 1)
+
+        mastery_result = await db.execute(
+            select(ConceptMastery).where(
+                ConceptMastery.user_id == user_id,
+                ConceptMastery.knowledge_node_id == prereq_id,
+            )
+        )
+        prereq_mastery = mastery_result.scalar_one_or_none()
+        if prereq_mastery:
+            # Fractional boost: small mastery increase without full practice credit
+            boost = fraction * 0.05  # 5% * fraction
+            prereq_mastery.mastery_score = min(1.0, prereq_mastery.mastery_score + boost)
+
+        # Continue walking up the prerequisite chain
+        deeper_edges = await db.execute(
+            select(KnowledgeEdge).where(
+                KnowledgeEdge.source_id == prereq_id,
+                KnowledgeEdge.relation_type == "prerequisite",
+            )
+        )
+        for edge in deeper_edges.scalars().all():
+            if edge.target_id not in visited:
+                queue.append((edge.target_id, depth + 1))
 
 
 # ── Mastery Graph Retrieval ──
@@ -291,13 +397,18 @@ async def get_mastery_graph(
     for node in nodes:
         m = masteries.get(node.id)
         mastery_score = m.mastery_score if m else 0.0
+        meta = node.metadata_ or {}
         graph_nodes.append({
             "id": str(node.id),
             "name": node.name,
             "mastery": round(mastery_score, 3),
             "description": node.description,
+            "bloom_level": meta.get("bloom_level", 2),
+            "bloom_label": meta.get("bloom_label", "understand"),
             "practice_count": m.practice_count if m else 0,
             "last_practiced": m.last_practiced_at.isoformat() if m and m.last_practiced_at else None,
+            "next_review_at": m.next_review_at.isoformat() if m and m.next_review_at else None,
+            "stability_days": round(m.stability_days, 1) if m else 0.0,
         })
         if mastery_score < 0.5:
             weak_concepts.append(node.name)
@@ -468,8 +579,13 @@ async def generate_learning_path(
         if in_degree.get(nid, 0) == 0:
             queue.append(nid)
 
-    # Sort queue by mastery (lowest first) for deterministic ordering
-    queue = deque(sorted(queue, key=lambda nid: masteries.get(nid, 0.0)))
+    # Sort queue by Bloom level (lower first), then mastery (lowest first)
+    def _sort_key(nid: uuid.UUID) -> tuple:
+        node = node_by_id[nid]
+        bloom = (node.metadata_ or {}).get("bloom_level", 2)
+        return (bloom, masteries.get(nid, 0.0))
+
+    queue = deque(sorted(queue, key=_sort_key))
 
     result: list[dict] = []
     while queue:
@@ -484,8 +600,8 @@ async def generate_learning_path(
             in_degree[neighbor] -= 1
             if in_degree[neighbor] == 0:
                 queue.append(neighbor)
-        # Re-sort new entries by mastery
-        queue = deque(sorted(queue, key=lambda nid: masteries.get(nid, 0.0)))
+        # Re-sort new entries by Bloom level then mastery
+        queue = deque(sorted(queue, key=_sort_key))
 
     # Append any remaining (cycle) nodes sorted by mastery
     remaining = unmastered_ids - {uuid.UUID(r["id"]) for r in result}
@@ -509,5 +625,5 @@ async def build_course_graph(db_factory, course_id: uuid.UUID) -> int:
             nodes = await extract_course_concepts(db, course_id)
             return len(nodes)
     except Exception as e:
-        logger.warning("LOOM graph building failed for course %s: %s", course_id, e)
+        logger.exception("LOOM graph building failed for course %s", course_id)
         return 0

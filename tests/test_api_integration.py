@@ -327,7 +327,7 @@ async def test_chat_session_history_persists_and_restores(client, monkeypatch):
                     "intent": "learn",
                     "session_id": str(kwargs["session_id"]),
                     "tokens": 42,
-                    "actions": [{"action": "set_layout_preset", "value": "quizFocused"}],
+                    "actions": [{"action": "reorder_blocks", "value": "quiz,notes,progress"}],
                     "provenance": {"content_count": 1, "memory_count": 0, "tool_count": 0},
                 }
             ),
@@ -360,7 +360,7 @@ async def test_chat_session_history_persists_and_restores(client, monkeypatch):
     assert messages[1]["content"] == "Tutor answer"
     assert messages[1]["metadata_json"]["agent"] == "teaching"
     assert messages[1]["metadata_json"]["provenance"]["content_count"] == 1
-    assert messages[1]["metadata_json"]["actions"][0]["action"] == "set_layout_preset"
+    assert messages[1]["metadata_json"]["actions"][0]["action"] == "reorder_blocks"
 
 
 @pytest.mark.asyncio
@@ -1295,6 +1295,16 @@ async def test_regression_benchmark_endpoint_runs_offline_suites(client):
     assert {"routing", "retrieval", "response_quality", "recovery"} <= suite_names
     response_suite = next(suite for suite in payload["suites"] if suite["name"] == "response_quality")
     assert response_suite["skipped"] is False
+
+
+@pytest.mark.asyncio
+async def test_regression_benchmark_endpoint_strict_mode_requires_retrieval_and_recovery_inputs(client):
+    resp = await client.post("/api/eval/regression", json={"strict": True})
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["strict"] is True
+    assert payload["passed"] is False
+    assert {"retrieval", "recovery"} <= set(payload["failed_suites"])
 
 
 # ── Cleanup ──

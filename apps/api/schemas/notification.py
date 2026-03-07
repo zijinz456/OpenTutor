@@ -6,7 +6,7 @@ from typing import ClassVar
 
 from pydantic import BaseModel, Field, field_validator
 
-ALLOWED_NOTIFICATION_CHANNELS = {"sse", "web_push", "telegram"}
+ALLOWED_NOTIFICATION_CHANNELS = {"sse"}
 
 
 # ---------- Notification Settings ----------

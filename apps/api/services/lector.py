@@ -17,7 +17,7 @@ Usage:
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass
 
 from sqlalchemy import select
@@ -38,6 +38,7 @@ class ReviewItem:
     priority: float  # Higher = more urgent
     reason: str  # Why this is being reviewed
     related_concepts: list[str]  # Reviewed together for semantic reinforcement
+    review_type: str = "standard"  # "standard" | "contrast" | "prerequisite_first"
 
 
 async def get_smart_review_session(
@@ -176,6 +177,23 @@ async def get_smart_review_session(
 
         reason = ", ".join(reason_parts) if reason_parts else "scheduled review"
 
+        # Determine review type based on graph structure
+        review_type = "standard"
+        # Check for confusion pairs with low-mastery confused concepts
+        confused_ids = confused_with.get(node.id, [])
+        if confused_ids:
+            for cid in confused_ids:
+                cm = mastery_map.get(cid)
+                if cm and cm.mastery_score < settings.lector_confusion_threshold:
+                    review_type = "contrast"
+                    break
+        # Prerequisite-first overrides contrast when prerequisites are weak
+        for prereq_id in prereqs_of.get(node.id, []):
+            prereq_m = mastery_map.get(prereq_id)
+            if prereq_m and prereq_m.mastery_score < settings.lector_prerequisite_threshold:
+                review_type = "prerequisite_first"
+                break
+
         scored_items.append(ReviewItem(
             concept_name=node.name,
             concept_id=str(node.id),
@@ -183,6 +201,7 @@ async def get_smart_review_session(
             priority=round(priority, 3),
             reason=reason,
             related_concepts=related_names,
+            review_type=review_type,
         ))
 
     # Sort by priority (highest first) and take top N
@@ -231,3 +250,76 @@ async def get_review_summary(
         "concepts_at_risk": at_risk,
         "recommendation": rec,
     }
+
+
+async def record_review_outcome(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    concept_id: uuid.UUID,
+    recalled_correctly: bool,
+) -> None:
+    """Record whether a concept was recalled correctly after being reviewed.
+
+    Used to adaptively tune LECTOR priority weights per user.
+    Updates the concept mastery's metadata with review feedback.
+    """
+    result = await db.execute(
+        select(ConceptMastery).where(
+            ConceptMastery.user_id == user_id,
+            ConceptMastery.knowledge_node_id == concept_id,
+        )
+    )
+    mastery = result.scalar_one_or_none()
+    if mastery is None:
+        logger.warning(
+            "record_review_outcome: no ConceptMastery for user=%s concept=%s",
+            user_id, concept_id,
+        )
+        return
+
+    now = datetime.now(timezone.utc)
+    mastery.practice_count += 1
+    mastery.last_practiced_at = now
+
+    if recalled_correctly:
+        mastery.correct_count += 1
+        # Increase mastery toward 1.0 with diminishing returns
+        gain = 0.1 * (1.0 - mastery.mastery_score)
+        mastery.mastery_score = min(1.0, mastery.mastery_score + gain)
+        # Increase stability (FSRS-style: successful recall extends interval)
+        mastery.stability_days = max(1.0, mastery.stability_days * 1.5 + 0.5)
+    else:
+        mastery.wrong_count += 1
+        # Decrease mastery
+        mastery.mastery_score = max(0.0, mastery.mastery_score - 0.1)
+        # Reset stability on failure (FSRS lapse)
+        mastery.stability_days = max(0.5, mastery.stability_days * 0.3)
+
+    # Schedule next review based on updated stability
+    mastery.next_review_at = now + timedelta(days=mastery.stability_days)
+
+    # Store adaptive weight feedback in metadata (for future per-user tuning)
+    node_result = await db.execute(
+        select(KnowledgeNode).where(KnowledgeNode.id == concept_id)
+    )
+    node = node_result.scalar_one_or_none()
+    if node:
+        meta = dict(node.metadata_ or {})
+        review_history = meta.get("review_outcomes", [])
+        review_history.append({
+            "user_id": str(user_id),
+            "recalled": recalled_correctly,
+            "mastery_after": round(mastery.mastery_score, 3),
+            "stability_after": round(mastery.stability_days, 2),
+            "timestamp": now.isoformat(),
+        })
+        # Keep only last 50 outcomes per concept to bound storage
+        meta["review_outcomes"] = review_history[-50:]
+        node.metadata_ = meta
+
+    await db.flush()
+    logger.info(
+        "Recorded review outcome: user=%s concept=%s recalled=%s mastery=%.3f stability=%.2f",
+        user_id, concept_id, recalled_correctly,
+        mastery.mastery_score, mastery.stability_days,
+    )

@@ -32,9 +32,9 @@ export function ClarifyCard({ clarify, courseId }: ClarifyCardProps) {
           onClick={() => sendClarifyResponse(courseId, clarify.key, option)}
           className={cn(
             "inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium",
-            "bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300",
-            "transition-all hover:bg-blue-100 dark:hover:bg-blue-900/50",
-            "cursor-pointer select-none border border-blue-200 dark:border-blue-800",
+            "bg-muted/30 text-foreground/80",
+            "transition-all hover:bg-muted/50 card-shadow",
+            "cursor-pointer select-none border border-border/60",
             "disabled:opacity-50 disabled:cursor-not-allowed",
           )}
         >

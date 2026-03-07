@@ -29,7 +29,7 @@ def _load_template(name: str) -> str | None:
             try:
                 return path.read_text(encoding="utf-8")
             except Exception as e:
-                logger.warning("Failed to read template %s: %s", path, e)
+                logger.exception("Failed to read template %s: %s", path, e)
     return None
 
 

@@ -153,7 +153,7 @@ async def auto_summarize_titles(
                     updated += 1
                     logger.info("Renamed '%s' → '%s'", title, new_title)
             except Exception as e:
-                logger.debug("AI title generation failed for '%s': %s", title, e)
+                logger.warning("AI title generation failed for '%s': %s", title, e)
 
         await db.commit()
 
@@ -204,7 +204,7 @@ async def auto_generate_notes(
                 if ai_content and len(ai_content) > 50:
                     return (node, ai_content)
             except Exception as e:
-                logger.debug("Auto-generate notes failed for '%s': %s", node.title, e)
+                logger.warning("Auto-generate notes failed for '%s': %s", node.title, e)
             return None
 
         results = await _asyncio.gather(*[_gen_one(n) for n in eligible[:5]])
@@ -272,8 +272,8 @@ async def auto_generate_flashcards(
             await db.commit()
             logger.info("Auto-generated %d flashcards for course %s", len(cards), course_id)
             return len(cards)
-        except Exception as e:
-            logger.warning("Auto-generate flashcards failed: %s", e)
+        except Exception:
+            logger.exception("Auto flashcard generation failed for course %s", course_id)
             return 0
 
 
@@ -330,8 +330,8 @@ async def auto_generate_quiz(
             await db.commit()
             logger.info("Auto-generated %d quiz questions for course %s", added, course_id)
             return added
-        except Exception as e:
-            logger.warning("Auto-generate quiz failed: %s", e)
+        except Exception:
+            logger.exception("Auto quiz generation failed for course %s", course_id)
             return 0
 
 
@@ -351,21 +351,21 @@ async def auto_prepare(
         try:
             return await auto_generate_notes(db_factory, course_id, user_id)
         except Exception as e:
-            logger.warning("auto_prepare: notes step failed: %s", e)
+            logger.exception("auto_prepare: notes step failed")
             return 0
 
     async def _safe_flashcards():
         try:
             return await auto_generate_flashcards(db_factory, course_id, user_id)
         except Exception as e:
-            logger.warning("auto_prepare: flashcards step failed: %s", e)
+            logger.exception("auto_prepare: flashcards step failed")
             return 0
 
     async def _safe_quiz():
         try:
             return await auto_generate_quiz(db_factory, course_id)
         except Exception as e:
-            logger.warning("auto_prepare: quiz step failed: %s", e)
+            logger.exception("auto_prepare: quiz step failed")
             return 0
 
     notes_count, flashcards_count, quiz_count = await _asyncio.gather(
@@ -382,7 +382,7 @@ async def auto_prepare(
         config = await auto_configure_course(db_factory, course_id, summary)
         summary["auto_configured"] = bool(config)
     except Exception as e:
-        logger.warning("auto_prepare: auto-configure step failed: %s", e)
+        logger.exception("auto_prepare: auto-configure step failed")
         summary["auto_configured"] = False
 
     # LOOM: Build knowledge concept graph from content
@@ -390,7 +390,7 @@ async def auto_prepare(
         from services.loom import build_course_graph
         summary["loom_concepts"] = await build_course_graph(db_factory, course_id)
     except Exception as e:
-        logger.warning("auto_prepare: LOOM graph building failed: %s", e)
+        logger.exception("auto_prepare: LOOM graph building failed")
         summary["loom_concepts"] = 0
 
     logger.info("auto_prepare complete for course %s: %s", course_id, summary)
@@ -594,10 +594,10 @@ async def _auto_generate_learning_content(
                     pass
 
         except Exception as e:
-            logger.debug("Auto-generate learning content failed for '%s': %s", node.title, e)
+            logger.warning("Auto-generate learning content failed for '%s': %s", node.title, e)
 
     try:
         await db.flush()
         logger.info("Auto-generated learning content for %d nodes in course %s", len(eligible), course_id)
     except Exception as e:
-        logger.warning("Failed to flush auto-generated content: %s", e)
+        logger.exception("Failed to flush auto-generated content")

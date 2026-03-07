@@ -3,10 +3,11 @@
 import { useWorkspaceStore, type SectionId } from "@/store/workspace";
 import { cn } from "@/lib/utils";
 import {
+  LayoutGrid,
+  RefreshCw,
+  Sparkles,
+  Focus,
   BookOpen,
-  ClipboardList,
-  CalendarCheck,
-  StickyNote,
   ArrowRight,
 } from "lucide-react";
 
@@ -23,45 +24,60 @@ const ACTION_MAP: Record<
   string,
   { section: SectionId; icon: typeof BookOpen; color: string }
 > = {
-  open_quiz: {
-    section: "practice",
-    icon: ClipboardList,
-    color: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800/50 dark:text-zinc-400",
+  data_updated: {
+    section: "notes",
+    icon: RefreshCw,
+    color: "bg-muted/30 text-muted-foreground",
   },
-  add_to_quiz: {
-    section: "practice",
-    icon: ClipboardList,
-    color: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800/50 dark:text-zinc-400",
+  focus_topic: {
+    section: "notes",
+    icon: Focus,
+    color: "bg-muted/30 text-muted-foreground",
   },
-  open_plan: {
+  add_block: {
+    section: "notes",
+    icon: LayoutGrid,
+    color: "bg-muted/40 text-foreground/80",
+  },
+  remove_block: {
+    section: "notes",
+    icon: LayoutGrid,
+    color: "bg-muted/40 text-foreground/80",
+  },
+  reorder_blocks: {
+    section: "notes",
+    icon: LayoutGrid,
+    color: "bg-muted/40 text-foreground/80",
+  },
+  resize_block: {
+    section: "notes",
+    icon: LayoutGrid,
+    color: "bg-muted/40 text-foreground/80",
+  },
+  apply_template: {
+    section: "notes",
+    icon: LayoutGrid,
+    color: "bg-muted/40 text-foreground/80",
+  },
+  agent_insight: {
+    section: "notes",
+    icon: Sparkles,
+    color: "bg-muted/40 text-foreground/80",
+  },
+  set_learning_mode: {
     section: "plan",
-    icon: CalendarCheck,
-    color: "bg-zinc-200 text-zinc-800 dark:bg-zinc-700/50 dark:text-zinc-300",
+    icon: Sparkles,
+    color: "bg-muted/40 text-foreground/80",
   },
-  show_plan: {
+  suggest_mode: {
     section: "plan",
-    icon: CalendarCheck,
-    color: "bg-zinc-200 text-zinc-800 dark:bg-zinc-700/50 dark:text-zinc-300",
+    icon: Sparkles,
+    color: "bg-muted/40 text-foreground/80",
   },
-  open_notes: {
-    section: "notes",
-    icon: StickyNote,
-    color: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800/50 dark:text-zinc-400",
-  },
-  add_to_notes: {
-    section: "notes",
-    icon: StickyNote,
-    color: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800/50 dark:text-zinc-400",
-  },
-  open_section: {
-    section: "notes",
-    icon: BookOpen,
-    color: "bg-zinc-200 text-zinc-800 dark:bg-zinc-700/50 dark:text-zinc-300",
-  },
-  switch_tab: {
+  unknown: {
     section: "notes",
     icon: ArrowRight,
-    color: "bg-gray-100 text-gray-700 dark:bg-gray-800/50 dark:text-gray-400",
+    color: "bg-muted/30 text-muted-foreground",
   },
 };
 
@@ -71,23 +87,27 @@ const ACTION_MAP: Record<
  */
 export function ActionCard({ action }: ActionCardProps) {
   const setActiveSection = useWorkspaceStore((s) => s.setActiveSection);
+  const setSelectedNodeId = useWorkspaceStore((s) => s.setSelectedNodeId);
 
-  const mapping = ACTION_MAP[action.type];
+  const mapping = ACTION_MAP[action.type] ?? ACTION_MAP.unknown;
   const Icon = mapping?.icon ?? ArrowRight;
   const colorClass =
     mapping?.color ??
-    "bg-gray-100 text-gray-700 dark:bg-gray-800/50 dark:text-gray-400";
+    "bg-muted/30 text-muted-foreground";
 
   const handleClick = () => {
-    if (mapping) {
-      const VALID_SECTIONS: Set<string> = new Set(["notes", "practice", "analytics", "plan"]);
-      // For switch_tab / open_section, use the label as target only if it's a valid SectionId.
-      const target =
-        action.type === "switch_tab" || action.type === "open_section"
-          ? (VALID_SECTIONS.has(action.label ?? "") ? (action.label as SectionId) : mapping.section)
-          : mapping.section;
-      setActiveSection(target);
+    const VALID_SECTIONS: Set<string> = new Set(["notes", "practice", "analytics", "plan"]);
+    if (action.type === "data_updated") {
+      const requested = action.label ?? "";
+      if (VALID_SECTIONS.has(requested)) {
+        setActiveSection(requested as SectionId);
+        return;
+      }
     }
+    if (action.type === "focus_topic" && action.label) {
+      setSelectedNodeId(action.label);
+    }
+    setActiveSection(mapping.section);
   };
 
   const label =
@@ -98,8 +118,8 @@ export function ActionCard({ action }: ActionCardProps) {
       type="button"
       onClick={handleClick}
       className={cn(
-        "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium",
-        "transition-opacity hover:opacity-80 active:opacity-60",
+        "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium card-shadow",
+        "transition-all hover:opacity-80 active:opacity-60",
         "cursor-pointer select-none",
         colorClass,
       )}

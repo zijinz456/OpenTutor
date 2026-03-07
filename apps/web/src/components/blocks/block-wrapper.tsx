@@ -2,7 +2,8 @@
 
 import { Suspense } from "react";
 import Link from "next/link";
-import { X, Check, Sparkles, Maximize2 } from "lucide-react";
+import { X, Check, Sparkles, Maximize2, AlertTriangle } from "lucide-react";
+import { ErrorBoundary } from "@/components/shared/error-boundary";
 import { BLOCK_REGISTRY } from "@/lib/block-system/registry";
 import type { BlockInstance, BlockType, LearningMode } from "@/lib/block-system/types";
 import { updateUnlockContext } from "@/lib/block-system/feature-unlock";
@@ -113,14 +114,18 @@ export function BlockWrapper({ block, courseId, aiActionsEnabled }: BlockWrapper
 
   return (
     <div
+      role="region"
+      aria-label={entry.label}
+      tabIndex={0}
       className={cn(
-        "rounded-xl border bg-card overflow-hidden flex flex-col",
-        isAgent && "border-brand/30 bg-brand-muted/30",
-        needsApproval && "border-warning/40 bg-warning-muted/40",
+        "rounded-2xl bg-card overflow-hidden flex flex-col card-shadow",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        isAgent && "ring-1 ring-brand/20 bg-brand-muted/20",
+        needsApproval && "ring-1 ring-warning/30 bg-warning-muted/20",
       )}
     >
       {/* Header bar */}
-      <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border/60 bg-section-header/50">
+      <div className="flex items-center gap-2 px-4 py-3 border-b border-border/40">
         <span className="text-sm font-medium text-foreground flex-1 truncate">
           {entry.label}
         </span>
@@ -165,7 +170,7 @@ export function BlockWrapper({ block, courseId, aiActionsEnabled }: BlockWrapper
           <button
             onClick={handleDismiss}
             className="text-muted-foreground hover:text-foreground transition-colors p-1 -mr-1"
-            aria-label="Dismiss"
+            aria-label={t("block.dismiss")}
           >
             <X className="size-3.5" />
           </button>
@@ -200,20 +205,31 @@ export function BlockWrapper({ block, courseId, aiActionsEnabled }: BlockWrapper
 
       {/* Block content */}
       <div className="flex-1 min-h-0 overflow-auto">
-        <Suspense
+        <ErrorBoundary
           fallback={
-            <div className="flex items-center justify-center h-32 text-sm text-muted-foreground">
-              {t("block.loading")}
+            <div className="flex flex-col items-center justify-center h-32 gap-2 text-center p-4">
+              <AlertTriangle className="size-5 text-destructive/60" />
+              <p className="text-xs text-muted-foreground">
+                This block encountered an error.
+              </p>
             </div>
           }
         >
-          <Component
-            courseId={courseId}
-            blockId={block.id}
-            config={block.config}
-            aiActionsEnabled={aiActionsEnabled}
-          />
-        </Suspense>
+          <Suspense
+            fallback={
+              <div className="flex items-center justify-center h-32 text-sm text-muted-foreground">
+                {t("block.loading")}
+              </div>
+            }
+          >
+            <Component
+              courseId={courseId}
+              blockId={block.id}
+              config={block.config}
+              aiActionsEnabled={aiActionsEnabled}
+            />
+          </Suspense>
+        </ErrorBoundary>
       </div>
     </div>
   );

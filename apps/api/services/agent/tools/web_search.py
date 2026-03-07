@@ -97,5 +97,5 @@ class WebSearchTool(Tool):
                 metadata={"result_count": len(results)},
             )
         except Exception as e:
-            logger.error("web_search failed: %s", e)
+            logger.exception("web_search failed: %s", e)
             return ToolResult(success=False, output="", error=f"Web search failed: {e}")

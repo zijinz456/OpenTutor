@@ -88,7 +88,7 @@ async def classify_error(
         result = _parse_classification(response)
         return result
     except Exception as e:
-        logger.warning("Error classification failed: %s", e)
+        logger.exception("Error classification LLM call failed")
         return {
             "category": "conceptual",
             "confidence": 0.3,

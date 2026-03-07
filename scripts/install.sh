@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # OpenTutor — One-line install script
-# Usage: curl -sSL https://raw.githubusercontent.com/<org>/opentutor/main/scripts/install.sh | bash
+# Usage: curl -sSL https://raw.githubusercontent.com/zijinz456/OpenTutor/main/scripts/install.sh | bash
 set -euo pipefail
 
-REPO_URL="https://github.com/<org>/opentutor.git"
+REPO_URL="https://github.com/zijinz456/OpenTutor.git"
 INSTALL_DIR="${OPENTUTOR_DIR:-$HOME/opentutor}"
 
 info()  { printf "\033[1;34m[INFO]\033[0m  %s\n" "$*"; }

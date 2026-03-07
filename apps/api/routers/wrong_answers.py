@@ -68,6 +68,7 @@ async def list_wrong_answers(
             knowledge_points=wa.knowledge_points,
             review_count=wa.review_count,
             mastered=wa.mastered,
+            created_at=wa.created_at,
         )
         for wa, prob in rows
     ]

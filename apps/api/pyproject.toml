@@ -92,3 +92,7 @@ include = [
     "utils*",
 ]
 exclude = ["tests*", "alembic*", "uploads*", "sessions*", "plugins*"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "BLE001"]
+# BLE001: Do not catch blind exception: `Exception`

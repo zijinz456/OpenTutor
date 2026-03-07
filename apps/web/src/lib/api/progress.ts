@@ -271,6 +271,20 @@ export async function listStudyPlanBatches(courseId: string): Promise<GeneratedA
   return request(`/workflows/study-plans/${courseId}`);
 }
 
+export interface StudyPlanResponse {
+  id: string;
+  course_id: string;
+  name: string;
+  scene_id: string | null;
+  tasks: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function getStudyPlans(courseId: string, limit = 5): Promise<StudyPlanResponse[]> {
+  return request(`/workflows/courses/${courseId}/study-plans?limit=${limit}`);
+}
+
 // ── Agent Tasks ──
 
 export interface AgentTask {

@@ -124,3 +124,45 @@ class ContextBuildError(AppError):
     def __init__(self, phase: str = "unknown", message: str = "Context building failed"):
         self.phase = phase
         super().__init__(f"Context build error ({phase}): {message}")
+
+
+class ExternalServiceError(AppError):
+    """Raised when an external service (LLM, Canvas, embedding, etc.) fails."""
+    code = "external_service_error"
+    status = 502
+
+    def __init__(self, service: str, message: str = "External service unavailable"):
+        self.service = service
+        super().__init__(f"{service}: {message}")
+
+
+class ServiceTimeoutError(AppError):
+    """Raised when an external service call times out."""
+    code = "timeout_error"
+    status = 504
+
+    def __init__(self, service: str, timeout_seconds: float | None = None):
+        self.service = service
+        self.timeout_seconds = timeout_seconds
+        detail = f"{service} timed out"
+        if timeout_seconds is not None:
+            detail += f" after {timeout_seconds}s"
+        super().__init__(detail)
+
+
+class ConfigurationError(AppError):
+    """Raised when required configuration is missing or invalid at runtime."""
+    code = "configuration_error"
+    status = 500
+
+    def __init__(self, message: str = "Configuration error"):
+        super().__init__(message)
+
+
+class RateLimitError(AppError):
+    """Raised when a rate limit is exceeded."""
+    code = "rate_limit_exceeded"
+    status = 429
+
+    def __init__(self, message: str = "Rate limit exceeded"):
+        super().__init__(message)

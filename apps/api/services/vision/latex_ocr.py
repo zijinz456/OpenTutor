@@ -8,6 +8,7 @@ Requires: pip install pix2tex
 """
 
 import base64
+import binascii
 import io
 import logging
 from typing import Any
@@ -37,7 +38,7 @@ class LaTeXOCRService:
             logger.info("pix2tex not installed — LaTeX-OCR disabled")
         except Exception as e:
             self._available = False
-            logger.warning("Failed to load LaTeX-OCR model: %s", e)
+            logger.exception("Failed to load LaTeX-OCR model")
 
         return self._available
 
@@ -65,7 +66,7 @@ class LaTeXOCRService:
                 logger.info("LaTeX-OCR extracted: %s", latex[:100])
                 return latex.strip()
         except Exception as e:
-            logger.debug("LaTeX-OCR extraction failed: %s", e)
+            logger.warning("LaTeX-OCR extraction failed: %s", e)
 
         return None
 
@@ -74,8 +75,8 @@ class LaTeXOCRService:
         try:
             image_bytes = base64.b64decode(data)
             return self.extract_latex(image_bytes)
-        except Exception as e:
-            logger.debug("Failed to decode base64 for LaTeX-OCR: %s", e)
+        except (ValueError, binascii.Error) as e:
+            logger.warning("Failed to decode base64 for LaTeX-OCR: %s", e)
             return None
 
 

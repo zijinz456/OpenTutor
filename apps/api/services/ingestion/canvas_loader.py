@@ -54,7 +54,7 @@ def _load_session_cookies(
                 cookies[name] = cookie["value"]
         return cookies
     except Exception as e:
-        logger.debug("Failed to load session cookies for %s: %s", session_name, e)
+        logger.warning("Failed to load session cookies for %s: %s", session_name, e)
         return {}
 
 
@@ -342,7 +342,7 @@ async def _canvas_fetch_modules(client, api_base: str, course_id: str, base_url:
                                 file_urls.extend(_extract_file_urls_from_html(body, base_url, module_name=mod_name, item_title=item_title))
                             pages_fetched += 1
                     except Exception as e:
-                        logger.debug("Failed to fetch page %s: %s", page_url, e)
+                        logger.warning("Failed to fetch page %s: %s", page_url, e)
                         parts.append(f"#### {item_title}")
             elif item_type == "File":
                 content_id = item.get("content_id")
@@ -422,7 +422,7 @@ async def _canvas_fetch_additional_pages(client, api_base: str, course_id: str, 
                     file_urls.extend(_extract_file_urls_from_html(body, base_url))
                 pages_fetched += 1
         except Exception as e:
-            logger.warning("Failed to fetch additional page %s: %s", slug, e)
+            logger.warning("Failed to fetch Canvas additional page %s: %s", slug, e)
             parts.append(f"### {title_text}")
     parts.append("")
     return pages_fetched, parts, file_urls
@@ -464,7 +464,7 @@ async def _canvas_fetch_quizzes(client, api_base: str, course_id: str) -> tuple[
                         if parsed:
                             quiz_questions.append(parsed)
             except Exception as e:
-                logger.warning("Failed to fetch quiz questions for quiz %s: %s", quiz_id, e)
+                logger.warning("Failed to fetch Canvas quiz questions for quiz %s: %s", quiz_id, e)
     parts.append("")
     return quiz_questions, parts
 
@@ -506,7 +506,7 @@ async def _try_canvas_api_deep(
             except CanvasAuthExpiredError:
                 raise
             except Exception as e:
-                logger.warning("Canvas course info fetch failed for %s: %s", url, e)
+                logger.exception("Canvas course info fetch failed for %s", url)
                 return None
             if not course_result:
                 return None
@@ -519,7 +519,7 @@ async def _try_canvas_api_deep(
                 parts.extend(mod_parts)
                 all_file_urls.extend(mod_files)
             except Exception as e:
-                logger.warning("Modules deep fetch failed: %s", e)
+                logger.exception("Modules deep fetch failed")
                 modules_found, mod_pages = 0, 0
 
             # 3. Assignments with descriptions
@@ -528,7 +528,7 @@ async def _try_canvas_api_deep(
                 parts.extend(assign_parts)
                 all_file_urls.extend(assign_files)
             except Exception as e:
-                logger.warning("Canvas assignments fetch failed: %s", e)
+                logger.exception("Canvas assignments fetch failed")
                 all_assignments_data = []
 
             # 4. Additional pages
@@ -537,7 +537,7 @@ async def _try_canvas_api_deep(
                 parts.extend(page_parts)
                 all_file_urls.extend(page_files)
             except Exception as e:
-                logger.warning("Canvas additional pages fetch failed: %s", e)
+                logger.exception("Canvas additional pages fetch failed")
                 extra_pages = 0
 
             # 5. Quizzes
@@ -545,7 +545,7 @@ async def _try_canvas_api_deep(
                 all_quiz_questions, quiz_parts = await _canvas_fetch_quizzes(client, api_base, course_id)
                 parts.extend(quiz_parts)
             except Exception as e:
-                logger.warning("Canvas quizzes fetch failed: %s", e)
+                logger.exception("Canvas quizzes fetch failed")
                 all_quiz_questions = []
 
             pages_fetched = mod_pages + extra_pages
@@ -580,7 +580,7 @@ async def _try_canvas_api_deep(
     except CanvasAuthExpiredError:
         raise  # Let auth errors propagate to caller
     except Exception as e:
-        logger.debug("Canvas deep API extraction failed for %s: %s", url, e)
+        logger.warning("Canvas deep API extraction failed for %s: %s", url, e)
 
     return None
 
@@ -661,10 +661,10 @@ async def download_canvas_file(
                         logger.info("Downloaded Canvas file: %s (%d bytes)", filename, len(resp.content))
                         return save_path
                 except Exception as e:
-                    logger.debug("Download attempt failed for %s: %s", try_url, e)
+                    logger.warning("Canvas download attempt failed for %s: %s", try_url, e)
 
-            logger.debug("All download attempts failed for: %s", filename)
+            logger.warning("All download attempts failed for: %s", filename)
     except Exception as e:
-        logger.debug("Canvas file download error for %s: %s", filename, e)
+        logger.exception("Canvas file download error for %s", filename)
 
     return None

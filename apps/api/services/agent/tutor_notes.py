@@ -46,7 +46,7 @@ async def get_tutor_notes(
             return value
         return None
     except Exception as e:
-        logger.warning("Failed to load tutor notes for user %s: %s", user_id, e)
+        logger.exception("Failed to load tutor notes for user %s: %s", user_id, e)
         return None
 
 

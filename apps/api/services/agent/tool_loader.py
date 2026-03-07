@@ -27,14 +27,20 @@ LAYOUT_TOOLS = """
 ## Layout Actions
 Output action markers on their own line to control the interface.
 
-Layout presets:
-- [ACTION:set_layout_preset:balanced] — Equal panel sizes
-- [ACTION:set_layout_preset:notesFocused] — Expand notes panel
-- [ACTION:set_layout_preset:quizFocused] — Expand quiz panel
-- [ACTION:set_layout_preset:chatFocused] — Expand chat panel
-- [ACTION:set_layout_preset:fullNotes] — Maximize notes panel
+Supported actions (PRD v1):
+- [ACTION:add_block:flashcards:medium] — Add a block
+- [ACTION:remove_block:quiz] — Remove a block by type
+- [ACTION:reorder_blocks:quiz,notes,progress] — Reorder blocks by priority
+- [ACTION:resize_block:notes:large] — Resize a block
+- [ACTION:apply_template:quick_reviewer] — Apply a workspace template
+- [ACTION:agent_insight:review_needed:3 concepts are fading] — Add agent insight block
+- [ACTION:data_updated:notes] — Notify frontend data refresh
+- [ACTION:focus_topic:<nodeId>] — Focus a specific concept/unit
 
-Rules: Only output ONE action per response. Explain what changed.
+Rules:
+- Put each action marker on its own line.
+- When both explanation and layout changes are needed, explain first, then output action markers.
+- Multiple actions are allowed when the user asks for combined operations.
 """
 
 # Preference tools (only when preference changes are likely)

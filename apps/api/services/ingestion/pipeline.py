@@ -190,7 +190,7 @@ async def extract_content(
         )
         return content
     except Exception as e:
-        logger.warning(f"Content extraction failed: {e}")
+        logger.exception("Content extraction failed")
         return ""
 
 
@@ -239,7 +239,7 @@ async def classify_content(content: str) -> str:
                 return cat
         return "other"
     except Exception as e:
-        logger.warning(f"LLM classification failed: {e}")
+        logger.exception("LLM classification failed")
         return "other"
 
 
@@ -417,7 +417,7 @@ async def run_ingestion_pipeline(
                             auth_session.is_valid = False
                             logger.info("Marked auth session %s as invalid", session_name)
                     except Exception:
-                        pass
+                        logger.debug("Failed to invalidate auth session", exc_info=True)
                     _set_job_phase(
                         job,
                         status="failed",
@@ -513,7 +513,7 @@ async def run_ingestion_pipeline(
         try:
             await db.rollback()
         except Exception:
-            pass
+            logger.debug("Rollback after ingestion failure also failed", exc_info=True)
         last_progress = _snapshot_job_int(job, "progress_percent", 0)
         last_nodes = _snapshot_job_int(job, "nodes_created", 0)
         _set_job_phase(
@@ -524,12 +524,12 @@ async def run_ingestion_pipeline(
             nodes_created=last_nodes,
             error_message=str(e)[:500],
         )
-        logger.error(f"Ingestion pipeline failed: {e}")
+        logger.exception("Ingestion pipeline failed")
         try:
             db.add(job)
             await db.commit()
         except Exception as commit_err:
-            logger.error(f"Failed to persist ingestion failure: {commit_err}")
+            logger.exception("Failed to persist ingestion failure")
 
     await db.flush()
     # Attach discovered Canvas file URLs and quiz questions for the caller to process
@@ -559,6 +559,7 @@ async def ingest_canvas_files(
     from config import settings
 
     ingested = 0
+    failed_files: list[str] = []
     save_dir = getattr(settings, "upload_dir", "uploads")
 
     for file_info in file_urls:
@@ -571,7 +572,9 @@ async def ingest_canvas_files(
                 save_dir=save_dir,
             )
             if not saved_path:
-                logger.debug("Skipped Canvas file (download failed): %s", file_info.get("filename"))
+                fname = file_info.get("filename", "unknown")
+                failed_files.append(fname)
+                logger.warning("Skipped Canvas file (download failed): %s", fname)
                 continue
 
             # Read file bytes for dedup
@@ -602,8 +605,13 @@ async def ingest_canvas_files(
                     logger.debug("Canvas file ingestion produced no nodes: %s", filename)
 
         except Exception as e:
-            logger.debug("Failed to ingest Canvas file %s: %s", file_info.get("filename"), e)
+            logger.warning("Failed to ingest Canvas file %s: %s", file_info.get("filename"), e)
 
+    if failed_files:
+        logger.warning(
+            "Canvas ingestion: %d file(s) failed to download: %s",
+            len(failed_files), ", ".join(failed_files[:10])
+        )
     logger.info("Canvas file ingestion complete: %d/%d files ingested", ingested, len(file_urls))
     return ingested
 
@@ -852,6 +860,6 @@ async def _dispatch_content(db: AsyncSession, job: IngestionJob) -> dict:
             if deadline_count:
                 result["deadlines_extracted"] = deadline_count
         except Exception as e:
-            logger.debug("Deadline extraction failed (non-blocking): %s", e)
+            logger.warning("Deadline extraction failed (non-blocking): %s", e)
 
     return result

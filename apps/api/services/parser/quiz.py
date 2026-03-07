@@ -129,6 +129,12 @@ _MODE_QUIZ_HINTS: dict[str, str] = {
     "course_following": "\n\nMode: COURSE FOLLOWING — Strictly follow the provided content. Only test concepts explicitly covered in the material.",
 }
 
+_DIFFICULTY_HINTS: dict[str, str] = {
+    "easy": "\n\nDifficulty: EASY — Mostly Layer 1-2 questions. Focus on core definitions and basic checks.",
+    "medium": "\n\nDifficulty: MEDIUM — Balanced Layer 1-3 mix. Emphasize applied understanding.",
+    "hard": "\n\nDifficulty: HARD — Bias strongly toward Layer 2-3. Include tricky distractors and transfer scenarios.",
+}
+
 
 async def extract_questions(
     content: str,
@@ -136,6 +142,7 @@ async def extract_questions(
     course_id: uuid.UUID,
     content_node_id: uuid.UUID | None = None,
     mode: str | None = None,
+    difficulty: str | None = None,
 ) -> list:
     """Extract practice questions from content using LLM.
 
@@ -154,6 +161,8 @@ async def extract_questions(
     user_msg = f"## {title}\n\n{content}"
     if mode and mode in _MODE_QUIZ_HINTS:
         user_msg += _MODE_QUIZ_HINTS[mode]
+    if difficulty and difficulty in _DIFFICULTY_HINTS:
+        user_msg += _DIFFICULTY_HINTS[difficulty]
 
     response, _ = await client.chat(
         EXTRACTION_PROMPT,

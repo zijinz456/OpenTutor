@@ -81,7 +81,7 @@ export default function AnalyticsPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      <header className="border-b border-border px-6 py-3 flex items-center gap-3">
+      <header className="border-b border-border/60 px-6 py-3 flex items-center gap-3 glass">
         <button
           type="button"
           onClick={() => router.push("/")}

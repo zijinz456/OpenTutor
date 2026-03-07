@@ -24,8 +24,8 @@ async def fetch_with_httpx(url: str, cookies: dict | None = None) -> str | None:
                 return response.text
             logger.debug(f"httpx returned {response.status_code} for {url}")
             return None
-    except Exception as e:
-        logger.debug(f"httpx failed for {url}: {e}")
+    except (httpx.HTTPError, OSError) as e:
+        logger.debug("httpx failed for %s: %s", url, e)
         return None
 
 
@@ -48,7 +48,7 @@ async def fetch_with_scrapling(url: str) -> str | None:
         logger.debug("Scrapling not installed. Run: pip install scrapling")
         return None
     except Exception as e:
-        logger.debug(f"Scrapling failed for {url}: {e}")
+        logger.warning("Scrapling failed for %s: %s", url, e)
         return None
 
 
@@ -102,7 +102,7 @@ async def fetch_with_browser(
         logger.warning("Playwright not installed. Run: pip install playwright && playwright install")
         return None
     except Exception as e:
-        logger.warning(f"Browser automation failed: {e}")
+        logger.exception("Browser automation failed for %s", url)
         return None
 
 

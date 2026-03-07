@@ -391,7 +391,7 @@ async def _try_browser_cascade(url: str) -> tuple[str, str] | None:
             if text and len(text) >= 50:
                 return url, text
     except Exception as e:
-        logger.debug(f"Browser cascade failed for {url}: {e}")
+        logger.warning("Browser cascade failed for %s: %s", url, e)
     return None
 
 
@@ -448,7 +448,7 @@ def _extract_pdf_fallback(file_path: str) -> tuple[str, str]:
     except ImportError:
         pass
     except Exception as e:
-        logger.debug(f"Marker PDF extraction failed: {e}")
+        logger.warning("Marker PDF extraction failed: %s", e)
 
     # Try pypdf
     try:
@@ -458,7 +458,7 @@ def _extract_pdf_fallback(file_path: str) -> tuple[str, str]:
         text = "\n".join(page.extract_text() or "" for page in reader.pages)
         return Path(file_path).stem, text
     except Exception as e:
-        logger.debug(f"pypdf extraction failed: {e}")
+        logger.warning("pypdf extraction failed: %s", e)
 
     return Path(file_path).stem, ""
 
@@ -480,7 +480,7 @@ def _extract_html_fallback(file_path: str) -> tuple[str, str]:
     try:
         return Path(file_path).stem, Path(file_path).read_text(errors="ignore")
     except Exception as e:
-        logger.warning("Failed to read file %s: %s", file_path, e)
+        logger.exception("Failed to read file %s", file_path)
         return Path(file_path).stem, ""
 
 
@@ -527,7 +527,7 @@ def _extract_with_loader_dict(file_path: str, ext: str) -> tuple[str, str]:
         )
         return _extract_office_fallback(file_path, ext)
     except Exception as e:
-        logger.warning(f"loader_dict extraction failed for {file_path}: {e}")
+        logger.warning("loader_dict extraction failed for %s: %s", file_path, e)
         return _extract_office_fallback(file_path, ext)
 
 
@@ -541,7 +541,7 @@ def _extract_office_fallback(file_path: str, ext: str) -> tuple[str, str]:
             content = "\n\n".join(p.text for p in doc.paragraphs if p.text)
             return Path(file_path).stem, content
         except Exception as e:
-            logger.warning("DOCX fallback extraction failed for %s: %s", file_path, e)
+            logger.exception("DOCX fallback extraction failed for %s", file_path)
 
     if ext in ("pptx",):
         try:
@@ -556,7 +556,7 @@ def _extract_office_fallback(file_path: str, ext: str) -> tuple[str, str]:
                         texts.append(shape.text_frame.text)
             return Path(file_path).stem, "\n\n".join(texts)
         except Exception as e:
-            logger.warning("PPTX fallback extraction failed for %s: %s", file_path, e)
+            logger.exception("PPTX fallback extraction failed for %s", file_path)
 
     return Path(file_path).stem, ""
 
@@ -570,7 +570,7 @@ def _extract_plain_text(file_path: str) -> tuple[str, str]:
         content = Path(file_path).read_text(errors="ignore")
         return Path(file_path).stem, content
     except Exception as e:
-        logger.warning("Failed to read plain text file %s: %s", file_path, e)
+        logger.exception("Failed to read plain text file %s", file_path)
         return Path(file_path).stem, ""
 
 

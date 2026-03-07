@@ -126,4 +126,4 @@ class PlanAgent(ReActMixin, BaseAgent):
             await db.flush()
             logger.info("Study plan saved for user=%s course=%s", ctx.user_id, ctx.course_id)
         except Exception as e:
-            logger.warning("Failed to save study plan: %s", e)
+            logger.exception("Failed to save study plan: %s", e)

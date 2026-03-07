@@ -235,7 +235,7 @@ async def export_session_state(
             )
             counts["memories"] = n
         except Exception as exc:
-            logger.warning("Skipping memories export (table may not exist): %s", exc)
+            logger.exception("Skipping memories export (table may not exist)")
             counts["memories"] = 0
 
         # ---- preferences (user_preferences) ----
@@ -261,7 +261,7 @@ async def export_session_state(
             )
             counts["preferences"] = n
         except Exception as exc:
-            logger.warning("Skipping preferences export (table may not exist): %s", exc)
+            logger.exception("Skipping preferences export (table may not exist)")
             counts["preferences"] = 0
 
         # ---- progress (learning_progress) ----
@@ -295,7 +295,7 @@ async def export_session_state(
             )
             counts["progress"] = n
         except Exception as exc:
-            logger.warning("Skipping progress export (table may not exist): %s", exc)
+            logger.exception("Skipping progress export (table may not exist)")
             counts["progress"] = 0
 
         # ---- kv_store (agent_kv) ----
@@ -319,7 +319,7 @@ async def export_session_state(
             )
             counts["kv_store"] = n
         except Exception as exc:
-            logger.warning("Skipping kv_store export (table may not exist): %s", exc)
+            logger.exception("Skipping kv_store export (table may not exist)")
             counts["kv_store"] = 0
 
         # ---- tool_calls (tool_call_events) ----
@@ -346,7 +346,7 @@ async def export_session_state(
             )
             counts["tool_calls"] = n
         except Exception as exc:
-            logger.warning("Skipping tool_calls export (table may not exist): %s", exc)
+            logger.exception("Skipping tool_calls export (table may not exist)")
             counts["tool_calls"] = 0
 
         # ---- chat_messages (chat_message_logs via chat_sessions) ----
@@ -379,7 +379,7 @@ async def export_session_state(
             )
             counts["chat_messages"] = n
         except Exception as exc:
-            logger.warning("Skipping chat_messages export (table may not exist): %s", exc)
+            logger.exception("Skipping chat_messages export (table may not exist)")
             counts["chat_messages"] = 0
 
         # ---- export metadata ----

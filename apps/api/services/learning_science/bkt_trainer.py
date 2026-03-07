@@ -93,7 +93,7 @@ def _fit_with_pybkt(data: list[dict]) -> dict[str, dict[str, float]]:
 
     try:
         from pyBKT.models import Model
-    except Exception as exc:  # ImportError + dependency/runtime compatibility failures
+    except (ImportError, RuntimeError, OSError) as exc:
         logger.info("pyBKT unavailable — using heuristic BKT params (%s)", exc)
         return {}
 
@@ -127,7 +127,7 @@ def _fit_with_pybkt(data: list[dict]) -> dict[str, dict[str, float]]:
                     "slips": float(row.get("slips", 0.1)),
                 }
         except Exception as e:
-            logger.debug("pyBKT fit failed for concept '%s': %s", concept, e)
+            logger.warning("pyBKT fit failed for concept '%s': %s", concept, e)
 
     return fitted
 

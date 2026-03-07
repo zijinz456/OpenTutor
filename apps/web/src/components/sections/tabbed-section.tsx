@@ -48,15 +48,15 @@ export function TabbedSection<T extends string>({
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden" data-testid={testId}>
-      <div className="px-3 py-1.5 border-b shrink-0">
-        <div className="flex items-center gap-1">
+      <div className="px-3 py-1.5 border-b border-border/60 shrink-0 overflow-x-auto scrollbar-none">
+        <div className="flex items-center gap-1 min-w-max">
           {tabs.map((tab) => (
             <Button
               key={tab.id}
               type="button"
               size="sm"
               variant={resolvedActiveTab === tab.id ? "secondary" : "ghost"}
-              className="h-6 px-2.5 text-xs"
+              className="h-6 px-2.5 text-xs rounded-xl min-h-[44px] min-w-[44px] shrink-0"
               data-testid={tab.testId}
               onClick={() => {
                 if (externalCandidate) onExternalTabConsumed?.();

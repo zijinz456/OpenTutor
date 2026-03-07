@@ -1,8 +1,13 @@
 "use client";
 
+import { useCallback, useRef, useState } from "react";
+import { ChevronDown } from "lucide-react";
 import { useWorkspaceStore } from "@/store/workspace";
+import { useRovingTabindex } from "@/hooks/use-roving-tabindex";
+import { BLOCK_REGISTRY } from "@/lib/block-system/registry";
 import { BlockWrapper } from "./block-wrapper";
 import { BlockPalette } from "./block-palette";
+import { cn } from "@/lib/utils";
 
 interface BlockGridProps {
   courseId: string;
@@ -12,8 +17,13 @@ interface BlockGridProps {
 export function BlockGrid({ courseId, aiActionsEnabled }: BlockGridProps) {
   const blocks = useWorkspaceStore((s) => s.spaceLayout.blocks);
   const columns = useWorkspaceStore((s) => s.spaceLayout.columns);
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
 
   const visibleBlocks = blocks.filter((b) => b.visible);
+
+  const toggleCollapse = useCallback((blockId: string) => {
+    setCollapsed((prev) => ({ ...prev, [blockId]: !prev[blockId] }));
+  }, []);
 
   if (visibleBlocks.length === 0) {
     return null;
@@ -27,29 +37,55 @@ export function BlockGrid({ courseId, aiActionsEnabled }: BlockGridProps) {
     return "col-span-1";
   };
 
+  const gridRef = useRef<HTMLDivElement>(null);
+  useRovingTabindex(gridRef, "both");
+
   return (
     <div className="space-y-4">
       <div
-        className="grid gap-4"
+        ref={gridRef}
+        role="list"
+        aria-label="Workspace blocks"
+        className="grid gap-5 max-sm:!grid-cols-1"
         style={{
           gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
         }}
       >
         {visibleBlocks
           .sort((a, b) => a.position - b.position)
-          .map((block, index) => (
-            <div
-              key={block.id}
-              className={sizeToSpan(block.size, columns)}
-              style={{ animation: "block-appear 0.4s ease-out both", animationDelay: `${index * 100}ms` }}
-            >
-              <BlockWrapper
-                block={block}
-                courseId={courseId}
-                aiActionsEnabled={aiActionsEnabled}
-              />
-            </div>
-          ))}
+          .map((block, index) => {
+            const isCollapsed = collapsed[block.id] ?? false;
+            const regEntry = BLOCK_REGISTRY[block.type];
+            const blockLabel = regEntry?.label ?? block.type;
+
+            return (
+              <div
+                key={block.id}
+                role="listitem"
+                tabIndex={index === 0 ? 0 : -1}
+                className={cn("max-sm:col-span-1", sizeToSpan(block.size, columns))}
+                style={{ animation: "block-appear 0.4s ease-out both", animationDelay: `${index * 100}ms` }}
+              >
+                {/* Mobile collapsible header */}
+                <button
+                  type="button"
+                  className="sm:hidden w-full flex items-center justify-between px-3 py-2 text-xs font-medium text-muted-foreground rounded-t-xl bg-section-header border border-b-0 border-border/60 touch-target"
+                  onClick={() => toggleCollapse(block.id)}
+                  aria-expanded={!isCollapsed ? "true" : "false"}
+                >
+                  <span>{blockLabel}</span>
+                  <ChevronDown className={cn("h-4 w-4 transition-transform", isCollapsed && "-rotate-90")} />
+                </button>
+                <div className={cn("sm:!block", isCollapsed && "hidden")}>
+                  <BlockWrapper
+                    block={block}
+                    courseId={courseId}
+                    aiActionsEnabled={aiActionsEnabled}
+                  />
+                </div>
+              </div>
+            );
+          })}
       </div>
 
       <BlockPalette />

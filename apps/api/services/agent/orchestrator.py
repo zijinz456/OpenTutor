@@ -86,7 +86,7 @@ async def prepare_agent_turn(
                     cl["score"], block_types
                 )
     except Exception as e:
-        logger.debug("Cognitive load detection skipped: %s", e)
+        logger.exception("Cognitive load detection skipped: %s", e)
 
     agent = get_agent(ctx.intent)
     ctx.delegated_agent = agent.name
@@ -188,7 +188,7 @@ async def orchestrate_simple(
             return ctx.response or "I couldn't process that. Please try again."
 
     except Exception as e:
-        logger.error("orchestrate_simple failed (channel=%s): %s", channel, e)
+        logger.exception("orchestrate_simple failed (channel=%s): %s", channel, e)
         return "Sorry, I encountered an error. Please try again later."
 
 
@@ -313,18 +313,16 @@ async def _handle_guided_session(
     async for chunk in agent.stream(ctx, db):
         text_chunk = chunk if isinstance(chunk, str) else chunk.get("content", "")
         if text_chunk:
-            for parsed in marker_parser.feed(text_chunk):
-                if parsed["type"] == "text":
-                    yield {"event": "message", "data": json.dumps({"content": parsed["content"]})}
-                elif parsed["type"] == "action":
-                    yield {"event": "action", "data": json.dumps(parsed)}
+            for event_type, payload in marker_parser.feed(text_chunk):
+                if event_type == "text":
+                    yield {"event": "message", "data": json.dumps({"content": payload})}
+                elif event_type == "action":
+                    yield {"event": "action", "data": json.dumps(payload)}
 
     # Flush remaining
-    for parsed in marker_parser.flush():
-        if parsed["type"] == "text":
-            yield {"event": "message", "data": json.dumps({"content": parsed["content"]})}
-        elif parsed["type"] == "action":
-            yield {"event": "action", "data": json.dumps(parsed)}
+    remaining = marker_parser.flush()
+    if remaining:
+        yield {"event": "message", "data": json.dumps({"content": remaining})}
 
     # Persist phase completion and advance to next phase.
     next_state = await advance_phase(db, ctx.user_id, task_id)
@@ -496,7 +494,7 @@ async def orchestrate_stream(
             yield {"event": "done", "data": json.dumps(envelope_payload(ctx))}
             return
         except Exception as e:
-            logger.warning("Multi-step planning failed, falling back to single turn: %s", e)
+            logger.exception("Multi-step planning failed, falling back to single turn: %s", e)
 
     # Fatigue detection (metadata only — TutorAgent handles response adaptation)
     fatigue = _detect_fatigue(ctx.user_message)
@@ -522,7 +520,7 @@ async def orchestrate_stream(
                     cl["score"], block_types
                 )
     except Exception as e:
-        logger.debug("Cognitive load detection skipped: %s", e)
+        logger.exception("Cognitive load detection skipped: %s", e)
 
     agent = get_agent(ctx.intent)
     ctx.delegated_agent = agent.name
@@ -581,7 +579,7 @@ async def orchestrate_stream(
         try:
             await db.commit()
         except Exception as commit_err:
-            logger.error("Post-stream commit failed: %s", commit_err)
+            logger.exception("Post-stream commit failed: %s", commit_err)
             await db.rollback()
 
     finalize_token_usage(ctx, agent)
@@ -618,5 +616,5 @@ async def orchestrate_stream(
         try:
             await enqueue_post_process_task(bg_ctx)
         except Exception as exc:
-            logger.warning("Failed to enqueue durable chat post-process task: %s", exc)
+            logger.exception("Failed to enqueue durable chat post-process task: %s", exc)
             track_background_task(asyncio.create_task(run_post_process_bundle(bg_ctx, db_factory)))

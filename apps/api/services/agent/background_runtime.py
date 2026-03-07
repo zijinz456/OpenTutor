@@ -71,7 +71,7 @@ async def record_llm_usage(ctx: AgentContext, db_factory) -> None:
                     primary_client = registry.get(registry.primary_name)
                     model_name = getattr(primary_client, "model", "unknown")
             except Exception:
-                pass
+                logger.debug("Could not resolve model name from LLM registry")
 
             await record_usage(
                 db,
@@ -241,7 +241,7 @@ async def post_process(ctx: AgentContext, db_factory) -> None:
                     tool_calls=ctx.tool_calls,
                 )
         except Exception as exc:
-            logger.warning("Failed to persist tool calls: %s", exc)
+            logger.exception("Failed to persist tool calls: %s", exc)
 
     try:
         if ctx.response and ctx.user_message:
@@ -268,7 +268,7 @@ async def post_process(ctx: AgentContext, db_factory) -> None:
                     )
                     await reset_turn_counter(notes_db, ctx.user_id, ctx.course_id)
     except Exception as exc:
-        logger.warning("Tutor notes update failed (non-critical): %s", exc)
+        logger.exception("Tutor notes update failed (non-critical): %s", exc)
 
     # ── Teaching strategy extraction (Claudeception pattern, throttled) ──
     try:
@@ -308,7 +308,7 @@ async def post_process(ctx: AgentContext, db_factory) -> None:
                         )
                 await strategy_db.commit()
     except Exception as exc:
-        logger.warning("Teaching strategy extraction failed (non-critical): %s", exc)
+        logger.exception("Teaching strategy extraction failed (non-critical): %s", exc)
 
     failures = [result for result in pp_results if not result.get("success")]
     if failures:

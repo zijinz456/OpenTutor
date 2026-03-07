@@ -62,22 +62,6 @@ export const TEMPLATES: Record<string, TemplateDefinition> = {
       b("progress", "small"),
     ],
   },
-  language_learner: {
-    id: "language_learner",
-    name: "Language Learner",
-    nameZh: "语言学习者",
-    description: "Flashcards-first, comparison tables, frequent practice",
-    descriptionZh: "闪卡优先、对比表格、频繁练习",
-    defaultMode: "self_paced",
-    columns: 2,
-    blocks: [
-      b("chapter_list", "full"),
-      b("flashcards", "large"),
-      b("quiz", "medium", { difficulty: "easy" }),
-      b("notes", "medium", { note_format: "table" }),
-      b("progress", "small"),
-    ],
-  },
   visual_learner: {
     id: "visual_learner",
     name: "Visual Learner",

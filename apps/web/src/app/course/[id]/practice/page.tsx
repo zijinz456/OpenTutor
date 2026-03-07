@@ -9,11 +9,13 @@ import { ChatFab } from "@/components/chat/chat-fab";
 import { ChatDrawer } from "@/components/chat/chat-drawer";
 import { getHealthStatus, type HealthStatus } from "@/lib/api";
 import { ttlCache } from "@/lib/cache";
+import { useT } from "@/lib/i18n-context";
 
 export default function PracticePage() {
   const params = useParams();
   const searchParams = useSearchParams();
   const courseId = params.id as string;
+  const t = useT();
   const [chatOpen, setChatOpen] = useState(false);
   const [health, setHealth] = useState<HealthStatus | null>(
     () => ttlCache.get<HealthStatus>("course:health") ?? null,
@@ -41,16 +43,31 @@ export default function PracticePage() {
     health?.llm_status !== "mock_fallback" &&
     health?.llm_status !== "configuration_required";
   const tab = (searchParams.get("tab") ?? "quiz") as "quiz" | "flashcards" | "review" | "podcast";
+  const difficultyParam = searchParams.get("difficulty");
+  const modeParam = searchParams.get("mode");
+  const quizDifficultyHint =
+    difficultyParam === "easy" || difficultyParam === "medium" || difficultyParam === "hard"
+      ? difficultyParam
+      : undefined;
+  const quizModeHint =
+    modeParam === "course_following" ||
+    modeParam === "self_paced" ||
+    modeParam === "exam_prep" ||
+    modeParam === "maintenance"
+      ? modeParam
+      : undefined;
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
-      <WorkspaceHeader courseName={course?.name || "Practice"} courseId={courseId} />
+      <WorkspaceHeader courseName={course?.name || t("course.practice")} courseId={courseId} />
       <main className="flex-1 max-w-5xl mx-auto w-full px-4 py-6">
         <PracticeSection
           courseId={courseId}
           showReview
           aiActionsEnabled={aiActionsEnabled}
           defaultTab={tab}
+          quizDifficultyHint={quizDifficultyHint}
+          quizModeHint={quizModeHint}
         />
       </main>
       <ChatFab open={chatOpen} onToggle={() => setChatOpen((v) => !v)} />

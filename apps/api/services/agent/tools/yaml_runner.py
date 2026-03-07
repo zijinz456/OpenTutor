@@ -188,7 +188,7 @@ class YAMLTool(Tool):
             return ToolResult(success=True, output=output)
 
         except Exception as e:
-            logger.error("YAML HTTP tool %s failed: %s", self.name, e)
+            logger.exception("YAML HTTP tool %s failed: %s", self.name, e)
             return ToolResult(success=False, output="", error=str(e))
 
     # Safe module prefixes for python_function endpoint type.
@@ -227,7 +227,7 @@ class YAMLTool(Tool):
 
             return ToolResult(success=True, output=str(result))
         except Exception as e:
-            logger.error("YAML python_function tool %s failed: %s", self.name, e)
+            logger.exception("YAML python_function tool %s failed: %s", self.name, e)
             return ToolResult(success=False, output="", error=str(e))
 
 
@@ -267,7 +267,7 @@ def load_yaml_tools(registry: ToolRegistry | None = None) -> int:
             logger.info("YAML tool registered: %s from %s", tool.name, yaml_file.name)
 
         except Exception as e:
-            logger.warning("Failed to load YAML tool %s: %s", yaml_file.name, e)
+            logger.exception("Failed to load YAML tool %s: %s", yaml_file.name, e)
 
     if count:
         logger.info("Loaded %d YAML tool(s) from %s", count, _TOOLS_DIR)

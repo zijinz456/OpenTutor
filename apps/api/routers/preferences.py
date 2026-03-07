@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query
-from libs.exceptions import AppError, ValidationError
+from libs.exceptions import AppError, ExternalServiceError, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -440,7 +440,7 @@ async def test_runtime_llm_config(
     except ValueError as exc:
         raise ValidationError(message=str(exc)) from exc
     except Exception as exc:
-        raise AppError(message=str(exc)) from exc
+        raise ExternalServiceError(service="LLM", message=str(exc)) from exc
 
 
 @router.get("/runtime/ollama/models", response_model=list[OllamaModelEntry])
@@ -452,8 +452,10 @@ async def list_ollama_models(
     _ = user
     try:
         return await get_ollama_models(base_url)
+    except (ConnectionError, OSError) as exc:
+        raise ExternalServiceError(service="Ollama", message=f"Cannot reach Ollama: {exc}") from exc
     except Exception as exc:
-        raise AppError(message=f"Cannot reach Ollama: {exc}") from exc
+        raise ExternalServiceError(service="Ollama", message=f"Cannot reach Ollama: {exc}") from exc
 
 
 # ── NL Preference Parsing ──
@@ -535,6 +537,9 @@ async def parse_nl_preference(
             return NLPreferenceResult()
         label = f"{(dim or '').replace('_', ' ')}: {val}" if dim and val else None
         return NLPreferenceResult(dimension=dim, value=val, label=label)
-    except Exception as e:
-        logger.warning("NL preference parsing failed: %s", e)
+    except (json.JSONDecodeError, KeyError, TypeError) as e:
+        logger.debug("NL preference parsing returned unparseable result: %s", e)
+        return NLPreferenceResult()
+    except Exception:
+        logger.exception("NL preference parsing failed")
         return NLPreferenceResult()

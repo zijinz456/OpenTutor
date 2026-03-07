@@ -147,7 +147,7 @@ async def eval_response(
             rationale=scores,
         )
     except Exception as e:
-        logger.error("Response evaluation failed: %s", e)
+        logger.exception("Response evaluation LLM call failed")
         return _heuristic_eval_response(question, response, context)
 
 

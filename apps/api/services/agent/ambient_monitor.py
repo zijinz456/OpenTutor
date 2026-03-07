@@ -175,7 +175,7 @@ async def llm_deliberate(
         return decision
 
     except Exception as e:
-        logger.debug("Ambient monitor LLM deliberation failed: %s", e)
+        logger.exception("Ambient monitor LLM deliberation failed: %s", e)
         return None
 
 
