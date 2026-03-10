@@ -1,5 +1,6 @@
 """Progress knowledge endpoints — knowledge graph, LOOM, learning path, review, velocity."""
 
+import logging
 import uuid
 from datetime import datetime, timezone
 
@@ -13,6 +14,8 @@ from models.progress import LearningProgress
 from models.practice import PracticeProblem
 from models.user import User
 from services.auth.dependency import get_current_user
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -190,8 +193,8 @@ async def get_misconception_dashboard(
             try:
                 delta = now - entry["latest_error_at"]
                 recency_days = max(delta.days, 0)
-            except TypeError:
-                pass
+            except TypeError as exc:
+                logger.debug("Failed to compute recency for concept '%s': %s", key, exc)
         recency_boost = max(0, 30 - recency_days) / 30
 
         diagnoses = entry["diagnoses"]

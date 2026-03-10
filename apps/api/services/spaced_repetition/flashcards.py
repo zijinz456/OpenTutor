@@ -94,30 +94,12 @@ async def generate_flashcards(
     )
 
     # Parse response
-    import json
+    from libs.text_utils import parse_llm_json
 
-    # Handle markdown code blocks
-    from libs.text_utils import strip_code_fences
-    text = strip_code_fences(response)
-
-    try:
-        flashcards = json.loads(text)
-        if not isinstance(flashcards, list):
-            flashcards = []
-    except json.JSONDecodeError:
-        start = text.find("[")
-        end = text.rfind("]") + 1
-        if start >= 0 and end > start:
-            try:
-                flashcards = json.loads(text[start:end])
-                if not isinstance(flashcards, list):
-                    flashcards = []
-            except json.JSONDecodeError:
-                logger.warning("Failed to parse flashcard JSON, returning empty")
-                flashcards = []
-        else:
-            logger.warning("Failed to parse flashcard JSON, returning empty")
-            flashcards = []
+    flashcards = parse_llm_json(response, default=[])
+    if not isinstance(flashcards, list):
+        logger.warning("Failed to parse flashcard JSON, returning empty")
+        flashcards = []
 
     # Add metadata
     for i, card in enumerate(flashcards):

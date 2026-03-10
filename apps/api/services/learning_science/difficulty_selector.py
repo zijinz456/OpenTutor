@@ -25,6 +25,18 @@ from models.progress import LearningProgress
 
 logger = logging.getLogger(__name__)
 
+# ZPD mastery thresholds for difficulty layer selection
+MASTERY_LOW_THRESHOLD = 0.4     # Below this = Layer 1 (fundamental / recall)
+MASTERY_HIGH_THRESHOLD = 0.7    # Above this = Layer 3 (traps / edge cases)
+
+# Layer distribution presets (Layer 1, 2, 3 weights)
+DIST_FUNDAMENTAL = {1: 0.7, 2: 0.3, 3: 0.0}
+DIST_TRANSFER = {1: 0.2, 2: 0.6, 3: 0.2}
+DIST_TRAP = {1: 0.1, 2: 0.3, 3: 0.6}
+DIST_LOW_MASTERY = {1: 0.6, 2: 0.3, 3: 0.1}
+DIST_MID_MASTERY = {1: 0.2, 2: 0.5, 3: 0.3}
+DIST_HIGH_MASTERY = {1: 0.1, 2: 0.3, 3: 0.6}
+
 
 @dataclass
 class DifficultyRecommendation:
@@ -49,7 +61,7 @@ def recommend_difficulty(
     if gap_type == "fundamental_gap":
         return DifficultyRecommendation(
             primary_layer=1,
-            layer_distribution={1: 0.7, 2: 0.3, 3: 0.0},
+            layer_distribution=DIST_FUNDAMENTAL,
             rationale="Fundamental gap detected — focus on core concept recall before progressing.",
             mastery_score=mastery_score,
             gap_type=gap_type,
@@ -58,7 +70,7 @@ def recommend_difficulty(
     if gap_type == "transfer_gap":
         return DifficultyRecommendation(
             primary_layer=2,
-            layer_distribution={1: 0.2, 2: 0.6, 3: 0.2},
+            layer_distribution=DIST_TRANSFER,
             rationale="Transfer gap — student knows the concept but struggles with application.",
             mastery_score=mastery_score,
             gap_type=gap_type,
@@ -67,7 +79,7 @@ def recommend_difficulty(
     if gap_type == "trap_vulnerability":
         return DifficultyRecommendation(
             primary_layer=3,
-            layer_distribution={1: 0.1, 2: 0.3, 3: 0.6},
+            layer_distribution=DIST_TRAP,
             rationale="Trap vulnerability — student understands well but falls for edge cases.",
             mastery_score=mastery_score,
             gap_type=gap_type,
@@ -77,26 +89,26 @@ def recommend_difficulty(
     if fsrs_state == "relearning":
         return DifficultyRecommendation(
             primary_layer=1,
-            layer_distribution={1: 0.6, 2: 0.3, 3: 0.1},
+            layer_distribution=DIST_LOW_MASTERY,
             rationale="Relearning state — reinforce fundamentals before advancing.",
             mastery_score=mastery_score,
             gap_type=gap_type,
         )
 
     # Mastery-based selection
-    if mastery_score < 0.4:
+    if mastery_score < MASTERY_LOW_THRESHOLD:
         return DifficultyRecommendation(
             primary_layer=1,
-            layer_distribution={1: 0.6, 2: 0.3, 3: 0.1},
+            layer_distribution=DIST_LOW_MASTERY,
             rationale=f"Low mastery ({mastery_score:.0%}) — build foundation first.",
             mastery_score=mastery_score,
             gap_type=gap_type,
         )
 
-    if mastery_score < 0.7:
+    if mastery_score < MASTERY_HIGH_THRESHOLD:
         return DifficultyRecommendation(
             primary_layer=2,
-            layer_distribution={1: 0.2, 2: 0.5, 3: 0.3},
+            layer_distribution=DIST_MID_MASTERY,
             rationale=f"Moderate mastery ({mastery_score:.0%}) — practice application and transfer.",
             mastery_score=mastery_score,
             gap_type=gap_type,
@@ -104,7 +116,7 @@ def recommend_difficulty(
 
     return DifficultyRecommendation(
         primary_layer=3,
-        layer_distribution={1: 0.1, 2: 0.3, 3: 0.6},
+        layer_distribution=DIST_HIGH_MASTERY,
         rationale=f"High mastery ({mastery_score:.0%}) — challenge with traps and edge cases.",
         mastery_score=mastery_score,
         gap_type=gap_type,

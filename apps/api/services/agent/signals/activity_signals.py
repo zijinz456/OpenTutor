@@ -135,8 +135,8 @@ async def _collect_guided_session_readiness(
                         ts = ts.replace(tzinfo=timezone.utc)
                     if now - ts < timedelta(hours=24):
                         return []
-                except (ValueError, TypeError):
-                    pass
+                except (ValueError, TypeError) as exc:
+                    logger.debug("Failed to parse activity timestamp: %s", exc)
 
     # Determine urgency based on what's available
     urgency = 45.0  # Base urgency (below weak_area at 55, above inactivity at 40)

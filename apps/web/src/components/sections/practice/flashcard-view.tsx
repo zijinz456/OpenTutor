@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useT } from "@/lib/i18n-context";
 import {
   generateFlashcards,
@@ -16,19 +16,13 @@ import { useWorkspaceStore } from "@/store/workspace";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { AiFeatureBlocked } from "@/components/shared/ai-feature-blocked";
+import { FlashcardCard } from "./flashcard-card";
 import { toast } from "sonner";
 
 interface FlashcardViewProps {
   courseId: string;
   aiActionsEnabled?: boolean;
 }
-
-const RATINGS = [
-  { label: "Again", value: 1, variant: "destructive" as const },
-  { label: "Hard", value: 2, variant: "outline" as const },
-  { label: "Good", value: 3, variant: "secondary" as const },
-  { label: "Easy", value: 4, variant: "default" as const },
-];
 
 export function FlashcardView({
   courseId,
@@ -52,11 +46,6 @@ export function FlashcardView({
   const [dueCount, setDueCount] = useState(0);
   const [useLector, setUseLector] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
-
-  // Swipe gesture refs (handlers defined after handleRate)
-  const cardRef = useRef<HTMLDivElement>(null);
-  const swipeState = useRef<{ startX: number; currentX: number } | null>(null);
-  const [swipeOffset, setSwipeOffset] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -176,36 +165,6 @@ export function FlashcardView({
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [flipped, submitting, handleRate]);
 
-  // Swipe gesture handlers (must be after handleRate)
-  const SWIPE_THRESHOLD = 80;
-
-  const handleCardPointerDown = useCallback((e: React.PointerEvent) => {
-    if (!flipped) return; // Only swipe when answer is visible
-    swipeState.current = { startX: e.clientX, currentX: e.clientX };
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
-  }, [flipped]);
-
-  const handleCardPointerMove = useCallback((e: React.PointerEvent) => {
-    if (!swipeState.current) return;
-    swipeState.current.currentX = e.clientX;
-    const dx = e.clientX - swipeState.current.startX;
-    setSwipeOffset(dx);
-  }, []);
-
-  const handleCardPointerUp = useCallback(() => {
-    if (!swipeState.current) return;
-    const dx = swipeState.current.currentX - swipeState.current.startX;
-    swipeState.current = null;
-    setSwipeOffset(0);
-    if (dx > SWIPE_THRESHOLD) {
-      // Swipe right = correct (rating 3 "Good")
-      void handleRate(3);
-    } else if (dx < -SWIPE_THRESHOLD) {
-      // Swipe left = wrong (rating 1 "Again")
-      void handleRate(1);
-    }
-  }, [handleRate]);
-
   if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center p-8" role="status" aria-live="polite">
@@ -294,68 +253,14 @@ export function FlashcardView({
         </div>
       </div>
 
-      <div
-        ref={cardRef}
-        className="flashcard-perspective w-full max-w-md cursor-pointer touch-none"
-        onClick={handleFlip}
-        role="button"
-        tabIndex={0}
-        aria-label={flipped ? "Flashcard showing answer. Press Enter or Space to show question." : "Flashcard showing question. Press Enter or Space to reveal answer."}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            handleFlip();
-          }
-        }}
-        onPointerDown={handleCardPointerDown}
-        onPointerMove={handleCardPointerMove}
-        onPointerUp={handleCardPointerUp}
-        style={{
-          transform: swipeOffset ? `translateX(${swipeOffset}px) rotate(${swipeOffset * 0.05}deg)` : undefined,
-          transition: swipeOffset ? "none" : "transform 0.3s ease",
-        }}
-      >
-        <div aria-live="polite" className={`flashcard-inner relative w-full min-h-[200px] ${flipped ? "flipped" : ""}`}>
-          <div className="flashcard-face absolute inset-0 flex flex-col items-center justify-center rounded-2xl card-shadow bg-card p-6 text-center">
-            <p className="text-xs text-muted-foreground mb-2">Question</p>
-            <p className="text-sm font-medium whitespace-pre-wrap">{card.front}</p>
-          </div>
-
-          <div className="flashcard-back absolute inset-0 flex flex-col items-center justify-center rounded-2xl card-shadow bg-card p-6 text-center">
-            <p className="text-xs text-muted-foreground mb-2">Answer</p>
-            <p className="text-sm font-medium whitespace-pre-wrap">{card.back}</p>
-          </div>
-        </div>
-      </div>
-
-      {!flipped ? (
-        <p className="text-xs text-muted-foreground">Tap card or press Space to reveal answer</p>
-      ) : (
-        <div className="flex flex-col items-center gap-1.5">
-          <div className="flex gap-2">
-            {RATINGS.map((rating) => (
-              <Button
-                key={rating.value}
-                size="sm"
-                variant={rating.variant}
-                disabled={submitting}
-                aria-label={`Rate: ${rating.label} (press ${rating.value})`}
-                aria-keyshortcuts={String(rating.value)}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  void handleRate(rating.value);
-                }}
-              >
-                {rating.label}
-              </Button>
-            ))}
-          </div>
-          <p className="text-xs text-muted-foreground/60">Press 1-4 to rate</p>
-        </div>
-      )}
-      {reviewError && (
-        <p role="alert" className="text-xs text-warning-foreground text-center mt-2">{reviewError}</p>
-      )}
+      <FlashcardCard
+        card={card}
+        flipped={flipped}
+        submitting={submitting}
+        reviewError={reviewError}
+        onFlip={handleFlip}
+        onRate={handleRate}
+      />
     </div>
   );
 }

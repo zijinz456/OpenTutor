@@ -213,8 +213,8 @@ async def get_lector_ordered_flashcards(
                 try:
                     due_dt = datetime.fromisoformat(fsrs["due"].replace("Z", "+00:00"))
                     is_due = due_dt <= now
-                except (ValueError, TypeError):
-                    pass
+                except (ValueError, TypeError) as exc:
+                    logger.debug("Failed to parse FSRS due date: %s", exc)
 
             if not is_due:
                 continue
