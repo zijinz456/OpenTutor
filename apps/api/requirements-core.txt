@@ -55,4 +55,4 @@ structlog>=24.4.0
 tenacity==9.0.0
 httpx==0.28.1
 python-dotenv==1.0.1
-sse-starlette==2.2.1
+sse-starlette==3.3.2
