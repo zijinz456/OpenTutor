@@ -93,9 +93,9 @@ async def export_flashcards_to_anki(
     try:
         tmp.close()
         genanki.Package(deck).write_to_file(str(tmp_path))
-    except Exception:
+    except (IOError, OSError, ValueError) as exc:
         tmp_path.unlink(missing_ok=True)
-        raise
+        raise exc
 
     logger.info("Exported %d flashcards to Anki for course %s", card_count, course_id)
     return tmp_path

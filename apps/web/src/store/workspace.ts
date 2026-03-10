@@ -2,6 +2,7 @@
  * Workspace state management using Zustand.
  *
  * Controls layout, block system, and agent autonomy state.
+ * Block system operations extracted to workspace-blocks.ts.
  */
 
 import { create } from "zustand";
@@ -13,150 +14,35 @@ import {
   getVisibleSections,
   toggleSection,
 } from "@/lib/layout-presets";
-import type {
-  BlockInstance,
-  BlockType,
-  BlockSize,
-  BlockSource,
-  AgentBlockMeta,
-  SpaceLayout,
-  LearningMode,
-} from "@/lib/block-system/types";
-import { buildLayoutFromTemplate, buildLayoutFromMode } from "@/lib/block-system/templates";
-import { BLOCK_REGISTRY } from "@/lib/block-system/registry";
+import { type BlockSystemState, createBlockSlice } from "./workspace-blocks";
 
 export type SectionId = "notes" | "practice" | "analytics" | "plan";
 
-let blockIdCounter = 0;
-function nextBlockId(): string {
-  return `blk-${Date.now()}-${++blockIdCounter}`;
-}
-
-interface WorkspaceState {
-  /** Currently visible right-side section. */
+interface CoreWorkspaceState {
   activeSection: SectionId;
   setActiveSection: (id: SectionId) => void;
-
-  /** Currently selected content node in the tree. */
   selectedNodeId: string | null;
   setSelectedNodeId: (id: string | null) => void;
-
-  /** PDF viewer overlay (VS Code file-open pattern). */
   pdfOverlay: { fileId: string; fileName: string } | null;
   openPdf: (fileId: string, fileName: string) => void;
   closePdf: () => void;
-
-  /** Left course-tree collapsed state. */
   treeCollapsed: boolean;
   toggleTree: () => void;
-
-  /** Left course-tree width in pixels. */
   treeWidth: number;
   setTreeWidth: (w: number) => void;
-
-  /** Bottom chat panel height ratio (0–1, proportion of viewport). */
   chatHeight: number;
   setChatHeight: (h: number) => void;
-
-  /** Per-section refresh counter — incremented by agent tools to trigger re-fetch. */
   sectionRefreshKey: Record<string, number>;
   triggerRefresh: (section: SectionId) => void;
-
-  /** Agent-driven sub-tab hint for the practice section (consumed once on render). */
   practiceActiveTab: string | null;
   setPracticeTab: (tab: string | null) => void;
-
-  /** Dynamic layout configuration (legacy). */
   layout: WorkspaceLayout;
   setLayout: (layout: WorkspaceLayout) => void;
   applyPreset: (presetId: PresetId) => void;
   toggleLayoutSection: (sectionId: SectionId, visible: boolean) => void;
-
-  // ── Block System ──
-
-  /** Block-based space layout. */
-  spaceLayout: SpaceLayout;
-
-  /** Add a block to the space. */
-  addBlock: (
-    type: BlockType,
-    config?: Record<string, unknown>,
-    source?: BlockSource,
-    size?: BlockSize,
-  ) => void;
-
-  /** Last removed block (for undo). */
-  lastRemovedBlock: { block: BlockInstance; index: number } | null;
-
-  /** Remove a block by ID. */
-  removeBlock: (blockId: string) => void;
-
-  /** Undo the last block removal. */
-  undoRemoveBlock: () => void;
-
-  /** Remove expired agent blocks. */
-  cleanupExpiredBlocks: () => void;
-
-  /** Remove the first block matching a given type. */
-  removeBlockByType: (type: BlockType) => void;
-
-  /** Reorder blocks by providing an ordered list of types. */
-  reorderBlocks: (orderedTypes: BlockType[]) => void;
-
-  /** Resize a block. */
-  resizeBlock: (blockId: string, size: BlockSize) => void;
-
-  /** Update a block's config. */
-  updateBlockConfig: (blockId: string, config: Record<string, unknown>) => void;
-
-  /** Apply a template, replacing all blocks. */
-  applyBlockTemplate: (templateId: string) => void;
-
-  /** Agent adds a block with metadata (tier 1: auto, tier 2: needs approval). */
-  agentAddBlock: (
-    type: BlockType,
-    config: Record<string, unknown>,
-    meta: AgentBlockMeta,
-  ) => void;
-
-  /** User approves an agent-suggested block. */
-  approveAgentBlock: (blockId: string) => void;
-
-  /** User dismisses an agent block. */
-  dismissAgentBlock: (blockId: string) => void;
-
-  /** Load blocks from persisted state (e.g., course metadata). */
-  loadBlocks: (layout: SpaceLayout) => void;
-
-  /** Set learning mode and apply its default block layout. */
-  setLearningMode: (mode: LearningMode) => void;
-  /** Set the mode marker without replacing current blocks. */
-  setSpaceMode: (mode: LearningMode) => void;
-
-  // ── Layout History (undo support) ──
-
-  /** Stack of previous layouts for undo (max 10). */
-  layoutHistory: SpaceLayout[];
-
-  /** Undo the last layout change. Returns true if undo was performed. */
-  undoLayout: () => boolean;
-
-  /** Apply multiple block operations atomically with a single history push. */
-  batchUpdateBlocks: (
-    ops: Array<
-      | { action: "add"; type: BlockType; config?: Record<string, unknown>; size?: BlockSize }
-      | { action: "remove"; blockId: string }
-      | { action: "reorder"; orderedTypes: BlockType[] }
-    >,
-  ) => void;
 }
 
-const MAX_LAYOUT_HISTORY = 10;
-
-function pushHistory(state: WorkspaceState): SpaceLayout[] {
-  const history = [...state.layoutHistory, state.spaceLayout];
-  return history.slice(-MAX_LAYOUT_HISTORY);
-}
+type WorkspaceState = CoreWorkspaceState & BlockSystemState;
 
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   activeSection: "notes",
@@ -212,287 +98,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     get().setLayout(next);
   },
 
-  // ── Block System ──
-
-  lastRemovedBlock: null,
-
-  spaceLayout: { templateId: null, blocks: [], columns: 2 },
-
-  addBlock: (type, config = {}, source = "user", size) => {
-    const entry = BLOCK_REGISTRY[type];
-    if (!entry) return;
-    const blocks = get().spaceLayout.blocks;
-    const newBlock: BlockInstance = {
-      id: nextBlockId(),
-      type,
-      position: blocks.length,
-      size: size ?? entry.defaultSize,
-      config: { ...entry.defaultConfig, ...config },
-      visible: true,
-      source,
-    };
-    set((s) => ({
-      layoutHistory: pushHistory(s),
-      spaceLayout: {
-        ...s.spaceLayout,
-        blocks: [...s.spaceLayout.blocks, newBlock],
-      },
-    }));
-  },
-
-  removeBlock: (blockId) => {
-    set((state) => {
-      const idx = state.spaceLayout.blocks.findIndex((b) => b.id === blockId);
-      const block = state.spaceLayout.blocks[idx];
-      return {
-        layoutHistory: pushHistory(state),
-        lastRemovedBlock: block ? { block, index: idx } : null,
-        spaceLayout: {
-          ...state.spaceLayout,
-          blocks: state.spaceLayout.blocks.filter((b) => b.id !== blockId),
-        },
-      };
-    });
-  },
-
-  undoRemoveBlock: () => {
-    set((state) => {
-      const removed = state.lastRemovedBlock;
-      if (!removed) return state;
-      const blocks = [...state.spaceLayout.blocks];
-      blocks.splice(removed.index, 0, removed.block);
-      return {
-        lastRemovedBlock: null,
-        spaceLayout: { ...state.spaceLayout, blocks },
-      };
-    });
-  },
-
-  cleanupExpiredBlocks: () => {
-    set((state) => {
-      const now = new Date().toISOString();
-      const blocks = state.spaceLayout.blocks.filter((b) => {
-        if (b.source !== "agent" || !b.agentMeta?.expiresAt) return true;
-        return b.agentMeta.expiresAt > now;
-      });
-      if (blocks.length === state.spaceLayout.blocks.length) return state;
-      return { spaceLayout: { ...state.spaceLayout, blocks } };
-    });
-  },
-
-  removeBlockByType: (type) => {
-    set((s) => {
-      const idx = s.spaceLayout.blocks.findIndex((b) => b.type === type);
-      if (idx === -1) return s;
-      const blocks = [...s.spaceLayout.blocks];
-      blocks.splice(idx, 1);
-      return {
-        spaceLayout: {
-          ...s.spaceLayout,
-          blocks: blocks.map((b, i) => ({ ...b, position: i })),
-        },
-      };
-    });
-  },
-
-  reorderBlocks: (orderedTypes) => {
-    set((s) => {
-      const blocksByType = new Map<BlockType, BlockInstance[]>();
-      for (const b of s.spaceLayout.blocks) {
-        const list = blocksByType.get(b.type) ?? [];
-        list.push(b);
-        blocksByType.set(b.type, list);
-      }
-      const reordered: BlockInstance[] = [];
-      for (const type of orderedTypes) {
-        const list = blocksByType.get(type);
-        if (list?.length) {
-          reordered.push(list.shift()!);
-          if (list.length === 0) blocksByType.delete(type);
-        }
-      }
-      // Append any blocks not in the ordered list
-      for (const remaining of blocksByType.values()) {
-        reordered.push(...remaining);
-      }
-      return {
-        spaceLayout: {
-          ...s.spaceLayout,
-          blocks: reordered.map((b, i) => ({ ...b, position: i })),
-        },
-      };
-    });
-  },
-
-  resizeBlock: (blockId, size) => {
-    set((s) => ({
-      spaceLayout: {
-        ...s.spaceLayout,
-        blocks: s.spaceLayout.blocks.map((b) =>
-          b.id === blockId ? { ...b, size } : b,
-        ),
-      },
-    }));
-  },
-
-  updateBlockConfig: (blockId, config) => {
-    set((s) => ({
-      spaceLayout: {
-        ...s.spaceLayout,
-        blocks: s.spaceLayout.blocks.map((b) =>
-          b.id === blockId ? { ...b, config: { ...b.config, ...config } } : b,
-        ),
-      },
-    }));
-  },
-
-  applyBlockTemplate: (templateId) => {
-    const layout = buildLayoutFromTemplate(templateId);
-    if (layout) {
-      const existingMode = get().spaceLayout.mode;
-      set({
-        spaceLayout: {
-          ...layout,
-          mode: existingMode ?? layout.mode,
-        },
-      });
-    }
-  },
-
-  agentAddBlock: (type, config, meta) => {
-    const entry = BLOCK_REGISTRY[type];
-    if (!entry) return;
-    const blocks = get().spaceLayout.blocks;
-    // For tier-1 (no approval needed), insert at a smart position
-    // For tier-2 (needs approval), insert at the top so it's visible
-    const position = meta.needsApproval ? 0 : blocks.length;
-    const newBlock: BlockInstance = {
-      id: nextBlockId(),
-      type,
-      position,
-      size: entry.defaultSize,
-      config: { ...entry.defaultConfig, ...config },
-      visible: true,
-      source: "agent",
-      agentMeta: meta,
-    };
-    set((s) => {
-      const allBlocks = meta.needsApproval
-        ? [newBlock, ...s.spaceLayout.blocks]
-        : [...s.spaceLayout.blocks, newBlock];
-      return {
-        spaceLayout: {
-          ...s.spaceLayout,
-          blocks: allBlocks.map((b, i) => ({ ...b, position: i })),
-        },
-      };
-    });
-  },
-
-  approveAgentBlock: (blockId) => {
-    set((s) => ({
-      spaceLayout: {
-        ...s.spaceLayout,
-        blocks: s.spaceLayout.blocks.map((b) =>
-          b.id === blockId && b.agentMeta
-            ? { ...b, agentMeta: { ...b.agentMeta, needsApproval: false } }
-            : b,
-        ),
-      },
-    }));
-  },
-
-  dismissAgentBlock: (blockId) => {
-    set((s) => ({
-      spaceLayout: {
-        ...s.spaceLayout,
-        blocks: s.spaceLayout.blocks
-          .filter((b) => b.id !== blockId)
-          .map((b, i) => ({ ...b, position: i })),
-      },
-    }));
-  },
-
-  loadBlocks: (layout) => {
-    set({ spaceLayout: layout });
-  },
-
-  setLearningMode: (mode) => {
-    const layout = buildLayoutFromMode(mode);
-    set({ spaceLayout: layout });
-  },
-
-  setSpaceMode: (mode) => {
-    set((s) => ({
-      spaceLayout: {
-        ...s.spaceLayout,
-        mode,
-      },
-    }));
-  },
-
-  // ── Layout History ──
-
-  layoutHistory: [],
-
-  undoLayout: () => {
-    const state = get();
-    if (state.layoutHistory.length === 0) return false;
-    const history = [...state.layoutHistory];
-    const previous = history.pop()!;
-    set({ spaceLayout: previous, layoutHistory: history });
-    return true;
-  },
-
-  batchUpdateBlocks: (ops) => {
-    set((state) => {
-      const history = pushHistory(state);
-      let blocks = [...state.spaceLayout.blocks];
-
-      for (const op of ops) {
-        if (op.action === "add") {
-          const entry = BLOCK_REGISTRY[op.type];
-          if (!entry) continue;
-          blocks.push({
-            id: nextBlockId(),
-            type: op.type,
-            position: blocks.length,
-            size: op.size ?? entry.defaultSize,
-            config: { ...entry.defaultConfig, ...op.config },
-            visible: true,
-            source: "agent",
-          });
-        } else if (op.action === "remove") {
-          blocks = blocks.filter((b) => b.id !== op.blockId);
-        } else if (op.action === "reorder") {
-          const byType = new Map<BlockType, BlockInstance[]>();
-          for (const b of blocks) {
-            const list = byType.get(b.type) ?? [];
-            list.push(b);
-            byType.set(b.type, list);
-          }
-          const reordered: BlockInstance[] = [];
-          for (const type of op.orderedTypes) {
-            const list = byType.get(type);
-            if (list?.length) {
-              reordered.push(list.shift()!);
-              if (list.length === 0) byType.delete(type);
-            }
-          }
-          for (const remaining of byType.values()) {
-            reordered.push(...remaining);
-          }
-          blocks = reordered;
-        }
-      }
-
-      return {
-        layoutHistory: history,
-        spaceLayout: {
-          ...state.spaceLayout,
-          blocks: blocks.map((b, i) => ({ ...b, position: i })),
-        },
-      };
-    });
-  },
+  // Block system (extracted to workspace-blocks.ts)
+  ...createBlockSlice(set, get),
 }));

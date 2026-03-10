@@ -126,7 +126,7 @@ def _fit_with_pybkt(data: list[dict]) -> dict[str, dict[str, float]]:
                     "guesses": float(row.get("guesses", 0.25)),
                     "slips": float(row.get("slips", 0.1)),
                 }
-        except Exception as e:
+        except (ValueError, KeyError, RuntimeError, TypeError) as e:
             logger.warning("pyBKT fit failed for concept '%s': %s", concept, e)
 
     return fitted

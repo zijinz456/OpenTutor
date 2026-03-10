@@ -47,7 +47,7 @@ async def fetch_with_scrapling(url: str) -> str | None:
     except ImportError:
         logger.debug("Scrapling not installed. Run: pip install scrapling")
         return None
-    except Exception as e:
+    except (OSError, RuntimeError, ConnectionError, TimeoutError) as e:
         logger.warning("Scrapling failed for %s: %s", url, e)
         return None
 
@@ -101,7 +101,7 @@ async def fetch_with_browser(
     except ImportError:
         logger.warning("Playwright not installed. Run: pip install playwright && playwright install")
         return None
-    except Exception as e:
+    except (OSError, RuntimeError, ConnectionError, TimeoutError) as e:
         logger.exception("Browser automation failed for %s", url)
         return None
 

@@ -147,9 +147,9 @@ export default function AgentInsightBlock({ courseId, blockId, config }: BlockCo
       : undefined;
 
   return (
-    <div className="flex items-center gap-4 p-4 bg-brand-muted/20 rounded-2xl">
+    <div role="alert" aria-label={title} className="flex items-center gap-4 p-4 bg-brand-muted/20 rounded-2xl">
       <div className="flex items-center justify-center w-10 h-10 rounded-2xl bg-brand-muted shrink-0">
-        <ModeIcon className="size-5 text-brand" />
+        <ModeIcon className="size-5 text-brand" aria-hidden="true" />
       </div>
 
       <div className="flex-1 min-w-0">
@@ -174,6 +174,7 @@ export default function AgentInsightBlock({ courseId, blockId, config }: BlockCo
       {ctaLabel && !needsApproval && (
         <button
           onClick={handleCta}
+          aria-label={ctaLabel}
           className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-brand-foreground bg-brand rounded-xl hover:opacity-90 transition-opacity shrink-0"
         >
           {ctaLabel}

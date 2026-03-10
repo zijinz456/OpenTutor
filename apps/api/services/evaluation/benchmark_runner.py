@@ -189,8 +189,8 @@ async def run_regression_benchmark(
                     },
                 )
             )
-        except Exception as exc:
-            logger.exception("Recovery evaluation suite failed")
+        except (ValueError, RuntimeError, ConnectionError, TimeoutError, OSError) as exc:
+            logger.exception("Recovery evaluation suite failed: %s", exc)
             suites.append(
                 BenchmarkSuite(
                     name="recovery",

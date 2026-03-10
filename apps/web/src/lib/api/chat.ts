@@ -1,8 +1,5 @@
 import { buildAuthHeaders } from "@/lib/auth";
-
-import { API_BASE, request } from "./client";
-
-import type { JsonObject } from "./client";
+import { API_BASE, request, type JsonObject } from "./client";
 
 // ── Chat types ──
 

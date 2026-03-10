@@ -35,12 +35,14 @@ export function PdfViewerOverlay({ courseId }: PdfViewerOverlayProps) {
 
   return (
     <div
+      role="document"
+      aria-label={`PDF viewer: ${pdfOverlay.fileName}`}
       className="flex-1 flex flex-col overflow-hidden"
       data-testid="pdf-viewer-overlay"
     >
       {/* Header */}
       <div className="px-3 py-1.5 border-b border-border/60 flex items-center gap-2 shrink-0 glass">
-        <FileText className="size-3.5 text-muted-foreground shrink-0" />
+        <FileText className="size-3.5 text-muted-foreground shrink-0" aria-hidden="true" />
         <span className="text-xs font-medium truncate flex-1">
           {pdfOverlay.fileName}
         </span>
@@ -50,9 +52,10 @@ export function PdfViewerOverlay({ courseId }: PdfViewerOverlayProps) {
           download={pdfOverlay.fileName}
           className="inline-flex"
           title="Download"
+          aria-label={`Download ${pdfOverlay.fileName}`}
         >
           <Button variant="ghost" size="sm" className="h-6 w-6 p-0">
-            <Download className="size-3.5" />
+            <Download className="size-3.5" aria-hidden="true" />
           </Button>
         </a>
 
@@ -62,6 +65,7 @@ export function PdfViewerOverlay({ courseId }: PdfViewerOverlayProps) {
           className="h-6 w-6 p-0"
           onClick={closePdf}
           title={t("general.close")}
+          aria-label="Close PDF viewer"
         >
           <X className="size-3.5" />
         </Button>

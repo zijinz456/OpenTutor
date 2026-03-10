@@ -42,7 +42,7 @@ class FallbackEmbeddingProvider(EmbeddingProvider):
                         name, self._primary_name,
                     )
                 return result
-            except Exception as e:
+            except (ConnectionError, TimeoutError, RuntimeError, ValueError, OSError) as e:
                 last_error = e
                 logger.warning("Embedding provider '%s' failed: %s", name, e)
         raise RuntimeError(
@@ -60,7 +60,7 @@ class FallbackEmbeddingProvider(EmbeddingProvider):
                         name, self._primary_name,
                     )
                 return result
-            except Exception as e:
+            except (ConnectionError, TimeoutError, RuntimeError, ValueError, OSError) as e:
                 last_error = e
                 logger.warning("Embedding provider '%s' batch failed: %s", name, e)
         raise RuntimeError(
@@ -84,7 +84,7 @@ def get_embedding_provider() -> EmbeddingProvider:
             from services.embedding.openai_provider import OpenAIEmbedding
             providers.append(("openai", OpenAIEmbedding(settings.openai_api_key)))
             logger.info("Embedding provider registered: OpenAI text-embedding-3-small")
-        except Exception as e:
+        except (ValueError, RuntimeError, OSError) as e:
             logger.exception("Failed to init OpenAI embedding")
 
     # Fallback: local sentence-transformers
@@ -92,8 +92,10 @@ def get_embedding_provider() -> EmbeddingProvider:
         from services.embedding.local import LocalEmbedding
         providers.append(("local", LocalEmbedding()))
         logger.info("Embedding provider registered: local sentence-transformers")
-    except (ImportError, Exception) as e:
+    except ImportError as e:
         logger.warning("Local embedding unavailable: %s", e)
+    except (OSError, RuntimeError, ValueError) as e:
+        logger.warning("Local embedding init failed: %s", e)
 
     if not providers:
         raise RuntimeError(

@@ -36,7 +36,7 @@ class LaTeXOCRService:
         except ImportError:
             self._available = False
             logger.info("pix2tex not installed — LaTeX-OCR disabled")
-        except Exception as e:
+        except (OSError, RuntimeError, ValueError) as e:
             self._available = False
             logger.exception("Failed to load LaTeX-OCR model")
 
@@ -65,7 +65,7 @@ class LaTeXOCRService:
             if latex and latex.strip():
                 logger.info("LaTeX-OCR extracted: %s", latex[:100])
                 return latex.strip()
-        except Exception as e:
+        except (OSError, RuntimeError, ValueError) as e:
             logger.warning("LaTeX-OCR extraction failed: %s", e)
 
         return None

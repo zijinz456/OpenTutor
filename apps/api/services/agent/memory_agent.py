@@ -20,6 +20,7 @@ from collections import Counter
 from datetime import datetime, timezone
 
 from sqlalchemy import select, func, case, literal_column
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.memory import ConversationMemory, MEMCELL_TYPES
@@ -131,7 +132,7 @@ async def categorize_uncategorized(
             await db.flush()
         return {"categorized": categorized}
 
-    except Exception as e:
+    except (SQLAlchemyError, ConnectionError, TimeoutError, ValueError, json.JSONDecodeError, RuntimeError) as e:
         logger.exception("Memory categorization failed: %s", e)
         return {"categorized": 0}
 
@@ -246,7 +247,7 @@ async def create_session_episodic_memory(
         logger.info("Session episodic memory created for user %s", user_id)
         return memory
 
-    except Exception as e:
+    except (SQLAlchemyError, ConnectionError, TimeoutError, ValueError, RuntimeError) as e:
         logger.exception("Session episodic summary failed: %s", e)
         return None
 

@@ -60,6 +60,6 @@ class ExportAnkiTool(Tool):
             )
         except ValueError as e:
             return ToolResult(success=False, output="", error=str(e))
-        except Exception as e:
+        except (IOError, OSError, RuntimeError, KeyError) as e:
             logger.exception("export_anki failed: %s", e)
             return ToolResult(success=False, output="", error=f"Anki export failed: {e}")

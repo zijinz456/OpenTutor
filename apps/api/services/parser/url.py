@@ -8,6 +8,8 @@ import re
 import uuid
 import logging
 
+import httpx
+
 from models.content import CourseContentTree
 from services.parser.pdf import _markdown_to_tree
 
@@ -52,7 +54,7 @@ async def scrape_url_to_tree(
 
     try:
         title, content = await extract_content(url=url)
-    except Exception as e:
+    except (httpx.HTTPError, ConnectionError, TimeoutError, ValueError, RuntimeError, OSError, IOError) as exc:
         logger.exception("URL extraction failed for %s", url)
         return []
 

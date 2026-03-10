@@ -58,7 +58,7 @@ export function MessageList({ messages }: MessageListProps) {
 
   if (messages.length === 0) {
     return (
-      <div className="flex flex-1 items-center justify-center p-6 animate-fade-in">
+      <div role="status" aria-label="No messages" className="flex flex-1 items-center justify-center p-6 animate-fade-in">
         <div className="text-center">
           <MessageSquare className="mx-auto mb-3 size-8 text-muted-foreground/30" />
           <p className="text-sm text-muted-foreground">
@@ -73,7 +73,7 @@ export function MessageList({ messages }: MessageListProps) {
   }
 
   return (
-    <div ref={parentRef} className="flex-1 overflow-auto scrollbar-thin" role="log" aria-live="polite" aria-label="Chat messages">
+    <div ref={parentRef} className="flex-1 overflow-auto scrollbar-thin" role="log" aria-live="polite" aria-relevant="additions" aria-label="Chat messages">
       <div
         className="relative w-full p-3"
         style={{ height: `${virtualizer.getTotalSize()}px` }}
@@ -120,7 +120,7 @@ export function MessageList({ messages }: MessageListProps) {
 
       {/* Error banner */}
       {error && !isStreaming && (
-        <div className="sticky bottom-0 mx-3 mb-2 flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive animate-fade-in">
+        <div role="alert" className="sticky bottom-0 mx-3 mb-2 flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive animate-fade-in">
           <AlertCircle className="size-4 shrink-0 mt-0.5" />
           <div className="flex-1">
             <p className="font-medium">{ERROR_LABELS[errorCategory ?? "generic"]}</p>

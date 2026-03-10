@@ -24,6 +24,9 @@ export function ToolStatus({ status }: ToolStatusProps) {
 
   return (
     <div
+      role="status"
+      aria-live="polite"
+      aria-label={isRunning ? `Running tool: ${label}` : `Tool complete: ${label}`}
       className={cn(
         "flex shrink-0 items-center gap-2 border-t border-border/60 px-3 py-1.5 text-xs",
         "animate-in fade-in slide-in-from-bottom-1 duration-200",

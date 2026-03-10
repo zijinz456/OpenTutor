@@ -1,11 +1,19 @@
 services:
   redis:
-    image: redis:7-alpine
+    image: redis:7.4-alpine
     container_name: opentutor-redis
+    restart: unless-stopped
     ports:
       - "${REDIS_PORT:-6379}:6379"
     volumes:
       - redisdata:/data
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.5"
+    security_opt:
+      - no-new-privileges:true
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -19,6 +27,14 @@ services:
       args:
         PYTHON_REQUIREMENTS: ${API_PYTHON_REQUIREMENTS:-requirements-core.txt}
     container_name: opentutor-api
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "2.0"
+    security_opt:
+      - no-new-privileges:true
     ports:
       - "${API_PORT:-8000}:8000"
     environment:
@@ -73,8 +89,21 @@ services:
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000/api}
     container_name: opentutor-web
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+    security_opt:
+      - no-new-privileges:true
     ports:
       - "${WEB_PORT:-3001}:3001"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:3001 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     depends_on:
       api:
         condition: service_healthy

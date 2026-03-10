@@ -25,7 +25,7 @@ export function ChatFab({ open, onToggle, hasUnread }: ChatFabProps) {
           : "bg-brand text-brand-foreground hover:bg-brand/90 shadow-lg hover:shadow-xl",
       )}
     >
-      {open ? <X className="size-5" /> : <MessageCircle className="size-5" />}
+      {open ? <X className="size-5" aria-hidden="true" /> : <MessageCircle className="size-5" aria-hidden="true" />}
       {!open && hasUnread && (
         <span className="absolute top-1 right-1 w-3 h-3 bg-destructive rounded-full border-2 border-background" />
       )}

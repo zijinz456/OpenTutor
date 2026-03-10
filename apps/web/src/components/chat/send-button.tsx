@@ -46,6 +46,7 @@ export function SendButton({
       data-testid="chat-send"
       onClick={onSend}
       disabled={!canSend}
+      aria-disabled={!canSend}
       title="Send message"
       aria-label="Send message"
     >

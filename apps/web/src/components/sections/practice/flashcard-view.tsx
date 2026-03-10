@@ -159,6 +159,23 @@ export function FlashcardView({
     [cards, index, submitting],
   );
 
+  // Keyboard shortcuts: 1-4 for ratings when card is flipped
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+      if (flipped && !submitting) {
+        const key = parseInt(e.key, 10);
+        if (key >= 1 && key <= 4) {
+          e.preventDefault();
+          void handleRate(key);
+        }
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [flipped, submitting, handleRate]);
+
   // Swipe gesture handlers (must be after handleRate)
   const SWIPE_THRESHOLD = 80;
 
@@ -191,7 +208,7 @@ export function FlashcardView({
 
   if (loading) {
     return (
-      <div className="flex-1 flex items-center justify-center p-8">
+      <div className="flex-1 flex items-center justify-center p-8" role="status" aria-live="polite">
         <p className="text-xs text-muted-foreground">{t("flashcard.title")}...</p>
       </div>
     );
@@ -207,7 +224,7 @@ export function FlashcardView({
         ) : null}
         <h3 className="text-sm font-medium mb-1">{t("flashcard.title")}</h3>
         {loadError ? (
-          <div className="text-center space-y-2">
+          <div role="alert" className="text-center space-y-2">
             <p className="text-sm text-destructive">{loadError}</p>
             <button type="button" onClick={() => { setLoadError(null); setLoading(true); setRetryCount((c) => c + 1); }}
               className="text-xs text-brand hover:underline">
@@ -243,7 +260,7 @@ export function FlashcardView({
   const card = cards[index];
 
   return (
-    <div className="flex-1 flex flex-col items-center justify-center gap-6 p-6">
+    <div role="region" aria-label={t("flashcard.title")} className="flex-1 flex flex-col items-center justify-center gap-6 p-6">
       <div className="flex w-full max-w-md items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <Badge variant="outline">
@@ -298,7 +315,7 @@ export function FlashcardView({
           transition: swipeOffset ? "none" : "transform 0.3s ease",
         }}
       >
-        <div className={`flashcard-inner relative w-full min-h-[200px] ${flipped ? "flipped" : ""}`}>
+        <div aria-live="polite" className={`flashcard-inner relative w-full min-h-[200px] ${flipped ? "flipped" : ""}`}>
           <div className="flashcard-face absolute inset-0 flex flex-col items-center justify-center rounded-2xl card-shadow bg-card p-6 text-center">
             <p className="text-xs text-muted-foreground mb-2">Question</p>
             <p className="text-sm font-medium whitespace-pre-wrap">{card.front}</p>
@@ -312,27 +329,32 @@ export function FlashcardView({
       </div>
 
       {!flipped ? (
-        <p className="text-xs text-muted-foreground">Tap card to reveal answer</p>
+        <p className="text-xs text-muted-foreground">Tap card or press Space to reveal answer</p>
       ) : (
-        <div className="flex gap-2">
-          {RATINGS.map((rating) => (
-            <Button
-              key={rating.value}
-              size="sm"
-              variant={rating.variant}
-              disabled={submitting}
-              onClick={(e) => {
-                e.stopPropagation();
-                void handleRate(rating.value);
-              }}
-            >
-              {rating.label}
-            </Button>
-          ))}
+        <div className="flex flex-col items-center gap-1.5">
+          <div className="flex gap-2">
+            {RATINGS.map((rating) => (
+              <Button
+                key={rating.value}
+                size="sm"
+                variant={rating.variant}
+                disabled={submitting}
+                aria-label={`Rate: ${rating.label} (press ${rating.value})`}
+                aria-keyshortcuts={String(rating.value)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void handleRate(rating.value);
+                }}
+              >
+                {rating.label}
+              </Button>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground/60">Press 1-4 to rate</p>
         </div>
       )}
       {reviewError && (
-        <p className="text-xs text-warning-foreground text-center mt-2">{reviewError}</p>
+        <p role="alert" className="text-xs text-warning-foreground text-center mt-2">{reviewError}</p>
       )}
     </div>
   );

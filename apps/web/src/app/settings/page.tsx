@@ -92,6 +92,7 @@ export default function SettingsPage() {
           type="button"
           onClick={() => router.push("/")}
           className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+          aria-label={t("settings.back")}
         >
           &larr; {t("settings.back")}
         </button>

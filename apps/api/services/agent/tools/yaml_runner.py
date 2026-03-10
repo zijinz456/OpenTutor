@@ -187,7 +187,7 @@ class YAMLTool(Tool):
 
             return ToolResult(success=True, output=output)
 
-        except Exception as e:
+        except (ConnectionError, TimeoutError, ValueError, KeyError, OSError) as e:
             logger.exception("YAML HTTP tool %s failed: %s", self.name, e)
             return ToolResult(success=False, output="", error=str(e))
 
@@ -226,7 +226,7 @@ class YAMLTool(Tool):
                 result = func(**parameters)
 
             return ToolResult(success=True, output=str(result))
-        except Exception as e:
+        except (ValueError, TypeError, KeyError, RuntimeError, AttributeError) as e:
             logger.exception("YAML python_function tool %s failed: %s", self.name, e)
             return ToolResult(success=False, output="", error=str(e))
 
@@ -266,7 +266,7 @@ def load_yaml_tools(registry: ToolRegistry | None = None) -> int:
             count += 1
             logger.info("YAML tool registered: %s from %s", tool.name, yaml_file.name)
 
-        except Exception as e:
+        except (ValueError, KeyError, TypeError, OSError) as e:
             logger.exception("Failed to load YAML tool %s: %s", yaml_file.name, e)
 
     if count:

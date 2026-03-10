@@ -22,7 +22,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
 from database import get_db, async_session
-from libs.exceptions import NotFoundError
+from sqlalchemy.exc import SQLAlchemyError
+
+from libs.exceptions import AppError, NotFoundError, reraise_as_app_error
 from models.chat_message import ChatMessageLog
 from models.chat_session import ChatSession
 from models.user import User
@@ -33,91 +35,20 @@ from services.course_access import get_course_or_404
 from services.llm.readiness import ensure_llm_ready
 from utils.serializers import serialize_model
 
+# Helpers extracted to chat_helpers — re-export for backward compatibility
+from .chat_helpers import (
+    build_session_title as _build_session_title,
+    resolve_chat_session as _resolve_chat_session,
+    persist_chat_turn as _persist_chat_turn,
+    serialize_session as _serialize_session,
+)
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 
-def _build_session_title(message: str) -> str:
-    normalized = " ".join(message.strip().split())
-    if not normalized:
-        return "New Chat"
-    return normalized[:77] + "..." if len(normalized) > 80 else normalized
-
-
-async def _resolve_chat_session(
-    db: AsyncSession,
-    user_id: uuid.UUID,
-    course_id: uuid.UUID,
-    scene_id: str | None,
-    message: str,
-    session_id: uuid.UUID | None,
-) -> ChatSession:
-    if session_id:
-        result = await db.execute(
-            select(ChatSession).where(
-                ChatSession.id == session_id,
-                ChatSession.user_id == user_id,
-                ChatSession.course_id == course_id,
-            )
-        )
-        session = result.scalar_one_or_none()
-        if not session:
-            raise NotFoundError("Chat session", session_id)
-        if scene_id and session.scene_id != scene_id:
-            session.scene_id = scene_id
-        if not session.title:
-            session.title = _build_session_title(message)
-        await db.flush()
-        return session
-
-    session = ChatSession(
-        user_id=user_id,
-        course_id=course_id,
-        scene_id=scene_id,
-        title=_build_session_title(message),
-    )
-    db.add(session)
-    await db.flush()
-    return session
-
-
-async def _persist_chat_turn(
-    db: AsyncSession,
-    session_id: uuid.UUID,
-    user_message: str,
-    assistant_message: str,
-    assistant_metadata: dict | None = None,
-) -> None:
-    if not assistant_message.strip():
-        return
-    db.add_all(
-        [
-            ChatMessageLog(session_id=session_id, role="user", content=user_message),
-            ChatMessageLog(
-                session_id=session_id,
-                role="assistant",
-                content=assistant_message,
-                metadata_json=assistant_metadata,
-            ),
-        ]
-    )
-    # Update session timestamp via query to avoid needing the ORM object in this session
-    from sqlalchemy import update
-    await db.execute(
-        update(ChatSession).where(ChatSession.id == session_id).values(updated_at=datetime.now(timezone.utc))
-    )
-    await db.commit()
-
-
-def _serialize_session(session: ChatSession, message_count: int) -> dict:
-    data = serialize_model(session, ["id", "course_id", "scene_id", "title", "created_at", "updated_at"])
-    data["title"] = data.get("title") or "New Chat"
-    data["message_count"] = message_count
-    return data
-
-
-@router.get("/courses/{course_id}/sessions")
+@router.get("/courses/{course_id}/sessions", summary="List chat sessions", description="Return paginated chat sessions for a course, ordered by most recent activity.")
 async def list_chat_sessions(
     course_id: uuid.UUID,
     limit: int = Query(default=20, ge=1, le=100),
@@ -147,7 +78,7 @@ async def list_chat_sessions(
     return [_serialize_session(session, message_count) for session, message_count in result.all()]
 
 
-@router.get("/sessions/{session_id}/messages")
+@router.get("/sessions/{session_id}/messages", summary="Get session messages", description="Return paginated messages for a chat session with session metadata.")
 async def get_chat_session_messages(
     session_id: uuid.UUID,
     limit: int = Query(default=50, ge=1, le=200),
@@ -187,7 +118,7 @@ async def get_chat_session_messages(
     }
 
 
-@router.post("/")
+@router.post("/", summary="Send chat message", description="Stream a tutoring response via SSE using the multi-agent orchestrator.")
 async def chat_stream(
     body: ChatRequest,
     request: Request,
@@ -289,16 +220,28 @@ async def chat_stream(
             try:
                 async with session_factory() as persist_db:
                     await _persist_chat_turn(persist_db, session.id, body.message, assistant_content, assistant_metadata)
-            except Exception as persist_err:
-                logger.error("Failed to persist chat turn: %s", persist_err, exc_info=True)
+            except SQLAlchemyError as persist_err:
+                logger.exception("Failed to persist chat turn: %s", persist_err)
+        except AppError as e:
+            logger.exception("Orchestrator AppError: %s", e)
+            yield {"event": "error", "data": json.dumps({"error": e.message})}
+        except (ValueError, KeyError, SQLAlchemyError, ConnectionError, TimeoutError) as e:
+            from libs.exceptions import is_llm_unavailable_error
+            if is_llm_unavailable_error(e):
+                error_msg = "The AI service is temporarily unavailable. Please try again shortly."
+            else:
+                error_msg = "An internal error occurred. Please try again."
+            logger.exception("Orchestrator error: %s", e)
+            yield {"event": "error", "data": json.dumps({"error": error_msg})}
         except Exception as e:
-            logger.error("Orchestrator error: %s", e, exc_info=True)
+            # Top-level fallback: don't crash the SSE stream
+            logger.exception("Orchestrator unexpected error: %s", e)
             yield {"event": "error", "data": json.dumps({"error": "An internal error occurred. Please try again."})}
 
     return EventSourceResponse(event_generator())
 
 
-@router.get("/greeting/{course_id}")
+@router.get("/greeting/{course_id}", summary="Get personalized greeting", description="Generate a context-aware greeting using mastery graph and review state.")
 async def get_greeting(
     course_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -330,7 +273,7 @@ async def get_greeting(
             greeting_parts.append("Want me to start a quick review session?")
         else:
             greeting_parts.append("You're all caught up on reviews!")
-    except Exception:
+    except (SQLAlchemyError, ValueError, KeyError, TypeError) as exc:
         logger.exception("Failed to fetch review summary for greeting")
 
     try:
@@ -349,7 +292,7 @@ async def get_greeting(
                 greeting_parts.append(
                     f"You've mastered {mastered}/{total} concepts so far."
                 )
-    except Exception:
+    except (SQLAlchemyError, ValueError, KeyError, TypeError) as exc:
         logger.exception("Failed to fetch mastery graph for greeting")
 
     # Check for upcoming deadlines
@@ -373,7 +316,7 @@ async def get_greeting(
                 greeting_parts.append(
                     f"Heads up: **{upcoming.title}** is due in {days_until} day(s)!"
                 )
-    except Exception:
+    except (SQLAlchemyError, ValueError, TypeError) as exc:
         logger.exception("Failed to fetch upcoming deadlines for greeting")
 
     greeting_parts.append("What would you like to work on?")

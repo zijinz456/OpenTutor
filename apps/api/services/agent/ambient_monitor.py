@@ -156,7 +156,8 @@ async def llm_deliberate(
 
     try:
         client = get_llm_client(tier="fast")
-    except Exception:
+    except (ImportError, ConnectionError, RuntimeError):
+        logger.debug("LLM client unavailable for ambient monitor deliberation")
         return None
 
     try:
@@ -174,7 +175,7 @@ async def llm_deliberate(
             return None
         return decision
 
-    except Exception as e:
+    except (ConnectionError, TimeoutError, json.JSONDecodeError, ValueError, RuntimeError) as e:
         logger.exception("Ambient monitor LLM deliberation failed: %s", e)
         return None
 

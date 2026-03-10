@@ -144,7 +144,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
                 max_age=_TOKEN_MAX_AGE,
                 httponly=False,  # Frontend needs to read this
                 samesite="strict",
-                secure=settings.environment == "production",
+                secure=settings.environment != "development",
                 path="/",
             )
 

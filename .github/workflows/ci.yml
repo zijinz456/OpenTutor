@@ -33,10 +33,38 @@ jobs:
           pip install pytest
 
       - name: Audit Python dependencies
-        run: pip install pip-audit && pip-audit --desc --skip-editable 2>&1 || true
+        run: pip install pip-audit && pip-audit --desc --skip-editable
 
       - name: Run API unit tests
-        run: python -m pytest tests/test_api_unit_basics.py tests/test_services.py tests/test_agent_runtime_regressions.py tests/test_code_execution_agent.py tests/test_eval_regressions.py tests/test_ingestion_regressions.py tests/test_canvas_parser.py tests/test_canvas_router_unit.py tests/test_scrape_services.py tests/test_scrape_router_unit.py -q
+        run: python -m pytest tests/test_api_unit_basics.py tests/test_services.py tests/test_agent_runtime_regressions.py tests/test_code_execution_agent.py tests/test_eval_regressions.py tests/test_ingestion_regressions.py tests/test_canvas_parser.py tests/test_canvas_router_unit.py tests/test_scrape_services.py tests/test_scrape_router_unit.py tests/test_cognitive_load.py tests/test_progress_tracker.py tests/test_workspace_tool_actions.py tests/test_workspace_layout_actions.py tests/test_bkt.py tests/test_lector.py tests/test_loom.py tests/test_middleware_security.py tests/test_scheduler_engine.py -q
+
+      - name: Check CI/local gate consistency
+        run: |
+          python - <<'PY'
+          import re
+          from pathlib import Path
+
+          pytest_ini = Path("pytest.ini").read_text(encoding="utf-8")
+          ci_workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+
+          cov_match = re.search(r"--cov-fail-under=(\d+)", pytest_ini)
+          if cov_match is None:
+              raise SystemExit("pytest.ini missing --cov-fail-under")
+          if int(cov_match.group(1)) < 25:
+              raise SystemExit("coverage gate must be >=25 for this beta phase")
+
+          api_tests_section = re.search(
+              r"- name:\s*Run API unit tests(?P<body>.*?)(?:\n\s*-\s+name:|\Z)",
+              ci_workflow,
+              flags=re.S,
+          )
+          if api_tests_section is None:
+              raise SystemExit("missing Run API unit tests step")
+          if "-o addopts=" in api_tests_section.group("body"):
+              raise SystemExit("Run API unit tests step cannot bypass addopts")
+
+          print("CI/local gate consistency check passed.")
+          PY
 
       - name: Run Offline Regression Benchmark
         working-directory: apps/api
@@ -51,8 +79,27 @@ jobs:
               sys.exit(1)
           PY
 
+      - name: Validate Alembic migrations
+        working-directory: apps/api
+        env:
+          DATABASE_URL: sqlite+aiosqlite:////tmp/opentutor-ci-alembic.db
+          APP_AUTO_CREATE_TABLES: "false"
+        run: |
+          python -m alembic upgrade head
+          python -c "
+          from alembic.config import Config
+          from alembic.script import ScriptDirectory
+          cfg = Config('alembic.ini')
+          scripts = ScriptDirectory.from_config(cfg)
+          heads = scripts.get_heads()
+          print(f'Migration heads: {heads}')
+          if len(heads) != 1:
+              raise SystemExit(f'Expected 1 migration head, found {len(heads)}: {heads}')
+          print('Alembic migration validation passed.')
+          "
+
       - name: Compile API sources
-        run: python -m compileall apps/api
+        run: python -m compileall -q -x '/\.venv/' apps/api
 
       - name: Setup Node
         uses: actions/setup-node@v6
@@ -74,12 +121,16 @@ jobs:
         working-directory: apps/web
         run: npm run lint
 
+      - name: Run Web unit tests
+        working-directory: apps/web
+        run: npx vitest run --reporter=github-actions
+
       - name: Run Web build
         working-directory: apps/web
         run: npm run build
 
       - name: Generate host-safe verification summary
-        run: bash scripts/dev_local.sh verify-host
+        run: bash scripts/dev_local.sh verify-host --ci-parity
 
       - name: Gate host-safe verification summary
         run: |
@@ -189,10 +240,19 @@ jobs:
           course_id = open("/tmp/opentutor_eval_course_id.txt", encoding="utf-8").read().strip()
           payload = {
               "course_id": course_id,
+              "strict": True,
               "retrieval_queries": [
                   {
                       "query": "topic A notes",
                       "keywords": ["Topic A", "Unit 1"],
+                  }
+              ],
+              "response_cases": [
+                  {
+                      "question": "What is Topic A?",
+                      "response": "Topic A notes are in Unit 1 and summarize the uploaded fixture.",
+                      "context": "Unit 1 / Topic A / Notes for CI smoke test.",
+                      "expected_intent": "learn",
                   }
               ],
           }

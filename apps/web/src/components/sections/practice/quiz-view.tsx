@@ -48,6 +48,7 @@ export function QuizView({
   const [result, setResult] = useState<AnswerResult | null>(null);
   const [score, setScore] = useState({ correct: 0, total: 0 });
   const consecutiveWrongRef = useRef(0);
+  const questionStartTimeRef = useRef(Date.now());
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -68,6 +69,7 @@ export function QuizView({
   useEffect(() => {
     setSelectedOption(null);
     setResult(null);
+    questionStartTimeRef.current = Date.now();
   }, [currentIdx]);
 
   const handleExtract = async () => {
@@ -93,7 +95,8 @@ export function QuizView({
     setSelectedOption(option);
     setSubmitting(true);
     try {
-      const res = await submitAnswer(problems[currentIdx].id, option);
+      const answerTimeMs = Date.now() - questionStartTimeRef.current;
+      const res = await submitAnswer(problems[currentIdx].id, option, answerTimeMs);
       setResult(res);
       setScore((prev) => ({
         correct: prev.correct + (res.is_correct ? 1 : 0),
@@ -134,8 +137,8 @@ export function QuizView({
 
   if (loading) {
     return (
-      <div className="flex-1 flex items-center justify-center p-8" data-testid="quiz-panel">
-        <div className="h-4 w-32 bg-muted animate-pulse rounded" />
+      <div className="flex-1 flex items-center justify-center p-8" data-testid="quiz-panel" role="status" aria-live="polite">
+        <div className="h-4 w-32 bg-muted animate-pulse rounded" aria-label="Loading quiz" />
       </div>
     );
   }
@@ -150,7 +153,7 @@ export function QuizView({
           {extracting ? `${t("quiz.generating")}...` : t("quiz.generate")}
         </Button>
         {extractStatus ? (
-          <p className="mt-3 text-xs text-muted-foreground" data-testid="quiz-extract-status">
+          <p role="status" aria-live="polite" className="mt-3 text-xs text-muted-foreground" data-testid="quiz-extract-status">
             {extractStatus}
           </p>
         ) : null}
@@ -180,7 +183,7 @@ export function QuizView({
   };
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden" data-testid="quiz-panel">
+    <div role="form" aria-label="Quiz question" className="flex-1 flex flex-col overflow-hidden" data-testid="quiz-panel">
       <div className="flex items-center gap-2 px-3 py-2 border-b border-border/60 shrink-0">
         {accuracy !== null ? <Badge variant="outline">{accuracy}%</Badge> : null}
         <span className="ml-auto text-xs text-muted-foreground">
@@ -212,11 +215,11 @@ export function QuizView({
           ) : null}
         </div>
 
-        <p className="text-sm font-medium leading-relaxed" data-testid="quiz-question">
+        <p id="quiz-question-text" className="text-sm font-medium leading-relaxed" data-testid="quiz-question">
           {problem.question}
         </p>
 
-        <div className="space-y-3" role="radiogroup" aria-label="Answer options">
+        <div className="space-y-3" role="radiogroup" aria-label="Answer options" aria-describedby="quiz-question-text">
           {optionKeys.map((key) => (
             <button
               key={key}
@@ -230,6 +233,21 @@ export function QuizView({
                   e.preventDefault();
                   if (!result && !submitting) void handleOptionClick(key);
                 }
+                // Arrow key navigation within radiogroup
+                if (e.key === "ArrowDown" || e.key === "ArrowRight") {
+                  e.preventDefault();
+                  const idx = optionKeys.indexOf(key);
+                  const next = optionKeys[(idx + 1) % optionKeys.length];
+                  const nextEl = document.querySelector(`[data-testid="quiz-option-${next}"]`) as HTMLElement;
+                  nextEl?.focus();
+                }
+                if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
+                  e.preventDefault();
+                  const idx = optionKeys.indexOf(key);
+                  const prev = optionKeys[(idx - 1 + optionKeys.length) % optionKeys.length];
+                  const prevEl = document.querySelector(`[data-testid="quiz-option-${prev}"]`) as HTMLElement;
+                  prevEl?.focus();
+                }
               }}
               className={`w-full text-left rounded-xl border px-3.5 py-3 text-sm min-h-[44px] transition-colors ${optionStyle(key)} disabled:cursor-default`}
             >
@@ -240,7 +258,7 @@ export function QuizView({
         </div>
 
         {submitError && (
-          <p className="text-xs text-destructive mt-2">{submitError}</p>
+          <p role="alert" className="text-xs text-destructive mt-2">{submitError}</p>
         )}
 
         {result?.explanation ? (

@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from collections import Counter
 from dataclasses import asdict, dataclass
 
 from services.agent.base import BaseAgent
 from services.agent.state import AgentContext, AgentVerificationResult, IntentType
+
+logger = logging.getLogger(__name__)
 
 _MATERIAL_DISCLAIMER_PATTERNS = (
     "not in the materials",
@@ -320,7 +323,8 @@ async def verify_and_repair(ctx: AgentContext, agent: BaseAgent) -> AgentContext
         repair_succeeded = False
         try:
             repair_succeeded = await _repair_response(agent, ctx, issue)
-        except Exception:
+        except (ConnectionError, TimeoutError, ValueError, RuntimeError):
+            logger.debug("Verifier repair attempt failed for issue %s", issue.code, exc_info=True)
             repair_succeeded = False
         if repair_succeeded:
             repaired_signals = _acceptance_signals(ctx)

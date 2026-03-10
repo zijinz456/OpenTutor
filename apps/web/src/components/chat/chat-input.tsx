@@ -141,6 +141,8 @@ export function ChatInput({ courseId, disabled }: ChatInputProps) {
 
   return (
     <div
+      role="form"
+      aria-label="Chat input"
       className={cn(
         "shrink-0 border-t border-border/60 bg-background px-3 py-2",
         isDragOver && "ring-2 ring-primary ring-inset bg-primary/5",

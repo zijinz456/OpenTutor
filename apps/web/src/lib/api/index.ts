@@ -73,6 +73,7 @@ export {
   reviewFlashcard,
   getDueFlashcards,
   getWrongAnswerReview,
+  getConfusionPairs,
 } from "./practice";
 
 export type {
@@ -86,6 +87,8 @@ export type {
   PrerequisiteGap,
   DueFlashcardsResult,
   Flashcard,
+  ConfusionPair,
+  ConfusionPairsResult,
 } from "./practice";
 
 export {
@@ -112,6 +115,9 @@ export {
   getReviewSession,
   listAgendaRuns,
   logAgentDecision,
+  getVelocity,
+  getCompletionForecast,
+  getTransferOpportunities,
 } from "./progress";
 
 export type {
@@ -136,6 +142,9 @@ export type {
   AgendaRun,
   AgendaDecisionLogRequest,
   StudyPlanResponse,
+  VelocityResult,
+  CompletionForecast,
+  TransferOpportunity,
 } from "./progress";
 
 export {

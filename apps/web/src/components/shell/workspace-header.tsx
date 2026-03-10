@@ -55,6 +55,8 @@ export function WorkspaceHeader({
 
   return (
     <header
+      role="banner"
+      aria-label="Workspace header"
       className="flex h-12 shrink-0 items-center gap-2 border-b border-border/60 px-4 glass"
     >
       <div className="flex items-center gap-2 min-w-0">
@@ -80,6 +82,7 @@ export function WorkspaceHeader({
             size="icon-xs"
             className="shrink-0 text-muted-foreground hover:text-foreground rounded-lg"
             title={syncing ? "Syncing..." : "Sync course content"}
+            aria-label={syncing ? "Syncing course content" : "Sync course content"}
             onClick={handleSync}
             disabled={syncing}
           >
@@ -88,7 +91,7 @@ export function WorkspaceHeader({
         )}
 
         {syncMessage && (
-          <span className="text-[11px] text-muted-foreground truncate max-w-[200px] animate-fade-in">
+          <span role="status" aria-live="polite" className="text-[11px] text-muted-foreground truncate max-w-[200px] animate-fade-in">
             {syncMessage}
           </span>
         )}
@@ -103,6 +106,7 @@ export function WorkspaceHeader({
           size="icon-xs"
           className="text-muted-foreground hover:text-foreground rounded-lg"
           title="Search (⌘K)"
+          aria-label="Search"
           onClick={() => window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true }))}
         >
           <Search className="size-3.5" />
@@ -115,6 +119,7 @@ export function WorkspaceHeader({
             href={`/course/${courseId}/profile`}
             className="p-2 rounded-xl text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
             title={t("nav.analytics")}
+            aria-label={t("nav.analytics") || "Analytics"}
           >
             <BarChart3 className="size-4" />
           </Link>

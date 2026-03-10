@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { buildAuthHeaders } from "@/lib/auth";
 import { PodcastPlayer } from "@/components/audio/podcast-player";
 import { AiFeatureBlocked } from "@/components/shared/ai-feature-blocked";
+import { API_BASE } from "@/lib/api/client";
 
 interface PodcastViewProps {
   courseId: string;
@@ -22,8 +23,6 @@ interface PodcastHistoryItem {
   dialogue: PodcastLine[];
   created_at: string | null;
 }
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
 const STYLE_OPTIONS: { value: PodcastStyle; label: string }[] = [
   { value: "review", label: "Review" },
@@ -133,7 +132,7 @@ export function PodcastView({
   }, [courseId, loadHistory, normalizeScript, style, topic]);
 
   return (
-    <div className="flex-1 flex flex-col p-4 gap-4 overflow-y-auto scrollbar-thin">
+    <div role="region" aria-label="Podcast studio" className="flex-1 flex flex-col p-4 gap-4 overflow-y-auto scrollbar-thin">
       <div className="space-y-3">
         {!aiActionsEnabled ? <AiFeatureBlocked compact /> : null}
         <div>
@@ -143,6 +142,7 @@ export function PodcastView({
           <input
             id="podcast-topic"
             type="text"
+            aria-required="true"
             value={topic}
             onChange={(e) => setTopic(e.target.value)}
             placeholder="e.g. Photosynthesis, Linear Algebra..."
@@ -154,8 +154,8 @@ export function PodcastView({
           />
         </div>
 
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-muted-foreground">Style:</span>
+        <div className="flex items-center gap-2" role="radiogroup" aria-labelledby="podcast-style-label">
+          <span id="podcast-style-label" className="text-sm text-muted-foreground">Style:</span>
           {STYLE_OPTIONS.map((opt) => (
             <Button
               key={opt.value}
@@ -163,6 +163,8 @@ export function PodcastView({
               size="sm"
               variant={style === opt.value ? "secondary" : "ghost"}
               className="h-6 px-2 text-xs"
+              role="radio"
+              aria-checked={style === opt.value}
               onClick={() => setStyle(opt.value)}
               disabled={!aiActionsEnabled || generating}
             >
@@ -176,11 +178,11 @@ export function PodcastView({
           disabled={!aiActionsEnabled || !topic.trim() || generating}
           onClick={() => void handleGenerate()}
         >
-          {generating ? "Generating..." : "Generate Podcast"}
+          {generating ? <span role="status">Generating...</span> : "Generate Podcast"}
         </Button>
 
         {error && (
-          <p className="text-sm text-destructive">{error}</p>
+          <p role="alert" className="text-sm text-destructive">{error}</p>
         )}
       </div>
 
@@ -196,14 +198,16 @@ export function PodcastView({
       {history.length > 0 && (
         <div className="rounded-2xl card-shadow p-3.5">
           <div className="mb-2 flex items-center justify-between">
-            <h3 className="text-sm font-medium text-foreground">Recent podcasts</h3>
+            <h3 id="podcast-history-heading" className="text-sm font-medium text-foreground">Recent podcasts</h3>
             <span className="text-xs text-muted-foreground">{history.length} saved</span>
           </div>
-          <div className="space-y-2">
+          <div role="list" aria-labelledby="podcast-history-heading" className="space-y-2">
             {history.slice(0, 5).map((item) => (
               <button
                 key={item.id}
                 type="button"
+                role="listitem"
+                aria-label={`Load podcast: ${item.topic}`}
                 className="w-full rounded-xl bg-muted/30 px-3.5 py-2.5 text-left hover:bg-accent"
                 onClick={() => {
                   setTopic(item.topic);

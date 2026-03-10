@@ -61,6 +61,7 @@ export function VoiceButton({ voice, disabled }: VoiceButtonProps) {
       )}
       title={getVoiceTitle(voice.voiceState)}
       aria-label={voice.voiceState === "recording" ? "Stop recording" : "Start voice recording"}
+      aria-pressed={voice.voiceState === "recording"}
       disabled={isClickDisabled}
       onClick={handleClick}
     >
@@ -76,7 +77,7 @@ export function VoiceStatusIndicator({ voice }: { voice: VoiceSession }) {
   if (voice.voiceState === "idle") return null;
 
   return (
-    <div className="mt-1.5 flex items-center gap-2 rounded-xl bg-muted/20 px-2 py-1 text-xs text-muted-foreground animate-fade-in">
+    <div role="status" aria-live="polite" className="mt-1.5 flex items-center gap-2 rounded-xl bg-muted/20 px-2 py-1 text-xs text-muted-foreground animate-fade-in">
       {voice.voiceState === "recording" && (
         <>
           <span className="inline-block size-2 rounded-full bg-red-500 animate-pulse" />

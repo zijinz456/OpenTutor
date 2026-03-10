@@ -73,7 +73,7 @@ class WriteFileTool(Tool):
             )
         except (PermissionError, ValueError) as e:
             return ToolResult(success=False, output="", error=str(e))
-        except Exception as e:
+        except (IOError, OSError, RuntimeError) as e:
             logger.exception("write_file failed: %s", e)
             return ToolResult(success=False, output="", error=f"File write failed: {e}")
 
@@ -109,7 +109,7 @@ class ListFilesTool(Tool):
                 lines.append(f"- {f['name']} ({size_str})")
 
             return ToolResult(success=True, output="\n".join(lines))
-        except Exception as e:
+        except (IOError, OSError, RuntimeError) as e:
             logger.exception("list_files failed: %s", e)
             return ToolResult(success=False, output="", error=f"Failed to list files: {e}")
 
@@ -158,6 +158,6 @@ class ReadFileTool(Tool):
             )
         except PermissionError as e:
             return ToolResult(success=False, output="", error=str(e))
-        except Exception as e:
+        except (IOError, OSError, RuntimeError) as e:
             logger.exception("read_file failed: %s", e)
             return ToolResult(success=False, output="", error=f"File read failed: {e}")

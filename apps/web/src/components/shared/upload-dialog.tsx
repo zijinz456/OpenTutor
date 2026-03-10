@@ -100,6 +100,8 @@ export function UploadDialog({
 
           <TabsContent value="file" className="space-y-4 pt-4">
             <div
+              role="region"
+              aria-label="File drop zone"
               className={`rounded-2xl border-2 border-dashed p-8 text-center transition-colors ${
                 dragging ? "border-primary bg-primary/5" : "border-border/60"
               }`}
@@ -161,8 +163,12 @@ export function UploadDialog({
                 </Button>
               </label>
               {uploading && (
-                <div className="mt-3 w-full">
-                  <div className="h-2.5 w-full rounded-full bg-muted overflow-hidden">
+                <div className="mt-3 w-full" role="status" aria-live="polite">
+                  <div
+                    role="progressbar"
+                    aria-label={`Upload progress: ${progress}%`}
+                    className="h-2.5 w-full rounded-full bg-muted overflow-hidden"
+                  >
                     <div
                       className="h-full rounded-full bg-brand transition-all duration-300"
                       style={{ width: `${progress}%` }}
@@ -179,6 +185,7 @@ export function UploadDialog({
           <TabsContent value="url" className="space-y-4 pt-4">
             <Input
               data-testid="workspace-upload-url-input"
+              aria-label="URL to scrape"
               placeholder="https://example.com/lecture-notes"
               value={url}
               onChange={(e) => {
@@ -193,7 +200,7 @@ export function UploadDialog({
               disabled={uploading}
             />
             {urlError ? (
-              <p className="text-sm text-destructive" data-testid="workspace-upload-url-error">
+              <p role="alert" className="text-sm text-destructive" data-testid="workspace-upload-url-error">
                 {urlError}
               </p>
             ) : null}

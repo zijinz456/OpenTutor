@@ -12,7 +12,7 @@ from sqlalchemy.exc import ProgrammingError
 from libs.exceptions import NotFoundError, ValidationError
 from routers.chat import _build_session_title, _resolve_chat_session
 from routers.goals import get_next_action, queue_next_action
-from routers.preferences import _normalize_preference_value
+from routers.preferences_crud import _normalize_preference_value
 from routers.upload import _validate_url
 from routers.wrong_answers import derive_question, diagnose_from_pair
 from services.agent.agenda_ranking import AgendaDecision

@@ -71,6 +71,7 @@ export function RuntimeAlert({ health, className }: RuntimeAlertProps) {
         {visible.map(({ key, title, body, Icon, dismissable }) => (
           <div
             key={key}
+            role="alert"
             className="rounded-2xl border border-amber-300/60 bg-amber-50/80 px-4 py-3 text-amber-950 card-shadow"
           >
             <div className="flex items-start gap-3">

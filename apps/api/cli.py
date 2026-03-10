@@ -226,13 +226,14 @@ def _cmd_start(args):
     # Auto-open browser once server is ready (poll health endpoint)
     if not args.no_browser:
         def _open_browser():
+            import urllib.error
             import urllib.request
             for _ in range(30):  # Wait up to 15s
                 time.sleep(0.5)
                 try:
                     urllib.request.urlopen(f"{url}/api/health", timeout=2)
                     break
-                except Exception:
+                except (urllib.error.URLError, OSError, ValueError):
                     continue
             webbrowser.open(url)
         threading.Thread(target=_open_browser, daemon=True).start()

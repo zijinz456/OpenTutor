@@ -6,177 +6,33 @@ Three-tier extraction strategy:
 - Tier C (Canvas API): Direct parsing of Canvas assignment due_at fields
 
 Extracted deadlines are persisted as Assignment records with extraction metadata.
+
+Helper constants, patterns, and parsing utilities live in deadline_helpers.py.
+All public names are re-exported here for backward compatibility.
 """
 
+import json
 import logging
-import re
 import uuid
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.ingestion import Assignment
+from services.ingestion.deadline_helpers import (
+    ExtractedDeadline,
+    ISO_DATE_RE,
+    DUE_PHRASE_LONG_RE,
+    DUE_PHRASE_NUMERIC_RE,
+    STANDALONE_LONG_RE,
+    RELATIVE_WEEK_RE,
+    parse_date_flexible,
+    infer_event_type,
+    extract_event_title,
+)
 
 logger = logging.getLogger(__name__)
-
-# ── Date parsing ──
-
-# Month names for regex
-_MONTH_NAMES = {
-    "january": 1, "february": 2, "march": 3, "april": 4,
-    "may": 5, "june": 6, "july": 7, "august": 8,
-    "september": 9, "october": 10, "november": 11, "december": 12,
-    "jan": 1, "feb": 2, "mar": 3, "apr": 4,
-    "jun": 6, "jul": 7, "aug": 8, "sep": 9, "sept": 9,
-    "oct": 10, "nov": 11, "dec": 12,
-}
-
-# Assignment type inference from surrounding context
-_TYPE_KEYWORDS = {
-    "exam": re.compile(r"(?i)\b(exam|midterm|final\s+exam|test)\b"),
-    "quiz": re.compile(r"(?i)\b(quiz|assessment|evaluation)\b"),
-    "homework": re.compile(r"(?i)\b(homework|hw|problem\s+set|ps\d)\b"),
-    "project": re.compile(r"(?i)\b(project|report|presentation|essay|paper)\b"),
-    "reading": re.compile(r"(?i)\b(reading|chapter|read\s+by)\b"),
-}
-
-# ── Date extraction patterns (priority-ordered) ──
-
-# ISO 8601 / Canvas API format
-_ISO_DATE_RE = re.compile(
-    r"(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}(?::\d{2})?)Z?"
-)
-
-# "Due: March 15, 2026" or "Deadline: March 15 2026"
-_DUE_PHRASE_LONG_RE = re.compile(
-    r"(?:due|deadline|submit|submission|turn\s+in)\s*(?:date|by)?\s*[:\-–—]?\s*"
-    r"((?:January|February|March|April|May|June|July|August|September|October|November|December"
-    r"|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.?\s+\d{1,2},?\s*\d{4})",
-    re.IGNORECASE,
-)
-
-# "Due: 15/03/2026" or "Submit by 03-15-2026"
-_DUE_PHRASE_NUMERIC_RE = re.compile(
-    r"(?:due|deadline|submit|submission|turn\s+in)\s*(?:date|by)?\s*[:\-–—]?\s*"
-    r"(\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4})",
-    re.IGNORECASE,
-)
-
-# Standalone long-form dates: "March 15, 2026"
-_STANDALONE_LONG_RE = re.compile(
-    r"((?:January|February|March|April|May|June|July|August|September|October|November|December"
-    r"|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.?\s+\d{1,2},?\s*\d{4})",
-    re.IGNORECASE,
-)
-
-# Relative academic dates (need LLM resolution)
-_RELATIVE_WEEK_RE = re.compile(
-    r"(?:Week|Wk)\s*(\d{1,2})\s*"
-    r"(?:,?\s*(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|Mon|Tue|Wed|Thu|Fri|Sat|Sun))?",
-    re.IGNORECASE,
-)
-
-
-@dataclass
-class ExtractedDeadline:
-    """A deadline extracted from document text."""
-    title: str
-    due_date: datetime | None
-    raw_date_text: str
-    assignment_type: str  # exam, quiz, homework, project, reading
-    confidence: float  # 0.0-1.0
-    source_context: str  # surrounding text snippet
-    needs_llm_resolution: bool = False
-
-
-def _parse_date_flexible(text: str, prefer_day_first: bool = True) -> datetime | None:
-    """Parse a date string in multiple formats. Returns UTC datetime or None."""
-    text = text.strip().rstrip(".")
-
-    # ISO 8601
-    m = _ISO_DATE_RE.match(text)
-    if m:
-        try:
-            return datetime.fromisoformat(text.replace("Z", "+00:00"))
-        except ValueError:
-            try:
-                return datetime.fromisoformat(m.group(1) + "T" + m.group(2)).replace(tzinfo=timezone.utc)
-            except ValueError:
-                pass
-
-    # Long-form: "March 15, 2026" or "Mar 15 2026"
-    long_match = re.match(
-        r"((?:January|February|March|April|May|June|July|August|September|October|November|December"
-        r"|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.?)\s+(\d{1,2}),?\s*(\d{4})",
-        text, re.IGNORECASE,
-    )
-    if long_match:
-        month_str = long_match.group(1).rstrip(".").lower()
-        month = _MONTH_NAMES.get(month_str)
-        if month:
-            try:
-                return datetime(int(long_match.group(3)), month, int(long_match.group(2)),
-                                23, 59, 0, tzinfo=timezone.utc)
-            except ValueError:
-                pass
-
-    # Numeric: DD/MM/YYYY or MM/DD/YYYY
-    num_match = re.match(r"(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})", text)
-    if num_match:
-        a, b, year_str = int(num_match.group(1)), int(num_match.group(2)), num_match.group(3)
-        year = int(year_str)
-        if year < 100:
-            year += 2000
-        try:
-            if prefer_day_first:
-                return datetime(year, b, a, 23, 59, 0, tzinfo=timezone.utc)
-            else:
-                return datetime(year, a, b, 23, 59, 0, tzinfo=timezone.utc)
-        except ValueError:
-            # Try the other interpretation
-            try:
-                if prefer_day_first:
-                    return datetime(year, a, b, 23, 59, 0, tzinfo=timezone.utc)
-                else:
-                    return datetime(year, b, a, 23, 59, 0, tzinfo=timezone.utc)
-            except ValueError:
-                pass
-
-    return None
-
-
-def _infer_event_type(context: str) -> str:
-    """Infer assignment type from surrounding text context."""
-    for atype, pattern in _TYPE_KEYWORDS.items():
-        if pattern.search(context):
-            return atype
-    return "homework"  # default
-
-
-def _extract_event_title(context: str, assignment_type: str) -> str:
-    """Extract a meaningful event title from surrounding context."""
-    # Try to find named assignment/event lines (closest to the date)
-    title_patterns = [
-        # "### Assignment 1: Introduction to Accounting" or "**Quiz 2: Balance Sheet**"
-        re.compile(r"((?:Assignment|Homework|Quiz|Exam|Test|Project|Lab|Essay|Midterm|Final)\s*\d*[:\s].{3,60})", re.IGNORECASE),
-        # "Assignment 1" or "Quiz 2"
-        re.compile(r"((?:Assignment|Homework|Quiz|Exam|Test|Project|Lab|Essay|Midterm|Final)\s*\d+)", re.IGNORECASE),
-        # Markdown headers closest to the match (### Title)
-        re.compile(r"(?:^|\n)\s*#{2,4}\s+(.{5,80})", re.MULTILINE),
-        # Bold text (**Title**)
-        re.compile(r"\*\*(.{5,80})\*\*"),
-    ]
-    for pat in title_patterns:
-        m = pat.search(context)
-        if m:
-            title = m.group(1).strip().rstrip(":")
-            if len(title) > 3:
-                return title[:100]
-
-    # Fallback: capitalize type
-    return assignment_type.replace("_", " ").title()
 
 
 def extract_deadlines_regex(content: str) -> list[ExtractedDeadline]:
@@ -206,12 +62,12 @@ def extract_deadlines_regex(content: str) -> list[ExtractedDeadline]:
         ctx_end = min(len(content), match_start + len(raw_date) + 100)
         context = content[ctx_start:ctx_end]
 
-        parsed_date = _parse_date_flexible(raw_date) if not needs_llm else None
+        parsed_date = parse_date_flexible(raw_date) if not needs_llm else None
         if parsed_date is None and not needs_llm:
             return  # unparseable, skip
 
-        atype = _infer_event_type(context)
-        title = _extract_event_title(context, atype)
+        atype = infer_event_type(context)
+        title = extract_event_title(context, atype)
 
         deadlines.append(ExtractedDeadline(
             title=title,
@@ -224,20 +80,20 @@ def extract_deadlines_regex(content: str) -> list[ExtractedDeadline]:
         ))
 
     # Pattern 1: ISO dates (highest confidence)
-    for m in _ISO_DATE_RE.finditer(content):
+    for m in ISO_DATE_RE.finditer(content):
         _add_deadline(m.group(0), m.start(), confidence=0.95)
 
     # Pattern 2: Due/deadline phrases with long-form dates
-    for m in _DUE_PHRASE_LONG_RE.finditer(content):
+    for m in DUE_PHRASE_LONG_RE.finditer(content):
         _add_deadline(m.group(1), m.start(), confidence=0.9)
 
     # Pattern 3: Due/deadline phrases with numeric dates
-    for m in _DUE_PHRASE_NUMERIC_RE.finditer(content):
+    for m in DUE_PHRASE_NUMERIC_RE.finditer(content):
         _add_deadline(m.group(1), m.start(), confidence=0.75)
 
     # Pattern 4: Standalone long-form dates (lower confidence — might not be deadlines)
     # Only extract if near deadline-related keywords
-    for m in _STANDALONE_LONG_RE.finditer(content):
+    for m in STANDALONE_LONG_RE.finditer(content):
         ctx_start = max(0, m.start() - 150)
         nearby = content[ctx_start:m.end() + 50].lower()
         deadline_keywords = ("due", "deadline", "submit", "exam", "quiz", "test", "assignment", "homework")
@@ -245,7 +101,7 @@ def extract_deadlines_regex(content: str) -> list[ExtractedDeadline]:
             _add_deadline(m.group(1), m.start(), confidence=0.7)
 
     # Pattern 5: Relative week dates (need LLM resolution)
-    for m in _RELATIVE_WEEK_RE.finditer(content):
+    for m in RELATIVE_WEEK_RE.finditer(content):
         ctx_start = max(0, m.start() - 150)
         nearby = content[ctx_start:m.end() + 50].lower()
         deadline_keywords = ("due", "deadline", "submit", "assignment", "homework", "quiz")
@@ -271,13 +127,13 @@ def extract_canvas_deadlines(assignments_data: list[dict]) -> list[ExtractedDead
         if not due_at:
             continue
 
-        parsed = _parse_date_flexible(due_at)
+        parsed = parse_date_flexible(due_at)
         if not parsed:
             continue
 
         name = a.get("name") or a.get("title") or "Canvas Assignment"
         # Infer type from name
-        atype = _infer_event_type(name)
+        atype = infer_event_type(name)
 
         deadlines.append(ExtractedDeadline(
             title=name,
@@ -327,8 +183,8 @@ async def extract_deadlines_llm(
 
     try:
         client = get_llm_client("fast")
-    except Exception:
-        logger.warning("LLM client unavailable for deadline extraction", exc_info=True)
+    except (RuntimeError, ValueError, ConnectionError) as e:
+        logger.warning("LLM client unavailable for deadline extraction: %s", e)
         return []
 
     context_hint = ""
@@ -353,7 +209,6 @@ async def extract_deadlines_llm(
         from libs.text_utils import strip_code_fences
         text = strip_code_fences(response)
 
-        import json
         items = json.loads(text)
         if not isinstance(items, list):
             return []
@@ -363,7 +218,7 @@ async def extract_deadlines_llm(
             if not isinstance(item, dict):
                 continue
             due_str = item.get("due_date", "")
-            parsed = _parse_date_flexible(due_str) if due_str else None
+            parsed = parse_date_flexible(due_str) if due_str else None
             deadlines.append(ExtractedDeadline(
                 title=item.get("title", "Unknown"),
                 due_date=parsed,
@@ -375,8 +230,11 @@ async def extract_deadlines_llm(
             ))
         return deadlines
 
-    except Exception as e:
-        logger.warning("LLM deadline extraction failed: %s", e)
+    except (json.JSONDecodeError, ValueError, KeyError) as e:
+        logger.warning("LLM deadline extraction parse error: %s", e)
+        return []
+    except (ConnectionError, TimeoutError) as e:
+        logger.warning("LLM deadline extraction network error: %s", e)
         return []
 
 

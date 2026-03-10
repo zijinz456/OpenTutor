@@ -176,7 +176,7 @@ async def queue_decision(
                     "steps": steps,
                     "plan_prompt": decision.plan_prompt,
                 })
-            except Exception:
+            except (ConnectionError, TimeoutError, ValueError, RuntimeError):
                 logger.exception("Plan creation failed, submitting without steps")
                 input_json["course_id"] = str(course_id)
         elif course_id:

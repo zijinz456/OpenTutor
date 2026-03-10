@@ -40,7 +40,7 @@ export default function ForecastBlock({ courseId }: BlockComponentProps) {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-32 text-sm text-muted-foreground animate-pulse">
+      <div role="status" aria-live="polite" className="flex items-center justify-center h-32 text-sm text-muted-foreground animate-pulse">
         Analyzing exam readiness...
       </div>
     );
@@ -57,11 +57,11 @@ export default function ForecastBlock({ courseId }: BlockComponentProps) {
     "text-destructive";
 
   return (
-    <div className="p-4 space-y-4">
+    <div role="region" aria-label="Exam readiness forecast" className="p-4 space-y-4">
       {/* Readiness score */}
       <div className="flex items-center gap-4">
         <div className="flex items-center justify-center w-14 h-14 rounded-2xl bg-muted/30">
-          <TrendingUp className={`size-6 ${readinessColor}`} />
+          <TrendingUp className={`size-6 ${readinessColor}`} aria-hidden="true" />
         </div>
         <div>
           <p className="text-2xl font-bold text-foreground tabular-nums">
@@ -74,12 +74,17 @@ export default function ForecastBlock({ courseId }: BlockComponentProps) {
       </div>
 
       {/* Progress bar */}
-      <div className="w-full h-2 bg-muted/40 rounded-full overflow-hidden">
+      <div
+        role="progressbar"
+        aria-label={`Exam readiness: ${Math.round(masteryPct)} percent`}
+        className="w-full h-2 bg-muted/40 rounded-full overflow-hidden"
+      >
         <div
           className={`h-full rounded-full transition-all duration-500 ${
             masteryPct >= 80 ? "bg-success" : masteryPct >= 50 ? "bg-warning" : "bg-destructive"
           }`}
           style={{ width: `${Math.min(100, masteryPct)}%` }}
+          aria-hidden="true"
         />
       </div>
 
@@ -90,7 +95,7 @@ export default function ForecastBlock({ courseId }: BlockComponentProps) {
           <div className="space-y-1.5">
             {riskConcepts.slice(0, 5).map((c, i) => (
               <div key={i} className="flex items-center gap-2 text-xs rounded-xl bg-muted/30 p-3.5">
-                <BarChart3 className="size-3 text-destructive shrink-0" />
+                <BarChart3 className="size-3 text-destructive shrink-0" aria-hidden="true" />
                 <span className="text-foreground flex-1 truncate">{c.label}</span>
                 <span className="text-muted-foreground tabular-nums">{Math.round(c.retrievability * 100)}%</span>
               </div>

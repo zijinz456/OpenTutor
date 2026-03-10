@@ -84,6 +84,8 @@ export function ProgressView({ courseId }: ProgressViewProps) {
 
   return (
     <div
+      role="region"
+      aria-label="Course progress"
       className="flex-1 flex flex-col gap-4 p-4 overflow-y-auto"
       data-testid="progress-panel"
     >
@@ -111,7 +113,7 @@ export function ProgressView({ courseId }: ProgressViewProps) {
           <span>{data.total_nodes} topics</span>
           <span>{Math.round(data.completion_percent)}%</span>
         </div>
-        <div className="flex h-3 w-full rounded-full overflow-hidden bg-muted">
+        <div role="progressbar" aria-valuenow={Math.round(data.completion_percent)} aria-valuemin={0} aria-valuemax={100} aria-label="Course completion" className="flex h-3 w-full rounded-full overflow-hidden bg-muted">
           {segments.map(({ key, count, color }) => {
             const pct = (count / total) * 100;
             if (pct === 0) return null;

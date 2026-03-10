@@ -92,6 +92,7 @@ export function OllamaSection({
             value={ollamaBaseUrl}
             onChange={(e) => setOllamaBaseUrl(e.target.value)}
             placeholder="http://localhost:11434"
+            aria-label={t("settings.ollamaBaseUrl")}
           />
           <Button
             type="button"

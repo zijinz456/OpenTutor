@@ -200,19 +200,19 @@ class SessionManager:
             if success_selector and is_valid:
                 try:
                     await page.wait_for_selector(success_selector, timeout=3000)
-                except Exception:
+                except (TimeoutError, OSError, RuntimeError):
                     is_valid = False
 
             if failure_selector:
                 try:
                     await page.wait_for_selector(failure_selector, timeout=1000)
                     is_valid = False  # login form visible = not authenticated
-                except Exception:
+                except (TimeoutError, OSError, RuntimeError):
                     pass  # failure indicator NOT found = good
 
             await context.close()
             return is_valid
-        except Exception as e:
+        except (OSError, RuntimeError, ConnectionError, TimeoutError) as e:
             logger.exception("Session validation failed for %s", session_name)
             return False
 
@@ -253,7 +253,7 @@ class SessionManager:
             await context.close()
             logger.info("Re-authentication succeeded for %s", session_name)
             return True
-        except Exception as e:
+        except (OSError, RuntimeError, ConnectionError, TimeoutError) as e:
             logger.exception("Re-authentication failed for %s", session_name)
             return False
 
@@ -274,6 +274,6 @@ class SessionManager:
             await SessionManager.save_state(context, session_name)
             await context.close()
             return content
-        except Exception as e:
+        except (OSError, RuntimeError, ConnectionError, TimeoutError) as e:
             logger.exception("Session fetch failed for %s", url)
             return None

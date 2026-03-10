@@ -27,6 +27,7 @@ export function ContinueLearningCta({ courseId, nodes }: ContinueLearningCtaProp
   return (
     <Link
       href={`/course/${courseId}/${firstNode.id}`}
+      aria-label={`Continue learning: ${firstNode.title}`}
       className="flex items-center gap-4 p-4 rounded-2xl bg-primary/5 border border-primary/20 hover:bg-primary/10 transition-colors group card-lift"
     >
       <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-primary/10 shrink-0">

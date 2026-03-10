@@ -6,6 +6,8 @@ import asyncio
 import logging
 import uuid
 
+from sqlalchemy.exc import SQLAlchemyError
+
 from services.agent.state import AgentContext, IntentType, TaskPhase
 
 logger = logging.getLogger(__name__)
@@ -42,7 +44,7 @@ async def _retry_async(coro_fn, name: str, max_retries: int = 2, base_delay: flo
             return {"success": True, "name": name}
         except Exception as exc:
             if attempt == max_retries:
-                logger.warning("Post-process '%s' failed after %d retries: %s", name, max_retries, exc)
+                logger.exception("Post-process '%s' failed after %d retries: %s", name, max_retries, exc)
                 return {"success": False, "name": name, "error": str(exc)}
             delay = base_delay * (2 ** attempt)
             logger.debug("Retrying '%s' in %.1fs (attempt %d/%d): %s", name, delay, attempt + 1, max_retries, exc)
@@ -70,7 +72,7 @@ async def record_llm_usage(ctx: AgentContext, db_factory) -> None:
                 if registry.primary_name:
                     primary_client = registry.get(registry.primary_name)
                     model_name = getattr(primary_client, "model", "unknown")
-            except Exception:
+            except (KeyError, AttributeError, RuntimeError):
                 logger.debug("Could not resolve model name from LLM registry")
 
             await record_usage(
@@ -86,7 +88,7 @@ async def record_llm_usage(ctx: AgentContext, db_factory) -> None:
                 tool_calls=len(ctx.tool_calls),
                 metadata={"intent": ctx.intent.value if ctx.intent else None},
             )
-    except Exception as exc:
+    except (SQLAlchemyError, ConnectionError, TimeoutError, ValueError, RuntimeError, ImportError, OSError) as exc:
         logger.debug("Usage recording failed (non-critical): %s", exc)
 
 
@@ -184,7 +186,7 @@ async def post_process(ctx: AgentContext, db_factory) -> None:
             _retry_async(_signal_with_session, "signal_extraction", max_retries=2),
             _retry_async(_memory_with_session, "memory_encoding", max_retries=2),
         ))
-    except Exception as exc:
+    except (SQLAlchemyError, ConnectionError, TimeoutError, ValueError, RuntimeError, OSError) as exc:
         logger.warning("Phase 1 post-processing failed: %s", exc, exc_info=True)
         pp_results.append({"success": False, "name": "parallel_phase", "error": str(exc)})
 
@@ -224,7 +226,7 @@ async def post_process(ctx: AgentContext, db_factory) -> None:
                 pp_results.append(await _retry_async(coro_fn, name, max_retries=retries))
 
             await db.commit()
-    except Exception as exc:
+    except (SQLAlchemyError, ConnectionError, TimeoutError, ValueError, RuntimeError, OSError) as exc:
         logger.warning("Phase 2 post-processing failed: %s", exc, exc_info=True)
         pp_results.append({"success": False, "name": "sequential_phase", "error": str(exc)})
 
@@ -240,7 +242,7 @@ async def post_process(ctx: AgentContext, db_factory) -> None:
                     agent_name=ctx.delegated_agent or "unknown",
                     tool_calls=ctx.tool_calls,
                 )
-        except Exception as exc:
+        except (SQLAlchemyError, ConnectionError, TimeoutError) as exc:
             logger.exception("Failed to persist tool calls: %s", exc)
 
     try:
@@ -267,7 +269,7 @@ async def post_process(ctx: AgentContext, db_factory) -> None:
                         summary,
                     )
                     await reset_turn_counter(notes_db, ctx.user_id, ctx.course_id)
-    except Exception as exc:
+    except (SQLAlchemyError, ConnectionError, TimeoutError, RuntimeError) as exc:
         logger.exception("Tutor notes update failed (non-critical): %s", exc)
 
     # ── Teaching strategy extraction (Claudeception pattern, throttled) ──
@@ -280,6 +282,7 @@ async def post_process(ctx: AgentContext, db_factory) -> None:
                 extract_teaching_strategies,
                 reset_strategy_counter,
                 save_teaching_strategies,
+                score_strategy_effectiveness,
             )
 
             async with db_factory() as strategy_db:
@@ -306,15 +309,27 @@ async def post_process(ctx: AgentContext, db_factory) -> None:
                             "Extracted %d teaching strategies for user %s",
                             len(new_strategies), ctx.user_id,
                         )
+                    # Score existing strategies effectiveness (piggyback on extraction tick)
+                    try:
+                        result = await score_strategy_effectiveness(
+                            strategy_db, ctx.user_id, ctx.course_id,
+                        )
+                        if result.get("pruned") or result.get("updated"):
+                            logger.info(
+                                "Strategy effectiveness: updated=%d pruned=%d total=%d",
+                                result["updated"], result["pruned"], result["total"],
+                            )
+                    except (SQLAlchemyError, ConnectionError, TimeoutError, ValueError):
+                        logger.debug("Strategy effectiveness scoring skipped")
                 await strategy_db.commit()
-    except Exception as exc:
+    except (SQLAlchemyError, ConnectionError, TimeoutError, RuntimeError, ValueError) as exc:
         logger.exception("Teaching strategy extraction failed (non-critical): %s", exc)
 
     failures = [result for result in pp_results if not result.get("success")]
     if failures:
         try:
             await _persist_pp_failures(ctx, db_factory, failures)
-        except Exception as exc:
+        except (SQLAlchemyError, ConnectionError, TimeoutError, OSError) as exc:
             logger.debug("Failed to persist post-processing failure notification: %s", exc)
 
     try:
@@ -322,7 +337,7 @@ async def post_process(ctx: AgentContext, db_factory) -> None:
         await get_extension_registry().run_hooks(
             ExtensionHook.POST_PROCESS, ctx, response=ctx.response or "",
         )
-    except Exception as exc:
+    except (ImportError, RuntimeError, ValueError) as exc:
         logger.debug("POST_PROCESS extension hook error: %s", exc)
 
     ctx.mark_completed()

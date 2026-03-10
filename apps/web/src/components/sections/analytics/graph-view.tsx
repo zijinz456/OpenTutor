@@ -236,10 +236,12 @@ export function GraphView({ courseId, focusTerms, maxNodes = 20 }: GraphViewProp
   const nodeById = new Map(nodes.map((node) => [node.id, node]));
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden" data-testid="graph-panel">
+    <div role="region" aria-label="Knowledge graph" className="flex-1 flex flex-col overflow-hidden" data-testid="graph-panel">
       <svg
         viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
         className="w-full h-full min-h-0 bg-background"
+        role="img"
+        aria-label="Knowledge graph visualization"
       >
         {edges.map((edge) => {
           const source = nodeById.get(edge.source);

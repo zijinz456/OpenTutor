@@ -81,6 +81,7 @@ class PracticeResult(Base):
     error_category: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
     # conceptual | procedural | computational | reading | careless
     difficulty_layer: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    answer_time_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     answered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

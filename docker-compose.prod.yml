@@ -1,0 +1,41 @@
+# Production overrides — use with: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+services:
+  redis:
+    image: redis:7.4-alpine
+
+  api:
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: "4.0"
+    environment:
+      AUTH_ENABLED: "true"
+      LLM_REQUIRED: "true"
+      APP_AUTO_CREATE_TABLES: "false"
+      APP_AUTO_SEED_SYSTEM: "false"
+      APP_RUN_SCHEDULER: "true"
+      APP_RUN_ACTIVITY_ENGINE: "true"
+      CORS_ORIGINS: ${CORS_ORIGINS:?CORS_ORIGINS must be set in production}
+    volumes:
+      - uploads:/app/uploads
+      - sqlite_data:/app/data
+      - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
+    # Don't bind-mount source code in production
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  web:
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"

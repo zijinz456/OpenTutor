@@ -165,10 +165,10 @@ export async function listGeneratedQuizBatches(courseId: string): Promise<Genera
   return request(`/quiz/${courseId}/generated-batches`);
 }
 
-export async function submitAnswer(problemId: string, answer: string): Promise<AnswerResult> {
+export async function submitAnswer(problemId: string, answer: string, answerTimeMs?: number): Promise<AnswerResult> {
   return request("/quiz/submit", {
     method: "POST",
-    body: JSON.stringify({ problem_id: problemId, user_answer: answer }),
+    body: JSON.stringify({ problem_id: problemId, user_answer: answer, answer_time_ms: answerTimeMs }),
   });
 }
 
@@ -269,6 +269,25 @@ export async function getLectorOrderedFlashcards(
   courseId: string,
 ): Promise<LectorOrderResult> {
   return request(`/flashcards/lector-order/${courseId}`);
+}
+
+// ── Confusion Pairs ──
+
+export interface ConfusionPair {
+  concept_a: string;
+  concept_b: string;
+  weight: number;
+  description_a?: string | null;
+  description_b?: string | null;
+}
+
+export interface ConfusionPairsResult {
+  pairs: ConfusionPair[];
+  count: number;
+}
+
+export async function getConfusionPairs(courseId: string): Promise<ConfusionPairsResult> {
+  return request(`/flashcards/confusion-pairs/${courseId}`);
 }
 
 // ── Wrong Answer Review ──

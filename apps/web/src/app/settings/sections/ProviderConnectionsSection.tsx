@@ -182,6 +182,7 @@ export function ProviderConnectionsSection({
               <select
                 data-testid="settings-llm-provider"
                 className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground"
+                aria-required
                 value={provider}
                 onChange={(e) =>
                   handleProviderSelectChange(e.target.value as ProviderName)
@@ -203,6 +204,7 @@ export function ProviderConnectionsSection({
                 value={model}
                 onChange={(e) => onModelChange(e.target.value)}
                 placeholder="gpt-4o-mini"
+                aria-required
               />
             </label>
             <Button

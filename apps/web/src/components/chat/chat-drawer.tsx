@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ChatView } from "./chat-view";
 import { cn } from "@/lib/utils";
 import { BottomSheet } from "@/components/ui/bottom-sheet";
+import { useFocusTrap } from "@/hooks/use-focus-trap";
 
 interface ChatDrawerProps {
   courseId: string;
@@ -47,6 +48,19 @@ export function ChatDrawer({ courseId, open, onOpenChange, aiActionsEnabled = tr
     }
   }, [onOpenChange]);
 
+  // Trap focus within the drawer when open (desktop)
+  useFocusTrap(drawerRef, open);
+
+  // Close on Escape key
+  useEffect(() => {
+    if (!open) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onOpenChange?.(false);
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [open, onOpenChange]);
+
   return (
     <>
       {/* Mobile: bottom sheet (< md) */}
@@ -61,6 +75,9 @@ export function ChatDrawer({ courseId, open, onOpenChange, aiActionsEnabled = tr
       {/* Desktop: side drawer (>= md) */}
       <div
         ref={drawerRef}
+        role="complementary"
+        aria-label="Chat panel"
+        aria-hidden={!open ? "true" : undefined}
         className={cn(
           "hidden md:block fixed top-0 right-0 z-40 h-full w-full sm:w-[420px] md:w-[480px]",
           "bg-card border-l border-border/40 shadow-2xl",

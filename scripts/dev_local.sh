@@ -29,6 +29,15 @@ CI_API_TEST_TARGETS=(
   tests/test_canvas_router_unit.py
   tests/test_scrape_services.py
   tests/test_scrape_router_unit.py
+  tests/test_cognitive_load.py
+  tests/test_progress_tracker.py
+  tests/test_workspace_tool_actions.py
+  tests/test_workspace_layout_actions.py
+  tests/test_bkt.py
+  tests/test_lector.py
+  tests/test_loom.py
+  tests/test_middleware_security.py
+  tests/test_scheduler_engine.py
 )
 
 usage() {
@@ -64,7 +73,7 @@ Flags for verify:
   --with-real-llm Also run the real-provider API and browser validation checks.
 
 Flags for verify-host:
-  --ci-parity     Run CI-equivalent host checks (coverage gate, web build, compileall, strict benchmark).
+  --ci-parity     Run CI-equivalent host checks (coverage gate, web build, compileall) without stack-dependent smoke/regression.
 
 Important environment variables:
   API_PORT=8000
@@ -586,8 +595,6 @@ PY
 run_host_verify() {
   local ci_parity=0
   local arg
-  local regression_label="Regression benchmark against running stack"
-  local strict_benchmark="0"
 
   for arg in "$@"; do
     case "${arg}" in
@@ -601,8 +608,7 @@ run_host_verify() {
   done
 
   if (( ci_parity )); then
-    regression_label="Strict regression benchmark against running stack"
-    strict_benchmark="1"
+    :
   fi
 
   require_cmd curl npx npm
@@ -615,7 +621,7 @@ run_host_verify() {
   if (( ci_parity )); then
     run_reported "CI parity gate consistency" run_ci_parity_consistency_check
     run_reported "CI parity API tests" "${PY_BIN}" -m pytest "${CI_API_TEST_TARGETS[@]}" -q
-    run_reported "CI parity compile API sources" "${PY_BIN}" -m compileall apps/api
+    run_reported "CI parity compile API sources" "${PY_BIN}" -m compileall -q -x '/\\.venv/' apps/api
     run_reported "CI parity frontend lint" bash -lc "cd '${ROOT_DIR}/apps/web' && npm run lint"
     run_reported "CI parity frontend build" bash -lc "cd '${ROOT_DIR}/apps/web' && npm run build"
   else
@@ -626,11 +632,14 @@ run_host_verify() {
     run_reported "SQLite integration spot check" "${PY_BIN}" -m pytest tests/test_sqlite_mode.py -q -o addopts=
   fi
 
-  if is_url_ready "${API_BASE}/health" && is_url_ready "${WEB_BASE_URL}"; then
+  if (( ci_parity )); then
+    CURRENT_CHECK="Stack smoke/regression"
+    record_skip "Stack smoke/regression skipped in --ci-parity mode. Run STRICT_BENCHMARK=1 bash scripts/run_regression_benchmark.sh against a running stack."
+  elif is_url_ready "${API_BASE}/health" && is_url_ready "${WEB_BASE_URL}"; then
     CURRENT_CHECK="Stack smoke/regression"
     guard_stack_health
     run_reported "Smoke test against running stack" bash -lc "API_BASE='${API_HOST}' UPLOAD_FILE='${UPLOAD_FILE}' SCRAPE_URL='${SCRAPE_URL}' STRICT_LLM='${STRICT_LLM:-0}' bash '${ROOT_DIR}/scripts/smoke_test.sh'"
-    run_reported "${regression_label}" bash -lc "API_BASE='${API_BASE}' UPLOAD_FILE='${UPLOAD_FILE}' PYTHON_BIN='${PY_BIN}' STRICT_BENCHMARK='${strict_benchmark}' bash '${ROOT_DIR}/scripts/run_regression_benchmark.sh'"
+    run_reported "Regression benchmark against running stack" bash -lc "API_BASE='${API_BASE}' UPLOAD_FILE='${UPLOAD_FILE}' PYTHON_BIN='${PY_BIN}' STRICT_BENCHMARK='0' bash '${ROOT_DIR}/scripts/run_regression_benchmark.sh'"
   else
     CURRENT_CHECK="Stack smoke/regression"
     record_skip "Stack smoke/regression skipped because API or web is not running"

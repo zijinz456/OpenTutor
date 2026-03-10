@@ -117,7 +117,7 @@ def finalize_token_usage(ctx: AgentContext, agent: BaseAgent) -> None:
             ctx.input_tokens += usage.get("input_tokens", 0)
             ctx.output_tokens += usage.get("output_tokens", 0)
         ctx.total_tokens = ctx.input_tokens + ctx.output_tokens
-    except Exception as exc:
+    except (AttributeError, KeyError, TypeError) as exc:
         logger.debug("Token tracking unavailable: %s", exc)
 
 
@@ -234,7 +234,7 @@ async def apply_verifier(ctx: AgentContext, agent: BaseAgent) -> AgentContext:
         ctx.metadata["provenance"] = build_provenance(ctx)
         ctx = await verify_and_repair(ctx, agent)
         ctx.metadata["verifier_replaced"] = ctx.response != original_response
-    except Exception as exc:
+    except (ConnectionError, TimeoutError, ValueError, RuntimeError) as exc:
         logger.exception("Verifier failed (non-critical): %s", exc)
     return ctx
 
@@ -256,6 +256,6 @@ async def apply_reflection(ctx: AgentContext) -> AgentContext:
             ctx.response != original_response
             and ctx.metadata.get("reflection", {}).get("improved")
         )
-    except Exception as exc:
+    except (ConnectionError, TimeoutError, ValueError, RuntimeError) as exc:
         logger.exception("Reflection failed (non-critical): %s", exc)
     return ctx

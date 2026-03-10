@@ -12,7 +12,10 @@ import json
 import logging
 from typing import Any, AsyncIterator
 
-from services.llm.router import LLMClient
+import httpx
+import openai
+
+from services.llm.base_client import LLMClient
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +79,13 @@ class LiteLLMClient(LLMClient):
                         self.mark_healthy()
                         marked_healthy = True
                     yield delta.content
-        except Exception as e:
+        except (openai.APIConnectionError, openai.APITimeoutError, openai.RateLimitError, openai.APIError) as e:
+            self.mark_unhealthy(str(e))
+            raise
+        except (httpx.ConnectError, httpx.TimeoutException, httpx.HTTPStatusError) as e:
+            self.mark_unhealthy(str(e))
+            raise
+        except Exception as e:  # Catch-all: litellm may raise provider-specific errors
             self.mark_unhealthy(str(e))
             raise
 
@@ -105,7 +114,13 @@ class LiteLLMClient(LLMClient):
             }
             self._last_usage = usage
             return response.choices[0].message.content or "", usage
-        except Exception as e:
+        except (openai.APIConnectionError, openai.APITimeoutError, openai.RateLimitError, openai.APIError) as e:
+            self.mark_unhealthy(str(e))
+            raise
+        except (httpx.ConnectError, httpx.TimeoutException, httpx.HTTPStatusError) as e:
+            self.mark_unhealthy(str(e))
+            raise
+        except Exception as e:  # Catch-all: litellm may raise provider-specific errors
             self.mark_unhealthy(str(e))
             raise
 
@@ -155,6 +170,12 @@ class LiteLLMClient(LLMClient):
             }
             self._last_usage = usage
             return text, tool_calls, usage
-        except Exception as e:
+        except (openai.APIConnectionError, openai.APITimeoutError, openai.RateLimitError, openai.APIError) as e:
+            self.mark_unhealthy(str(e))
+            raise
+        except (httpx.ConnectError, httpx.TimeoutException, httpx.HTTPStatusError) as e:
+            self.mark_unhealthy(str(e))
+            raise
+        except Exception as e:  # Catch-all: litellm may raise provider-specific errors
             self.mark_unhealthy(str(e))
             raise

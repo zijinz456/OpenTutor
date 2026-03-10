@@ -23,7 +23,7 @@ export function ConnectionStatus() {
   if (!offline) return null;
 
   return (
-    <div className="fixed top-0 left-0 right-0 z-[60] bg-destructive/90 text-destructive-foreground text-center py-2 text-xs font-medium flex items-center justify-center gap-2 animate-slide-up">
+    <div role="status" aria-live="polite" className="fixed top-0 left-0 right-0 z-[60] bg-destructive/90 text-destructive-foreground text-center py-2 text-xs font-medium flex items-center justify-center gap-2 animate-slide-up">
       <WifiOff className="size-3.5" />
       You are offline. Changes will sync when reconnected.
     </div>

@@ -1,24 +1,12 @@
-"""Orchestrator — central coordinator for multi-agent architecture (Phase 2: simplified).
-
-Flow:
-1. Classify intent (rule-based, 4 intents)
-2. Load context (preferences, memories, RAG in parallel)
-3. Trim context to token budget
-4. Route to specialist agent (tutor / planner / layout)
-5. Stream response + collect token usage
-6. Reflection self-check (optional VERIFYING phase)
-7. Post-process with retry (signal extraction, memory encoding, graph extraction)
-
-Registry and context loading extracted to:
-- services.agent.registry — agent registration + intent mapping
-- services.agent.context_builder — context loading + token trimming
-"""
+"""Orchestrator -- central coordinator for multi-agent architecture."""
 
 import asyncio
 import json
 import logging
 import re
 import uuid
+
+from sqlalchemy.exc import SQLAlchemyError
 from dataclasses import asdict
 from typing import AsyncIterator
 
@@ -31,6 +19,7 @@ from services.agent.registry import AGENT_REGISTRY, get_agent, build_agent_conte
 from services.agent.context_builder import load_context
 from services.agent.background_runtime import (
     enqueue_post_process_task,
+    post_process,
     run_post_process_bundle,
     track_background_task,
     wait_for_background_tasks,
@@ -44,13 +33,16 @@ from services.agent.turn_pipeline import (
     finalize_token_usage,
 )
 from services.agent.marker_parser import MarkerParser
+from services.agent.fatigue import detect_fatigue
+from services.agent.guided_session_handler import handle_guided_session
 
 logger = logging.getLogger(__name__)
 
-# Backward-compatible exports for tests and adjacent modules that still import
-# the legacy helper names from orchestrator.py.
+# Backward-compatible exports for tests and adjacent modules
 _build_provenance = build_provenance
 _envelope_payload = envelope_payload
+_detect_fatigue = detect_fatigue
+_handle_guided_session = handle_guided_session
 
 
 async def prepare_agent_turn(
@@ -61,11 +53,9 @@ async def prepare_agent_turn(
     ctx = await classify_intent(ctx)
     ctx = await load_context(ctx, db, db_factory=db_factory)
 
-    # Fatigue detection (metadata only — TutorAgent handles the response adaptation)
     fatigue = _detect_fatigue(ctx.user_message)
     ctx.metadata["fatigue_score"] = fatigue
 
-    # Cognitive load detection — multi-signal analysis for adaptive difficulty
     try:
         from services.cognitive_load import compute_cognitive_load
         cl = await compute_cognitive_load(
@@ -77,7 +67,6 @@ async def prepare_agent_turn(
             user_message=ctx.user_message,
         )
         ctx.metadata["cognitive_load"] = cl
-        # Suggest layout simplification when cognitive load is high
         if cl.get("score", 0) >= 0.7:
             from services.cognitive_load import suggest_layout_simplification
             block_types = ctx.metadata.get("block_types", [])
@@ -85,8 +74,8 @@ async def prepare_agent_turn(
                 ctx.metadata["layout_simplification"] = suggest_layout_simplification(
                     cl["score"], block_types
                 )
-    except Exception as e:
-        logger.exception("Cognitive load detection skipped: %s", e)
+    except (SQLAlchemyError, ImportError, ConnectionError, TimeoutError, ValueError, AttributeError) as e:
+        logger.debug("Cognitive load detection skipped: %s", e)
 
     agent = get_agent(ctx.intent)
     ctx.delegated_agent = agent.name
@@ -132,224 +121,28 @@ async def run_agent_turn(
     return ctx
 
 
-async def orchestrate_simple(
-    user_id,
-    message: str,
-    channel: str = "api",
-    db=None,
-    course_id=None,
-) -> str:
-    """Non-streaming orchestration for webhook/channel integrations.
-
-    Lightweight wrapper around ``run_agent_turn`` that returns just the text
-    response.  If no course_id is provided, attempts to find the user's most
-    recent course.  If no database session is provided, creates one.
-
-    Args:
-        user_id: The user's UUID.
-        message: The user's message text.
-        channel: Channel identifier (e.g. "telegram", "discord").
-        db: Optional active database session.
-        course_id: Optional course UUID. If None, resolves from user's courses.
-
-    Returns:
-        The agent's text response, or an error message string.
-    """
+async def orchestrate_simple(user_id, message: str, channel: str = "api", db=None, course_id=None) -> str:
+    """Non-streaming orchestration for webhook/channel integrations."""
     from database import async_session
-
     try:
         async with async_session() as session:
-            # Resolve course_id if not provided
             if course_id is None:
                 from sqlalchemy import select
                 from models.course import Course
-
-                stmt = (
-                    select(Course.id)
-                    .where(Course.user_id == user_id)
-                    .order_by(Course.updated_at.desc())
-                    .limit(1)
-                )
+                stmt = select(Course.id).where(Course.user_id == user_id).order_by(Course.updated_at.desc()).limit(1)
                 result = await session.execute(stmt)
                 course_id = result.scalar_one_or_none()
-
                 if course_id is None:
                     return "You don't have any courses yet. Create one on the web app first."
-
             ctx = await run_agent_turn(
-                user_id=user_id,
-                course_id=course_id,
-                message=message,
-                db=session,
-                db_factory=async_session,
-                post_process_inline=True,
+                user_id=user_id, course_id=course_id, message=message,
+                db=session, db_factory=async_session, post_process_inline=True,
             )
-
             return ctx.response or "I couldn't process that. Please try again."
-
     except Exception as e:
         logger.exception("orchestrate_simple failed (channel=%s): %s", channel, e)
         return "Sorry, I encountered an error. Please try again later."
 
-
-# ── Fatigue Detection (OpenAkita Persona pattern) ──
-# Pre-compiled regex patterns for fatigue/positive signals (avoid re-compiling per call).
-_FATIGUE_SIGNALS: list[tuple[re.Pattern, float]] = [
-    (re.compile(r"(don'?t\s+want\s+to\s+study|give\s+up|so\s+annoying|so\s+tired|can'?t\s+keep\s+going|hate\s+this)", re.IGNORECASE), 0.35),
-    (re.compile(r"(can'?t\s+do\s+it|too\s+hard|frustrated|confused)", re.IGNORECASE), 0.3),
-    (re.compile(r"(can'?t\s+understand|can'?t\s+learn|why\s+still\s+wrong|wrong\s+again|can'?t\s+figure\s+out)", re.IGNORECASE), 0.3),
-    (re.compile(r"(again\s+wrong|still\s+don'?t\s+get|keep\s+getting\s+wrong|makes\s+no\s+sense)", re.IGNORECASE), 0.25),
-    (re.compile(r"(forget\s+it|sigh|ugh|whatever|nvm|never\s+mind)", re.IGNORECASE), 0.25),
-    (re.compile(r"[😫😤😩😭💀🤯😡]"), 0.2),
-]
-_POSITIVE_SIGNALS: list[tuple[re.Pattern, float]] = [
-    (re.compile(r"(i\s+get\s+it|i\s+understand|so\s+that'?s\s+how|learned\s+it|mastered\s+it|got\s+it\s+done)", re.IGNORECASE), -0.3),
-    (re.compile(r"(i see|got it|makes sense|understand now|figured it out)", re.IGNORECASE), -0.3),
-    (re.compile(r"(thanks?|not\s+bad|pretty\s+good|great|nice|cool)", re.IGNORECASE), -0.15),
-]
-
-
-def _detect_fatigue(message: str) -> float:
-    """Detect student frustration/fatigue level (0.0-1.0).
-
-    OpenAkita persona dimension pattern: check signals across multiple categories.
-    Positive signals reduce the score to prevent false positives.
-    """
-    score = 0.0
-    for pattern, weight in _FATIGUE_SIGNALS:
-        if pattern.search(message):
-            score += weight
-    for pattern, weight in _POSITIVE_SIGNALS:
-        if pattern.search(message):
-            score += weight
-    return max(0.0, min(score, 1.0))
-
-
-# ── Guided Session Handler ──
-
-_PHASE_TO_INTENT = {
-    "warmup": IntentType.LEARN,    # ReviewAgent handles review
-    "teach": IntentType.LEARN,     # TeachingAgent
-    "practice": IntentType.LEARN,  # ExerciseAgent
-    "summary": IntentType.LEARN,   # TeachingAgent
-}
-
-
-async def _handle_guided_session(
-    ctx: AgentContext,
-    db: AsyncSession,
-    action: str,
-    task_id: str,
-) -> AsyncIterator[dict]:
-    """Handle [GUIDED_SESSION:action:task_id] messages.
-
-    Routes to existing specialist agents with phase-specific prompts.
-    """
-    from services.agent.guided_session import (
-        get_session_state, advance_phase, pause_session, resume_session,
-        build_phase_prompt,
-    )
-
-    if action == "pause":
-        state = await pause_session(db, ctx.user_id, task_id)
-        yield {"event": "message", "data": json.dumps({"content": "Session paused. You can resume anytime."})}
-        yield {"event": "action", "data": json.dumps({"type": "guided_session_paused", "task_id": task_id})}
-        yield {"event": "done", "data": json.dumps({"guided_session": "paused"})}
-        return
-
-    if action == "resume":
-        state = await resume_session(db, ctx.user_id, task_id)
-        if not state or state.get("error"):
-            yield {"event": "message", "data": json.dumps({"content": "Could not find that session."})}
-            yield {"event": "done", "data": json.dumps({})}
-            return
-    else:
-        # "start" — load existing prepared session
-        state = await get_session_state(db, ctx.user_id, task_id)
-
-    if not state:
-        yield {"event": "message", "data": json.dumps({"content": "Session not found. It may have expired."})}
-        yield {"event": "done", "data": json.dumps({})}
-        return
-
-    phase = state.get("current_phase", "warmup")
-    topic = state.get("topic", {})
-
-    if phase == "completed":
-        yield {"event": "message", "data": json.dumps({"content": "This session is already completed."})}
-        yield {"event": "done", "data": json.dumps({})}
-        return
-
-    # Emit phase indicator
-    yield {"event": "action", "data": json.dumps({
-        "type": "guided_session_phase",
-        "phase": phase,
-        "task_id": task_id,
-        "topic": topic.get("title", ""),
-    })}
-
-    # Build phase-specific prompt and override the context
-    phase_prompt = build_phase_prompt(phase, topic, state)
-    ctx.user_message = phase_prompt
-    ctx.intent = _PHASE_TO_INTENT.get(phase, IntentType.LEARN)
-    ctx.intent_confidence = 1.0
-    ctx.metadata["guided_session"] = {"task_id": task_id, "phase": phase}
-
-    # Route to the appropriate agent and stream
-    agent = get_agent(ctx.intent)
-    ctx.delegated_agent = agent.name
-
-    ctx = await load_context(ctx, db)
-
-    yield {"event": "status", "data": json.dumps({
-        "phase": "generating",
-        "intent": ctx.intent.value,
-        "agent": agent.name,
-        "guided_phase": phase,
-    })}
-
-    # Stream agent response
-    marker_parser = MarkerParser()
-    async for chunk in agent.stream(ctx, db):
-        text_chunk = chunk if isinstance(chunk, str) else chunk.get("content", "")
-        if text_chunk:
-            for event_type, payload in marker_parser.feed(text_chunk):
-                if event_type == "text":
-                    yield {"event": "message", "data": json.dumps({"content": payload})}
-                elif event_type == "action":
-                    yield {"event": "action", "data": json.dumps(payload)}
-
-    # Flush remaining
-    remaining = marker_parser.flush()
-    if remaining:
-        yield {"event": "message", "data": json.dumps({"content": remaining})}
-
-    # Persist phase completion and advance to next phase.
-    next_state = await advance_phase(db, ctx.user_id, task_id)
-    if isinstance(next_state, dict) and not next_state.get("error"):
-        completed = next_state.get("completed_phases", [])
-        next_phase = next_state.get("current_phase", phase)
-    else:
-        completed = state.get("completed_phases", []) + [phase]
-        next_phase = phase
-
-    # Emit phase progress
-    phase_idx = len(completed)
-    yield {"event": "action", "data": json.dumps({
-        "type": "guided_session_progress",
-        "progress": f"{phase_idx}/4",
-        "task_id": task_id,
-        "next_phase": next_phase,
-    })}
-
-    yield {"event": "done", "data": json.dumps({
-        "guided_session": phase,
-        "task_id": task_id,
-        "next_phase": next_phase,
-    })}
-
-
-# ── Main Orchestration ──
 
 async def orchestrate_stream(
     user_id: uuid.UUID,
@@ -366,19 +159,7 @@ async def orchestrate_stream(
     images: list[dict] | None = None,
     learning_mode: str | None = None,
 ) -> AsyncIterator[dict]:
-    """Main orchestration entry point for streaming responses.
-
-    Yields SSE-compatible event dicts: {"event": str, "data": str}
-
-    Flow:
-    1. Create AgentContext
-    2. Classify intent (rule-based)
-    3. Load context + trim to budget
-    4. Route to agent (tutor / planner / layout)
-    5. Stream response with [ACTION:...] marker parsing + token tracking
-    6. Reflection self-check (optional VERIFYING phase)
-    7. Fire-and-forget post-processing with retry
-    """
+    """Main orchestration entry point for streaming responses."""
     ctx = build_agent_context(
         user_id=user_id,
         course_id=course_id,
@@ -393,7 +174,7 @@ async def orchestrate_stream(
         learning_mode=learning_mode,
     )
 
-    # ── Guided session detection (bypass normal routing) ──
+    # Guided session detection (bypass normal routing)
     _gs_match = re.match(
         r"\[GUIDED_SESSION:(start|resume|pause):([a-f0-9\-]+)\]",
         message.strip(), re.IGNORECASE,
@@ -404,11 +185,9 @@ async def orchestrate_stream(
             yield evt
         return
 
-    # Extension hooks
     from services.agent.extensions import get_extension_registry, ExtensionHook
     ext_registry = get_extension_registry()
 
-    # Emit agent status
     yield {"event": "status", "data": json.dumps({"phase": "routing"})}
 
     await ext_registry.run_hooks(ExtensionHook.PRE_ROUTING, ctx, message=message)
@@ -431,10 +210,9 @@ async def orchestrate_stream(
         }),
     }
 
-    # 3. Load context (parallel when enabled, sequential fallback)
     ctx = await load_context(ctx, db, db_factory=db_factory)
 
-    # Detect complex multi-step requests and submit as background task
+    # Detect complex multi-step requests
     from services.agent.task_planner import is_complex_request
     if is_complex_request(ctx.user_message) and ctx.intent in (IntentType.PLAN, IntentType.LEARN):
         try:
@@ -493,14 +271,12 @@ async def orchestrate_stream(
             yield {"event": "message", "data": json.dumps({"content": ctx.response})}
             yield {"event": "done", "data": json.dumps(envelope_payload(ctx))}
             return
-        except Exception as e:
+        except (SQLAlchemyError, ConnectionError, TimeoutError, ValueError, RuntimeError, ImportError) as e:
             logger.exception("Multi-step planning failed, falling back to single turn: %s", e)
 
-    # Fatigue detection (metadata only — TutorAgent handles response adaptation)
     fatigue = _detect_fatigue(ctx.user_message)
     ctx.metadata["fatigue_score"] = fatigue
 
-    # Cognitive load detection — multi-signal analysis for adaptive difficulty
     try:
         from services.cognitive_load import compute_cognitive_load
         cl = await compute_cognitive_load(
@@ -519,13 +295,21 @@ async def orchestrate_stream(
                 ctx.metadata["layout_simplification"] = suggest_layout_simplification(
                     cl["score"], block_types
                 )
-    except Exception as e:
-        logger.exception("Cognitive load detection skipped: %s", e)
+        if cl.get("consecutive_high", 0) > 0:
+            try:
+                from services.agent.kv_store import kv_set
+                await kv_set(
+                    db, ctx.user_id, "cognitive_load", "consecutive",
+                    {"consecutive_high": cl["consecutive_high"]},
+                    course_id=ctx.course_id,
+                )
+            except (SQLAlchemyError, ConnectionError, TimeoutError):
+                logger.debug("Failed to persist cognitive load counter")
+    except (SQLAlchemyError, ImportError, ConnectionError, TimeoutError, ValueError, AttributeError) as e:
+        logger.debug("Cognitive load detection skipped: %s", e)
 
     agent = get_agent(ctx.intent)
     ctx.delegated_agent = agent.name
-
-    # ── Single-agent execution path ──
 
     yield {
         "event": "status",
@@ -537,7 +321,6 @@ async def orchestrate_stream(
 
     await ext_registry.run_hooks(ExtensionHook.PRE_AGENT, ctx, agent_name=agent.name)
 
-    # 5. Stream response with marker parsing + token tracking
     parser = MarkerParser()
     _actions_emitted = 0
     _progress_emitted = 0
@@ -560,12 +343,10 @@ async def orchestrate_stream(
                 _actions_emitted += 1
                 yield {"event": "action", "data": json.dumps(payload)}
 
-        # Emit actions appended directly by tools (not via text markers)
         while _actions_emitted < len(ctx.actions):
             yield {"event": "action", "data": json.dumps(ctx.actions[_actions_emitted])}
             _actions_emitted += 1
 
-        # Emit tool progress events added by write tools
         while _progress_emitted < len(ctx.tool_progress):
             yield {"event": "tool_progress", "data": json.dumps(ctx.tool_progress[_progress_emitted])}
             _progress_emitted += 1
@@ -574,11 +355,10 @@ async def orchestrate_stream(
     if remaining:
         yield {"event": "message", "data": json.dumps({"content": remaining})}
 
-    # Commit write-tool changes atomically (tools use flush, orchestrator commits)
     if ctx.tool_calls:
         try:
             await db.commit()
-        except Exception as commit_err:
+        except SQLAlchemyError as commit_err:
             logger.exception("Post-stream commit failed: %s", commit_err)
             await db.rollback()
 
@@ -603,18 +383,16 @@ async def orchestrate_stream(
     if ctx.response != streamed_response:
         yield {"event": "replace", "data": json.dumps({"content": ctx.response})}
 
-    # Done streaming
     yield {
         "event": "done",
         "data": json.dumps(envelope_payload(ctx)),
     }
 
-    # Lightweight snapshot for background tasks (avoids deep-copying large context fields)
     bg_ctx = ctx.snapshot_for_postprocess()
 
     if bg_ctx.response or bg_ctx.input_tokens or bg_ctx.output_tokens:
         try:
             await enqueue_post_process_task(bg_ctx)
-        except Exception as exc:
+        except (SQLAlchemyError, ConnectionError, TimeoutError, ValueError, RuntimeError) as exc:
             logger.exception("Failed to enqueue durable chat post-process task: %s", exc)
             track_background_task(asyncio.create_task(run_post_process_bundle(bg_ctx, db_factory)))

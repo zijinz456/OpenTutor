@@ -54,6 +54,7 @@ export function PracticeSection({
   }, []);
 
   return (
+    <div role="region" aria-label="Practice">
     <TabbedSection
       tabs={tabs}
       defaultTab={tabs.some((t) => t.id === defaultTab) ? defaultTab : "quiz"}
@@ -77,5 +78,6 @@ export function PracticeSection({
         </>
       )}
     </TabbedSection>
+    </div>
   );
 }

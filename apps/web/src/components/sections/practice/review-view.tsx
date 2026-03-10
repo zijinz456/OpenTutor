@@ -8,11 +8,13 @@ import { Badge } from "@/components/ui/badge";
 import {
   diagnoseWrongAnswer,
   deriveQuestion,
+  getConfusionPairs,
   getWrongAnswerReview,
   getWrongAnswerStats,
   listWrongAnswers,
   retryWrongAnswer,
   submitAnswer,
+  type ConfusionPair,
   type WrongAnswer,
 } from "@/lib/api";
 import { AiFeatureBlocked } from "@/components/shared/ai-feature-blocked";
@@ -55,14 +57,18 @@ export function ReviewView({
     >
   >({});
 
+  const [confusionPairs, setConfusionPairs] = useState<ConfusionPair[]>([]);
+
   const loadWrongAnswers = useCallback(async () => {
     try {
-      const [items, summary] = await Promise.all([
+      const [items, summary, confusion] = await Promise.all([
         listWrongAnswers(courseId, { mastered: false }),
         getWrongAnswerStats(courseId),
+        getConfusionPairs(courseId).catch(() => ({ pairs: [], count: 0 })),
       ]);
       setWrongAnswers(items);
       setStats(summary);
+      setConfusionPairs(confusion.pairs);
     } catch {
       setWrongAnswers([]);
       setStats(null);
@@ -158,8 +164,8 @@ export function ReviewView({
 
   if (loading) {
     return (
-      <div className="flex-1 flex items-center justify-center" data-testid="review-panel">
-        <span className="text-sm animate-pulse text-muted-foreground">...</span>
+      <div className="flex-1 flex items-center justify-center" data-testid="review-panel" role="status" aria-live="polite">
+        <span className="text-sm animate-pulse text-muted-foreground">Loading review...</span>
       </div>
     );
   }
@@ -178,7 +184,7 @@ export function ReviewView({
   }
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden" data-testid="review-panel">
+    <div role="region" aria-label="Wrong answer review" className="flex-1 flex flex-col overflow-hidden" data-testid="review-panel">
       <div className="px-3 py-2 border-b border-border/60 flex items-center justify-between text-xs text-muted-foreground" aria-live="polite">
         <span>{wrongAnswers.length} mistakes ready for review</span>
         <Button size="sm" onClick={() => void handleGenerateReview()} disabled={!aiActionsEnabled || generating}>
@@ -214,6 +220,38 @@ export function ReviewView({
           </div>
         ) : null}
 
+        {confusionPairs.length > 0 ? (
+          <div className="space-y-3" data-testid="confusion-pairs">
+            <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+              Confused Concepts
+            </h4>
+            {confusionPairs.slice(0, 5).map((pair) => (
+              <div
+                key={`${pair.concept_a}-${pair.concept_b}`}
+                className="rounded-2xl border border-warning/30 bg-warning-muted/10 p-3.5"
+              >
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <p className="text-xs font-semibold text-foreground">{pair.concept_a}</p>
+                    {pair.description_a ? (
+                      <p className="text-[11px] text-muted-foreground leading-relaxed">{pair.description_a}</p>
+                    ) : null}
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-xs font-semibold text-foreground">{pair.concept_b}</p>
+                    {pair.description_b ? (
+                      <p className="text-[11px] text-muted-foreground leading-relaxed">{pair.description_b}</p>
+                    ) : null}
+                  </div>
+                </div>
+                <p className="text-[10px] text-muted-foreground mt-2">
+                  Confused {pair.weight}× — review both concepts side by side
+                </p>
+              </div>
+            ))}
+          </div>
+        ) : null}
+
         {wrongAnswers.map((item, index) => {
           const draft = diagnosticDrafts[item.id];
           const optionKeys = Object.keys(draft?.options ?? {}).sort();
@@ -237,6 +275,7 @@ export function ReviewView({
                   <Button
                     size="sm"
                     variant="ghost"
+                    aria-label="Mark as mastered"
                     onClick={() => void handleMarkMastered(item)}
                     disabled={markingId === item.id || !item.correct_answer}
                   >
@@ -246,6 +285,7 @@ export function ReviewView({
                     data-testid={`derive-${item.id}`}
                     size="sm"
                     variant="outline"
+                    aria-label="Derive diagnostic question"
                     onClick={() => void handleDerive(item.id)}
                     disabled={!aiActionsEnabled || derivingId === item.id}
                   >

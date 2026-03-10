@@ -60,6 +60,36 @@ def _local_beta_readiness(
     return blockers, warnings
 
 
+async def get_liveness() -> dict[str, Any]:
+    """Lightweight liveness check – no I/O, just confirms the process is up."""
+    from middleware.metrics import get_metrics
+    metrics = get_metrics()
+    return {
+        "status": "alive",
+        "uptime_seconds": metrics["uptime_seconds"],
+    }
+
+
+async def get_readiness() -> dict[str, Any]:
+    """Readiness check – verifies DB and LLM are reachable."""
+    db_ok = False
+    try:
+        async with database_module.async_session() as db:
+            await db.execute(text("SELECT 1"))
+        db_ok = True
+    except (ConnectionError, TimeoutError, OSError, RuntimeError) as exc:
+        logger.warning("Readiness check: database unreachable: %s", exc)
+
+    llm_runtime = await get_llm_runtime_status()
+    llm_ok = llm_runtime["status"] not in {"mock_fallback", "configuration_required"}
+
+    return {
+        "ready": db_ok and llm_ok,
+        "database": "connected" if db_ok else "unreachable",
+        "llm_status": llm_runtime["status"],
+    }
+
+
 async def get_health_status() -> dict[str, Any]:
     db_ok = False
     migration_state = _default_migration_state()
@@ -69,8 +99,8 @@ async def get_health_status() -> dict[str, Any]:
             conn = await db.connection()
             migration_state = await conn.run_sync(inspect_database_migrations)
         db_ok = True
-    except Exception:
-        logger.exception("Health check: database unreachable")
+    except (ConnectionError, TimeoutError, OSError, RuntimeError) as exc:
+        logger.exception("Health check: database unreachable: %s", exc)
 
     llm_runtime = await get_llm_runtime_status()
     provider_health = llm_runtime["provider_health"]

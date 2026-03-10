@@ -1,0 +1,153 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { useChatStore } from "./chat";
+
+// Mock API functions
+vi.mock("@/lib/api", () => ({
+  getChatSessionMessages: vi.fn(),
+  listChatSessions: vi.fn(),
+  streamChat: vi.fn(),
+}));
+
+vi.mock("@/lib/cache", () => ({
+  ttlCache: {
+    get: vi.fn(() => null),
+    set: vi.fn(),
+    invalidate: vi.fn(),
+  },
+}));
+
+vi.mock("@/store/workspace", () => ({
+  useWorkspaceStore: {
+    getState: () => ({
+      triggerSectionRefresh: vi.fn(),
+    }),
+  },
+}));
+
+import {
+  listChatSessions,
+  getChatSessionMessages,
+} from "@/lib/api";
+
+const mockListChatSessions = vi.mocked(listChatSessions);
+const mockGetChatSessionMessages = vi.mocked(getChatSessionMessages);
+
+function resetStore() {
+  useChatStore.setState({
+    activeCourseId: null,
+    messagesByCourse: {},
+    sessionIds: {},
+    sessionsByCourse: {},
+    planProgressByCourse: {},
+    messages: [],
+    activePlan: null,
+    isStreaming: false,
+    isLoadingSessions: false,
+    error: null,
+    errorCategory: null,
+    _abortController: null,
+    toolStatus: null,
+    clarifyOptions: null,
+    onAction: null,
+  });
+}
+
+describe("useChatStore", () => {
+  beforeEach(() => {
+    resetStore();
+    vi.clearAllMocks();
+  });
+
+  describe("setCourseContext", () => {
+    it("sets active course and derives messages", () => {
+      const msgs = [
+        { id: "m1", role: "user" as const, content: "Hello", timestamp: new Date() },
+      ];
+      useChatStore.setState({
+        messagesByCourse: { "c1": msgs },
+      });
+
+      useChatStore.getState().setCourseContext("c1");
+
+      const state = useChatStore.getState();
+      expect(state.activeCourseId).toBe("c1");
+      expect(state.messages).toEqual(msgs);
+    });
+
+    it("returns empty messages for unknown course", () => {
+      useChatStore.getState().setCourseContext("unknown");
+      expect(useChatStore.getState().messages).toEqual([]);
+    });
+  });
+
+  describe("clearMessages", () => {
+    it("clears messages for active course", () => {
+      useChatStore.setState({
+        activeCourseId: "c1",
+        messagesByCourse: {
+          c1: [{ id: "m1", role: "user", content: "test", timestamp: new Date() }],
+        },
+        messages: [{ id: "m1", role: "user", content: "test", timestamp: new Date() }],
+      });
+
+      useChatStore.getState().clearMessages("c1");
+
+      expect(useChatStore.getState().messages).toEqual([]);
+    });
+  });
+
+  describe("loadSessions", () => {
+    it("loads and caches chat sessions", async () => {
+      const sessions = [
+        { id: "s1", title: "Session 1", created_at: "2026-01-01", message_count: 5 },
+      ];
+      mockListChatSessions.mockResolvedValueOnce(sessions as never);
+
+      await useChatStore.getState().loadSessions("c1");
+
+      expect(useChatStore.getState().sessionsByCourse["c1"]).toEqual(sessions);
+      expect(useChatStore.getState().isLoadingSessions).toBe(false);
+    });
+  });
+
+  describe("startNewSession", () => {
+    it("clears session ID and messages for course", () => {
+      useChatStore.setState({
+        activeCourseId: "c1",
+        sessionIds: { c1: "old-session" },
+        messagesByCourse: {
+          c1: [{ id: "m1", role: "user", content: "old", timestamp: new Date() }],
+        },
+        messages: [{ id: "m1", role: "user", content: "old", timestamp: new Date() }],
+      });
+
+      useChatStore.getState().startNewSession("c1");
+
+      const state = useChatStore.getState();
+      expect(state.sessionIds["c1"]).toBeUndefined();
+      expect(state.messages).toEqual([]);
+    });
+  });
+
+  describe("abortStream", () => {
+    it("aborts the active stream controller", () => {
+      const controller = new AbortController();
+      useChatStore.setState({
+        _abortController: controller,
+        isStreaming: true,
+      });
+
+      useChatStore.getState().abortStream();
+
+      expect(controller.signal.aborted).toBe(true);
+      expect(useChatStore.getState().isStreaming).toBe(false);
+    });
+  });
+
+  describe("error handling", () => {
+    it("initializes with no error", () => {
+      expect(useChatStore.getState().error).toBeNull();
+      expect(useChatStore.getState().errorCategory).toBeNull();
+    });
+  });
+});

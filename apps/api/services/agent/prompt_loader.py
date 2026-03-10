@@ -28,7 +28,7 @@ def _load_template(name: str) -> str | None:
         if path.is_file():
             try:
                 return path.read_text(encoding="utf-8")
-            except Exception as e:
+            except (OSError, UnicodeDecodeError) as e:
                 logger.exception("Failed to read template %s: %s", path, e)
     return None
 
