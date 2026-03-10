@@ -231,7 +231,8 @@ async def apply_verifier(ctx: AgentContext, agent: BaseAgent) -> AgentContext:
 
         original_response = ctx.response
         ctx.transition(TaskPhase.VERIFYING)
-        ctx.metadata["provenance"] = build_provenance(ctx)
+        # Provenance is built by the caller after all post-processing;
+        # no need to rebuild here.
         ctx = await verify_and_repair(ctx, agent)
         ctx.metadata["verifier_replaced"] = ctx.response != original_response
     except (ConnectionError, TimeoutError, ValueError, RuntimeError) as exc:

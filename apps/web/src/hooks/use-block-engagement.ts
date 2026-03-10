@@ -21,6 +21,7 @@ let unloadListenerAdded = false;
 
 const FLUSH_INTERVAL_MS = 30_000;
 const VISIBILITY_THRESHOLD_MS = 5_000;
+const STUDY_TIME_THRESHOLD_MS = 60_000; // 60s of focused time → study_time event
 
 async function flushEvents(): Promise<void> {
   if (eventBuffer.length === 0) return;
@@ -95,6 +96,15 @@ export function useBlockEngagement(
               duration_ms: duration,
               course_id: courseId,
             });
+            // Extended focused time → study_time event for preference learning
+            if (duration >= STUDY_TIME_THRESHOLD_MS) {
+              eventBuffer.push({
+                block_type: blockType,
+                event_type: "study_time",
+                duration_ms: duration,
+                course_id: courseId,
+              });
+            }
           }
         }
       },
@@ -114,6 +124,14 @@ export function useBlockEngagement(
             duration_ms: duration,
             course_id: courseId,
           });
+          if (duration >= STUDY_TIME_THRESHOLD_MS) {
+            eventBuffer.push({
+              block_type: blockType,
+              event_type: "study_time",
+              duration_ms: duration,
+              course_id: courseId,
+            });
+          }
         }
         visibleSince.current = null;
       }
@@ -129,7 +147,7 @@ export function useBlockEngagement(
 export function recordBlockEvent(
   courseId: string,
   blockType: string,
-  eventType: "approve" | "dismiss" | "manual_add" | "manual_remove",
+  eventType: "approve" | "dismiss" | "manual_add" | "manual_remove" | "effective_review",
 ): void {
   ensureFlushTimer();
   eventBuffer.push({

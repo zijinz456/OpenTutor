@@ -60,13 +60,15 @@ export function useVoiceSession(courseId: string, options?: UseVoiceSessionOptio
   const reconnectAttemptsRef = useRef(0);
   const reconnectTimerRef = useRef<number | null>(null);
   const connectRef = useRef<(() => Promise<WebSocket>) | null>(null);
+  const unmountedRef = useRef(false);
 
   /** Play audio from base64 queue */
   const playNextAudio = useCallback(async () => {
+    if (unmountedRef.current) return;
     if (isPlayingRef.current || playbackQueueRef.current.length === 0) return;
 
     isPlayingRef.current = true;
-    setVoiceState("playing");
+    if (!unmountedRef.current) setVoiceState("playing");
 
     while (playbackQueueRef.current.length > 0) {
       const b64 = playbackQueueRef.current.shift()!;
@@ -330,9 +332,10 @@ export function useVoiceSession(courseId: string, options?: UseVoiceSessionOptio
     setIsConnected(false);
   }, []);
 
-  // Cleanup on unmount
+  // Cleanup on unmount — set flag to prevent async callbacks from updating state
   useEffect(() => {
     return () => {
+      unmountedRef.current = true;
       // Stop MediaRecorder and release microphone
       if (mediaRecorderRef.current?.state === "recording") {
         mediaRecorderRef.current.stop();

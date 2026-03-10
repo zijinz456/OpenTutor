@@ -131,3 +131,24 @@ def get_all_tools(include_preference: bool = False) -> str:
             parts.append(tool_prompt)
 
     return "\n".join(parts)
+
+
+def get_scene_tools(scene: str, include_preference: bool = False) -> str:
+    """Get tool definitions filtered by the current scene.
+
+    Only loads tools relevant to the scene, saving ~30% prompt tokens
+    compared to get_all_tools().
+
+    Falls back to core + layout if scene is unknown.
+    """
+    tool_keys = SCENE_TOOL_MAP.get(scene, ["core", "layout"])
+    if include_preference and "preference" not in tool_keys:
+        tool_keys = list(tool_keys) + ["preference"]
+
+    parts = []
+    for key in tool_keys:
+        tool_prompt = TOOL_REGISTRY.get(key, "")
+        if tool_prompt:
+            parts.append(tool_prompt)
+
+    return "\n".join(parts)

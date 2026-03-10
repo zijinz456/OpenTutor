@@ -24,8 +24,14 @@ from config import settings
 
 logger = logging.getLogger(__name__)
 
-# Track consecutive high-load messages for proactive intervention
+# Track consecutive high-load messages for proactive intervention.
+# Bounded to prevent unbounded memory growth with many students.
+_MAX_TRACKING_SIZE = 200
 _consecutive_high: dict[str, int] = {}  # user_id -> count
+
+# Cache last NLP affect result per user (reused between LLM calls).
+# Bounded with same limit.
+_last_affect: dict[str, dict] = {}  # user_id -> affect dict
 
 
 async def compute_cognitive_load(
@@ -85,8 +91,8 @@ async def compute_cognitive_load(
     msg_len = len(user_message.strip())
     if msg_len > 0:
         brevity_signal = max(0.0, 1.0 - (msg_len / settings.cognitive_load_brevity_length_norm))
-        # Only count if we have session context (student was writing longer before)
-        if session_messages > 3:
+        # Only count after the very first message (need at least some context)
+        if session_messages > 1:
             signals["message_brevity"] = brevity_signal
             load += brevity_signal * settings.cognitive_load_weight_brevity
         else:
@@ -95,9 +101,15 @@ async def compute_cognitive_load(
         signals["message_brevity"] = 0.0
 
     # ── Signal 5: Help-seeking indicators ──
-    # Detect explicit help-seeking in current message
-    help_keywords = ["help", "hint", "explain", "don't understand", "confused", "stuck", "how do i"]
-    help_signal = 1.0 if any(kw in user_message.lower() for kw in help_keywords) else 0.0
+    # Detect explicit help-seeking using word boundaries to avoid false positives
+    # (e.g. "helpful" should not match "help", "explain" should not match "explained well")
+    import re as _re
+    _help_patterns = [
+        r"\bhelp\b", r"\bhint\b", r"\bexplain\b", r"\bdon'?t understand\b",
+        r"\bconfused\b", r"\bstuck\b", r"\bhow do i\b",
+    ]
+    _msg_lower = user_message.lower()
+    help_signal = 1.0 if any(_re.search(p, _msg_lower) for p in _help_patterns) else 0.0
     signals["help_seeking"] = help_signal
     load += help_signal * settings.cognitive_load_weight_help_seeking
 
@@ -153,9 +165,20 @@ async def compute_cognitive_load(
         signals["answer_hesitation"] = 0.0
 
     # ── Signal 8: NLP-based affect analysis ──
+    # LLM affect call is expensive (~500ms). Only call every 3 messages;
+    # reuse the last result for intermediate messages.
     from services.cognitive_load_nlp import analyze_student_affect
 
-    affect = await analyze_student_affect(user_message) if user_message else {}
+    _should_run_nlp = (session_messages <= 1) or (session_messages % 3 == 0)
+    if _should_run_nlp and user_message:
+        affect = await analyze_student_affect(user_message)
+        _affect_key = str(user_id)
+        if _affect_key not in _last_affect and len(_last_affect) >= _MAX_TRACKING_SIZE:
+            # Evict arbitrary entry (oldest by insertion order in Python 3.7+)
+            del _last_affect[next(iter(_last_affect))]
+        _last_affect[_affect_key] = affect
+    else:
+        affect = _last_affect.get(str(user_id), {})
     frustration = affect.get("frustration", 0.0)
     confusion = affect.get("confusion", 0.0)
     nlp_signal = (frustration * settings.cognitive_load_nlp_frustration_weight
@@ -165,14 +188,22 @@ async def compute_cognitive_load(
 
     # ── Signal 9: Relative baseline calibration ──
     from services.cognitive_load_calibrator import (
-        get_or_create_baseline,
+        load_baseline_from_db,
+        flush_baseline_to_db,
         compute_relative_load,
     )
 
-    baseline = get_or_create_baseline(user_id)
+    baseline = await load_baseline_from_db(db, user_id)
     is_help = help_signal > 0
-    relative = compute_relative_load(baseline, len(user_message), is_help)
+    relative = compute_relative_load(
+        baseline, len(user_message), is_help,
+        current_word_count=len(user_message.split()) if user_message else 0,
+    )
     baseline.update(user_message, is_help)
+
+    # Periodically persist baseline to survive restarts
+    if baseline.needs_flush:
+        await flush_baseline_to_db(db, user_id)
 
     if relative["calibrated"]:
         for adj_name, adj_value in relative["adjustments"].items():
@@ -190,12 +221,18 @@ async def compute_cognitive_load(
     else:
         level = "low"
 
-    # Track consecutive high-load messages for proactive intervention
+    # Track consecutive high-load messages for proactive intervention.
+    # Use decay instead of hard reset: a single non-high message shouldn't
+    # erase the history of sustained struggle. Decrement by 1 instead of reset to 0.
     key = str(user_id)
+    # Evict least-loaded entry if cache is full
+    if key not in _consecutive_high and len(_consecutive_high) >= _MAX_TRACKING_SIZE:
+        evict_key = min(_consecutive_high, key=_consecutive_high.get)
+        del _consecutive_high[evict_key]
     if level == "high":
         _consecutive_high[key] = _consecutive_high.get(key, 0) + 1
     else:
-        _consecutive_high[key] = 0
+        _consecutive_high[key] = max(0, _consecutive_high.get(key, 0) - 1)
     consecutive = _consecutive_high.get(key, 0)
 
     # Generate teaching guidance
@@ -259,60 +296,6 @@ def _build_guidance(level: str, score: float, signals: dict, consecutive: int = 
         )
 
     return "\n".join(parts)
-
-
-# Priority order for hiding blocks under high cognitive load (least essential first)
-_BLOCK_HIDE_PRIORITY = [
-    "agent_insight",
-    "forecast",
-    "knowledge_graph",
-    "podcast",
-    "progress",
-    "plan",
-    "wrong_answers",
-    "flashcards",
-    "review",
-    # "quiz", "notes", "chapter_list" — essential, never hidden
-]
-
-
-def suggest_layout_simplification(
-    cognitive_load_score: float,
-    current_block_types: list[str],
-) -> dict:
-    """Suggest which blocks to collapse/hide when cognitive load is high.
-
-    Returns:
-        {
-            "should_simplify": bool,
-            "blocks_to_hide": list of block type strings to collapse,
-            "reason": str,
-        }
-    """
-    if cognitive_load_score < settings.cognitive_load_layout_simplify_threshold:
-        return {"should_simplify": False, "blocks_to_hide": [], "reason": ""}
-
-    # Hide non-essential blocks, most dispensable first
-    to_hide: list[str] = []
-    for block_type in _BLOCK_HIDE_PRIORITY:
-        if block_type in current_block_types:
-            to_hide.append(block_type)
-            # Hide enough to reduce visual clutter (max 3)
-            if len(to_hide) >= 3:
-                break
-
-    if not to_hide:
-        return {"should_simplify": False, "blocks_to_hide": [], "reason": ""}
-
-    return {
-        "should_simplify": True,
-        "blocks_to_hide": to_hide,
-        "reason": (
-            f"Cognitive load is high ({cognitive_load_score:.0%}). "
-            f"Consider hiding {', '.join(t.replace('_', ' ') for t in to_hide)} "
-            "to reduce visual clutter and focus on core study."
-        ),
-    }
 
 
 def adjust_review_order_for_load(

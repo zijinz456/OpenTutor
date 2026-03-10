@@ -4,7 +4,6 @@ Covers:
 - compute_cognitive_load(): signal aggregation, score clamping to [0,1]
 - Individual signal isolation (fatigue, session length, errors, brevity, help-seeking)
 - Edge cases: empty conversation, no quiz data, high-load consecutive tracking
-- suggest_layout_simplification(): block hiding under high load
 - adjust_review_order_for_load(): card reordering
 - _build_guidance(): prompt fragment generation
 """
@@ -19,7 +18,6 @@ from services.cognitive_load import (
     _consecutive_high,
     adjust_review_order_for_load,
     compute_cognitive_load,
-    suggest_layout_simplification,
 )
 
 
@@ -229,7 +227,7 @@ async def test_no_help_seeking_for_normal_message():
 
 @pytest.mark.asyncio
 async def test_brevity_signal_only_after_session_context():
-    """Brevity signal should only activate after 3+ session messages."""
+    """Brevity signal should only activate after first message (session_messages > 1)."""
     db = _mock_db_no_data()
     user_id = uuid.uuid4()
     course_id = uuid.uuid4()
@@ -239,18 +237,24 @@ async def test_brevity_signal_only_after_session_context():
          patch("services.cognitive_load_calibrator.get_or_create_baseline", return_value=_mock_baseline()), \
          patch("services.cognitive_load_calibrator.compute_relative_load", return_value={"calibrated": False, "adjustments": {}}):
 
-        # Short message but only 2 session messages -> no brevity signal
-        result_early = await compute_cognitive_load(
+        # Very first message -> no brevity signal
+        result_first = await compute_cognitive_load(
+            db, user_id, course_id,
+            fatigue_score=0.0, session_messages=1, user_message="ok",
+        )
+        # Second message -> brevity signal active
+        result_second = await compute_cognitive_load(
             db, user_id, course_id,
             fatigue_score=0.0, session_messages=2, user_message="ok",
         )
-        # Short message with 10 session messages -> brevity signal active
+        # Later in session -> brevity signal active
         result_late = await compute_cognitive_load(
             db, user_id, course_id,
             fatigue_score=0.0, session_messages=10, user_message="ok",
         )
 
-    assert result_early["signals"]["message_brevity"] == 0.0
+    assert result_first["signals"]["message_brevity"] == 0.0
+    assert result_second["signals"]["message_brevity"] > 0.0
     assert result_late["signals"]["message_brevity"] > 0.0
 
 
@@ -329,32 +333,6 @@ def test_guidance_consecutive_high_triggers_intervention():
     """3+ consecutive high-load messages should trigger intervention."""
     guidance = _build_guidance("high", 0.8, {}, consecutive=3)
     assert "break" in guidance.lower() or "struggling" in guidance.lower()
-
-
-# ── suggest_layout_simplification ──
-
-
-def test_no_simplification_below_threshold():
-    """Scores below 0.7 should not trigger simplification."""
-    result = suggest_layout_simplification(0.5, ["quiz", "notes", "forecast"])
-    assert result["should_simplify"] is False
-    assert result["blocks_to_hide"] == []
-
-
-def test_simplification_hides_non_essential_blocks():
-    """High load should hide non-essential blocks."""
-    blocks = ["quiz", "notes", "agent_insight", "forecast", "knowledge_graph", "podcast"]
-    result = suggest_layout_simplification(0.85, blocks)
-    assert result["should_simplify"] is True
-    assert len(result["blocks_to_hide"]) <= 3
-    # agent_insight should be first to hide (lowest priority)
-    assert "agent_insight" in result["blocks_to_hide"]
-
-
-def test_simplification_skips_essential_blocks():
-    """Essential blocks (quiz, notes) should never be hidden."""
-    result = suggest_layout_simplification(0.9, ["quiz", "notes"])
-    assert result["should_simplify"] is False
 
 
 # ── adjust_review_order_for_load ──

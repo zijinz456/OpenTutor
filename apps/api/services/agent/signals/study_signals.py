@@ -199,6 +199,56 @@ async def _collect_forgetting_risk(
     return signals
 
 
+async def _collect_lector_review(
+    user_id: uuid.UUID,
+    course_id: uuid.UUID | None,
+    db: AsyncSession,
+) -> list[AgendaSignal]:
+    """LECTOR semantic review — concepts needing review based on knowledge graph relationships."""
+    if not course_id:
+        return []
+
+    try:
+        from services.lector import get_smart_review_session
+        items = await get_smart_review_session(db, user_id, course_id, max_items=5)
+    except (SQLAlchemyError, ImportError, ConnectionError, TimeoutError):
+        logger.debug("LECTOR review signal collection failed", exc_info=True)
+        return []
+
+    urgent = [i for i in items if i.priority > 0.5]
+    if len(urgent) < 2:
+        return []
+
+    # Group by review type for targeted block operations
+    contrast_items = [i for i in urgent if i.review_type == "contrast"]
+    prereq_items = [i for i in urgent if i.review_type == "prerequisite_first"]
+
+    signals: list[AgendaSignal] = []
+
+    # Main LECTOR review signal
+    urgency = min(70.0 + len(urgent) * 3, 88.0)
+    signals.append(AgendaSignal(
+        signal_type="lector_review",
+        user_id=user_id,
+        course_id=course_id,
+        entity_id=f"lector:{course_id}",
+        title=f"{len(urgent)} concepts need semantic review",
+        urgency=urgency,
+        detail={
+            "urgent_count": len(urgent),
+            "concepts": [i.concept_name for i in urgent[:5]],
+            "contrast_count": len(contrast_items),
+            "prereq_first_count": len(prereq_items),
+            "top_reasons": [i.reason for i in urgent[:3]],
+            "review_types": list({i.review_type for i in urgent}),
+            "confused_concepts": [i.concept_name for i in contrast_items[:3]],
+            "weak_prerequisites": [i.concept_name for i in prereq_items[:3]],
+        },
+    ))
+
+    return signals
+
+
 async def _collect_prerequisite_gaps(
     user_id: uuid.UUID,
     course_id: uuid.UUID | None,

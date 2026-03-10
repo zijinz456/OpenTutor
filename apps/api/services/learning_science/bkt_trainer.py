@@ -20,8 +20,10 @@ logger = logging.getLogger(__name__)
 # Minimum observations per concept to justify EM fitting
 MIN_OBSERVATIONS_FOR_FIT = 15
 
-# Cache fitted params per concept (invalidated on weekly retrain)
+# Cache fitted params per concept with TTL-based invalidation
+_CACHE_TTL_SECONDS = 86400  # 24 hours — auto-expire stale params
 _fitted_params_cache: dict[str, dict[str, float]] = {}
+_cache_timestamps: dict[str, float] = {}  # cache_key -> unix timestamp of last train
 
 
 async def _collect_response_data(
@@ -148,9 +150,11 @@ async def train_bkt_params(
 
     fitted = _fit_with_pybkt(data)
 
-    # Cache results
+    # Cache results with timestamp for TTL expiry
+    import time as _time
     cache_key = f"{user_id}:{course_id or 'all'}"
     _fitted_params_cache[cache_key] = fitted
+    _cache_timestamps[cache_key] = _time.time()
 
     logger.info(
         "BKT training complete: user=%s course=%s concepts_fitted=%d",
@@ -164,8 +168,18 @@ def get_trained_params(
     course_id: uuid.UUID | None,
     concept: str,
 ) -> dict[str, float] | None:
-    """Get cached trained params for a specific concept, or None."""
+    """Get cached trained params for a specific concept, or None.
+
+    Returns None if the cache entry has expired (older than _CACHE_TTL_SECONDS).
+    """
+    import time as _time
     cache_key = f"{user_id}:{course_id or 'all'}"
+    cached_at = _cache_timestamps.get(cache_key, 0)
+    if _time.time() - cached_at > _CACHE_TTL_SECONDS:
+        # Expired — remove stale entry
+        _fitted_params_cache.pop(cache_key, None)
+        _cache_timestamps.pop(cache_key, None)
+        return None
     params = _fitted_params_cache.get(cache_key, {})
     return params.get(concept)
 

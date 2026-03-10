@@ -398,8 +398,10 @@ def test_get_trained_params_cache_miss():
 
 def test_get_trained_params_cache_hit():
     """get_trained_params should return cached params."""
+    import time
     from services.learning_science.bkt_trainer import (
         _fitted_params_cache,
+        _cache_timestamps,
         get_trained_params,
     )
 
@@ -410,6 +412,7 @@ def test_get_trained_params_cache_hit():
     _fitted_params_cache[cache_key] = {
         "calculus": {"prior": 0.3, "learns": 0.25, "guesses": 0.2, "slips": 0.08}
     }
+    _cache_timestamps[cache_key] = time.time()  # Set timestamp for TTL check
 
     result = get_trained_params(user_id, course_id, "calculus")
     assert result is not None
@@ -418,12 +421,15 @@ def test_get_trained_params_cache_hit():
 
     # Clean up
     del _fitted_params_cache[cache_key]
+    del _cache_timestamps[cache_key]
 
 
 def test_get_trained_params_all_courses():
     """get_trained_params with course_id=None should use 'all' key."""
+    import time
     from services.learning_science.bkt_trainer import (
         _fitted_params_cache,
+        _cache_timestamps,
         get_trained_params,
     )
 
@@ -433,6 +439,7 @@ def test_get_trained_params_all_courses():
     _fitted_params_cache[cache_key] = {
         "algebra": {"prior": 0.2, "learns": 0.15, "guesses": 0.25, "slips": 0.1}
     }
+    _cache_timestamps[cache_key] = time.time()
 
     result = get_trained_params(user_id, None, "algebra")
     assert result is not None
@@ -440,6 +447,7 @@ def test_get_trained_params_all_courses():
 
     # Clean up
     del _fitted_params_cache[cache_key]
+    del _cache_timestamps[cache_key]
 
 
 def test_fit_with_pybkt_insufficient_data():
@@ -480,7 +488,8 @@ def test_compute_mastery_adaptive_fallback():
 
 def test_compute_mastery_adaptive_with_cache():
     """compute_mastery_adaptive should use cached trained params."""
-    from services.learning_science.bkt_trainer import _fitted_params_cache
+    import time
+    from services.learning_science.bkt_trainer import _fitted_params_cache, _cache_timestamps
     from services.learning_science.knowledge_tracer import compute_mastery_adaptive
 
     user_id = uuid.uuid4()
@@ -494,6 +503,7 @@ def test_compute_mastery_adaptive_with_cache():
             "slips": 0.05,
         }
     }
+    _cache_timestamps[cache_key] = time.time()
 
     results = [True, True, True]
     mastery = compute_mastery_adaptive(
@@ -503,4 +513,5 @@ def test_compute_mastery_adaptive_with_cache():
     assert mastery > 0.8
 
     # Clean up
-    del _fitted_params_cache[cache_key]
+    _fitted_params_cache.pop(cache_key, None)
+    _cache_timestamps.pop(cache_key, None)

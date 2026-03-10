@@ -16,12 +16,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .rules import (
     BlockOperation,
+    rule_cognitive_adapt,
     rule_cognitive_overload,
     rule_confusion_pairs,
     rule_deadline_approaching,
     rule_forgetting_risk,
     rule_frustration,
     rule_inactivity,
+    rule_lector_review,
     rule_mastery_complete,
     rule_prerequisite_gap,
     rule_weak_areas,
@@ -88,6 +90,9 @@ async def compute_block_decisions(
     # Rule: cognitive overload
     candidates.extend(rule_cognitive_overload(cognitive_load, current_blocks))
 
+    # Rule: cognitive adaptation (quiz difficulty, mode suggestion)
+    candidates.extend(rule_cognitive_adapt(cognitive_load, current_blocks, current_mode))
+
     # Rule: frustration
     candidates.extend(rule_frustration(cognitive_load, current_blocks))
 
@@ -116,6 +121,9 @@ async def compute_block_decisions(
     if op:
         candidates.append(op)
 
+    # Rule: LECTOR semantic review
+    candidates.extend(rule_lector_review(signals, current_blocks))
+
     # Rule: inactivity
     op = rule_inactivity(signals, current_blocks)
     if op:
@@ -140,7 +148,15 @@ async def compute_block_decisions(
         if not (c.action == "add" and c.block_type in current_blocks)
     ]
 
-    # 3. Apply preference-based filtering
+    # 3. Conflict resolution: remove supersedes update_config for same block
+    # (e.g. rule_cognitive_overload removes quiz while rule_cognitive_adapt updates it)
+    removed_types = {c.block_type for c in candidates if c.action == "remove"}
+    candidates = [
+        c for c in candidates
+        if not (c.action == "update_config" and c.block_type in removed_types)
+    ]
+
+    # 4. Apply preference-based filtering
     if preferences:
         block_scores = preferences.get("block_scores", {})
         blocked_types = set(preferences.get("blocked", []))

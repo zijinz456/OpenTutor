@@ -5,7 +5,8 @@ from types import SimpleNamespace
 import pytest
 
 from services.agent.state import AgentContext, IntentType
-from services.agent.orchestrator import _build_provenance, orchestrate_stream, run_agent_turn
+from services.agent.turn_pipeline import build_provenance
+from services.agent.orchestrator import orchestrate_stream, run_agent_turn
 from services.search.hybrid import vector_search
 
 
@@ -170,7 +171,7 @@ def test_build_provenance_includes_explainable_scene_and_content_details():
     ctx.metadata["scene_resolution"] = {"scene": "exam_prep", "mode": "inferred", "reason": "Matched study-mode cue 'exam'."}
     ctx.metadata["scene_switch"] = {"current_scene": "study_session", "target_scene": "exam_prep", "reason": "Detected exam prep intent."}
 
-    provenance = _build_provenance(ctx)
+    provenance = build_provenance(ctx)
 
     assert provenance["scene"] == "exam_prep"
     assert provenance["scene_resolution"]["mode"] == "inferred"
@@ -198,7 +199,7 @@ def test_build_provenance_carries_evidence_summary_fields():
         }
     ]
 
-    provenance = _build_provenance(ctx)
+    provenance = build_provenance(ctx)
 
     assert provenance["content_refs"][0]["evidence_summary"].startswith("Matches:")
     assert provenance["content_refs"][0]["matched_terms"] == ["invariants", "boundary"]
@@ -232,6 +233,7 @@ async def test_run_agent_turn_records_verifier_and_repaired_response(monkeypatch
 
 @pytest.mark.asyncio
 async def test_orchestrate_stream_complex_request_returns_task_link(monkeypatch):
+    """Complex requests emit plan_step event with task_link AND continue with normal agent response."""
     async def fake_classify_intent(ctx):
         ctx.intent = IntentType.PLAN
         ctx.intent_confidence = 0.92
@@ -251,14 +253,19 @@ async def test_orchestrate_stream_complex_request_returns_task_link(monkeypatch)
             }
         ]
 
+    _task_id = uuid.uuid4()
+
     async def fake_submit_task(**_kwargs):
-        return SimpleNamespace(id=uuid.uuid4(), task_type="multi_step", status="queued")
+        return SimpleNamespace(id=_task_id, task_type="multi_step", status="queued")
+
+    dummy_agent = _StreamingOnlyAgent(["Here is a quick answer to your question."])
 
     monkeypatch.setattr("services.agent.orchestrator.classify_intent", fake_classify_intent)
     monkeypatch.setattr("services.agent.orchestrator.load_context", fake_load_context)
     monkeypatch.setattr("services.agent.task_planner.is_complex_request", lambda _message: True)
     monkeypatch.setattr("services.agent.task_planner.create_plan", fake_create_plan)
     monkeypatch.setattr("services.activity.engine.submit_task", fake_submit_task)
+    monkeypatch.setattr("services.agent.orchestrator.get_agent", lambda _intent: dummy_agent)
 
     events = []
     async for event in orchestrate_stream(
@@ -270,11 +277,16 @@ async def test_orchestrate_stream_complex_request_returns_task_link(monkeypatch)
     ):
         events.append(event)
 
+    # plan_step event should be emitted with task link
+    plan_events = [e for e in events if e["event"] == "plan_step"]
+    assert len(plan_events) == 1
+    plan_payload = json.loads(plan_events[0]["data"])
+    assert plan_payload["task_id"] == str(_task_id)
+
+    # Agent should still answer the question (not just return generic plan message)
     done_event = next(event for event in events if event["event"] == "done")
     payload = json.loads(done_event["data"])
-    assert payload["agent"] == "coordinator"
     assert payload["task_link"]["task_type"] == "multi_step"
-    assert payload["verifier"]["code"] == "background_task_created"
 
 
 @pytest.mark.asyncio

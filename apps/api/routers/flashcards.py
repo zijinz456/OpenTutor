@@ -106,7 +106,22 @@ async def review_flashcard_endpoint(
     except (SQLAlchemyError, ValueError, TypeError):
         logger.exception("Flashcard learning event emission failed (best-effort)")
 
-    # Single commit covers both the FSRS persistence and the analytics event
+    # Sync flashcard review to LOOM concept mastery (bridges flashcard ↔ knowledge graph)
+    concept_names = body.card.get("knowledge_points") or body.card.get("concepts") or []
+    if isinstance(concept_names, str):
+        concept_names = [concept_names]
+    course_id = body.card.get("course_id")
+    if concept_names and course_id:
+        try:
+            from services.loom import update_concept_mastery
+            is_correct = body.rating >= 3  # Good or Easy = correct recall
+            cid = uuid.UUID(course_id) if isinstance(course_id, str) else course_id
+            for concept in concept_names[:5]:  # Cap to avoid excessive DB ops
+                await update_concept_mastery(db, user.id, str(concept), cid, correct=is_correct)
+        except (SQLAlchemyError, ValueError, KeyError, ImportError):
+            logger.debug("Flashcard → LOOM mastery sync failed (best-effort)")
+
+    # Single commit covers FSRS persistence, analytics event, and mastery sync
     await db.commit()
 
     return {

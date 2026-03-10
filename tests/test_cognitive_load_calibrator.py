@@ -6,7 +6,10 @@ from services.cognitive_load_calibrator import (
     StudentBaseline,
     get_or_create_baseline,
     compute_relative_load,
-    _baselines,
+    load_baseline_from_db,
+    flush_baseline_to_db,
+    _cache,
+    _FLUSH_INTERVAL,
     CALIBRATION_MIN_MESSAGES,
     BREVITY_SEVERE_SIGNAL,
     BREVITY_MODERATE_SIGNAL,
@@ -16,9 +19,9 @@ from services.cognitive_load_calibrator import (
 
 @pytest.fixture(autouse=True)
 def clear_baselines():
-    _baselines.clear()
+    _cache.clear()
     yield
-    _baselines.clear()
+    _cache.clear()
 
 
 class TestStudentBaseline:
@@ -106,3 +109,88 @@ class TestComputeRelativeLoad:
         b = self._calibrated_baseline(help_rate=0.3)  # frequently seeks help
         result = compute_relative_load(b, 100, True)
         assert result["adjustments"]["unusual_help_seeking"] == 0.0
+
+
+class TestFlushTracking:
+    def test_needs_flush_after_interval(self):
+        b = StudentBaseline(user_id="u1")
+        for i in range(_FLUSH_INTERVAL):
+            b.update(f"message {i}", False)
+        assert b.needs_flush
+
+    def test_no_flush_before_interval(self):
+        b = StudentBaseline(user_id="u1")
+        for i in range(_FLUSH_INTERVAL - 1):
+            b.update(f"message {i}", False)
+        assert not b.needs_flush
+
+
+class TestDBPersistence:
+    """Tests for DB persistence of cognitive baselines.
+
+    Uses an in-memory SQLite database to verify round-trip persistence.
+    """
+
+    @staticmethod
+    async def _make_db():
+        from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+        from database import Base
+
+        engine = create_async_engine("sqlite+aiosqlite://", echo=False)
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        return engine, factory
+
+    @pytest.mark.asyncio
+    async def test_load_returns_empty_baseline_when_no_db_row(self):
+        engine, factory = await self._make_db()
+        async with factory() as session:
+            uid = uuid.uuid4()
+            baseline = await load_baseline_from_db(session, uid)
+            assert baseline.message_count == 0
+            assert baseline.user_id == str(uid)
+        await engine.dispose()
+
+    @pytest.mark.asyncio
+    async def test_flush_and_reload(self):
+        engine, factory = await self._make_db()
+        async with factory() as session:
+            uid = uuid.uuid4()
+            baseline = await load_baseline_from_db(session, uid)
+            for i in range(10):
+                baseline.update(f"test message number {i}", is_help_seeking=(i % 3 == 0))
+            baseline._updates_since_flush = 1  # Force dirty
+            await flush_baseline_to_db(session, uid)
+            await session.commit()
+
+            # Clear cache and reload from DB
+            _cache.clear()
+            reloaded = await load_baseline_from_db(session, uid)
+            assert reloaded.message_count == 10
+            assert reloaded.avg_message_length == baseline.avg_message_length
+            assert reloaded._help_count == baseline._help_count
+        await engine.dispose()
+
+    @pytest.mark.asyncio
+    async def test_flush_updates_existing_row(self):
+        engine, factory = await self._make_db()
+        async with factory() as session:
+            uid = uuid.uuid4()
+            baseline = await load_baseline_from_db(session, uid)
+            baseline.update("first", False)
+            baseline._updates_since_flush = 1
+            await flush_baseline_to_db(session, uid)
+            await session.commit()
+
+            # Update more and flush again
+            baseline.update("second message", True)
+            baseline._updates_since_flush = 1
+            await flush_baseline_to_db(session, uid)
+            await session.commit()
+
+            _cache.clear()
+            reloaded = await load_baseline_from_db(session, uid)
+            assert reloaded.message_count == 2
+            assert reloaded._help_count == 1
+        await engine.dispose()

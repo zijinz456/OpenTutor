@@ -22,10 +22,20 @@ EVENT_WEIGHTS: dict[str, float] = {
     "dismiss": -1.5,
     "manual_add": 2.0,
     "manual_remove": -2.0,
-    "view": 0.1,  # Per 30s of viewing
+    "view": 0.1,            # Per 30s of viewing
+    "effective_review": 1.5, # Review block led to improved quiz accuracy
+    "study_time": 0.2,      # Per 60s of focused interaction time
 }
 
 DECAY_HALF_LIFE_DAYS = 14.0
+
+# Bounds to prevent extreme preference scores
+SCORE_FLOOR = -10.0    # Minimum total preference score per block type
+SCORE_CEILING = 20.0   # Maximum total preference score per block type
+VIEW_WEIGHT_CAP = 2.0  # Max weight multiplier for duration-scaled events
+
+# Query limit to prevent full table scans on heavy users
+SIGNAL_QUERY_LIMIT = 500
 
 
 async def record_block_event(
@@ -73,6 +83,8 @@ async def compute_block_preferences(
                 PreferenceSignal.signal_type == "behavior",
                 PreferenceSignal.dimension.like("block_%"),
             )
+            .order_by(PreferenceSignal.created_at.desc())
+            .limit(SIGNAL_QUERY_LIMIT)
         )
         signals = result.scalars().all()
     except Exception as e:
@@ -99,13 +111,18 @@ async def compute_block_preferences(
         age_days = (now - sig.created_at).total_seconds() / 86400
         decay = math.exp(-0.693 * age_days / DECAY_HALF_LIFE_DAYS)
 
-        # For view events, scale by duration
+        # For view events, scale by duration (capped to prevent outliers)
         if event_type == "view" and isinstance(sig.context, dict):
             duration_ms = sig.context.get("duration_ms", 0)
-            # 0.1 points per 30s of viewing
-            weight = weight * (duration_ms / 30_000)
+            weight = min(weight * (duration_ms / 30_000), VIEW_WEIGHT_CAP)
 
-        scores[block_type] = scores.get(block_type, 0.0) + weight * decay
+        # For study_time events, scale by focused interaction duration (capped)
+        if event_type == "study_time" and isinstance(sig.context, dict):
+            duration_ms = sig.context.get("duration_ms", 0)
+            weight = min(weight * (duration_ms / 60_000), VIEW_WEIGHT_CAP)
+
+        scores[block_type] = max(SCORE_FLOOR, min(SCORE_CEILING,
+            scores.get(block_type, 0.0) + weight * decay))
 
     # Merge into unified result
     all_types = set(scores) | set(dismiss_counts)

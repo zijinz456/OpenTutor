@@ -13,6 +13,7 @@ SIGNAL_TYPES = (
     "deadline",
     "failed_task",
     "forgetting_risk",
+    "lector_review",
     "prerequisite_gap",
     "weak_area",
     "content_stale",
