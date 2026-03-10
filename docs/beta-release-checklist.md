@@ -56,9 +56,9 @@ Automation runbook: `docs/release-closeout-runbook.md`
 - [ ] CI stability window (main): `bash scripts/check_ci_stability.sh --repo owner/repo --branch main --workflow ci.yml --windows 2`
 - [ ] Optional GitHub workflow dispatch: `.github/workflows/release-readiness.yml`
 
-### Latest closeout evidence (2026-03-08)
+### Latest closeout evidence (2026-03-10)
 
 - Round 1 report: `tmp/release-rehearsal/round-1/summary.md` (Passed: 8, Failed: 0, Skipped: 0)
 - Round 2 report: `tmp/release-rehearsal/round-2/summary.md` (Passed: 8, Failed: 0, Skipped: 0)
-- CI stability check result: latest 2 completed `main` runs for `ci.yml` are failures (#54, #53), so this gate remains unchecked.
-- Root cause found in failed runs #54/#53: `pyBKT>=1.4` resolved to `1.4.2` with wheel/version metadata mismatch under `pip>=26`; local fix prepared as `pyBKT==1.4.1` in `apps/api/requirements-full.txt`.
+- CI update: `main` run `#76` (workflow run `22901607317`, commit `1e2f621`) is fully green for `checks + api-smoke`; browser E2E and real-LLM jobs are intentionally skipped unless repo variables enable them.
+- Remaining for this checklist item: obtain one more consecutive successful completed `main` run for `ci.yml` and re-run `scripts/check_ci_stability.sh --windows 2`.
