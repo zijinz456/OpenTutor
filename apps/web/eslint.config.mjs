@@ -13,6 +13,14 @@ const eslintConfig = defineConfig([
     "build/**",
     "next-env.d.ts",
   ]),
+  {
+    files: ["**/*.{js,jsx,ts,tsx}"],
+    rules: {
+      "@typescript-eslint/no-unused-vars": "error",
+      "jsx-a11y/alt-text": "error",
+      "jsx-a11y/role-has-required-aria-props": "error",
+    },
+  },
 ]);
 
 export default eslintConfig;

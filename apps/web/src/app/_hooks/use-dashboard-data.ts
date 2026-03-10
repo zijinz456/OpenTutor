@@ -21,7 +21,6 @@ import {
 import { listStudyGoals, type StudyGoal } from "@/lib/api/progress";
 import { ttlCache } from "@/lib/cache";
 import { useT, useTF } from "@/lib/i18n-context";
-import type { LearningMode } from "@/lib/block-system/types";
 import { buildLayoutFromMode } from "@/lib/block-system/templates";
 import { updateUnlockContext } from "@/lib/block-system/feature-unlock";
 import { initStudyNotifications } from "@/lib/study-notifications";

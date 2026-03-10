@@ -4,7 +4,8 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -87,6 +88,8 @@ async def get_learning_path(
 @router.get("/courses/{course_id}/misconceptions", summary="Get misconception dashboard", description="Return misconceptions grouped by concept with error analysis and priority scores.")
 async def get_misconception_dashboard(
     course_id: uuid.UUID,
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -101,6 +104,7 @@ async def get_misconception_dashboard(
             WrongAnswer.user_id == user.id,
         )
         .order_by(WrongAnswer.created_at.desc())
+        .limit(500)  # Cap to prevent unbounded data load
     )
     wrong_rows = wrong_result.all()
 
@@ -231,11 +235,17 @@ async def get_misconception_dashboard(
             d = m["dominant_diagnosis"]
             diagnosis_summary[d] = diagnosis_summary.get(d, 0) + 1
 
+    total_count = len(misconceptions)
+    page = misconceptions[offset : offset + limit]
+
     return {
         "course_id": str(course_id),
-        "misconceptions": misconceptions[:20],
+        "misconceptions": page,
+        "total": total_count,
+        "limit": limit,
+        "offset": offset,
         "summary": {
-            "total_concepts_with_issues": len(misconceptions),
+            "total_concepts_with_issues": total_count,
             "total_active_errors": total_active,
             "total_resolved": total_resolved,
             "resolution_rate": round(
@@ -268,20 +278,23 @@ async def get_review_session(
     }
 
 
+class ReviewRatingRequest(BaseModel):
+    concept_id: uuid.UUID
+    rating: str = "good"
+
+
 @router.post("/courses/{course_id}/review-session/rate", summary="Rate a reviewed concept", description="Submit a rating for a reviewed concept and update mastery scheduling.")
 async def submit_review_rating(
     course_id: uuid.UUID,
-    body: dict,
+    body: ReviewRatingRequest,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Submit a rating for a reviewed concept (again/hard/good/easy)."""
     from models.knowledge_graph import ConceptMastery
 
-    concept_id = body.get("concept_id")
-    rating = body.get("rating", "good")
-    if not concept_id:
-        raise HTTPException(status_code=400, detail="concept_id is required")
+    concept_id = str(body.concept_id)
+    rating = body.rating
 
     RATING_FACTORS = {
         "again": {"mastery_delta": -0.15, "stability_mult": 0.3, "correct": False},
@@ -289,12 +302,11 @@ async def submit_review_rating(
         "good":  {"mastery_delta": 0.05,  "stability_mult": 1.5, "correct": True},
         "easy":  {"mastery_delta": 0.10,  "stability_mult": 2.5, "correct": True},
     }
-    factors = RATING_FACTORS.get(rating, RATING_FACTORS["good"])
+    if rating not in RATING_FACTORS:
+        raise HTTPException(status_code=400, detail=f"Invalid rating '{rating}'. Must be one of: again, hard, good, easy")
+    factors = RATING_FACTORS[rating]
 
-    try:
-        concept_uuid = uuid.UUID(concept_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid concept_id")
+    concept_uuid = body.concept_id
 
     result = await db.execute(
         select(ConceptMastery).where(

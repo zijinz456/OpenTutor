@@ -7,6 +7,7 @@ Phase 2: Notion Integration
 """
 
 import logging
+import warnings
 from typing import Any
 
 from sqlalchemy.exc import SQLAlchemyError
@@ -15,6 +16,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from services.agent.tools.base import Tool, ToolCategory, ToolParameter, ToolResult
 
 logger = logging.getLogger(__name__)
+
+warnings.warn(
+    "services.agent.tools.notion is dormant by default and considered experimental.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 
 class ExportNotionTool(Tool):

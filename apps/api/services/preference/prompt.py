@@ -4,6 +4,14 @@ Converts resolved preferences into natural-language instructions
 injected into the LLM system prompt.
 """
 
+import warnings
+
+warnings.warn(
+    "services.preference.prompt is deprecated; prompt assembly now happens in agent prompt builders.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
 PREFERENCE_TEMPLATES: dict[str, str] = {
     "note_format": "Format notes as {value} (e.g., bullet points, tables, mind maps).",
     "detail_level": "Use a {value} level of detail in explanations.",

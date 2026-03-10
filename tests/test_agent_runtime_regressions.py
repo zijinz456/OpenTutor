@@ -1,12 +1,17 @@
 import json
+import importlib
+import importlib.util
+import sys
 import uuid
+from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
 from services.agent.state import AgentContext, IntentType
 from services.agent.turn_pipeline import build_provenance
-from services.agent.orchestrator import orchestrate_stream, run_agent_turn
+from services.agent.orchestrator import orchestrate_stream, run_agent_turn, prepare_agent_turn
 from services.search.hybrid import vector_search
 
 
@@ -72,6 +77,37 @@ class _RepairingAgent(_StreamingOnlyAgent):
 
     def build_system_prompt(self, _ctx):
         return "system"
+
+
+class _FakeBlockDecisions:
+    def to_dict(self):
+        return {
+            "operations": [],
+            "cognitive_state": {"score": 0.12, "level": "low", "top_signals": []},
+            "explanation": "No layout changes needed.",
+        }
+
+
+def _restore_real_provenance_module() -> None:
+    """Ensure `services.provenance` points to the real module, not a test stub."""
+    existing = sys.modules.get("services.provenance")
+    if existing is not None and getattr(existing, "__file__", None):
+        return
+
+    provenance_path = Path(__file__).resolve().parents[1] / "apps/api/services/provenance.py"
+    spec = importlib.util.spec_from_file_location("services.provenance", provenance_path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    sys.modules["services.provenance"] = module
+
+
+def _patch_submit_task(monkeypatch: pytest.MonkeyPatch, replacement) -> None:
+    """Patch submit_task even when scheduler tests have stubbed modules."""
+    module = sys.modules.get("services.activity.engine")
+    if module is None:
+        module = importlib.import_module("services.activity.engine")
+    monkeypatch.setattr(module, "submit_task", replacement, raising=False)
 
 
 @pytest.mark.asyncio
@@ -159,6 +195,8 @@ async def test_vector_search_does_not_fall_back_to_conversation_memory(monkeypat
 
 
 def test_build_provenance_includes_explainable_scene_and_content_details():
+    _restore_real_provenance_module()
+
     ctx = AgentContext(
         user_id=uuid.uuid4(),
         course_id=uuid.uuid4(),
@@ -181,6 +219,8 @@ def test_build_provenance_includes_explainable_scene_and_content_details():
 
 
 def test_build_provenance_carries_evidence_summary_fields():
+    _restore_real_provenance_module()
+
     ctx = AgentContext(
         user_id=uuid.uuid4(),
         course_id=uuid.uuid4(),
@@ -264,7 +304,7 @@ async def test_orchestrate_stream_complex_request_returns_task_link(monkeypatch)
     monkeypatch.setattr("services.agent.orchestrator.load_context", fake_load_context)
     monkeypatch.setattr("services.agent.task_planner.is_complex_request", lambda _message: True)
     monkeypatch.setattr("services.agent.task_planner.create_plan", fake_create_plan)
-    monkeypatch.setattr("services.activity.engine.submit_task", fake_submit_task)
+    _patch_submit_task(monkeypatch, fake_submit_task)
     monkeypatch.setattr("services.agent.orchestrator.get_agent", lambda _intent: dummy_agent)
 
     events = []
@@ -287,6 +327,97 @@ async def test_orchestrate_stream_complex_request_returns_task_link(monkeypatch)
     done_event = next(event for event in events if event["event"] == "done")
     payload = json.loads(done_event["data"])
     assert payload["task_link"]["task_type"] == "multi_step"
+
+
+@pytest.mark.asyncio
+async def test_prepare_agent_turn_and_orchestrate_stream_share_enrichment(monkeypatch):
+    calls: list[str] = []
+
+    async def fake_classify_intent(ctx):
+        ctx.intent = IntentType.LEARN
+        ctx.intent_confidence = 0.95
+        return ctx
+
+    async def fake_load_context(ctx, _db, db_factory=None):
+        return ctx
+
+    async def fake_enrichment(ctx, _db):
+        calls.append("enrichment")
+        ctx.metadata["block_decisions"] = _FakeBlockDecisions()
+        return ctx
+
+    dummy_agent = _StreamingOnlyAgent(["Shared enrichment path."])
+
+    monkeypatch.setattr("services.agent.orchestrator.classify_intent", fake_classify_intent)
+    monkeypatch.setattr("services.agent.orchestrator.load_context", fake_load_context)
+    monkeypatch.setattr("services.agent.orchestrator._apply_turn_enrichment", fake_enrichment)
+    monkeypatch.setattr("services.agent.orchestrator.get_agent", lambda _intent: dummy_agent)
+    monkeypatch.setattr("services.agent.task_planner.is_complex_request", lambda _message: False)
+
+    ctx = AgentContext(
+        user_id=uuid.uuid4(),
+        course_id=uuid.uuid4(),
+        user_message="help me",
+    )
+    await prepare_agent_turn(ctx, db=None, db_factory=None)
+
+    async for _event in orchestrate_stream(
+        user_id=uuid.uuid4(),
+        course_id=uuid.uuid4(),
+        message="Help me understand recursion",
+        db=None,
+        db_factory=None,
+    ):
+        pass
+
+    assert calls == ["enrichment", "enrichment"]
+
+
+@pytest.mark.asyncio
+async def test_orchestrate_stream_emits_block_update_before_done(monkeypatch):
+    async def fake_classify_intent(ctx):
+        ctx.intent = IntentType.LEARN
+        ctx.intent_confidence = 0.91
+        return ctx
+
+    async def fake_load_context(ctx, _db, db_factory=None):
+        return ctx
+
+    async def fake_enrichment(ctx, _db):
+        ctx.metadata["block_decisions"] = _FakeBlockDecisions()
+        return ctx
+
+    dummy_agent = _StreamingOnlyAgent(["Answer with shared block updates."])
+
+    monkeypatch.setattr("services.agent.orchestrator.classify_intent", fake_classify_intent)
+    monkeypatch.setattr("services.agent.orchestrator.load_context", fake_load_context)
+    monkeypatch.setattr("services.agent.orchestrator._apply_turn_enrichment", fake_enrichment)
+    monkeypatch.setattr("services.agent.orchestrator.get_agent", lambda _intent: dummy_agent)
+    monkeypatch.setattr("services.agent.task_planner.is_complex_request", lambda _message: True)
+    monkeypatch.setattr("services.agent.task_planner.create_plan", AsyncMock(return_value=[
+        {"step_index": 0, "step_type": "check_progress", "title": "Check progress", "agent": "assessment", "depends_on": []}
+    ]))
+    _patch_submit_task(
+        monkeypatch,
+        AsyncMock(return_value=SimpleNamespace(id=uuid.uuid4(), task_type="multi_step", status="queued")),
+    )
+
+    events = []
+    async for event in orchestrate_stream(
+        user_id=uuid.uuid4(),
+        course_id=uuid.uuid4(),
+        message="make me a full preparation plan",
+        db=None,
+        db_factory=None,
+    ):
+        events.append(event)
+
+    event_names = [event["event"] for event in events]
+    assert "plan_step" in event_names
+    assert "block_update" in event_names
+    assert "done" in event_names
+    assert event_names.index("plan_step") < event_names.index("done")
+    assert event_names.index("block_update") < event_names.index("done")
 
 
 @pytest.mark.asyncio
@@ -326,7 +457,7 @@ async def test_orchestrate_stream_enqueues_durable_post_process_task(monkeypatch
     monkeypatch.setattr("services.agent.orchestrator.apply_verifier", fake_apply_verifier)
     monkeypatch.setattr("services.agent.orchestrator.apply_reflection", fake_apply_reflection)
     monkeypatch.setattr("services.agent.task_planner.is_complex_request", lambda _message: False)
-    monkeypatch.setattr("services.activity.engine.submit_task", fake_submit_task)
+    _patch_submit_task(monkeypatch, fake_submit_task)
 
     events = []
     async for event in orchestrate_stream(

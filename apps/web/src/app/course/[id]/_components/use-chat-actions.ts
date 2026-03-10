@@ -4,7 +4,7 @@ import { useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useWorkspaceStore } from "@/store/workspace";
 import { useChatStore } from "@/store/chat";
-import { updateCourseLayout, type ChatAction } from "@/lib/api";
+import type { ChatAction } from "@/lib/api";
 import type { BlockType, BlockSize, LearningMode } from "@/lib/block-system/types";
 import { updateUnlockContext } from "@/lib/block-system/feature-unlock";
 import { useT, useTF } from "@/lib/i18n-context";
@@ -12,8 +12,6 @@ import { useT, useTF } from "@/lib/i18n-context";
 const MODE_SUGGESTION_COOLDOWN_MS = 12 * 60 * 60 * 1000;
 
 export function useQueueModeSuggestion(courseId: string) {
-  const t = useT();
-
   return useCallback((payload: {
     suggestedMode: LearningMode;
     reason: string;
@@ -65,7 +63,7 @@ export function useQueueModeSuggestion(courseId: string) {
       // ignore localStorage write issues
     }
     return true;
-  }, [courseId, t]);
+  }, [courseId]);
 }
 
 export function useChatActions(courseId: string) {

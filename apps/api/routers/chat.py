@@ -227,7 +227,7 @@ async def chat_stream(
         except AppError as e:
             logger.exception("Orchestrator AppError: %s", e)
             yield {"event": "error", "data": json.dumps({"error": e.message})}
-        except (ValueError, KeyError, SQLAlchemyError, ConnectionError, TimeoutError) as e:
+        except (ValueError, KeyError, SQLAlchemyError, ConnectionError, TimeoutError, OSError, RuntimeError) as e:
             from libs.exceptions import is_llm_unavailable_error
             if is_llm_unavailable_error(e):
                 error_msg = "The AI service is temporarily unavailable. Please try again shortly."
@@ -236,7 +236,9 @@ async def chat_stream(
             logger.exception("Orchestrator error: %s", e)
             yield {"event": "error", "data": json.dumps({"error": error_msg})}
         except Exception as e:
-            # Top-level fallback: don't crash the SSE stream
+            # Last-resort SSE fallback — must not crash the generator or the
+            # client gets no error feedback at all.  All known exception types
+            # are handled above; this only catches truly unexpected failures.
             logger.exception("Orchestrator unexpected error: %s", e)
             yield {"event": "error", "data": json.dumps({"error": "An internal error occurred. Please try again."})}
 

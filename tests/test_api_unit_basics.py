@@ -153,12 +153,14 @@ def test_summarize_migration_state_accepts_current_head():
 def test_bootstrap_alembic_version_table_stamps_when_schema_exists(monkeypatch):
     monkeypatch.setattr("services.migrations.get_expected_migration_heads", lambda: ["20260307_0019"])
     engine = sa.create_engine("sqlite:///:memory:")
+    try:
+        with engine.begin() as conn:
+            conn.execute(sa.text("CREATE TABLE users (id INTEGER PRIMARY KEY)"))
 
-    with engine.begin() as conn:
-        conn.execute(sa.text("CREATE TABLE users (id INTEGER PRIMARY KEY)"))
-
-        stamped = bootstrap_alembic_version_table(conn)
-        versions = conn.execute(sa.text("SELECT version_num FROM alembic_version")).fetchall()
+            stamped = bootstrap_alembic_version_table(conn)
+            versions = conn.execute(sa.text("SELECT version_num FROM alembic_version")).fetchall()
+    finally:
+        engine.dispose()
 
     assert stamped == ["20260307_0019"]
     assert versions == [("20260307_0019",)]

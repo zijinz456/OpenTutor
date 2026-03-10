@@ -1,8 +1,15 @@
 """Tests for services.agent.stream_events — StreamEvent formatting."""
 
 import json
+import warnings
 
 import pytest
+
+warnings.filterwarnings(
+    "ignore",
+    message="services\\.agent\\.stream_events is deprecated and kept for compatibility only\\.",
+    category=DeprecationWarning,
+)
 
 from services.agent.stream_events import StreamEvent
 

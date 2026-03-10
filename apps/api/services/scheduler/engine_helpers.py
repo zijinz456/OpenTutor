@@ -3,12 +3,11 @@
 Provides user iteration, notification, and backward-compatible SSE stubs.
 """
 
+import inspect
 import logging
 import uuid
 
 from sqlalchemy import select
-
-from sqlalchemy.exc import SQLAlchemyError
 
 from database import async_session
 from models.user import User
@@ -64,22 +63,64 @@ async def _push_notification(
     title: str,
     body: str,
     category: str = "reminder",
+    *,
+    course_id: uuid.UUID | None = None,
+    dedup_key: str | None = None,
+    batch_key: str | None = None,
+    priority: str | None = None,
+    action_url: str | None = None,
+    action_label: str | None = None,
+    data: dict | None = None,
+    scheduled_for=None,
     **kwargs,
-):
-    """Store an in-app notification for the user."""
+) -> bool:
+    """Store an in-app notification for the user.
+
+    Returns:
+        True if inserted, False if skipped (dedup) or failed.
+    """
     try:
         from models.notification import Notification
 
         async with async_session() as db:
+            if dedup_key:
+                existing = await db.execute(
+                    select(Notification.id).where(
+                        Notification.user_id == user_id,
+                        Notification.dedup_key == dedup_key,
+                    ).limit(1)
+                )
+                if existing.scalar_one_or_none() is not None:
+                    logger.debug(
+                        "Notification dedup skip: [%s] %s for user %s (%s)",
+                        category,
+                        title,
+                        user_id,
+                        dedup_key,
+                    )
+                    return False
+
             notif = Notification(
                 user_id=user_id,
+                course_id=course_id,
                 title=title,
                 body=body,
                 category=category,
-                metadata_json=kwargs.get("data"),
+                batch_key=batch_key,
+                dedup_key=dedup_key,
+                priority=priority,
+                action_url=action_url,
+                action_label=action_label,
+                metadata_json=data if data is not None else kwargs.get("data"),
+                scheduled_for=scheduled_for,
             )
-            db.add(notif)
+            add_result = db.add(notif)
+            # Test doubles sometimes model `add` as async; production AsyncSession.add is sync.
+            if inspect.isawaitable(add_result):
+                await add_result
             await db.commit()
             logger.debug("Notification stored: [%s] %s for user %s", category, title, user_id)
-    except (SQLAlchemyError, ImportError) as e:
+            return True
+    except Exception as e:
         logger.exception("Failed to store notification for user %s", user_id)
+        return False

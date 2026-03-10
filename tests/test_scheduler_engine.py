@@ -114,6 +114,7 @@ if "services.scheduler.engine" in sys.modules:
 
 from services.scheduler.engine import (  # noqa: E402
     _SCHEDULED_JOBS,
+    _broadcast_report_job,
     _for_each_user,
     _get_user_ids,
     _push_notification,
@@ -380,6 +381,83 @@ async def test_push_notification_handles_error():
         ):
             # Should not raise despite the DB error
             await _push_notification(user_id, "Title", "Body")
+
+
+@pytest.mark.asyncio
+async def test_push_notification_dedup_skip():
+    """_push_notification should skip inserts when dedup_key already exists."""
+    user_id = uuid.uuid4()
+
+    mock_session = AsyncMock()
+    dedup_result = MagicMock()
+    dedup_result.scalar_one_or_none.return_value = uuid.uuid4()
+    mock_session.execute.return_value = dedup_result
+
+    mock_ctx = AsyncMock()
+    mock_ctx.__aenter__.return_value = mock_session
+    mock_ctx.__aexit__.return_value = None
+
+    mock_notification_cls = MagicMock()
+
+    with patch("services.scheduler.engine_helpers.async_session", return_value=mock_ctx):
+        with patch.dict(
+            "sys.modules",
+            {"models.notification": MagicMock(Notification=mock_notification_cls)},
+        ):
+            inserted = await _push_notification(
+                user_id,
+                "Daily Brief",
+                "Body",
+                category="daily_brief",
+                dedup_key="daily_brief:2026-03-10",
+            )
+
+    assert inserted is False
+    mock_session.add.assert_not_called()
+    mock_session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_broadcast_report_job_pushes_notifications():
+    """_broadcast_report_job should generate report content and push notifications."""
+    import services.scheduler.engine_jobs_proactive as proactive
+
+    user1 = uuid.uuid4()
+    user2 = uuid.uuid4()
+
+    fake_module = ModuleType("fake_report_module")
+    fake_module.generate_daily = AsyncMock(side_effect=["Report A", "Report B"])
+
+    mock_session = AsyncMock()
+    mock_ctx = AsyncMock()
+    mock_ctx.__aenter__.return_value = mock_session
+    mock_ctx.__aexit__.return_value = None
+
+    with patch.object(proactive, "_get_user_ids", return_value=[user1, user2]):
+        with patch.object(proactive, "async_session", return_value=mock_ctx):
+            with patch.object(proactive.importlib, "import_module", return_value=fake_module):
+                with patch.object(
+                    proactive,
+                    "_push_notification",
+                    new=AsyncMock(return_value=True),
+                ) as push_mock:
+                    await _broadcast_report_job(
+                        name="Daily brief",
+                        generator_module="fake_report_module",
+                        generator_func_name="generate_daily",
+                        title="Good morning",
+                        category="daily_brief",
+                        dedup_pattern="%Y-%m-%d",
+                        action_label="View Dashboard",
+                    )
+
+    assert fake_module.generate_daily.await_count == 2
+    assert push_mock.await_count == 2
+    first_call_kwargs = push_mock.await_args_list[0].kwargs
+    assert first_call_kwargs["title"] == "Good morning"
+    assert first_call_kwargs["category"] == "daily_brief"
+    assert first_call_kwargs["action_label"] == "View Dashboard"
+    assert first_call_kwargs["dedup_key"].startswith("daily_brief:")
 
 
 # ── start_scheduler / stop_scheduler ──

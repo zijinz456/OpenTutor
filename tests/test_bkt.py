@@ -400,19 +400,20 @@ def test_get_trained_params_cache_hit():
     """get_trained_params should return cached params."""
     import time
     from services.learning_science.bkt_trainer import (
-        _fitted_params_cache,
-        _cache_timestamps,
+        set_trained_params_cache,
+        invalidate_trained_params_cache,
         get_trained_params,
     )
 
     user_id = uuid.uuid4()
     course_id = uuid.uuid4()
-    cache_key = f"{user_id}:{course_id}"
 
-    _fitted_params_cache[cache_key] = {
-        "calculus": {"prior": 0.3, "learns": 0.25, "guesses": 0.2, "slips": 0.08}
-    }
-    _cache_timestamps[cache_key] = time.time()  # Set timestamp for TTL check
+    set_trained_params_cache(
+        user_id,
+        course_id,
+        {"calculus": {"prior": 0.3, "learns": 0.25, "guesses": 0.2, "slips": 0.08}},
+        trained_at_ts=time.time(),
+    )
 
     result = get_trained_params(user_id, course_id, "calculus")
     assert result is not None
@@ -420,34 +421,33 @@ def test_get_trained_params_cache_hit():
     assert result["learns"] == 0.25
 
     # Clean up
-    del _fitted_params_cache[cache_key]
-    del _cache_timestamps[cache_key]
+    invalidate_trained_params_cache(user_id, course_id)
 
 
 def test_get_trained_params_all_courses():
     """get_trained_params with course_id=None should use 'all' key."""
     import time
     from services.learning_science.bkt_trainer import (
-        _fitted_params_cache,
-        _cache_timestamps,
+        set_trained_params_cache,
+        invalidate_trained_params_cache,
         get_trained_params,
     )
 
     user_id = uuid.uuid4()
-    cache_key = f"{user_id}:all"
 
-    _fitted_params_cache[cache_key] = {
-        "algebra": {"prior": 0.2, "learns": 0.15, "guesses": 0.25, "slips": 0.1}
-    }
-    _cache_timestamps[cache_key] = time.time()
+    set_trained_params_cache(
+        user_id,
+        None,
+        {"algebra": {"prior": 0.2, "learns": 0.15, "guesses": 0.25, "slips": 0.1}},
+        trained_at_ts=time.time(),
+    )
 
     result = get_trained_params(user_id, None, "algebra")
     assert result is not None
     assert result["prior"] == 0.2
 
     # Clean up
-    del _fitted_params_cache[cache_key]
-    del _cache_timestamps[cache_key]
+    invalidate_trained_params_cache(user_id)
 
 
 def test_fit_with_pybkt_insufficient_data():
@@ -466,6 +466,13 @@ def test_fit_with_pybkt_empty():
 
     result = _fit_with_pybkt([])
     assert result == {}
+
+
+def test_trained_params_cache_ttl_covers_weekly_training_cycle():
+    """Cache TTL should survive weekly training cadence to avoid fallback drift."""
+    from services.learning_science.bkt_trainer import _CACHE_TTL_SECONDS
+
+    assert _CACHE_TTL_SECONDS >= 7 * 24 * 60 * 60
 
 
 # ── compute_mastery_adaptive ──
@@ -489,21 +496,26 @@ def test_compute_mastery_adaptive_fallback():
 def test_compute_mastery_adaptive_with_cache():
     """compute_mastery_adaptive should use cached trained params."""
     import time
-    from services.learning_science.bkt_trainer import _fitted_params_cache, _cache_timestamps
+    from services.learning_science.bkt_trainer import (
+        set_trained_params_cache,
+        invalidate_trained_params_cache,
+    )
     from services.learning_science.knowledge_tracer import compute_mastery_adaptive
 
     user_id = uuid.uuid4()
-    cache_key = f"{user_id}:all"
-
-    _fitted_params_cache[cache_key] = {
-        "cached_concept": {
-            "prior": 0.4,
-            "learns": 0.3,
-            "guesses": 0.1,
-            "slips": 0.05,
-        }
-    }
-    _cache_timestamps[cache_key] = time.time()
+    set_trained_params_cache(
+        user_id,
+        None,
+        {
+            "cached_concept": {
+                "prior": 0.4,
+                "learns": 0.3,
+                "guesses": 0.1,
+                "slips": 0.05,
+            }
+        },
+        trained_at_ts=time.time(),
+    )
 
     results = [True, True, True]
     mastery = compute_mastery_adaptive(
@@ -513,5 +525,4 @@ def test_compute_mastery_adaptive_with_cache():
     assert mastery > 0.8
 
     # Clean up
-    _fitted_params_cache.pop(cache_key, None)
-    _cache_timestamps.pop(cache_key, None)
+    invalidate_trained_params_cache(user_id)

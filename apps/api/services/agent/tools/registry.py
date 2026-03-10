@@ -190,6 +190,8 @@ def _register_web_tools(registry: ToolRegistry) -> None:
 
 def _register_export_tools(registry: ToolRegistry) -> None:
     """Register export tools (Anki, calendar)."""
+    from config import settings
+
     try:
         from services.agent.tools.anki import ExportAnkiTool
 
@@ -202,6 +204,17 @@ def _register_export_tools(registry: ToolRegistry) -> None:
         registry.register(ExportCalendarTool())
     except (ImportError, AttributeError) as e:
         logger.exception("Failed to load calendar export tool: %s", e)
+
+    if settings.enable_experimental_notion_export:
+        try:
+            from services.agent.tools.notion import ExportNotionTool
+
+            registry.register(ExportNotionTool())
+            logger.info("Registered experimental Notion export tool")
+        except (ImportError, AttributeError) as e:
+            logger.exception("Failed to load Notion export tool: %s", e)
+    else:
+        logger.info("Experimental Notion export tool is dormant (ENABLE_EXPERIMENTAL_NOTION_EXPORT=false)")
     logger.info("Registered export tools")
 
 

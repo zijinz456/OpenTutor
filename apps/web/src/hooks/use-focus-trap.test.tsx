@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { useRef, useState } from "react";
+import { useRef } from "react";
 import { render, screen } from "@/test-utils";
 import { useFocusTrap } from "./use-focus-trap";
 
@@ -12,18 +12,6 @@ function TrapHarness({ active }: { active: boolean }) {
       <button data-testid="btn-2">Second</button>
       <button data-testid="btn-3">Third</button>
     </div>
-  );
-}
-
-function TogglableTrap() {
-  const [active, setActive] = useState(false);
-  return (
-    <>
-      <button data-testid="trigger" onClick={() => setActive(true)}>
-        Open
-      </button>
-      {active && <TrapHarness active={true} />}
-    </>
   );
 }
 

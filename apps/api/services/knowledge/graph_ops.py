@@ -6,6 +6,7 @@ conversation-extracted relationships to the static LOOM knowledge graph.
 
 import json
 import logging
+import inspect
 import uuid
 from datetime import datetime, timezone
 
@@ -124,7 +125,9 @@ async def store_graph_entities(
                 ],
             },
         )
-        db.add(mem)
+        add_result = db.add(mem)
+        if inspect.isawaitable(add_result):
+            await add_result
 
     for rel in relationships:
         summary = f"[Relation] ({rel['source']}) -[{rel['relation']}]-> ({rel['target']})"
@@ -144,7 +147,9 @@ async def store_graph_entities(
                 "mentions": 1,
             },
         )
-        db.add(mem)
+        add_result = db.add(mem)
+        if inspect.isawaitable(add_result):
+            await add_result
 
     await db.flush()
 
@@ -218,7 +223,9 @@ async def sync_to_knowledge_graph(
                 relation_type=edge_type,
                 weight=1.0,
             )
-            db.add(edge)
+            add_result = db.add(edge)
+            if inspect.isawaitable(add_result):
+                await add_result
 
             if edge_type == "confused_with":
                 reverse = KnowledgeEdge(
@@ -227,7 +234,9 @@ async def sync_to_knowledge_graph(
                     relation_type=edge_type,
                     weight=1.0,
                 )
-                db.add(reverse)
+                add_result = db.add(reverse)
+                if inspect.isawaitable(add_result):
+                    await add_result
 
             synced += 1
 

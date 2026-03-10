@@ -29,6 +29,8 @@ export function FlashcardView({
   aiActionsEnabled = true,
 }: FlashcardViewProps) {
   const t = useT();
+  const loadFailedLabel = t("flashcard.loadFailed");
+  const reviewFailedLabel = t("flashcard.reviewFailed");
   const refreshKey = useWorkspaceStore((s) => s.sectionRefreshKey["practice"]);
   const { saving, latestBatch, wrapSave } = useBatchManager({
     courseId,
@@ -83,7 +85,7 @@ export function FlashcardView({
           if (!cancelled) {
             setCards([]);
             setDueCount(0);
-            setLoadError(t("flashcard.loadFailed"));
+            setLoadError(loadFailedLabel);
           }
         }
       } finally {
@@ -96,7 +98,7 @@ export function FlashcardView({
     return () => {
       cancelled = true;
     };
-  }, [courseId, refreshKey, retryCount]);
+  }, [courseId, refreshKey, retryCount, loadFailedLabel]);
 
   const handleGenerate = useCallback(async () => {
     setLoading(true);
@@ -137,7 +139,7 @@ export function FlashcardView({
       try {
         await reviewFlashcard(card, value);
       } catch {
-        setReviewError(t("flashcard.reviewFailed"));
+        setReviewError(reviewFailedLabel);
         setTimeout(() => setReviewError(null), 3000);
       }
       setSubmitting(false);
@@ -145,7 +147,7 @@ export function FlashcardView({
       setReviewed((count) => count + 1);
       setIndex((current) => current + 1);
     },
-    [cards, index, submitting],
+    [cards, index, submitting, reviewFailedLabel],
   );
 
   // Keyboard shortcuts: 1-4 for ratings when card is flipped

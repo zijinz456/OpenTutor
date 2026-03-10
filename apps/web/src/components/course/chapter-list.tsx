@@ -36,6 +36,7 @@ export function ChapterList({ courseId, nodes }: ChapterListProps) {
             <div
               key={node.id}
               role="treeitem"
+              aria-selected={false}
               {...(isFolder ? { "aria-expanded": true } : {})}
             >
               <Link

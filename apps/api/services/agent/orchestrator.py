@@ -6,16 +6,15 @@ import logging
 import re
 import uuid
 
-from sqlalchemy.exc import SQLAlchemyError
-from dataclasses import asdict
 from typing import AsyncIterator
 
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.agent.state import AgentContext, AgentVerificationResult, IntentType, TaskPhase
+from services.agent.state import AgentContext, IntentType, TaskPhase
 from services.agent.router import classify_intent
 from services.agent.base import BaseAgent
-from services.agent.registry import AGENT_REGISTRY, get_agent, build_agent_context
+from services.agent.registry import get_agent, build_agent_context
 from services.agent.context_builder import load_context
 from services.agent.background_runtime import (
     enqueue_post_process_task,
@@ -39,19 +38,14 @@ from services.agent.guided_session_handler import handle_guided_session
 logger = logging.getLogger(__name__)
 
 
-async def prepare_agent_turn(
-    ctx: AgentContext, db: AsyncSession, db_factory=None,
-) -> tuple[AgentContext, BaseAgent]:
-    """Run shared orchestration steps before agent execution."""
-    ctx.transition(TaskPhase.ROUTING)
-    ctx = await classify_intent(ctx)
-    ctx = await load_context(ctx, db, db_factory=db_factory)
-
+async def _apply_turn_enrichment(ctx: AgentContext, db: AsyncSession) -> AgentContext:
+    """Apply shared per-turn enrichment for stream/non-stream entry points."""
     fatigue = detect_fatigue(ctx.user_message)
     ctx.metadata["fatigue_score"] = fatigue
 
     try:
         from services.cognitive_load import compute_cognitive_load
+
         cl = await compute_cognitive_load(
             db,
             user_id=ctx.user_id,
@@ -61,32 +55,49 @@ async def prepare_agent_turn(
             user_message=ctx.user_message,
         )
         ctx.metadata["cognitive_load"] = cl
+        if db is not None and cl.get("consecutive_high", 0) > 0:
+            try:
+                from services.agent.kv_store import kv_set
+
+                await kv_set(
+                    db,
+                    ctx.user_id,
+                    "cognitive_load",
+                    "consecutive",
+                    {"consecutive_high": cl["consecutive_high"]},
+                    course_id=ctx.course_id,
+                )
+            except (SQLAlchemyError, ConnectionError, TimeoutError):
+                logger.debug("Failed to persist cognitive load counter")
     except (SQLAlchemyError, ImportError, ConnectionError, TimeoutError, ValueError, AttributeError) as e:
         logger.debug("Cognitive load detection skipped: %s", e)
 
-    # Block Decision Engine — evaluate all signals against current layout
-    # Always runs (even with empty blocks) so cognitive state badge stays updated
+    # Block Decision Engine — always run so cognitive badge state is updated.
     try:
         from services.block_decision.engine import compute_block_decisions
-        block_types = ctx.metadata.get("block_types", [])
 
-        # Collect agenda signals for richer decisions
+        block_types = ctx.metadata.get("block_types", [])
         agenda_signals: list[dict] = []
         try:
             from services.agent.signals import collect_signals
+
             raw_signals = await collect_signals(ctx.user_id, ctx.course_id, db)
             agenda_signals = [
-                {"signal_type": s.signal_type, "urgency": s.urgency,
-                 "detail": s.detail, "title": s.title}
+                {
+                    "signal_type": s.signal_type,
+                    "urgency": s.urgency,
+                    "detail": s.detail,
+                    "title": s.title,
+                }
                 for s in raw_signals
             ]
         except (SQLAlchemyError, ImportError, ValueError, RuntimeError) as sig_err:
             logger.debug("Signal collection for block decisions skipped: %s", sig_err)
 
-        # Load user's block preferences for filtering
         block_prefs = None
         try:
             from services.block_decision.preference import compute_block_preferences
+
             raw_prefs = await compute_block_preferences(db, ctx.user_id, ctx.course_id)
             if raw_prefs:
                 block_prefs = {"block_scores": raw_prefs}
@@ -94,7 +105,9 @@ async def prepare_agent_turn(
             logger.debug("Block preference loading skipped: %s", pref_err)
 
         decisions = await compute_block_decisions(
-            db, ctx.user_id, ctx.course_id,
+            db,
+            ctx.user_id,
+            ctx.course_id,
             current_blocks=block_types,
             current_mode=ctx.learning_mode,
             cognitive_load=ctx.metadata.get("cognitive_load"),
@@ -105,6 +118,34 @@ async def prepare_agent_turn(
         ctx.metadata["block_decisions"] = decisions
     except (ImportError, SQLAlchemyError, ConnectionError, TimeoutError, ValueError, AttributeError) as e:
         logger.debug("Block decision engine skipped: %s", e)
+
+    return ctx
+
+
+def _build_plan_progress(plan_steps: list[dict]) -> list[dict]:
+    """Normalize planner output into the plan_step SSE payload shape."""
+    return [
+        {
+            "step_index": step["step_index"],
+            "step_type": step.get("step_type", "unknown"),
+            "title": step.get("title", f"Step {step['step_index'] + 1}"),
+            "status": "pending",
+            "depends_on": step.get("depends_on", []),
+            "agent": step.get("agent"),
+            "summary": None,
+        }
+        for step in plan_steps
+    ]
+
+
+async def prepare_agent_turn(
+    ctx: AgentContext, db: AsyncSession, db_factory=None,
+) -> tuple[AgentContext, BaseAgent]:
+    """Run shared orchestration steps before agent execution."""
+    ctx.transition(TaskPhase.ROUTING)
+    ctx = await classify_intent(ctx)
+    ctx = await load_context(ctx, db, db_factory=db_factory)
+    ctx = await _apply_turn_enrichment(ctx, db)
 
     agent = get_agent(ctx.intent)
     ctx.delegated_agent = agent.name
@@ -244,8 +285,9 @@ async def orchestrate_stream(
     }
 
     ctx = await load_context(ctx, db, db_factory=db_factory)
+    ctx = await _apply_turn_enrichment(ctx, db)
 
-    # Detect complex multi-step requests — create background plan but still answer normally
+    # Complex request contract: emit one `plan_step` then continue normal chat response.
     from services.agent.task_planner import is_complex_request
     if is_complex_request(ctx.user_message) and ctx.intent in (IntentType.PLAN, IntentType.LEARN):
         try:
@@ -253,18 +295,7 @@ async def orchestrate_stream(
             from services.activity.engine import submit_task
 
             plan_steps = await create_plan(ctx.user_message, ctx.user_id, ctx.course_id)
-            initial_plan_progress = [
-                {
-                    "step_index": step["step_index"],
-                    "step_type": step.get("step_type", "unknown"),
-                    "title": step.get("title", f"Step {step['step_index'] + 1}"),
-                    "status": "pending",
-                    "depends_on": step.get("depends_on", []),
-                    "agent": step.get("agent"),
-                    "summary": None,
-                }
-                for step in plan_steps
-            ]
+            initial_plan_progress = _build_plan_progress(plan_steps)
             task = await submit_task(
                 user_id=ctx.user_id,
                 task_type="multi_step",
@@ -289,35 +320,6 @@ async def orchestrate_stream(
             }
         except (SQLAlchemyError, ConnectionError, TimeoutError, ValueError, RuntimeError, ImportError) as e:
             logger.exception("Multi-step planning failed, falling back to single turn: %s", e)
-
-    fatigue = detect_fatigue(ctx.user_message)
-    ctx.metadata["fatigue_score"] = fatigue
-
-    try:
-        from services.cognitive_load import compute_cognitive_load
-        cl = await compute_cognitive_load(
-            db,
-            user_id=ctx.user_id,
-            course_id=ctx.course_id,
-            fatigue_score=fatigue,
-            session_messages=len(ctx.metadata.get("history", [])),
-            user_message=ctx.user_message,
-        )
-        ctx.metadata["cognitive_load"] = cl
-        # NOTE: layout_simplification removed — Block Decision Engine (block_update event)
-        # now handles cognitive overload via rule_cognitive_overload in prepare_agent_turn.
-        if cl.get("consecutive_high", 0) > 0:
-            try:
-                from services.agent.kv_store import kv_set
-                await kv_set(
-                    db, ctx.user_id, "cognitive_load", "consecutive",
-                    {"consecutive_high": cl["consecutive_high"]},
-                    course_id=ctx.course_id,
-                )
-            except (SQLAlchemyError, ConnectionError, TimeoutError):
-                logger.debug("Failed to persist cognitive load counter")
-    except (SQLAlchemyError, ImportError, ConnectionError, TimeoutError, ValueError, AttributeError) as e:
-        logger.debug("Cognitive load detection skipped: %s", e)
 
     agent = get_agent(ctx.intent)
     ctx.delegated_agent = agent.name
@@ -399,7 +401,7 @@ async def orchestrate_stream(
 
     # Emit block_update event — always send cognitive state for badge, ops may be empty
     block_decisions = ctx.metadata.get("block_decisions")
-    if block_decisions:
+    if block_decisions is not None:
         yield {
             "event": "block_update",
             "data": json.dumps(block_decisions.to_dict()),

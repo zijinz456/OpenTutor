@@ -1,11 +1,19 @@
-"""Typed stream event system for agent communication.
+"""Deprecated typed stream event helpers for agent communication.
 
-Replaces raw dict events with structured, typed dataclasses.
+Runtime streaming now uses orchestrator-native event dicts.
+This module is retained as a compatibility shim for tests and legacy imports.
 """
 
 import json
+import warnings
 from dataclasses import dataclass, field, asdict
 from typing import Any, Literal
+
+warnings.warn(
+    "services.agent.stream_events is deprecated and kept for compatibility only.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 
 @dataclass

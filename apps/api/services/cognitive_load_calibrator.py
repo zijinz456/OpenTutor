@@ -126,6 +126,26 @@ async def load_baseline_from_db(db: AsyncSession, user_id: uuid.UUID) -> Student
     return get_or_create_baseline(user_id)
 
 
+async def resolve_baseline(db: AsyncSession, user_id: uuid.UUID) -> StudentBaseline:
+    """Compatibility resolver for baseline loading.
+
+    Migration path:
+    - Legacy callers/tests patch `get_or_create_baseline`
+    - New runtime path prefers persisted DB baselines
+    """
+    baseline = get_or_create_baseline(user_id)
+    message_count = getattr(baseline, "message_count", 0)
+    try:
+        needs_hydrate = int(message_count) <= 0
+    except (TypeError, ValueError):
+        # Non-numeric mock/patch values: keep legacy baseline object as-is.
+        needs_hydrate = False
+
+    if not needs_hydrate:
+        return baseline
+    return await load_baseline_from_db(db, user_id)
+
+
 async def flush_baseline_to_db(db: AsyncSession, user_id: uuid.UUID) -> None:
     """Persist current baseline to DB. Call periodically or at session end."""
     key = str(user_id)

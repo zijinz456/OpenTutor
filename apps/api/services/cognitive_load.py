@@ -190,12 +190,12 @@ async def compute_cognitive_load(
 
     # ── Signal 9: Relative baseline calibration ──
     from services.cognitive_load_calibrator import (
-        load_baseline_from_db,
+        resolve_baseline,
         flush_baseline_to_db,
         compute_relative_load,
     )
 
-    baseline = await load_baseline_from_db(db, user_id)
+    baseline = await resolve_baseline(db, user_id)
     is_help = help_signal > 0
     relative = compute_relative_load(
         baseline, len(user_message), is_help,
@@ -298,6 +298,44 @@ def _build_guidance(level: str, score: float, signals: dict, consecutive: int = 
         )
 
     return "\n".join(parts)
+
+
+def check_response_complexity(
+    cognitive_load_level: str,
+    response_text: str,
+) -> dict:
+    """Check if tutor response complexity is appropriate for student's cognitive load.
+
+    Uses text complexity metrics to flag when a response may be too complex
+    for a student currently experiencing high cognitive load.
+
+    Returns dict with complexity metrics and a simplification recommendation.
+    """
+    from services.cognitive_load_nlp import compute_text_complexity
+
+    metrics = compute_text_complexity(response_text)
+    complexity = metrics.get("complexity", 0.0)
+
+    should_simplify = False
+    reason = ""
+
+    if cognitive_load_level == "high" and complexity > 0.5:
+        should_simplify = True
+        reason = (
+            f"Response complexity ({complexity:.2f}) is high while student is cognitively loaded. "
+            "Consider shorter sentences and simpler vocabulary."
+        )
+    elif cognitive_load_level == "medium" and complexity > 0.7:
+        should_simplify = True
+        reason = (
+            f"Response complexity ({complexity:.2f}) may be too high for a moderately loaded student."
+        )
+
+    return {
+        **metrics,
+        "should_simplify": should_simplify,
+        "reason": reason,
+    }
 
 
 def adjust_review_order_for_load(
