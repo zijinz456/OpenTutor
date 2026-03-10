@@ -141,11 +141,6 @@ export interface ChatMessageMetadata {
   verifier?: ChatVerifierResult | null;
   verifier_diagnostics?: ChatVerifierDiagnostics | null;
   task_link?: ChatTaskLink | null;
-  layout_simplification?: {
-    should_simplify: boolean;
-    blocks_to_hide: string[];
-    reason: string;
-  } | null;
 }
 
 interface PlanStepProgress {

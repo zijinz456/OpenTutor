@@ -38,12 +38,6 @@ from services.agent.guided_session_handler import handle_guided_session
 
 logger = logging.getLogger(__name__)
 
-# Backward-compatible exports for tests and adjacent modules
-_build_provenance = build_provenance
-_envelope_payload = envelope_payload
-_detect_fatigue = detect_fatigue
-_handle_guided_session = handle_guided_session
-
 
 async def prepare_agent_turn(
     ctx: AgentContext, db: AsyncSession, db_factory=None,
@@ -53,7 +47,7 @@ async def prepare_agent_turn(
     ctx = await classify_intent(ctx)
     ctx = await load_context(ctx, db, db_factory=db_factory)
 
-    fatigue = _detect_fatigue(ctx.user_message)
+    fatigue = detect_fatigue(ctx.user_message)
     ctx.metadata["fatigue_score"] = fatigue
 
     try:
@@ -146,9 +140,9 @@ async def run_agent_turn(
     ctx, agent = await prepare_agent_turn(ctx, db, db_factory=db_factory)
     ctx = await consume_agent_stream(ctx, agent, db)
     finalize_token_usage(ctx, agent)
-    ctx.metadata["provenance"] = build_provenance(ctx)
     ctx = await apply_verifier(ctx, agent)
     ctx = await apply_reflection(ctx)
+    # Build provenance once after all post-processing is complete
     ctx.metadata["provenance"] = build_provenance(ctx)
     ctx.metadata["turn_envelope"] = envelope_payload(ctx)
     if ctx.response and post_process_inline:
@@ -220,7 +214,7 @@ async def orchestrate_stream(
     )
     if _gs_match:
         gs_action, gs_task_id = _gs_match.group(1).lower(), _gs_match.group(2)
-        async for evt in _handle_guided_session(ctx, db, gs_action, gs_task_id):
+        async for evt in handle_guided_session(ctx, db, gs_action, gs_task_id):
             yield evt
         return
 
@@ -251,7 +245,8 @@ async def orchestrate_stream(
 
     ctx = await load_context(ctx, db, db_factory=db_factory)
 
-    # Detect complex multi-step requests
+    # Detect complex multi-step requests — create background plan but still answer normally
+    _has_background_plan = False
     from services.agent.task_planner import is_complex_request
     if is_complex_request(ctx.user_message) and ctx.intent in (IntentType.PLAN, IntentType.LEARN):
         try:
@@ -285,7 +280,7 @@ async def orchestrate_stream(
                 "data": json.dumps({
                     "task_id": str(task.id),
                     "steps": initial_plan_progress,
-                    "message": "I've created a multi-step plan for your request. It's running in the background.",
+                    "message": "I've created a background plan for the detailed steps. Let me also answer your question directly.",
                 }),
             }
             ctx.metadata["task_link"] = {
@@ -293,27 +288,11 @@ async def orchestrate_stream(
                 "task_type": task.task_type,
                 "status": task.status,
             }
-            ctx.delegated_agent = "coordinator"
-            ctx.response = (
-                "I created a background plan for this request. "
-                "It will review your current progress, identify weak spots, and coordinate the next study actions. "
-                "You can watch the task progress in the activity panel while continuing with the workspace."
-            )
-            ctx.metadata["provenance"] = build_provenance(ctx)
-            ctx.metadata["verifier"] = asdict(
-                AgentVerificationResult(
-                    status="pass",
-                    code="background_task_created",
-                    message="Complex request was converted into a durable background task.",
-                )
-            )
-            yield {"event": "message", "data": json.dumps({"content": ctx.response})}
-            yield {"event": "done", "data": json.dumps(envelope_payload(ctx))}
-            return
+            _has_background_plan = True
         except (SQLAlchemyError, ConnectionError, TimeoutError, ValueError, RuntimeError, ImportError) as e:
             logger.exception("Multi-step planning failed, falling back to single turn: %s", e)
 
-    fatigue = _detect_fatigue(ctx.user_message)
+    fatigue = detect_fatigue(ctx.user_message)
     ctx.metadata["fatigue_score"] = fatigue
 
     try:
@@ -356,7 +335,7 @@ async def orchestrate_stream(
     await ext_registry.run_hooks(ExtensionHook.PRE_AGENT, ctx, agent_name=agent.name)
 
     parser = MarkerParser()
-    _actions_emitted = 0
+    _actions_emitted_set: set[int] = set()  # Track by index to prevent duplicates
     _progress_emitted = 0
     async for chunk in agent.stream(ctx, db):
         for event_type, payload in parser.feed(chunk):
@@ -374,12 +353,15 @@ async def orchestrate_stream(
                 yield {"event": "tool_status", "data": json.dumps(event_data)}
             elif event_type == "action":
                 ctx.actions.append(payload)
-                _actions_emitted += 1
+                idx = len(ctx.actions) - 1
+                _actions_emitted_set.add(idx)
                 yield {"event": "action", "data": json.dumps(payload)}
 
-        while _actions_emitted < len(ctx.actions):
-            yield {"event": "action", "data": json.dumps(ctx.actions[_actions_emitted])}
-            _actions_emitted += 1
+        # Emit actions added by tool calls (not via parser)
+        for idx in range(len(ctx.actions)):
+            if idx not in _actions_emitted_set:
+                _actions_emitted_set.add(idx)
+                yield {"event": "action", "data": json.dumps(ctx.actions[idx])}
 
         while _progress_emitted < len(ctx.tool_progress):
             yield {"event": "tool_progress", "data": json.dumps(ctx.tool_progress[_progress_emitted])}
@@ -389,7 +371,7 @@ async def orchestrate_stream(
     if remaining:
         yield {"event": "message", "data": json.dumps({"content": remaining})}
 
-    if ctx.tool_calls:
+    if db is not None:
         try:
             await db.commit()
         except SQLAlchemyError as commit_err:
@@ -402,7 +384,6 @@ async def orchestrate_stream(
         agent_name=agent.name, response=ctx.response or "",
     )
     streamed_response = ctx.response
-    ctx.metadata["provenance"] = build_provenance(ctx)
     ctx = await apply_verifier(ctx, agent)
 
     should_reflect = (
@@ -413,6 +394,7 @@ async def orchestrate_stream(
     if should_reflect:
         yield {"event": "status", "data": json.dumps({"phase": "verifying"})}
         ctx = await apply_reflection(ctx)
+    # Build provenance once after all post-processing
     ctx.metadata["provenance"] = build_provenance(ctx)
     if ctx.response != streamed_response:
         yield {"event": "replace", "data": json.dumps({"content": ctx.response})}

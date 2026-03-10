@@ -56,6 +56,47 @@ def rule_cognitive_overload(
     return ops
 
 
+def rule_cognitive_adapt(
+    cognitive_load: dict | None,
+    current_blocks: list[str],
+    current_mode: str | None = None,
+) -> list[BlockOperation]:
+    """Medium-high cognitive load → adapt quiz difficulty and suggest mode change.
+
+    Fires at a lower threshold than rule_cognitive_overload (score >= 0.5)
+    to provide early intervention before full overload.
+    """
+    if not cognitive_load:
+        return []
+    score = cognitive_load.get("score", 0)
+    consecutive = cognitive_load.get("consecutive_high", 0)
+    signals = cognitive_load.get("signals", {})
+    ops = []
+
+    # Moderate load: lower quiz difficulty to reduce pressure
+    if score >= 0.5 and "quiz" in current_blocks:
+        nlp_affect = signals.get("nlp_affect", 0)
+        if nlp_affect >= 0.4 or (score >= 0.6 and consecutive >= 1):
+            ops.append(BlockOperation(
+                action="update_config", block_type="quiz",
+                reason="Adjusting quiz difficulty to match your current pace.",
+                signal_source="cognitive_load", urgency=70,
+                config={"difficulty": "easy", "adaptive_reason": "cognitive_load"},
+            ))
+
+    # High load in exam_prep mode: suggest switching to self_paced
+    if score >= 0.65 and consecutive >= 2 and current_mode == "exam_prep":
+        if "agent_insight" not in current_blocks:
+            ops.append(BlockOperation(
+                action="add", block_type="agent_insight",
+                reason="You've been studying intensively. Consider taking a lighter approach for a bit.",
+                signal_source="cognitive_load", urgency=65, size="full",
+                config={"insightType": "mode_suggestion", "suggestedMode": "self_paced"},
+            ))
+
+    return ops
+
+
 def rule_forgetting_risk(
     signals: list[dict],
     current_blocks: list[str],
@@ -177,6 +218,58 @@ def rule_inactivity(
             config={"insightType": "welcome_back"},
         )
     return None
+
+
+def rule_lector_review(
+    signals: list[dict],
+    current_blocks: list[str],
+) -> list[BlockOperation]:
+    """LECTOR semantic review signals → targeted block operations.
+
+    When LECTOR detects concepts needing review based on knowledge graph
+    relationships (prerequisite weakness, confusion pairs, decay), surface
+    the appropriate blocks.
+    """
+    lector = [s for s in signals if s.get("signal_type") == "lector_review"]
+    if not lector:
+        return []
+
+    ops = []
+    detail = lector[0].get("detail", {})
+    urgent_count = detail.get("urgent_count", 0)
+    prereq_count = detail.get("prereq_first_count", 0)
+    contrast_count = detail.get("contrast_count", 0)
+    confused = detail.get("confused_concepts", [])
+    weak_prereqs = detail.get("weak_prerequisites", [])
+
+    # If prerequisites are weak, surface knowledge graph for visualization
+    if prereq_count >= 1 and "knowledge_graph" not in current_blocks:
+        ops.append(BlockOperation(
+            action="add", block_type="knowledge_graph",
+            reason=f"Prerequisite concepts need attention: {', '.join(weak_prereqs[:2])}. "
+                   "Showing knowledge graph to visualize dependencies.",
+            signal_source="lector_review", urgency=80, size="medium",
+        ))
+
+    # If confusion pairs detected, update quiz to target confused concepts
+    if contrast_count >= 1 and "quiz" in current_blocks and confused:
+        ops.append(BlockOperation(
+            action="update_config", block_type="quiz",
+            reason=f"Concepts often confused: {', '.join(confused[:2])}. Targeting quiz questions.",
+            signal_source="lector_review", urgency=75,
+            config={"target_concepts": confused[:3], "difficulty": "adaptive", "review_mode": "contrast"},
+        ))
+
+    # If many urgent items and no review block, add it
+    if urgent_count >= 3 and "review" not in current_blocks:
+        concepts = detail.get("concepts", [])
+        ops.append(BlockOperation(
+            action="add", block_type="review",
+            reason=f"{urgent_count} concepts need semantic review: {', '.join(concepts[:3])}.",
+            signal_source="lector_review", urgency=82, size="medium",
+        ))
+
+    return ops
 
 
 def rule_mastery_complete(

@@ -140,10 +140,22 @@ class TutorAgent(ReActMixin, BaseAgent):
                 "Offer step-by-step worked examples rather than questions.\n"
             )
         else:
-            # Include all teaching strategy fragments as context for the LLM
+            # Only load relevant teaching strategy fragments (not all)
             fragments = _load_strategy_fragments()
             if fragments:
-                frag_text = "\n\n".join(f"### {k}\n{v}" for k, v in fragments.items())
+                # Select at most 2 relevant fragments based on message context
+                relevant_keys = []
+                msg_lower = msg.lower()
+                for k in fragments:
+                    k_lower = k.lower().replace("_", " ")
+                    if any(word in msg_lower for word in k_lower.split()):
+                        relevant_keys.append(k)
+                if not relevant_keys:
+                    # Default to first 2 fragments if none match
+                    relevant_keys = list(fragments.keys())[:2]
+                else:
+                    relevant_keys = relevant_keys[:2]
+                frag_text = "\n\n".join(f"### {k}\n{fragments[k]}" for k in relevant_keys)
                 parts.append(f"\n## Teaching Strategies\n{frag_text}\n")
             parts.append(SOCRATIC_GUARDRAILS)
             parts.append(_COMPREHENSION_PROBING)
@@ -184,8 +196,10 @@ class TutorAgent(ReActMixin, BaseAgent):
                 "Do not re-suggest dismissed block types."
             )
 
-        # Scene tools
-        scene_tools = get_all_tools(include_preference=False)
+        # Scene-specific tools (only load relevant tools for current context)
+        from services.agent.tool_loader import get_scene_tools
+        scene = ctx.metadata.get("scene") or ctx.scene or ""
+        scene_tools = get_scene_tools(scene, include_preference=False)
         parts.append(scene_tools)
 
         return "\n".join(parts)

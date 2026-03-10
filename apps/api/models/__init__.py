@@ -21,6 +21,7 @@ from models.mastery_snapshot import MasterySnapshot
 from models.integration_credential import IntegrationCredential
 from models.knowledge_graph import KnowledgeNode, KnowledgeEdge, ConceptMastery
 from models.notification import Notification
+from models.cognitive_baseline import CognitiveBaseline
 
 __all__ = [
     "User",
@@ -53,4 +54,5 @@ __all__ = [
     "KnowledgeEdge",
     "ConceptMastery",
     "Notification",
+    "CognitiveBaseline",
 ]

@@ -28,8 +28,10 @@ class TestBKTTrainer:
         assert result is None
 
     def test_get_trained_params_hit(self):
+        import time
         from services.learning_science.bkt_trainer import (
             _fitted_params_cache,
+            _cache_timestamps,
             get_trained_params,
         )
 
@@ -39,6 +41,7 @@ class TestBKTTrainer:
         _fitted_params_cache[cache_key] = {
             "derivatives": {"prior": 0.3, "learns": 0.25, "guesses": 0.2, "slips": 0.1},
         }
+        _cache_timestamps[cache_key] = time.time()
 
         result = get_trained_params(user_id, course_id, "derivatives")
         assert result is not None
@@ -49,7 +52,8 @@ class TestBKTTrainer:
         assert get_trained_params(user_id, course_id, "integrals") is None
 
         # Cleanup
-        del _fitted_params_cache[cache_key]
+        _fitted_params_cache.pop(cache_key, None)
+        _cache_timestamps.pop(cache_key, None)
 
     def test_fit_with_pybkt_returns_empty_without_library(self):
         """When pyBKT is not installed, _fit_with_pybkt returns {}."""
@@ -80,8 +84,10 @@ class TestBKTTrainer:
 
     def test_compute_mastery_with_trained_params_uses_cache(self):
         """When trained params are cached, they're used instead of defaults."""
+        import time
         from services.learning_science.bkt_trainer import (
             _fitted_params_cache,
+            _cache_timestamps,
             compute_mastery_with_trained_params,
         )
 
@@ -91,6 +97,7 @@ class TestBKTTrainer:
         _fitted_params_cache[cache_key] = {
             "derivatives": {"prior": 0.9, "learns": 0.5, "guesses": 0.1, "slips": 0.05},
         }
+        _cache_timestamps[cache_key] = time.time()
 
         # Mastery with trained params (high prior, high learns) should be high
         mastery = compute_mastery_with_trained_params(
@@ -103,7 +110,8 @@ class TestBKTTrainer:
         assert mastery > 0.5  # High prior + correct answers → high mastery
 
         # Cleanup
-        del _fitted_params_cache[cache_key]
+        _fitted_params_cache.pop(cache_key, None)
+        _cache_timestamps.pop(cache_key, None)
 
     def test_compute_mastery_fallback_to_heuristic(self):
         """When no trained params, falls back to heuristic."""

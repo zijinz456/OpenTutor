@@ -6,6 +6,7 @@ propagating fractional implicit repetition credit to prerequisites.
 
 import logging
 import uuid
+from collections import deque
 from datetime import datetime, timezone
 
 from sqlalchemy import select, func
@@ -61,7 +62,7 @@ async def update_concept_mastery(
             practice_count=0,
             correct_count=0,
             wrong_count=0,
-            stability_days=0.0,
+            stability_days=1.0,
         )
         db.add(mastery)
 
@@ -81,7 +82,7 @@ async def update_concept_mastery(
 
     fsrs_card = FSRSCard(
         difficulty=5.0,
-        stability=mastery.stability_days if mastery.stability_days > 0 else 0.0,
+        stability=mastery.stability_days if mastery.stability_days > 0 else 1.0,
         reps=mastery.practice_count - 1,  # -1 because we already incremented
         lapses=mastery.wrong_count,
         last_review=mastery.last_practiced_at,
@@ -102,6 +103,9 @@ async def update_concept_mastery(
 
     # FIRe: Fractional Implicit Repetitions — propagate partial credit to prerequisites
     await _fire_propagate(db, user_id, node.id, course_id, correct)
+
+    # Sync concept mastery → LearningProgress so forgetting_risk signals stay current
+    await _sync_to_learning_progress(db, user_id, course_id, mastery)
 
     await db.flush()
     return mastery
@@ -138,10 +142,10 @@ async def _fire_propagate(
         return
 
     visited: set[uuid.UUID] = {practiced_node_id}
-    queue: list[tuple[uuid.UUID, int]] = [(e.target_id, 1) for e in prereq_edges]
+    queue: deque[tuple[uuid.UUID, int]] = deque((e.target_id, 1) for e in prereq_edges)
 
     while queue:
-        prereq_id, depth = queue.pop(0)
+        prereq_id, depth = queue.popleft()
         if prereq_id in visited or depth > max_depth:
             continue
         visited.add(prereq_id)
@@ -171,3 +175,48 @@ async def _fire_propagate(
         for edge in deeper_edges.scalars().all():
             if edge.target_id not in visited:
                 queue.append((edge.target_id, depth + 1))
+
+
+# ── Mastery Sync: ConceptMastery → LearningProgress ──
+
+async def _sync_to_learning_progress(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    course_id: uuid.UUID,
+    concept_mastery: ConceptMastery,
+) -> None:
+    """Sync concept mastery changes to LearningProgress.
+
+    This ensures that forgetting_risk signals (which read LearningProgress)
+    reflect LOOM concept-level mastery updates from quiz and flashcard reviews.
+    """
+    try:
+        from models.progress import LearningProgress
+
+        result = await db.execute(
+            select(LearningProgress).where(
+                LearningProgress.user_id == user_id,
+                LearningProgress.course_id == course_id,
+            )
+        )
+        progress = result.scalar_one_or_none()
+        if not progress:
+            return
+
+        # Sync FSRS scheduling data from concept mastery.
+        # Use min strategy for next_review_at (earliest review wins) and
+        # weighted blend for stability to avoid last-writer-wins overwrites.
+        if concept_mastery.stability_days and concept_mastery.stability_days > 0:
+            current_stability = progress.fsrs_stability or concept_mastery.stability_days
+            progress.fsrs_stability = current_stability * 0.85 + concept_mastery.stability_days * 0.15
+        if concept_mastery.next_review_at:
+            if not progress.next_review_at or concept_mastery.next_review_at < progress.next_review_at:
+                progress.next_review_at = concept_mastery.next_review_at
+        # Blend mastery scores: nudge LearningProgress toward concept mastery
+        if concept_mastery.mastery_score is not None:
+            current = progress.mastery_score or 0.0
+            # Small nudge (±0.05) to avoid overriding flashcard-specific mastery
+            delta = (concept_mastery.mastery_score - current) * 0.15
+            progress.mastery_score = max(0.0, min(1.0, current + delta))
+    except Exception:
+        logger.debug("ConceptMastery → LearningProgress sync failed (best-effort)", exc_info=True)

@@ -19,6 +19,7 @@ from .study_signals import (
     _collect_active_goals,
     _collect_deadlines,
     _collect_forgetting_risk,
+    _collect_lector_review,
     _collect_prerequisite_gaps,
 )
 from .review_signals import (
@@ -43,6 +44,7 @@ _COLLECTORS = [
     _collect_deadlines,
     _collect_failed_tasks,
     _collect_forgetting_risk,
+    _collect_lector_review,
     _collect_prerequisite_gaps,
     _collect_weak_areas,
     _collect_content_stale,
@@ -81,6 +83,7 @@ __all__ = [
     "_collect_deadlines",
     "_collect_failed_tasks",
     "_collect_forgetting_risk",
+    "_collect_lector_review",
     "_collect_prerequisite_gaps",
     "_collect_weak_areas",
     "_collect_content_stale",
