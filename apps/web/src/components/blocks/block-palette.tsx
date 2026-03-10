@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo } from "react";
 import { Plus, Lock } from "lucide-react";
 import { USER_ADDABLE_BLOCKS, BLOCK_REGISTRY } from "@/lib/block-system/registry";
 import { useWorkspaceStore } from "@/store/workspace";
@@ -32,6 +32,9 @@ export function BlockPalette() {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
+        aria-label={t("block.addBlock")}
+        aria-expanded={open}
+        aria-haspopup="menu"
         className="inline-flex items-center gap-1.5 px-5 py-2.5 text-sm text-muted-foreground hover:text-foreground border border-dashed border-border rounded-full hover:border-brand/40 hover:bg-brand-muted/30 transition-all"
       >
         <Plus className="size-4" />
