@@ -10,6 +10,7 @@ Jobs:
 """
 
 import asyncio
+import importlib
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -46,8 +47,6 @@ async def _broadcast_report_job(
     Fetches all users, generates a report per user via the given generator
     function, and dispatches a notification with the result.
     """
-    import importlib
-
     logger.info("Running %s job...", name)
     module = importlib.import_module(generator_module)
     generator = getattr(module, generator_func_name)
@@ -55,13 +54,36 @@ async def _broadcast_report_job(
     user_ids = await _get_user_ids()
     sem = asyncio.Semaphore(5)
     sent = 0
+    dedup_bucket = datetime.now(timezone.utc).strftime(dedup_pattern)
+    dedup_key = f"{category}:{dedup_bucket}"
 
     async def _send(user_id: uuid.UUID) -> bool:
         async with sem, async_session() as db:
             content = await generator(user_id, db)
             if content:
-                logger.debug("Report generated for user %s [%s]: %s", user_id, category, content[:100])
-                return True
+                action_url = "/analytics" if category == "weekly_report" else "/"
+                stored = await _push_notification(
+                    user_id=user_id,
+                    title=title,
+                    body=content,
+                    category=category,
+                    dedup_key=dedup_key,
+                    action_label=action_label,
+                    action_url=action_url,
+                    data={
+                        "report_category": category,
+                        "report_name": name,
+                        "dedup_bucket": dedup_bucket,
+                    },
+                )
+                if stored:
+                    logger.debug(
+                        "Report generated and notified for user %s [%s]: %s",
+                        user_id,
+                        category,
+                        content[:100],
+                    )
+                return stored
             return False
 
     results = await asyncio.gather(

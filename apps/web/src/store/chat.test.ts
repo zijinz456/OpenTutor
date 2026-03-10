@@ -26,11 +26,9 @@ vi.mock("@/store/workspace", () => ({
 
 import {
   listChatSessions,
-  getChatSessionMessages,
 } from "@/lib/api";
 
 const mockListChatSessions = vi.mocked(listChatSessions);
-const mockGetChatSessionMessages = vi.mocked(getChatSessionMessages);
 
 function resetStore() {
   useChatStore.setState({

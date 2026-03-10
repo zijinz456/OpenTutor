@@ -11,6 +11,7 @@ The mastery model uses recent-answer weighting plus layer-based gap inference:
 
 import uuid
 import logging
+import inspect
 from datetime import datetime, timezone
 
 from sqlalchemy import select, func
@@ -63,7 +64,9 @@ async def get_or_create_progress(
             course_id=course_id,
             content_node_id=content_node_id,
         )
-        db.add(progress)
+        add_result = db.add(progress)
+        if inspect.isawaitable(add_result):
+            await add_result
         await db.flush()
 
     return progress
@@ -136,7 +139,9 @@ async def update_quiz_result(
             mastery_score=progress.mastery_score,
             gap_type=progress.gap_type,
         )
-        db.add(snap)
+        add_result = db.add(snap)
+        if inspect.isawaitable(add_result):
+            await add_result
     except (ValueError, RuntimeError, OSError, SQLAlchemyError):
         logger.exception("Mastery snapshot failed (best-effort)")
 

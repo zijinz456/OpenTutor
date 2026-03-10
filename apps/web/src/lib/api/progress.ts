@@ -1,8 +1,5 @@
 import { request } from "./client";
 
-import type { JsonObject, NullableDateTime, SavedGeneratedAsset } from "./client";
-import type { GeneratedAssetBatchSummary } from "./practice";
-
 // ── Course Progress ──
 
 interface LearningOverviewCourseSummary {

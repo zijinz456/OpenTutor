@@ -10,6 +10,7 @@ import os
 import sqlite3
 import tempfile
 import uuid
+import warnings
 from pathlib import Path
 
 from sqlalchemy import text
@@ -17,6 +18,12 @@ from sqlalchemy.exc import SQLAlchemyError as _SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
+
+warnings.warn(
+    "services.export.session_export is deprecated and currently has no active runtime entrypoint.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 _SQLITE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS memories (

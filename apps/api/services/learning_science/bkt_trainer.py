@@ -9,6 +9,7 @@ Phase 4: Learning Digital Twin
 """
 
 import logging
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -20,10 +21,106 @@ logger = logging.getLogger(__name__)
 # Minimum observations per concept to justify EM fitting
 MIN_OBSERVATIONS_FOR_FIT = 15
 
-# Cache fitted params per concept with TTL-based invalidation
-_CACHE_TTL_SECONDS = 86400  # 24 hours — auto-expire stale params
-_fitted_params_cache: dict[str, dict[str, float]] = {}
-_cache_timestamps: dict[str, float] = {}  # cache_key -> unix timestamp of last train
+# Weekly job runs every Saturday; keep params alive through the full cycle (+1 day grace).
+_CACHE_TTL_SECONDS = 8 * 24 * 60 * 60
+
+
+def _cache_key(user_id: uuid.UUID, course_id: uuid.UUID | None) -> str:
+    return f"{user_id}:{course_id or 'all'}"
+
+
+class _TrainedParamsCache:
+    """Internal cache for fitted BKT params.
+
+    Encapsulates TTL handling so callers use stable get/set/invalidate APIs
+    instead of mutating module-level dicts directly.
+    """
+
+    def __init__(self) -> None:
+        self._params_by_key: dict[str, dict[str, dict[str, float]]] = {}
+        self._updated_at_by_key: dict[str, float] = {}
+
+    def set(
+        self,
+        *,
+        user_id: uuid.UUID,
+        course_id: uuid.UUID | None,
+        fitted_params: dict[str, dict[str, float]],
+        trained_at_ts: float | None = None,
+    ) -> None:
+        key = _cache_key(user_id, course_id)
+        self._params_by_key[key] = fitted_params
+        self._updated_at_by_key[key] = trained_at_ts if trained_at_ts is not None else time.time()
+
+    def get(
+        self,
+        *,
+        user_id: uuid.UUID,
+        course_id: uuid.UUID | None,
+    ) -> dict[str, dict[str, float]] | None:
+        key = _cache_key(user_id, course_id)
+        cached_at = self._updated_at_by_key.get(key)
+        if cached_at is None:
+            # Defensive cleanup: a params entry without timestamp is invalid.
+            self._params_by_key.pop(key, None)
+            return None
+        if time.time() - cached_at > _CACHE_TTL_SECONDS:
+            self._params_by_key.pop(key, None)
+            self._updated_at_by_key.pop(key, None)
+            return None
+        return self._params_by_key.get(key)
+
+    def invalidate(
+        self,
+        *,
+        user_id: uuid.UUID,
+        course_id: uuid.UUID | None = None,
+    ) -> None:
+        if course_id is not None:
+            key = _cache_key(user_id, course_id)
+            self._params_by_key.pop(key, None)
+            self._updated_at_by_key.pop(key, None)
+            return
+        prefix = f"{user_id}:"
+        keys = [key for key in self._params_by_key if key.startswith(prefix)]
+        for key in keys:
+            self._params_by_key.pop(key, None)
+            self._updated_at_by_key.pop(key, None)
+
+
+_trained_params_cache = _TrainedParamsCache()
+
+
+def set_trained_params_cache(
+    user_id: uuid.UUID,
+    course_id: uuid.UUID | None,
+    fitted_params: dict[str, dict[str, float]],
+    *,
+    trained_at_ts: float | None = None,
+) -> None:
+    """Persist fitted params in cache."""
+    _trained_params_cache.set(
+        user_id=user_id,
+        course_id=course_id,
+        fitted_params=fitted_params,
+        trained_at_ts=trained_at_ts,
+    )
+
+
+def get_trained_params_cache(
+    user_id: uuid.UUID,
+    course_id: uuid.UUID | None,
+) -> dict[str, dict[str, float]] | None:
+    """Read cached fitted params for a user/course, honoring TTL."""
+    return _trained_params_cache.get(user_id=user_id, course_id=course_id)
+
+
+def invalidate_trained_params_cache(
+    user_id: uuid.UUID,
+    course_id: uuid.UUID | None = None,
+) -> None:
+    """Invalidate cache for one course or all courses for a user."""
+    _trained_params_cache.invalidate(user_id=user_id, course_id=course_id)
 
 
 async def _collect_response_data(
@@ -36,7 +133,7 @@ async def _collect_response_data(
 
     Returns list of dicts: [{concept, correct, timestamp}, ...]
     """
-    from sqlalchemy import select, text as sa_text
+    from sqlalchemy import text as sa_text
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
@@ -150,11 +247,7 @@ async def train_bkt_params(
 
     fitted = _fit_with_pybkt(data)
 
-    # Cache results with timestamp for TTL expiry
-    import time as _time
-    cache_key = f"{user_id}:{course_id or 'all'}"
-    _fitted_params_cache[cache_key] = fitted
-    _cache_timestamps[cache_key] = _time.time()
+    set_trained_params_cache(user_id, course_id, fitted)
 
     logger.info(
         "BKT training complete: user=%s course=%s concepts_fitted=%d",
@@ -168,19 +261,8 @@ def get_trained_params(
     course_id: uuid.UUID | None,
     concept: str,
 ) -> dict[str, float] | None:
-    """Get cached trained params for a specific concept, or None.
-
-    Returns None if the cache entry has expired (older than _CACHE_TTL_SECONDS).
-    """
-    import time as _time
-    cache_key = f"{user_id}:{course_id or 'all'}"
-    cached_at = _cache_timestamps.get(cache_key, 0)
-    if _time.time() - cached_at > _CACHE_TTL_SECONDS:
-        # Expired — remove stale entry
-        _fitted_params_cache.pop(cache_key, None)
-        _cache_timestamps.pop(cache_key, None)
-        return None
-    params = _fitted_params_cache.get(cache_key, {})
+    """Get cached trained params for a specific concept, or None."""
+    params = get_trained_params_cache(user_id, course_id) or {}
     return params.get(concept)
 
 

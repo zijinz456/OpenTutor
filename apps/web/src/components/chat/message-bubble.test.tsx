@@ -6,7 +6,7 @@ import type { ChatMessage } from "@/store/chat";
 vi.mock("next/image", () => ({
   default: (props: Record<string, unknown>) => {
     const { src, alt, ...rest } = props;
-    // eslint-disable-next-line @next/next/no-img-element, jsx-a11y/alt-text
+    // eslint-disable-next-line @next/next/no-img-element
     return <img src={src as string} alt={alt as string} {...rest} />;
   },
 }));

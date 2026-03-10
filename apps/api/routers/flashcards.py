@@ -71,7 +71,10 @@ async def review_flashcard_endpoint(
 
     updated_card = review_flashcard(body.card, body.rating)
 
-    # Persist FSRS state back to the GeneratedAsset in the database
+    # Persist FSRS state back to the GeneratedAsset in the database.
+    # Note: read-modify-write on JSON column without row-level locking.
+    # Safe under SQLite (serialized writes) but would need SELECT ... FOR UPDATE
+    # if migrated to PostgreSQL with concurrent reviewers.
     if body.batch_id is not None and body.card_index is not None:
         from models.generated_asset import GeneratedAsset
 

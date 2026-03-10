@@ -9,6 +9,7 @@ These edges feed into LECTOR's contrast review sessions.
 """
 
 import logging
+import inspect
 import uuid
 from collections import defaultdict
 
@@ -126,7 +127,9 @@ async def detect_confusion_pairs(
                 relation_type="confused_with",
                 weight=float(count),
             )
-            db.add(edge)
+            add_result = db.add(edge)
+            if inspect.isawaitable(add_result):
+                await add_result
             # Also add reverse edge (confusion is bidirectional)
             reverse_edge = KnowledgeEdge(
                 source_id=node_b_id,
@@ -134,7 +137,9 @@ async def detect_confusion_pairs(
                 relation_type="confused_with",
                 weight=float(count),
             )
-            db.add(reverse_edge)
+            add_result = db.add(reverse_edge)
+            if inspect.isawaitable(add_result):
+                await add_result
 
         node_a = next((n for n in nodes if n.id == node_a_id), None)
         node_b = next((n for n in nodes if n.id == node_b_id), None)

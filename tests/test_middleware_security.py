@@ -114,9 +114,9 @@ class TestCSRFMiddleware:
         async with AsyncClient(
             transport=ASGITransport(app=csrf_app), base_url="http://test"
         ) as client:
+            client.cookies.set("csrf_token", "token-a")
             resp = await client.post(
                 "/api/courses",
-                cookies={"csrf_token": "token-a"},
                 headers={"x-csrf-token": "token-b"},
             )
         assert resp.status_code == 403
@@ -129,9 +129,9 @@ class TestCSRFMiddleware:
         async with AsyncClient(
             transport=ASGITransport(app=csrf_app), base_url="http://test"
         ) as client:
+            client.cookies.set("csrf_token", bad_token)
             resp = await client.post(
                 "/api/courses",
-                cookies={"csrf_token": bad_token},
                 headers={"x-csrf-token": bad_token},
             )
         assert resp.status_code == 403
@@ -147,9 +147,9 @@ class TestCSRFMiddleware:
         async with AsyncClient(
             transport=ASGITransport(app=csrf_app), base_url="http://test"
         ) as client:
+            client.cookies.set("csrf_token", token)
             resp = await client.post(
                 "/api/courses",
-                cookies={"csrf_token": token},
                 headers={"x-csrf-token": token},
             )
         assert resp.status_code == 200
@@ -179,9 +179,9 @@ class TestCSRFMiddleware:
         async with AsyncClient(
             transport=ASGITransport(app=csrf_app), base_url="http://test"
         ) as client:
+            client.cookies.set("csrf_token", expired_token)
             resp = await client.post(
                 "/api/courses",
-                cookies={"csrf_token": expired_token},
                 headers={"x-csrf-token": expired_token},
             )
         assert resp.status_code == 403

@@ -8,9 +8,9 @@ function RovingHarness({ orientation = "vertical" }: { orientation?: "horizontal
   useRovingTabindex(ref, orientation);
   return (
     <div ref={ref} data-testid="container">
-      <div role="option" tabIndex={0} data-testid="item-0">A</div>
-      <div role="option" tabIndex={-1} data-testid="item-1">B</div>
-      <div role="option" tabIndex={-1} data-testid="item-2">C</div>
+      <div role="option" aria-selected={true} tabIndex={0} data-testid="item-0">A</div>
+      <div role="option" aria-selected={false} tabIndex={-1} data-testid="item-1">B</div>
+      <div role="option" aria-selected={false} tabIndex={-1} data-testid="item-2">C</div>
     </div>
   );
 }

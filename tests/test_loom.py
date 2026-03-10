@@ -152,7 +152,9 @@ async def test_update_mastery_correct_answer():
     db = AsyncMock(); uid, cid = uuid.uuid4(), uuid.uuid4()
     n = _node("Derivative", cid)
     m = _mastery(uid, n.id, score=0.5, pc=3, cc=2, wc=1, stab=2.0)
-    db.execute = AsyncMock(side_effect=[_scalars([n]), _scalars([m]), _scalars([])])
+    # Mock results: 1) find node, 2) find mastery, 3) FIRe prereq edges, 4) sync LearningProgress
+    no_progress = MagicMock(); no_progress.scalar_one_or_none.return_value = None
+    db.execute = AsyncMock(side_effect=[_scalars([n]), _scalars([m]), _scalars([]), no_progress])
     db.flush = AsyncMock()
     with _fsrs_patch() as fp:
         fp.return_value = (_fsrs_card(5.0), MagicMock())
@@ -165,7 +167,9 @@ async def test_update_mastery_incorrect_answer():
     db = AsyncMock(); uid, cid = uuid.uuid4(), uuid.uuid4()
     n = _node("Integration", cid)
     m = _mastery(uid, n.id, score=0.8, pc=5, cc=4, wc=1, stab=3.0)
-    db.execute = AsyncMock(side_effect=[_scalars([n]), _scalars([m])])
+    # Mock results: 1) find node, 2) find mastery, 3) sync LearningProgress (FIRe skipped for incorrect)
+    no_progress = MagicMock(); no_progress.scalar_one_or_none.return_value = None
+    db.execute = AsyncMock(side_effect=[_scalars([n]), _scalars([m]), no_progress])
     db.flush = AsyncMock()
     with _fsrs_patch() as fp:
         fp.return_value = (_fsrs_card(1.0), MagicMock())
@@ -179,7 +183,9 @@ async def test_update_mastery_creates_new_record():
     n = _node("Limit", cid)
     no_m = MagicMock(); no_m.scalar_one_or_none.return_value = None
     s = MagicMock(); s.all.return_value = []; no_m.scalars.return_value = s
-    db.execute = AsyncMock(side_effect=[_scalars([n]), no_m, _scalars([])])
+    # Mock results: 1) find node, 2) no existing mastery, 3) FIRe prereq edges, 4) sync LearningProgress
+    no_progress = MagicMock(); no_progress.scalar_one_or_none.return_value = None
+    db.execute = AsyncMock(side_effect=[_scalars([n]), no_m, _scalars([]), no_progress])
     added = []; db.add = lambda o: added.append(o); db.flush = AsyncMock()
     with _fsrs_patch() as fp:
         fp.return_value = (_fsrs_card(1.0), MagicMock())
@@ -193,7 +199,9 @@ async def test_update_mastery_ema_from_zero():
     db = AsyncMock(); uid, cid = uuid.uuid4(), uuid.uuid4()
     n = _node("Topic", cid)
     m = _mastery(uid, n.id, score=0.0, pc=0, cc=0, wc=0, stab=0.0)
-    db.execute = AsyncMock(side_effect=[_scalars([n]), _scalars([m]), _scalars([])])
+    # Mock results: 1) find node, 2) find mastery, 3) FIRe prereq edges, 4) sync LearningProgress
+    no_progress = MagicMock(); no_progress.scalar_one_or_none.return_value = None
+    db.execute = AsyncMock(side_effect=[_scalars([n]), _scalars([m]), _scalars([]), no_progress])
     db.flush = AsyncMock()
     with _fsrs_patch() as fp:
         fp.return_value = (_fsrs_card(1.0), MagicMock())

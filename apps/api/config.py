@@ -75,6 +75,9 @@ class Settings(BaseSettings):
     app_run_scheduler: bool = False
     app_run_activity_engine: bool = False
     ambient_monitor_enabled: bool = True
+    enable_experimental_loom: bool = True
+    enable_experimental_lector: bool = True
+    enable_experimental_notion_export: bool = False
 
     # Rate limiting
     rate_limit_mode: str = "simple"  # "simple" | "cost_aware"
@@ -107,17 +110,18 @@ class Settings(BaseSettings):
     # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
     encryption_key: str = ""
 
-    # Cognitive load signal weights (sum should = 1.0)
+    # Cognitive load signal weights (sum = 1.0)
     # Source: "Cognitive Load Theory meets Deep Knowledge Tracing" (Nature, 2025)
-    cognitive_load_weight_fatigue: float = 0.25
-    cognitive_load_weight_session_length: float = 0.15
-    cognitive_load_weight_errors: float = 0.20
-    cognitive_load_weight_brevity: float = 0.10
-    cognitive_load_weight_help_seeking: float = 0.15
-    cognitive_load_weight_quiz_performance: float = 0.15
-    cognitive_load_weight_answer_hesitation: float = 0.10
-    cognitive_load_weight_nlp_affect: float = 0.15
-    cognitive_load_weight_relative_baseline: float = 0.10
+    # Proportionally normalized from original paper weights to sum to 1.0
+    cognitive_load_weight_fatigue: float = 0.18
+    cognitive_load_weight_session_length: float = 0.11
+    cognitive_load_weight_errors: float = 0.15
+    cognitive_load_weight_brevity: float = 0.07
+    cognitive_load_weight_help_seeking: float = 0.11
+    cognitive_load_weight_quiz_performance: float = 0.11
+    cognitive_load_weight_answer_hesitation: float = 0.07
+    cognitive_load_weight_nlp_affect: float = 0.11
+    cognitive_load_weight_relative_baseline: float = 0.09
     cognitive_load_threshold_high: float = 0.6
     cognitive_load_threshold_medium: float = 0.3
 
@@ -130,7 +134,6 @@ class Settings(BaseSettings):
     cognitive_load_hesitation_range_ms: float = 45000.0    # 60s+ = full signal
     cognitive_load_nlp_frustration_weight: float = 0.6
     cognitive_load_nlp_confusion_weight: float = 0.4
-    cognitive_load_layout_simplify_threshold: float = 0.7
     cognitive_load_review_reorder_threshold: float = 0.5
 
     # LECTOR review priority factors
