@@ -15,7 +15,7 @@ interface EngagementEvent {
   course_id: string;
 }
 
-let eventBuffer: EngagementEvent[] = [];
+const eventBuffer: EngagementEvent[] = [];
 let flushTimer: ReturnType<typeof setInterval> | null = null;
 let unloadListenerAdded = false;
 
