@@ -18,6 +18,8 @@ export function BlockGrid({ courseId, aiActionsEnabled }: BlockGridProps) {
   const blocks = useWorkspaceStore((s) => s.spaceLayout.blocks);
   const columns = useWorkspaceStore((s) => s.spaceLayout.columns);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const gridRef = useRef<HTMLDivElement>(null);
+  useRovingTabindex(gridRef, "both");
 
   const visibleBlocks = blocks.filter((b) => b.visible);
 
@@ -36,9 +38,6 @@ export function BlockGrid({ courseId, aiActionsEnabled }: BlockGridProps) {
     if (size === "large") return cols === 3 ? "col-span-2" : "col-span-2";
     return "col-span-1";
   };
-
-  const gridRef = useRef<HTMLDivElement>(null);
-  useRovingTabindex(gridRef, "both");
 
   return (
     <div className="space-y-4">
@@ -62,6 +61,8 @@ export function BlockGrid({ courseId, aiActionsEnabled }: BlockGridProps) {
               <div
                 key={block.id}
                 role="listitem"
+                aria-roledescription="sortable block"
+                aria-label={`${blockLabel}, position ${index + 1} of ${visibleBlocks.length}`}
                 tabIndex={index === 0 ? 0 : -1}
                 className={cn("max-sm:col-span-1", sizeToSpan(block.size, columns))}
                 style={{ animation: "block-appear 0.4s ease-out both", animationDelay: `${index * 100}ms` }}
@@ -72,6 +73,7 @@ export function BlockGrid({ courseId, aiActionsEnabled }: BlockGridProps) {
                   className="sm:hidden w-full flex items-center justify-between px-3 py-2 text-xs font-medium text-muted-foreground rounded-t-xl bg-section-header border border-b-0 border-border/60 touch-target"
                   onClick={() => toggleCollapse(block.id)}
                   aria-expanded={!isCollapsed ? "true" : "false"}
+                  aria-label={`${isCollapsed ? "Expand" : "Collapse"} ${blockLabel}`}
                 >
                   <span>{blockLabel}</span>
                   <ChevronDown className={cn("h-4 w-4 transition-transform", isCollapsed && "-rotate-90")} />
