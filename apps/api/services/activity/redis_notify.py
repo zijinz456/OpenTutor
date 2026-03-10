@@ -65,7 +65,7 @@ async def _get_redis() -> Any | None:
         _redis_available = True
         logger.info("Redis notify: connected to %s", url)
         return client
-    except (OSError, ConnectionError, TimeoutError, Exception) as exc:
+    except (OSError, ConnectionError, TimeoutError, RuntimeError) as exc:
         logger.warning("Redis notify: connection failed; falling back to polling (%s)", type(exc).__name__, exc_info=True)
         _redis_available = False
         return None
@@ -88,8 +88,8 @@ async def notify_task_ready(task_id: str) -> None:
             return
         await client.publish(TASK_READY_CHANNEL, str(task_id))
         logger.debug("Redis notify: published task_ready for %s", task_id)
-    except Exception:
-        logger.exception("Redis notify: publish failed")
+    except (ConnectionError, TimeoutError, OSError, RuntimeError) as exc:
+        logger.exception("Redis notify: publish failed: %s", exc)
 
 
 async def wait_for_task_notification(timeout: float = 5.0) -> str | None:
@@ -125,8 +125,8 @@ async def wait_for_task_notification(timeout: float = 5.0) -> str | None:
         finally:
             await pubsub.unsubscribe(TASK_READY_CHANNEL)
             await pubsub.aclose()
-    except Exception:
-        logger.exception("Redis notify: wait failed")
+    except (ConnectionError, TimeoutError, OSError, RuntimeError) as exc:
+        logger.exception("Redis notify: wait failed: %s", exc)
     return None
 
 
@@ -136,7 +136,7 @@ async def close_redis() -> None:
     if _redis_client is not None:
         try:
             await _redis_client.aclose()
-        except Exception:
+        except (ConnectionError, TimeoutError, OSError, RuntimeError):
             logger.debug("Redis close error", exc_info=True)
     _redis_client = None
     _redis_available = None

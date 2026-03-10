@@ -18,6 +18,9 @@ class _DummyLLMClient:
     def get_last_usage(self) -> dict[str, int]:
         return self._usage
 
+    async def chat(self, *_args, **_kwargs):
+        raise RuntimeError("no LLM in test")
+
     async def _chat_with_tools(self, *_args, **_kwargs):
         raise NotImplementedError
 
@@ -31,6 +34,9 @@ class _StreamingOnlyAgent:
 
     def get_llm_client(self):
         return self._client
+
+    def build_system_prompt(self, _ctx):
+        return "system"
 
     async def run(self, *_args, **_kwargs):
         raise AssertionError("run() should not be used for run_agent_turn")
@@ -357,6 +363,8 @@ async def test_orchestrate_stream_guided_session_parses_action_markers(monkeypat
 
     monkeypatch.setattr("services.agent.orchestrator.get_agent", lambda _intent: guided_agent)
     monkeypatch.setattr("services.agent.orchestrator.load_context", fake_load_context)
+    monkeypatch.setattr("services.agent.guided_session_handler.get_agent", lambda _intent: guided_agent)
+    monkeypatch.setattr("services.agent.guided_session_handler.load_context", fake_load_context)
     monkeypatch.setattr("services.agent.guided_session.get_session_state", fake_get_session_state)
     monkeypatch.setattr("services.agent.guided_session.advance_phase", fake_advance_phase)
     monkeypatch.setattr("services.agent.guided_session.build_phase_prompt", lambda *_args, **_kwargs: "Teach this")

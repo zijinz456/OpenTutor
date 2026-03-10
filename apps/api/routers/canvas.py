@@ -50,7 +50,7 @@ def _canvas_actions(username: str, password: str) -> list[dict]:
     ]
 
 
-@router.post("/login")
+@router.post("/login", summary="Log in to Canvas LMS")
 async def canvas_login(
     body: CanvasLoginRequest,
     user: User = Depends(get_current_user),
@@ -115,7 +115,7 @@ async def canvas_login(
     return {"status": "ok", "message": "Canvas session saved"}
 
 
-@router.post("/browser-login")
+@router.post("/browser-login", summary="Log in to Canvas via browser")
 async def canvas_browser_login(
     body: CanvasBrowserLoginRequest,
     user: User = Depends(get_current_user),
@@ -162,8 +162,8 @@ async def canvas_browser_login(
 
             try:
                 current_url = page.url.lower()
-            except Exception:
-                logger.debug("Browser closed during Canvas login polling")
+            except (AttributeError, RuntimeError, OSError):
+                logger.debug("Browser closed during Canvas login polling")  # expected during user close
                 break  # browser was closed by user
 
             parsed = urlparse(current_url)
@@ -231,7 +231,7 @@ async def canvas_browser_login(
     return {"status": "ok", "message": "Canvas session saved via browser login"}
 
 
-@router.post("/sync")
+@router.post("/sync", summary="Sync content from Canvas")
 async def canvas_sync(
     body: CanvasSyncRequest,
     user: User = Depends(get_current_user),

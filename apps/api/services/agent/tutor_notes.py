@@ -45,7 +45,7 @@ async def get_tutor_notes(
         if isinstance(value, str):
             return value
         return None
-    except Exception as e:
+    except (ConnectionError, TimeoutError, KeyError, ValueError) as e:
         logger.exception("Failed to load tutor notes for user %s: %s", user_id, e)
         return None
 

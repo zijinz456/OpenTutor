@@ -5,10 +5,12 @@ import type { BlockComponentProps } from "@/lib/block-system/registry";
 
 export default function FlashcardsBlock({ courseId, aiActionsEnabled }: BlockComponentProps) {
   return (
-    <PracticeSection
-      courseId={courseId}
-      aiActionsEnabled={aiActionsEnabled}
-      defaultTab="flashcards"
-    />
+    <div role="region" aria-label="Flashcards">
+      <PracticeSection
+        courseId={courseId}
+        aiActionsEnabled={aiActionsEnabled}
+        defaultTab="flashcards"
+      />
+    </div>
   );
 }

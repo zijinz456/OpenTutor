@@ -24,7 +24,7 @@ function RetrievabilityBar({ value }: { value: number }) {
 
   return (
     <div className="flex items-center gap-2 min-w-[120px]">
-      <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
+      <div role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label="Retrievability" className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
         <div className={`h-full rounded-full ${color} transition-all`} style={{ width: `${pct}%` }} />
       </div>
       <span className="text-[10px] tabular-nums text-muted-foreground w-8 text-right">{pct}%</span>
@@ -108,7 +108,7 @@ export function ForecastView({ courseId }: ForecastViewProps) {
   const okItems = data.predictions.filter((p) => p.urgency === "ok");
 
   return (
-    <div className="flex-1 flex flex-col overflow-y-auto" data-testid="forecast-panel">
+    <div role="region" aria-label="Forgetting forecast" className="flex-1 flex flex-col overflow-y-auto" data-testid="forecast-panel">
       {/* Summary cards */}
       <div className="grid grid-cols-3 gap-2 p-4 pb-2">
         <div className="rounded-2xl card-shadow bg-card p-3.5 flex flex-col gap-0.5">

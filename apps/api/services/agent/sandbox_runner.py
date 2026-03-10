@@ -54,7 +54,7 @@ def _build_globals() -> dict:
     for module_name in ALLOWED_MODULES:
         try:
             safe_globals[module_name] = __import__(module_name)
-        except Exception:
+        except (ImportError, ModuleNotFoundError):
             continue
     return safe_globals
 

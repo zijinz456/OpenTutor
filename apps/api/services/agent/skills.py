@@ -55,7 +55,7 @@ def load_skills() -> list[Skill]:
                 priority=meta.get("priority", 5),
                 content=content,
             ))
-        except Exception as e:
+        except (OSError, UnicodeDecodeError, ValueError, KeyError) as e:
             logger.exception("Failed to load skill %s: %s", path.name, e)
 
     logger.info("Loaded %d teaching skills", len(skills))

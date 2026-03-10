@@ -94,8 +94,8 @@ def upgrade() -> None:
                 ["parent_problem_id"],
                 ["id"],
             )
-        except Exception:
-            pass  # FK may already exist without a name
+        except (sa.exc.IntegrityError, sa.exc.OperationalError, sa.exc.ProgrammingError):
+            pass  # FK may already exist without a name — safe to ignore in migration
 
 
 def downgrade() -> None:

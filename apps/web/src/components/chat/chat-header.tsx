@@ -42,7 +42,7 @@ export function ChatHeader({ courseId }: ChatHeaderProps) {
   };
 
   return (
-    <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border/40 px-4">
+    <div role="banner" aria-label="Chat header" className="flex h-10 shrink-0 items-center gap-2 border-b border-border/40 px-4">
       <Select
         value={currentSessionId || "__current__"}
         onValueChange={(value) => {
@@ -56,6 +56,7 @@ export function ChatHeader({ courseId }: ChatHeaderProps) {
           size="sm"
           className="h-7 min-w-[160px] flex-1 text-xs"
           data-testid="chat-session-select"
+          aria-label="Select chat session"
         >
           <SelectValue placeholder="Current conversation" />
         </SelectTrigger>
@@ -76,6 +77,7 @@ export function ChatHeader({ courseId }: ChatHeaderProps) {
         onClick={() => startNewSession(courseId)}
         disabled={isStreaming}
         title="New Chat"
+        aria-label="Start new chat session"
       >
         <Plus className="mr-1 size-3.5" />
         New

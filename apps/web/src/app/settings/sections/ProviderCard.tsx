@@ -89,6 +89,8 @@ export function ProviderCard({
               value={pendingValue}
               onChange={(e) => handleKeyChange(e.target.value)}
               placeholder={`${t("settings.pasteApiKey")} (${name})`}
+              aria-label={`${t("settings.pasteApiKey")} (${name})`}
+              aria-required
             />
             <Button
               type="button"

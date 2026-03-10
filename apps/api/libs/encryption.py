@@ -79,8 +79,13 @@ def decrypt_value(stored: str) -> str:
         return stored
 
     try:
+        from cryptography.fernet import InvalidToken
+    except ImportError:
+        InvalidToken = Exception  # type: ignore[misc,assignment]
+
+    try:
         ciphertext = stored[4:]  # strip "enc:" prefix
         return f.decrypt(ciphertext.encode("utf-8")).decode("utf-8")
-    except Exception as exc:
-        logger.exception("Decryption failed")
+    except (InvalidToken, ValueError, TypeError, UnicodeDecodeError) as exc:
+        logger.exception("Decryption failed: %s", exc)
         return stored

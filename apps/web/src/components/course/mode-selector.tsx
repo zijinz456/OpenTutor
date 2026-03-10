@@ -88,6 +88,9 @@ export function ModeSelector({ onModeChange }: ModeSelectorProps) {
         onClick={() => { setOpen((v) => !v); setConfirming(null); }}
         className="flex items-center gap-1 rounded-full px-2.5 py-1 text-xs hover:bg-muted/50 transition-colors"
         title={t("mode.title")}
+        aria-label={t("mode.title")}
+        aria-expanded={open ? "true" : "false"}
+        aria-haspopup="true"
       >
         {currentMode ? (
           <>
@@ -121,7 +124,7 @@ export function ModeSelector({ onModeChange }: ModeSelectorProps) {
                 type="button"
                 key={m.id}
                 role="tab"
-                aria-selected={isActive}
+                aria-selected={isActive ? "true" : "false"}
                 onClick={() => handleSelect(m.id)}
                 className={`flex w-full items-start gap-2.5 rounded-xl px-2 py-2 text-left transition-colors ${
                   isActive

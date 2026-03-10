@@ -110,7 +110,7 @@ export function ChatView({ courseId, aiActionsEnabled = true }: ChatViewProps) {
   }, [setOnAction, setActiveSection, setSelectedNodeId, triggerRefresh]);
 
   return (
-    <div className="flex h-full flex-col bg-background/80">
+    <div role="region" aria-label="Chat" className="flex h-full flex-col bg-background/80">
       <ChatHeader courseId={courseId} />
 
       <MessageList messages={messages} />

@@ -1,0 +1,137 @@
+"""Step 6: Dispatch extracted content to appropriate business tables.
+
+Routes classified content into content_tree, assignments, or exam records,
+then triggers deadline extraction and auto-generation of learning content.
+"""
+
+import logging
+
+import sqlalchemy as sa
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from models.ingestion import IngestionJob, Assignment
+
+logger = logging.getLogger(__name__)
+
+
+async def dispatch_content(db: AsyncSession, job: IngestionJob) -> dict:
+    """Step 6: Dispatch extracted content to appropriate business tables."""
+    result = {}
+
+    if not job.course_id or not job.extracted_markdown:
+        return result
+
+    category = job.content_category or "other"
+    source_name = (job.original_filename or "").lower()
+    inferred_text_source = (
+        source_name.endswith((".md", ".txt", ".rst", ".html", ".htm"))
+        or (job.mime_type or "").startswith("text/")
+        or job.source_type == "url"
+    )
+
+    if category in ("lecture_slides", "textbook", "notes", "syllabus") or (
+        category == "other" and inferred_text_source
+    ):
+        # Build content tree using PageIndex pattern
+        from services.parser.pdf import _markdown_to_tree
+        from models.content import CourseContentTree
+        source_label = job.original_filename or job.url or "Untitled"
+
+        # Dedup: remove existing content tree nodes from the same source
+        # before inserting new ones (prevents duplicates on re-ingestion)
+        existing = await db.execute(
+            select(CourseContentTree).where(
+                CourseContentTree.course_id == job.course_id,
+                CourseContentTree.source_file == source_label,
+            )
+        )
+        old_nodes = existing.scalars().all()
+        if old_nodes:
+            old_ids = [n.id for n in old_nodes]
+            # Nullify FK references from practice_problems before deleting
+            from models.practice import PracticeProblem
+            await db.execute(
+                PracticeProblem.__table__.update()
+                .where(PracticeProblem.content_node_id.in_(old_ids))
+                .values(content_node_id=None)
+            )
+            for old_node in old_nodes:
+                await db.delete(old_node)
+            await db.flush()
+            logger.info("Dedup: removed %d existing nodes for source %s", len(old_nodes), source_label)
+
+        nodes = _markdown_to_tree(
+            markdown=job.extracted_markdown,
+            course_id=job.course_id,
+            source_file=source_label,
+        )
+        for node in nodes:
+            # Normalize source metadata to the ingestion source (file/url).
+            node.source_type = job.source_type
+            node.source_file = source_label
+            db.add(node)
+        await db.flush()  # Assign IDs before indexing
+
+        # Build full-text search vectors for BM25
+        node_ids = [str(node.id) for node in nodes]
+        from services.search.indexer import index_content_nodes
+        await index_content_nodes(db, node_ids)
+
+        result["content_tree"] = len(nodes)
+
+        # Queue auto-generation of learning content (notes, practice, flashcards)
+        if nodes and job.course_id:
+            from services.ingestion.auto_generation import _auto_generate_learning_content
+            import asyncio as _asyncio_dispatch
+            _asyncio_dispatch.create_task(
+                _auto_generate_learning_content(db, job.course_id, job.user_id, nodes)
+            )
+
+    elif category == "assignment":
+        # Extract assignment info
+        from services.ingestion.content_trimmer import trim_for_llm
+
+        assignment = Assignment(
+            course_id=job.course_id,
+            title=job.original_filename or "Assignment",
+            description=trim_for_llm(job.extracted_markdown, max_tokens=2000) if job.extracted_markdown else None,
+            assignment_type="homework",
+            source_ingestion_id=job.id,
+        )
+        db.add(assignment)
+        result["assignments"] = 1
+
+    elif category == "exam_schedule":
+        from services.ingestion.content_trimmer import trim_for_llm
+
+        assignment = Assignment(
+            course_id=job.course_id,
+            title=job.original_filename or "Exam",
+            description=trim_for_llm(job.extracted_markdown, max_tokens=2000) if job.extracted_markdown else None,
+            assignment_type="exam",
+            source_ingestion_id=job.id,
+        )
+        db.add(assignment)
+        result["assignments"] = 1
+
+    # ── Automatic deadline extraction (all categories) ──
+    if job.course_id and job.extracted_markdown:
+        try:
+            from services.ingestion.deadline_extractor import extract_and_create_deadlines
+            canvas_assignments = getattr(job, "_canvas_assignments_data", None)
+            deadline_count = await extract_and_create_deadlines(
+                db=db,
+                course_id=job.course_id,
+                content=job.extracted_markdown,
+                source_ingestion_id=job.id,
+                canvas_assignments=canvas_assignments,
+            )
+            if deadline_count:
+                result["deadlines_extracted"] = deadline_count
+        except (sa.exc.SQLAlchemyError, ValueError, KeyError) as e:
+            logger.warning("Deadline extraction failed (non-blocking): %s", e)
+        except (RuntimeError, ConnectionError, TimeoutError) as e:
+            logger.exception("Deadline extraction unexpected error (non-blocking)")
+
+    return result

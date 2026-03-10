@@ -43,6 +43,7 @@ htmlcov/
 test-results/
 playwright-report/
 tmp/
+.hypothesis/
 
 # Temporary directories
 sessions/

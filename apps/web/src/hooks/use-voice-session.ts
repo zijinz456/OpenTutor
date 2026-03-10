@@ -11,10 +11,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getStoredAccessToken } from "@/lib/auth";
 import { getSharedAudioContext } from "@/lib/audio-context";
+import { API_BASE } from "@/lib/api/client";
 
 const API_WS_BASE =
-  (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000")
-    .replace(/^http/, "ws") + "/api/voice";
+  API_BASE.replace(/^http/, "ws").replace(/\/api$/, "") + "/api/voice";
 
 export type VoiceState = "idle" | "connecting" | "recording" | "processing" | "playing";
 

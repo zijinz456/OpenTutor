@@ -53,8 +53,8 @@ async def generate_query_variants(
         variants = json.loads(result)
         if isinstance(variants, list):
             return [str(v) for v in variants[:n]]
-    except Exception as e:
-        logger.warning("Query variant generation failed: %s", e)
+    except (json.JSONDecodeError, ConnectionError, TimeoutError, ValueError, RuntimeError, Exception) as e:
+        logger.warning("Query variant generation failed: %s", e, exc_info=True)
 
     return []
 

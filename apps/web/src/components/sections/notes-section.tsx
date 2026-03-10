@@ -216,12 +216,13 @@ export function NotesSection({
   }
 
   return (
-    <div className="flex-1 flex overflow-hidden" data-testid="notes-panel">
+    <div role="region" aria-label="Course notes" className="flex-1 flex overflow-hidden" data-testid="notes-panel">
       <div className="flex-1 flex flex-col overflow-hidden">
-        <div className="px-3 py-1.5 border-b border-border/60 flex items-center gap-2 shrink-0">
+        <div role="toolbar" aria-label="Notes toolbar" className="px-3 py-1.5 border-b border-border/60 flex items-center gap-2 shrink-0">
           {/* AI / Source toggle */}
-          <div className="flex items-center gap-0.5 rounded-xl bg-muted/30 p-0.5">
+          <div role="group" aria-label="View mode" className="flex items-center gap-0.5 rounded-xl bg-muted/30 p-0.5">
             <button
+              aria-pressed={viewMode === "ai" ? "true" : "false"}
               className={`px-2 py-0.5 text-xs rounded ${
                 viewMode === "ai"
                   ? "bg-primary text-primary-foreground"
@@ -232,6 +233,7 @@ export function NotesSection({
               AI Notes
             </button>
             <button
+              aria-pressed={viewMode === "source" ? "true" : "false"}
               className={`px-2 py-0.5 text-xs rounded ${
                 viewMode === "source"
                   ? "bg-primary text-primary-foreground"

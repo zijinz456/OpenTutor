@@ -141,7 +141,7 @@ def _register_default_experiments() -> None:
                 config={"use_structured_session": True},
             ),
         ],
-        status=ExperimentStatus.DRAFT,
+        status=ExperimentStatus.RUNNING,
     ))
 
     # Experiment 2: Cognitive load threshold
@@ -161,7 +161,7 @@ def _register_default_experiments() -> None:
                 config={"high_threshold": 0.45},
             ),
         ],
-        status=ExperimentStatus.DRAFT,
+        status=ExperimentStatus.RUNNING,
     ))
 
     # Experiment 3: FIRe propagation
@@ -181,7 +181,7 @@ def _register_default_experiments() -> None:
                 config={"fire_enabled": True},
             ),
         ],
-        status=ExperimentStatus.DRAFT,
+        status=ExperimentStatus.RUNNING,
     ))
 
 

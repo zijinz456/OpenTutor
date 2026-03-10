@@ -49,7 +49,34 @@ Upload → AI Teaches → You Practice → AI Remembers → AI Reminds → Repea
 
 - **Self-Hosted & Private** — Runs entirely on your machine. No data leaves your environment. Single-user mode by default.
 
+## Beta Scope (Current Release)
+
+- **Stable path (recommended):** local single-user mode, course/content ingestion, chat tutoring, core quiz/notes/review flows.
+- **Experimental path:** LOOM knowledge graph, LECTOR semantic review priority, advanced autonomous agent behaviors.
+- **Non-default integrations:** messaging channels, external tool side effects, and some automation stacks require extra setup and are not part of the default quickstart success criteria.
+
 ## Quick Start
+
+### Supported Host Platforms (Beta)
+
+| Platform | Status |
+|---|---|
+| macOS (Apple Silicon / Intel) | ✅ Supported |
+| Linux (Ubuntu 22.04+) | ✅ Supported |
+| Windows | ⚠️ Not a first-class target in this beta cycle |
+
+### Minimum Prerequisites
+
+- Python 3.11
+- Node.js 20+
+- Bash 3.2+ (`bash --version`)
+- `curl`
+- Docker Desktop / Docker Engine (optional, only for containerized flow)
+
+### Expected First-Run Time
+
+- One-command local: ~10-30 minutes (depends on network and npm/pip cache)
+- Docker: ~8-25 minutes (depends on image build cache)
 
 ### Docker (recommended)
 
@@ -68,6 +95,8 @@ bash scripts/quickstart.sh
 ```
 
 > Uses SQLite by default — no PostgreSQL needed. The script handles Python venv, npm install, DB setup, and starts both servers.
+> Optional custom ports: `API_PORT=38000 WEB_PORT=33000 bash scripts/quickstart.sh`
+> If quickstart fails, run `bash scripts/check_local_mode.sh --env-file .env --skip-api` and then check [docs/troubleshooting.md](docs/troubleshooting.md).
 
 ### Manual
 
@@ -170,6 +199,9 @@ OpenTutor builds on these papers:
 ## Contributing
 
 Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for setup instructions and guidelines.
+For release readiness, use [docs/beta-release-checklist.md](docs/beta-release-checklist.md).
+Current stabilization sprint execution plan: [docs/github-beta-sprint-plan.md](docs/github-beta-sprint-plan.md).
+Final 2-5 day closeout runbook: [docs/release-closeout-runbook.md](docs/release-closeout-runbook.md).
 
 ```bash
 # Run tests

@@ -1,0 +1,7 @@
+[allowlist]
+  description = "Allow false positives in test fixtures and secrets baseline"
+  paths = [
+    '''\.secrets\.baseline$''',
+    '''tests/test_middleware_security\.py$''',
+    '''tests/test_utils\.py$''',
+  ]

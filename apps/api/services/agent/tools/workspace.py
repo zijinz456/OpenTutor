@@ -80,7 +80,7 @@ async def update_workspace(
             result = await _execute_command(command_type, cmd, ctx, db)
             if result:
                 executed.append(result)
-        except Exception as e:
+        except (ValueError, KeyError, TypeError, RuntimeError) as e:
             errors.append(f"{command_type} failed: {e}")
 
     summary = f"Executed {len(executed)} workspace commands: {', '.join(executed)}"

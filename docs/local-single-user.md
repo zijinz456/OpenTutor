@@ -84,6 +84,17 @@ It fails if:
 
 When Docker is running, the script resolves the compose-published API and web ports automatically before it runs checks.
 
+For release-candidate parity with CI test gates, also run:
+
+```bash
+bash scripts/dev_local.sh verify-host --ci-parity
+```
+
+Current beta-phase coverage gate is `25`. The next target after this stabilization cycle is `30+`.
+
+For final release closeout (Ubuntu first-run + two clean rehearsals + CI stability window),
+follow `docs/release-closeout-runbook.md`.
+
 ## Common mistakes
 
 ### `AUTH_ENABLED=true`

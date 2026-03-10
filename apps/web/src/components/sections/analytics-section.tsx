@@ -46,6 +46,7 @@ export function AnalyticsSection({ courseId, defaultTab = "progress" }: Analytic
   ];
 
   return (
+    <div role="region" aria-label="Analytics">
     <TabbedSection
       tabs={tabs}
       defaultTab={tabs.some((tab) => tab.id === defaultTab) ? defaultTab : "progress"}
@@ -63,5 +64,6 @@ export function AnalyticsSection({ courseId, defaultTab = "progress" }: Analytic
         </>
       )}
     </TabbedSection>
+    </div>
   );
 }

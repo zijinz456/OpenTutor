@@ -96,6 +96,6 @@ class WebSearchTool(Tool):
                 output="\n".join(lines),
                 metadata={"result_count": len(results)},
             )
-        except Exception as e:
+        except (ConnectionError, TimeoutError, ValueError, KeyError, OSError) as e:
             logger.exception("web_search failed: %s", e)
             return ToolResult(success=False, output="", error=f"Web search failed: {e}")

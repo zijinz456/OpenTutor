@@ -19,6 +19,7 @@ class ExtractRequest(BaseModel):
 class SubmitAnswerRequest(BaseModel):
     problem_id: uuid.UUID
     user_answer: str
+    answer_time_ms: int | None = None  # Time from question display to answer submission
 
 
 class SaveGeneratedRequest(BaseModel):

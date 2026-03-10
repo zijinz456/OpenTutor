@@ -234,7 +234,7 @@ class CodeExecutionAgent(BaseAgent):
                     "error": f"Execution timed out after {settings.code_sandbox_timeout_seconds} seconds",
                     "backend": "process",
                 }
-            except Exception as e:
+            except OSError as e:
                 return {
                     "success": False,
                     "output": "",

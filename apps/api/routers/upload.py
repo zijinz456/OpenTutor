@@ -1,8 +1,4 @@
-"""File upload, URL scraping, and ingestion pipeline endpoints.
-
-Phase 0-A: Basic PDF upload + URL scrape → content tree.
-Phase 1: Full 7-step ingestion pipeline with classification + multi-format.
-"""
+"""File upload, URL scraping, and ingestion pipeline endpoints."""
 
 import asyncio
 import hashlib
@@ -10,10 +6,8 @@ import logging
 import mimetypes
 import os
 import re
-import socket
 import uuid
 from pathlib import Path
-from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, UploadFile, File, Form, Request
 from fastapi.responses import FileResponse
@@ -21,206 +15,36 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
-from libs.exceptions import AppError, NotFoundError, PermissionDeniedError, ValidationError
-from libs.url_validation import validate_url, validate_url_dns
+from libs.exceptions import AppError, PermissionDeniedError, ValidationError, NotFoundError
 from database import get_db, async_session
-from models.content import CourseContentTree
 from models.ingestion import IngestionJob
-from models.practice import PracticeProblem
-from models import scrape as models_scrape
 from models.user import User
-from services.ingestion.pipeline import _set_job_phase
 from services.ingestion.pipeline import run_ingestion_pipeline
 from services.agent.background_runtime import track_background_task
 from services.auth.dependency import get_current_user
 from services.course_access import get_course_or_404
-from services.llm.readiness import ensure_llm_ready
+
+import socket  # noqa: F401 — re-exported for test monkeypatching compatibility
+
+from routers.upload_processing import (  # noqa: F401 — re-exported for consumers
+    _safe_filename,
+    _validate_url,
+    _validate_url_dns,
+    _normalize_scrape_url,
+    _load_scrape_fixture_html,
+    _derive_filename,
+    _fetch_canvas_with_auth,
+    _background_auto_generate,
+    _background_import_canvas_quizzes,
+    _background_embed,
+)
 
 logger = logging.getLogger(__name__)
-
-
-def _safe_filename(filename: str) -> str:
-    """Sanitize user-provided filename to prevent path traversal."""
-    base = os.path.basename(filename)
-    cleaned = re.sub(r'[^\w.\-]', '_', base)
-    return (cleaned or "unnamed")[:255]
-
-
-# Backward-compatible aliases used by unit tests and older imports.
-_validate_url = validate_url
-_validate_url_dns = validate_url_dns
-
-
-def _normalize_scrape_url(url: str) -> str:
-    return url.strip()
-
-
-def _candidate_scrape_fixture_dirs() -> list[Path]:
-    candidates = []
-    if settings.scrape_fixture_dir:
-        candidates.append(Path(settings.scrape_fixture_dir).expanduser())
-    for parent in Path(__file__).resolve().parents:
-        candidate = parent / "tests" / "e2e" / "fixtures" / "scrape"
-        if candidate.exists():
-            candidates.append(candidate)
-            break
-    candidates.append(Path("/fixtures/e2e/scrape"))
-
-    unique_paths: list[Path] = []
-    seen: set[str] = set()
-    for candidate in candidates:
-        key = str(candidate)
-        if key in seen:
-            continue
-        seen.add(key)
-        unique_paths.append(candidate)
-    return unique_paths
-
-
-def _load_scrape_fixture_html(url: str) -> str | None:
-    """Load deterministic HTML fixtures for local E2E scrape flows."""
-    normalized_url = _normalize_scrape_url(url)
-    parsed = urlparse(normalized_url)
-    if (parsed.hostname or "").lower() != "opentutor-e2e.local":
-        return None
-
-    slug = (parsed.path or "/").strip("/") or "index"
-    safe_slug = re.sub(r"[^a-zA-Z0-9/_-]", "", slug)
-    searched_dirs = []
-    for fixture_dir in _candidate_scrape_fixture_dirs():
-        searched_dirs.append(str(fixture_dir))
-        fixture_path = fixture_dir / f"{safe_slug}.html"
-        if fixture_path.exists():
-            return fixture_path.read_text(encoding="utf-8")
-
-    if any(Path(path).exists() for path in searched_dirs):
-        raise NotFoundError(f"Scrape fixture for {parsed.path or '/'}")
-    return None
-
 
 router = APIRouter()
 
 
-async def _background_auto_generate(course_id: uuid.UUID, user_id: uuid.UUID):
-    """Fire-and-forget: auto-generate starter quiz + flashcards + notes after ingestion."""
-    try:
-        await ensure_llm_ready("Auto-generated starter study assets")
-    except Exception as exc:
-        logger.debug("Skipping starter asset generation for course %s: %s", course_id, exc)
-        return
-
-    try:
-        from services.ingestion.pipeline import auto_prepare
-        summary = await auto_prepare(async_session, course_id, user_id)
-        logger.info("auto_prepare complete for course %s: %s", course_id, summary)
-    except Exception:
-        logger.exception("Auto-generate study assets failed (best-effort)")
-
-
-async def _background_import_canvas_quizzes(
-    course_id: uuid.UUID,
-    quiz_questions: list[dict],
-) -> int:
-    """Import parsed Canvas quiz questions as PracticeProblem records."""
-    try:
-        from services.practice.annotation import build_practice_problem
-        from sqlalchemy import func
-
-        async with async_session() as db:
-            max_order_result = await db.execute(
-                select(func.max(PracticeProblem.order_index)).where(
-                    PracticeProblem.course_id == course_id,
-                    PracticeProblem.is_archived == False,
-                )
-            )
-            start_order = (max_order_result.scalar() or 0) + 1
-
-            batch_id = uuid.uuid4()
-            created = 0
-            for i, q in enumerate(quiz_questions):
-                if not q.get("question"):
-                    continue
-                problem = build_practice_problem(
-                    course_id=course_id,
-                    content_node_id=None,
-                    title=q.get("problem_metadata", {}).get("source_section", "Canvas Quiz"),
-                    question=q,
-                    order_index=start_order + i,
-                    source="canvas_import",
-                    source_batch_id=batch_id,
-                )
-                db.add(problem)
-                created += 1
-            await db.commit()
-            logger.info("Imported %d Canvas quiz questions for course %s", created, course_id)
-            return created
-    except Exception:
-        logger.exception("Canvas quiz import failed (best-effort)")
-        return 0
-
-
-async def _background_embed(course_id: uuid.UUID, job_id: uuid.UUID, user_id: uuid.UUID | None = None):
-    """Fire-and-forget: compute embeddings + auto-generate assets in parallel."""
-
-    async def _do_embed():
-        from services.embedding.content import embed_course_content
-        async with async_session() as db:
-            job = await db.get(IngestionJob, job_id)
-            if job:
-                _set_job_phase(
-                    job,
-                    status="embedding",
-                    progress_percent=max(job.progress_percent or 0, 92),
-                    embedding_status="running",
-                    nodes_created=job.nodes_created,
-                )
-                await db.flush()
-            await embed_course_content(db, course_id)
-            if job:
-                _set_job_phase(
-                    job,
-                    status="completed",
-                    progress_percent=100,
-                    embedding_status="completed",
-                    nodes_created=job.nodes_created,
-                )
-            await db.commit()
-
-    async def _do_auto_generate():
-        if not user_id:
-            return
-        await _background_auto_generate(course_id, user_id)
-
-    # Run embedding and auto-generation in parallel for speed
-    try:
-        results = await asyncio.gather(
-            _do_embed(), _do_auto_generate(), return_exceptions=True,
-        )
-        # Check if embedding failed
-        if isinstance(results[0], Exception):
-            raise results[0]
-        if isinstance(results[1], Exception):
-            logger.debug("Auto-generate failed (non-critical): %s", results[1])
-    except Exception as e:
-        try:
-            async with async_session() as db:
-                job = await db.get(IngestionJob, job_id)
-                if job:
-                    _set_job_phase(
-                        job,
-                        status="failed",
-                        progress_percent=job.progress_percent or 90,
-                        embedding_status="failed",
-                        nodes_created=job.nodes_created,
-                        error_message=str(e),
-                    )
-                    await db.commit()
-        except Exception:
-            logger.exception("Failed to persist embedding failure for job %s", job_id)
-        logger.exception("Background embedding failed for job %s", job_id)
-
-
-@router.post("/upload")
+@router.post("/upload", summary="Upload a file", description="Upload a document and run the 7-step ingestion pipeline.")
 async def upload_file(
     request: Request,
     file: UploadFile = File(...),
@@ -228,7 +52,7 @@ async def upload_file(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Upload any file → 7-step ingestion pipeline → content tree."""
+    """Upload any file -> 7-step ingestion pipeline -> content tree."""
     try:
         cid = uuid.UUID(course_id)
     except ValueError as e:
@@ -304,76 +128,7 @@ async def upload_file(
     }
 
 
-def _derive_filename(url: str) -> str:
-    """Derive a meaningful filename from a URL."""
-    from services.scraper.canvas_detector import detect_canvas_url
-
-    canvas_info = detect_canvas_url(url)
-    if canvas_info.is_canvas:
-        return canvas_info.friendly_name
-
-    parsed = urlparse(url)
-    segments = [s for s in parsed.path.split("/") if s]
-    if segments:
-        return segments[-1]
-    return parsed.hostname or "webpage"
-
-
-async def _fetch_canvas_with_auth(
-    url: str,
-    user_id: uuid.UUID,
-    db: AsyncSession,
-) -> str | None:
-    """Attempt auth-aware fetch for Canvas URLs."""
-    from services.scraper.canvas_detector import detect_canvas_url
-
-    canvas_info = detect_canvas_url(url)
-    if not canvas_info.is_canvas:
-        return None
-
-    result = await db.execute(
-        select(models_scrape.AuthSession).where(
-            models_scrape.AuthSession.user_id == user_id,
-            models_scrape.AuthSession.domain == canvas_info.domain,
-            models_scrape.AuthSession.is_valid == True,  # noqa: E712
-        )
-    )
-    auth_session = result.scalar_one_or_none()
-
-    if not auth_session:
-        src_result = await db.execute(
-            select(models_scrape.ScrapeSource).where(
-                models_scrape.ScrapeSource.user_id == user_id,
-                models_scrape.ScrapeSource.auth_domain == canvas_info.domain,
-                models_scrape.ScrapeSource.requires_auth == True,  # noqa: E712
-            )
-        )
-        scrape_source = src_result.scalar_one_or_none()
-        if scrape_source and scrape_source.session_name:
-            try:
-                from services.browser.automation import cascade_fetch
-                html = await cascade_fetch(
-                    url, require_auth=True, session_name=scrape_source.session_name,
-                )
-                if html and len(html) > 200:
-                    return html
-            except Exception as e:
-                logger.debug("Canvas auth fetch via ScrapeSource failed: %s", e)
-        return None
-
-    session_name = auth_session.session_name
-    try:
-        from services.browser.automation import cascade_fetch
-        html = await cascade_fetch(url, require_auth=True, session_name=session_name)
-        if html and len(html) > 200:
-            return html
-    except Exception as e:
-        logger.debug("Canvas auth fetch via AuthSession failed: %s", e)
-
-    return None
-
-
-@router.post("/url")
+@router.post("/url", summary="Scrape a URL", description="Fetch content from a URL and run it through the ingestion pipeline.")
 async def scrape_url(
     request: Request,
     url: str = Form(...),
@@ -381,7 +136,9 @@ async def scrape_url(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Scrape a URL → ingestion pipeline → content tree."""
+    """Scrape a URL -> ingestion pipeline -> content tree."""
+    from libs.url_validation import validate_url, validate_url_dns
+
     url = _normalize_scrape_url(url)
     fixture_html = _load_scrape_fixture_html(url)
     if fixture_html is not None:
@@ -406,9 +163,6 @@ async def scrape_url(
         requires_auth = True
         logger.info("Canvas URL detected: %s (course_id=%s, page=%s)",
                      canvas_info.domain, canvas_info.course_id, canvas_info.page_type)
-        # Note: For Canvas, we skip _fetch_canvas_with_auth (Playwright HTML scrape)
-        # and rely on Canvas REST API extraction in the pipeline (via session cookies).
-        # The pipeline handles CanvasAuthExpiredError for expired sessions.
 
     filename = _derive_filename(url)
 
@@ -434,7 +188,7 @@ async def scrape_url(
         if requires_auth and not pre_fetched:
             error_msg = (
                 f"Canvas URL requires authentication. "
-                f"Please login to {canvas_info.domain} first via Settings → Canvas Login, "
+                f"Please login to {canvas_info.domain} first via Settings -> Canvas Login, "
                 f"then retry. Original error: {error_msg}"
             )
         raise AppError(error_msg)
@@ -448,40 +202,13 @@ async def scrape_url(
     canvas_file_urls = getattr(job, "_canvas_file_urls", [])
     files_discovered = len(canvas_file_urls)
     if canvas_file_urls and canvas_info.is_canvas and scrape_session_name and not is_test_request:
-        from services.ingestion.pipeline import (
-            ingest_canvas_files, link_pdfs_to_canvas_topics,
-            auto_summarize_titles, auto_prepare,
+        from routers.upload_processing import start_background_canvas_pipeline
+        start_background_canvas_pipeline(
+            user_id=user.id, course_id=cid,
+            canvas_file_urls=canvas_file_urls,
+            scrape_session_name=scrape_session_name,
+            canvas_domain=canvas_info.domain,
         )
-
-        async def _background_canvas_pipeline():
-            """Chain: ingest files → link to topics → summarize titles → auto-prepare."""
-            await ingest_canvas_files(
-                db_factory=async_session,
-                user_id=user.id,
-                course_id=cid,
-                file_urls=canvas_file_urls,
-                session_name=scrape_session_name,
-                canvas_domain=canvas_info.domain,
-            )
-            # Phase 2: Link PDFs to Canvas topic nodes
-            await link_pdfs_to_canvas_topics(
-                db_factory=async_session,
-                course_id=cid,
-                file_urls=canvas_file_urls,
-            )
-            # Phase 3: AI-summarize meaningless file titles
-            await auto_summarize_titles(
-                db_factory=async_session,
-                course_id=cid,
-            )
-            # Phase 4: Auto-prepare notes + flashcards + quiz
-            await auto_prepare(
-                db_factory=async_session,
-                course_id=cid,
-                user_id=user.id,
-            )
-
-        track_background_task(asyncio.create_task(_background_canvas_pipeline()))
         logger.info("Queued %d Canvas files for background ingestion + auto-processing", files_discovered)
 
     # Auto-import Canvas quiz questions as PracticeProblem records
@@ -509,7 +236,7 @@ async def scrape_url(
     }
 
 
-@router.get("/jobs/{course_id}")
+@router.get("/jobs/{course_id}", summary="List ingestion jobs", description="Return all ingestion jobs for a course with status and progress.")
 async def list_ingestion_jobs(
     course_id: uuid.UUID,
     user: User = Depends(get_current_user),
@@ -543,7 +270,7 @@ async def list_ingestion_jobs(
     ]
 
 
-@router.get("/files/by-course/{course_id}")
+@router.get("/files/by-course/{course_id}", summary="List course files", description="Return uploaded files for a course that completed ingestion.")
 async def list_course_files(
     course_id: uuid.UUID,
     user: User = Depends(get_current_user),
@@ -573,7 +300,7 @@ async def list_course_files(
     ]
 
 
-@router.post("/image")
+@router.post("/image", summary="Upload an image", description="Upload an image for chat context such as a math problem photo.")
 async def upload_image(
     file: UploadFile = File(...),
     course_id: str = Form(...),
@@ -628,7 +355,7 @@ async def upload_image(
     }
 
 
-@router.get("/files/{job_id}")
+@router.get("/files/{job_id}", summary="Download an uploaded file", description="Serve an uploaded file by ingestion job ID for preview.")
 async def get_uploaded_file(
     job_id: uuid.UUID,
     user: User = Depends(get_current_user),

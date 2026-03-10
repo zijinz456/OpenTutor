@@ -1,6 +1,6 @@
 """Learning progress tracker service.
 
-Tracks progress at course → chapter → knowledge point granularity.
+Tracks progress at course -> chapter -> knowledge point granularity.
 Updates mastery scores based on quiz results and study time.
 
 The mastery model uses recent-answer weighting plus layer-based gap inference:
@@ -14,11 +14,11 @@ import logging
 from datetime import datetime, timezone
 
 from sqlalchemy import select, func
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.progress import LearningProgress
 from models.practice import PracticeResult, PracticeProblem
-from models.content import CourseContentTree
 from services.spaced_repetition.fsrs import FSRSCard, review_card
 from services.learning_science.knowledge_tracer import (
     compute_mastery_adaptive,
@@ -27,14 +27,15 @@ from services.learning_science.knowledge_tracer import (
 
 logger = logging.getLogger(__name__)
 
-# Weighted decay constants for generic mastery tracking
-_DECAY_FACTOR = 0.95       # Per-result recency decay
-_WRONG_WEIGHT = 1.3        # Wrong answers count more than correct
-_CORRECT_WEIGHT = 1.0      # Correct answer weight
-_RECENT_RESULTS_LIMIT = 20 # How many recent results to consider
-
+_DECAY_FACTOR = 0.95
+_WRONG_WEIGHT = 1.3
+_CORRECT_WEIGHT = 1.0
+_RECENT_RESULTS_LIMIT = 20
 
 from libs.datetime_utils import utcnow as _utcnow
+
+# Backward-compat re-exports (moved to analytics.py)
+from services.progress.analytics import get_course_progress, get_error_pattern_summary  # noqa: F401
 
 
 async def get_or_create_progress(
@@ -79,10 +80,8 @@ async def update_study_time(
     progress = await get_or_create_progress(db, user_id, course_id, content_node_id)
     progress.time_spent_minutes += minutes
     progress.last_studied_at = _utcnow()
-
     if progress.status == "not_started":
         progress.status = "in_progress"
-
     return progress
 
 
@@ -111,7 +110,6 @@ async def update_quiz_result(
     bkt_mastery = await _compute_bkt_mastery(db, user_id, course_id, content_node_id)
 
     if weighted_mastery is not None and bkt_mastery is not None:
-        # Blend: BKT (0.5) + weighted decay (0.2) + time (0.3)
         progress.mastery_score = (
             bkt_mastery * 0.5
             + weighted_mastery * 0.2
@@ -125,12 +123,10 @@ async def update_quiz_result(
         quiz_mastery = progress.quiz_correct / max(progress.quiz_attempts, 1)
         progress.mastery_score = quiz_mastery * 0.7 + min(progress.time_spent_minutes / 60, 1.0) * 0.3
 
-    # Infer gap type from difficulty layer performance
     gap_type = await _infer_gap_type(db, user_id, course_id, content_node_id)
     if gap_type:
         progress.gap_type = gap_type
 
-    # Phase 4: Write mastery snapshot for time-series analytics
     try:
         from models.mastery_snapshot import MasterySnapshot
         snap = MasterySnapshot(
@@ -141,13 +137,11 @@ async def update_quiz_result(
             gap_type=progress.gap_type,
         )
         db.add(snap)
-    except Exception as e:
+    except (ValueError, RuntimeError, OSError, SQLAlchemyError):
         logger.exception("Mastery snapshot failed (best-effort)")
 
-    # FSRS spaced repetition scheduling
     _apply_fsrs_review(progress, is_correct)
 
-    # Update status
     if progress.mastery_score >= 0.8 and progress.quiz_attempts >= 3:
         progress.status = "mastered"
     elif progress.quiz_attempts > 0:
@@ -157,12 +151,7 @@ async def update_quiz_result(
 
 
 def _apply_fsrs_review(progress: LearningProgress, is_correct: bool) -> None:
-    """Apply FSRS review to update spaced repetition fields.
-
-    Maps quiz correctness to FSRS ratings:
-    - Correct → 3 (Good)
-    - Wrong   → 1 (Again)
-    """
+    """Apply FSRS review to update spaced repetition fields."""
     card = FSRSCard(
         difficulty=progress.fsrs_difficulty,
         stability=progress.fsrs_stability,
@@ -172,11 +161,9 @@ def _apply_fsrs_review(progress: LearningProgress, is_correct: bool) -> None:
         due=progress.next_review_at,
         state=progress.fsrs_state,
     )
-
     rating = 3 if is_correct else 1
     now = _utcnow()
     updated_card, _log = review_card(card, rating, now)
-
     progress.fsrs_difficulty = updated_card.difficulty
     progress.fsrs_stability = updated_card.stability
     progress.fsrs_reps = updated_card.reps
@@ -188,17 +175,10 @@ def _apply_fsrs_review(progress: LearningProgress, is_correct: bool) -> None:
 
 
 async def _compute_weighted_mastery(
-    db: AsyncSession,
-    user_id: uuid.UUID,
-    course_id: uuid.UUID,
+    db: AsyncSession, user_id: uuid.UUID, course_id: uuid.UUID,
     content_node_id: uuid.UUID | None,
 ) -> float | None:
-    """Compute mastery using weighted decay over recent results.
-
-    Recent results matter more (decay 0.95^i). Wrong answers are weighted
-    heavier than correct ones (1.3x vs 1.0x) — asymmetric by design:
-    a past mistake is not fully erased by a correct answer.
-    """
+    """Compute mastery using weighted decay over recent results."""
     query = (
         select(PracticeResult)
         .join(PracticeProblem, PracticeResult.problem_id == PracticeProblem.id)
@@ -214,7 +194,6 @@ async def _compute_weighted_mastery(
 
     result = await db.execute(query)
     results = result.scalars().all()
-
     if not results:
         return None
 
@@ -233,9 +212,7 @@ async def _compute_weighted_mastery(
 
 
 async def _compute_bkt_mastery(
-    db: AsyncSession,
-    user_id: uuid.UUID,
-    course_id: uuid.UUID,
+    db: AsyncSession, user_id: uuid.UUID, course_id: uuid.UUID,
     content_node_id: uuid.UUID | None,
 ) -> float | None:
     """Compute mastery using Bayesian Knowledge Tracing over the answer sequence."""
@@ -254,16 +231,12 @@ async def _compute_bkt_mastery(
 
     result = await db.execute(query)
     rows = result.all()
-
     if not rows:
         return None
 
     results_seq = [bool(correct) for correct, _ in rows]
-    # Use most common question type for parameter estimation
     q_types = [qt for _, qt in rows if qt]
     question_type = max(set(q_types), key=q_types.count) if q_types else None
-
-    # Use pyBKT EM-trained params when available, else fall back to heuristic
     concept = str(content_node_id) if content_node_id else f"course:{course_id}"
     return compute_mastery_adaptive(
         results_seq, concept, user_id, course_id, question_type,
@@ -271,9 +244,7 @@ async def _compute_bkt_mastery(
 
 
 async def _infer_gap_type(
-    db: AsyncSession,
-    user_id: uuid.UUID,
-    course_id: uuid.UUID,
+    db: AsyncSession, user_id: uuid.UUID, course_id: uuid.UUID,
     content_node_id: uuid.UUID | None,
 ) -> str | None:
     """Infer gap type from difficulty layer performance.
@@ -283,14 +254,9 @@ async def _infer_gap_type(
     - Layer 1 pass, Layer 2 fail -> transfer_gap
     - Layer 2 pass, Layer 3 fail -> trap_vulnerability
     - All pass -> mastered
-
-    Returns None if insufficient data (no layered questions attempted).
     """
     query = (
-        select(
-            PracticeProblem.difficulty_layer,
-            PracticeResult.is_correct,
-        )
+        select(PracticeProblem.difficulty_layer, PracticeResult.is_correct)
         .join(PracticeProblem, PracticeResult.problem_id == PracticeProblem.id)
         .where(
             PracticeResult.user_id == user_id,
@@ -303,11 +269,9 @@ async def _infer_gap_type(
 
     result = await db.execute(query)
     rows = result.all()
-
     if not rows:
         return None
 
-    # Aggregate accuracy per layer
     layer_stats: dict[int, dict] = {}
     for layer, correct in rows:
         if layer not in layer_stats:
@@ -321,7 +285,7 @@ async def _infer_gap_type(
     def layer_passes(layer: int) -> bool | None:
         stats = layer_stats.get(layer)
         if not stats or stats["attempts"] < 2:
-            return None  # Insufficient data
+            return None
         return (stats["correct"] / stats["attempts"]) >= pass_threshold
 
     l1 = layer_passes(1)
@@ -336,94 +300,4 @@ async def _infer_gap_type(
         return "trap_vulnerability"
     if l1 is True and l2 is True and l3 is True:
         return "mastered"
-
     return None
-
-
-async def get_course_progress(
-    db: AsyncSession,
-    user_id: uuid.UUID,
-    course_id: uuid.UUID,
-) -> dict:
-    """Get overall progress for a course."""
-    # Get all content nodes for the course
-    nodes_result = await db.execute(
-        select(func.count(CourseContentTree.id))
-        .where(CourseContentTree.course_id == course_id)
-    )
-    total_nodes = nodes_result.scalar() or 0
-
-    # Get progress entries
-    progress_result = await db.execute(
-        select(LearningProgress)
-        .where(
-            LearningProgress.user_id == user_id,
-            LearningProgress.course_id == course_id,
-        )
-    )
-    progress_entries = progress_result.scalars().all()
-
-    mastered = sum(1 for p in progress_entries if p.status == "mastered")
-    reviewed = sum(1 for p in progress_entries if p.status == "reviewed")
-    in_progress = sum(1 for p in progress_entries if p.status == "in_progress")
-    total_time = sum(p.time_spent_minutes for p in progress_entries)
-    avg_mastery = (
-        sum(p.mastery_score for p in progress_entries) / len(progress_entries)
-        if progress_entries else 0.0
-    )
-    gap_type_breakdown: dict[str, int] = {}
-    for entry in progress_entries:
-        if entry.gap_type:
-            gap_type_breakdown[entry.gap_type] = gap_type_breakdown.get(entry.gap_type, 0) + 1
-
-    return {
-        "course_id": str(course_id),
-        "total_nodes": total_nodes,
-        "mastered": mastered,
-        "reviewed": reviewed,
-        "in_progress": in_progress,
-        "not_started": max(0, total_nodes - mastered - reviewed - in_progress),
-        "total_study_minutes": total_time,
-        "average_mastery": avg_mastery,
-        "completion_percent": (mastered + reviewed) / max(total_nodes, 1) * 100,
-        "gap_type_breakdown": gap_type_breakdown,
-    }
-
-
-# ── Phase 4: Error pattern analytics ──
-
-async def get_error_pattern_summary(
-    db: AsyncSession,
-    user_id: uuid.UUID,
-    course_id: uuid.UUID,
-    limit: int = 5,
-) -> list[dict]:
-    """Return top error categories by frequency for a user+course.
-
-    Aggregates unmastered WrongAnswer entries grouped by error_category.
-    Returns: [{"category": str, "count": int, "percentage": float}]
-    """
-    from models.ingestion import WrongAnswer
-
-    result = await db.execute(
-        select(WrongAnswer.error_category, func.count(WrongAnswer.id).label("cnt"))
-        .where(
-            WrongAnswer.user_id == user_id,
-            WrongAnswer.course_id == course_id,
-            WrongAnswer.mastered.is_(False),
-            WrongAnswer.error_category.isnot(None),
-        )
-        .group_by(WrongAnswer.error_category)
-        .order_by(func.count(WrongAnswer.id).desc())
-        .limit(limit)
-    )
-    rows = result.all()
-    total = sum(r.cnt for r in rows)
-    return [
-        {
-            "category": r.error_category,
-            "count": r.cnt,
-            "percentage": round(r.cnt / max(total, 1) * 100, 1),
-        }
-        for r in rows
-    ]

@@ -117,6 +117,7 @@ export function ActionCard({ action }: ActionCardProps) {
     <button
       type="button"
       onClick={handleClick}
+      aria-label={`Action: ${label}`}
       className={cn(
         "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium card-shadow",
         "transition-all hover:opacity-80 active:opacity-60",
@@ -124,7 +125,7 @@ export function ActionCard({ action }: ActionCardProps) {
         colorClass,
       )}
     >
-      <Icon className="size-3" />
+      <Icon className="size-3" aria-hidden="true" />
       <span>{label}</span>
     </button>
   );

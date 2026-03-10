@@ -146,8 +146,8 @@ async def eval_response(
             helpfulness=scores.get("helpfulness", {}).get("score", 3),
             rationale=scores,
         )
-    except Exception as e:
-        logger.exception("Response evaluation LLM call failed")
+    except (ConnectionError, TimeoutError, ValueError, json.JSONDecodeError, KeyError, RuntimeError, Exception) as exc:
+        logger.exception("Response evaluation LLM call failed: %s", exc)
         return _heuristic_eval_response(question, response, context)
 
 

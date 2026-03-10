@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Search, X, FileText, ArrowRight } from "lucide-react";
 import { useCourseStore } from "@/store/course";
+import { useFocusTrap } from "@/hooks/use-focus-trap";
 import type { ContentNode } from "@/lib/api";
 
 function flattenTree(nodes: ContentNode[], courseId: string): Array<{ id: string; title: string; content: string; courseId: string }> {
@@ -28,6 +29,7 @@ interface SearchDialogProps {
 export function SearchDialog({ open, onClose, courseId }: SearchDialogProps) {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
   const [query, setQuery] = useState("");
   const contentTree = useCourseStore((s) => s.contentTree);
   const courses = useCourseStore((s) => s.courses);
@@ -36,12 +38,8 @@ export function SearchDialog({ open, onClose, courseId }: SearchDialogProps) {
     onClose();
   }, [onClose]);
 
-  // Focus input when dialog opens
-  useEffect(() => {
-    if (open) {
-      setTimeout(() => inputRef.current?.focus(), 100);
-    }
-  }, [open]);
+  // Trap focus within the search dialog
+  useFocusTrap(dialogRef, open);
 
   // Close on Escape
   useEffect(() => {
@@ -78,10 +76,10 @@ export function SearchDialog({ open, onClose, courseId }: SearchDialogProps) {
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center pt-[15vh]">
       {/* Backdrop */}
-      <div className="fixed inset-0 bg-black/40 backdrop-blur-sm" onClick={handleClose} />
+      <div className="fixed inset-0 bg-black/40 backdrop-blur-sm" aria-hidden="true" onClick={handleClose} />
 
       {/* Dialog */}
-      <div className="relative w-full max-w-lg mx-4 bg-card rounded-2xl card-shadow overflow-hidden animate-fade-in">
+      <div ref={dialogRef} role="dialog" aria-label="Search notes and concepts" aria-modal="true" className="relative w-full max-w-lg mx-4 bg-card rounded-2xl card-shadow overflow-hidden animate-fade-in">
         {/* Search input */}
         <div className="flex items-center gap-3 px-4 py-3 border-b border-border/60">
           <Search className="size-4 text-muted-foreground shrink-0" />
@@ -90,11 +88,12 @@ export function SearchDialog({ open, onClose, courseId }: SearchDialogProps) {
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            aria-label="Search notes and concepts"
             placeholder="Search notes, concepts..."
             className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground outline-none"
           />
           {query && (
-            <button onClick={() => setQuery("")} className="text-muted-foreground hover:text-foreground">
+            <button onClick={() => setQuery("")} aria-label="Clear search" className="text-muted-foreground hover:text-foreground">
               <X className="size-3.5" />
             </button>
           )}
@@ -102,7 +101,7 @@ export function SearchDialog({ open, onClose, courseId }: SearchDialogProps) {
         </div>
 
         {/* Results */}
-        <div className="max-h-[50vh] overflow-y-auto scrollbar-thin">
+        <div role="list" aria-label="Search results" className="max-h-[50vh] overflow-y-auto scrollbar-thin">
           {query.length >= 2 && results.length === 0 && (
             <div className="px-4 py-8 text-center">
               <p className="text-sm text-muted-foreground">No results found for &quot;{query}&quot;</p>
@@ -112,6 +111,7 @@ export function SearchDialog({ open, onClose, courseId }: SearchDialogProps) {
             <button
               key={r.id}
               type="button"
+              role="listitem"
               onClick={() => {
                 const targetCourseId = courseId ?? r.courseId;
                 router.push(`/course/${targetCourseId}/${r.id}`);

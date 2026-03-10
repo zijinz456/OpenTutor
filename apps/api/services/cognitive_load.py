@@ -17,6 +17,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import SQLAlchemyError as _SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
@@ -75,7 +76,7 @@ async def compute_cognitive_load(
         error_signal = min(recent_errors / 5.0, 1.0)
         signals["unmastered_errors"] = error_signal
         load += error_signal * settings.cognitive_load_weight_errors
-    except Exception as e:
+    except (_SQLAlchemyError, OSError) as e:
         logger.exception("Cognitive load: error signal query failed")
         signals["unmastered_errors"] = 0.0
 
@@ -120,11 +121,37 @@ async def compute_cognitive_load(
             load += perf_signal * settings.cognitive_load_weight_quiz_performance
         else:
             signals["quiz_performance"] = 0.0
-    except Exception as e:
+    except (_SQLAlchemyError, OSError) as e:
         logger.exception("Cognitive load: quiz performance query failed")
         signals["quiz_performance"] = 0.0
 
-    # ── Signal 7: NLP-based affect analysis ──
+    # ── Signal 7: Answer hesitation (quiz response timing) ──
+    try:
+        from models.practice import PracticeResult
+        recent_times = await db.execute(
+            select(PracticeResult.answer_time_ms)
+            .where(
+                PracticeResult.user_id == user_id,
+                PracticeResult.answer_time_ms.isnot(None),
+            )
+            .order_by(PracticeResult.answered_at.desc())
+            .limit(10)
+        )
+        times = [r[0] for r in recent_times.fetchall() if r[0] and r[0] > 0]
+        if len(times) >= 3:
+            import statistics
+            median_ms = statistics.median(times)
+            # 15s median = no signal, 60s+ median = full signal
+            timing_signal = min(max((median_ms - 15000) / 45000, 0.0), 1.0)
+            signals["answer_hesitation"] = timing_signal
+            load += timing_signal * 0.10
+        else:
+            signals["answer_hesitation"] = 0.0
+    except (_SQLAlchemyError, OSError, ValueError) as e:
+        logger.debug("Cognitive load: answer hesitation query failed: %s", e)
+        signals["answer_hesitation"] = 0.0
+
+    # ── Signal 8: NLP-based affect analysis ──
     from services.cognitive_load_nlp import analyze_student_affect
 
     affect = await analyze_student_affect(user_message) if user_message else {}
@@ -134,7 +161,7 @@ async def compute_cognitive_load(
     signals["nlp_affect"] = nlp_signal
     load += nlp_signal * 0.15  # 15% weight for NLP signal
 
-    # ── Signal 8: Relative baseline calibration ──
+    # ── Signal 9: Relative baseline calibration ──
     from services.cognitive_load_calibrator import (
         get_or_create_baseline,
         compute_relative_load,
@@ -284,3 +311,22 @@ def suggest_layout_simplification(
             "to reduce visual clutter and focus on core study."
         ),
     }
+
+
+def adjust_review_order_for_load(
+    cognitive_load_score: float,
+    cards: list[dict],
+) -> list[dict]:
+    """Reorder review cards based on cognitive load — easier cards first when loaded.
+
+    Under high cognitive load, presenting easier (more stable) cards first
+    lets the student build confidence before tackling harder material.
+    """
+    if cognitive_load_score < 0.5 or not cards:
+        return cards
+    # Sort by FSRS stability descending (most stable = easiest recall)
+    return sorted(
+        cards,
+        key=lambda c: c.get("fsrs", {}).get("stability", 0),
+        reverse=True,
+    )

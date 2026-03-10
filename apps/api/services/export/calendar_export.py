@@ -124,10 +124,10 @@ async def export_study_plan_to_ical(
     try:
         tmp.write(cal.to_ical())
         tmp.close()
-    except Exception:
+    except (IOError, OSError, ValueError) as exc:
         tmp.close()
         tmp_path.unlink(missing_ok=True)
-        raise
+        raise exc
 
     logger.info("Exported %d study events to iCal for course %s", event_count, course_id)
     return tmp_path

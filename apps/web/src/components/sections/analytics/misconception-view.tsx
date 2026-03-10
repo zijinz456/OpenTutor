@@ -47,8 +47,12 @@ function MisconceptionCard({ item, rank }: { item: MisconceptionItem; rank: numb
 
   return (
     <div
+      role="button"
+      aria-expanded={expanded}
+      tabIndex={0}
       className="rounded-2xl card-shadow bg-card p-3.5 space-y-2 cursor-pointer hover:bg-accent/50 transition-colors"
       onClick={() => setExpanded(!expanded)}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setExpanded(!expanded); } }}
       data-testid={`misconception-card-${rank}`}
     >
       <div className="flex items-start justify-between gap-2">
@@ -171,6 +175,8 @@ export function MisconceptionView({ courseId }: MisconceptionViewProps) {
 
   return (
     <div
+      role="region"
+      aria-label="Misconception analysis"
       className="flex-1 flex flex-col gap-4 p-4 overflow-y-auto"
       data-testid="misconception-panel"
     >

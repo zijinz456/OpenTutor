@@ -28,7 +28,7 @@ export default function ReviewBlock({ courseId }: BlockComponentProps) {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-8 text-xs text-muted-foreground">
+      <div role="status" aria-live="polite" className="flex items-center justify-center py-8 text-xs text-muted-foreground">
         <RotateCcw className="size-3.5 animate-spin mr-2" />
         Loading review...
       </div>
@@ -46,10 +46,11 @@ export default function ReviewBlock({ courseId }: BlockComponentProps) {
   const topItems = items.slice(0, 3);
 
   return (
-    <div className="space-y-2 p-1">
+    <div role="list" aria-label="Concepts to review" className="space-y-2 p-1">
       {topItems.map((item) => (
         <div
           key={item.concept_id}
+          role="listitem"
           className="flex items-center gap-3 rounded-xl bg-muted/30 p-3.5"
         >
           <div className="flex-1 min-w-0">
@@ -78,6 +79,7 @@ export default function ReviewBlock({ courseId }: BlockComponentProps) {
 
       <Link
         href={`/course/${courseId}/review`}
+        aria-label="Start full review session"
         className="flex items-center justify-center gap-1.5 w-full py-2.5 text-sm font-medium text-brand-foreground bg-brand rounded-xl hover:opacity-90 transition-opacity"
       >
         Start Full Review

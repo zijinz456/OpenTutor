@@ -215,7 +215,7 @@ async def generate_daily_brief(
             DAILY_BRIEF_PROMPT,
             json.dumps(data, default=str),
         )
-    except Exception as e:
+    except (ConnectionError, TimeoutError, RuntimeError) as e:
         logger.exception("Daily brief LLM call failed")
         report_text = _format_fallback_report(data, "daily")
 
@@ -231,7 +231,7 @@ async def generate_daily_brief(
             course_id=course_id,
             data_snapshot=data,
         )
-    except Exception as e:
+    except (OSError, ValueError, RuntimeError) as e:
         logger.exception("Failed to persist daily brief")
         if raise_on_persist_failure:
             raise
@@ -262,7 +262,7 @@ async def generate_weekly_report(
             WEEKLY_REPORT_PROMPT,
             json.dumps(data, default=str),
         )
-    except Exception as e:
+    except (ConnectionError, TimeoutError, RuntimeError) as e:
         logger.exception("Weekly report LLM call failed")
         report_text = _format_fallback_report(data, "weekly")
 
@@ -278,7 +278,7 @@ async def generate_weekly_report(
             course_id=course_id,
             data_snapshot=data,
         )
-    except Exception as e:
+    except (OSError, ValueError, RuntimeError) as e:
         logger.exception("Failed to persist weekly report")
         if raise_on_persist_failure:
             raise

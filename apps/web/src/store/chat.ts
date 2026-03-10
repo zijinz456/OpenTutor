@@ -1,10 +1,4 @@
-/**
- * Chat store using Zustand.
- * Manages conversation messages, streaming state, and NL action dispatching.
- *
- * Phase 0-B: Handles [ACTION:...] markers from LLM responses (CopilotKit pattern).
- */
-
+/** Chat store — conversation messages, streaming state, NL action dispatching. */
 import { create } from "zustand";
 import {
   getChatSessionMessages,
@@ -20,6 +14,7 @@ import {
 } from "@/lib/api";
 import { ttlCache } from "@/lib/cache";
 import { useWorkspaceStore } from "@/store/workspace";
+import { applyLayoutSimplification, categorizeError } from "./chat-stream";
 
 /** TTL for cached chat session lists (per course). */
 const SESSIONS_TTL_MS = 30_000; // 30 seconds
@@ -80,16 +75,10 @@ interface ChatState {
   clearMessages: (courseId?: string) => void;
 }
 
-// Use timestamp + random suffix to ensure unique IDs across page refreshes
 let messageCounter = 0;
 const sessionPrefix = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 
-/**
- * Helper: compute the derived `messages` and `activePlan` fields from the
- * per-course maps.  Every `set()` call that touches `messagesByCourse` or
- * `planProgressByCourse` should spread the result of this helper so the
- * top-level `messages` / `activePlan` always stay in sync automatically.
- */
+/** Compute derived `messages`/`activePlan` from per-course maps. */
 function deriveActive(
   state: Pick<ChatState, "messagesByCourse" | "planProgressByCourse" | "activeCourseId">,
 ) {
@@ -115,8 +104,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
   toolStatus: null,
   clarifyOptions: null,
   sendClarifyResponse: (courseId, key, value) => {
-    // Don't clear clarifyOptions here — sendMessage already clears it.
-    // Keeping it until sendMessage runs ensures retry is possible if the call fails.
     get().sendMessage(courseId, `[CLARIFY:${key}:${value}]`);
   },
   onAction: null,
@@ -348,26 +335,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
           }
 
           // Apply layout simplification if cognitive load is high
-          const simplification = event.metadata?.layout_simplification as
-            | { should_simplify: boolean; blocks_to_hide: string[]; reason: string }
-            | undefined;
-          if (simplification?.should_simplify && simplification.blocks_to_hide.length > 0) {
-            try {
-              const { useWorkspaceStore } = await import("@/store/workspace");
-              const ws = useWorkspaceStore.getState();
-              const ops = simplification.blocks_to_hide
-                .map((type: string) => {
-                  const block = ws.spaceLayout.blocks.find((b) => b.type === type);
-                  return block ? { action: "remove" as const, blockId: block.id } : null;
-                })
-                .filter(Boolean) as Array<{ action: "remove"; blockId: string }>;
-              if (ops.length > 0) {
-                ws.batchUpdateBlocks(ops);
-              }
-            } catch {
-              // Best-effort — workspace store may not be available
-            }
-          }
+          await applyLayoutSimplification(
+            event.metadata?.layout_simplification as
+              | { should_simplify: boolean; blocks_to_hide: string[]; reason: string }
+              | undefined,
+          );
 
           set((s) => {
             const nextMBC = {
@@ -394,13 +366,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         return;
       }
       const msg = (e as Error).message || "";
-      const category: ChatState["errorCategory"] =
-        /rate.?limit|429/i.test(msg) ? "rate_limit" :
-        /auth|401|403|api.?key|unauthorized/i.test(msg) ? "auth_error" :
-        /timeout|timed?\s?out|abort/i.test(msg) ? "timeout" :
-        /llm|model|provider|mock|circuit/i.test(msg) ? "llm_unavailable" :
-        "generic";
-      set({ error: msg, errorCategory: category });
+      set({ error: msg, errorCategory: categorizeError(msg) });
     } finally {
       set({ isStreaming: false, toolStatus: null, _abortController: null });
     }

@@ -65,8 +65,8 @@ async def analyze_student_affect(message: str) -> dict:
             result["source"] = "llm"
         else:
             result = _keyword_fallback(message)
-    except Exception:
-        logger.debug("LLM affect analysis unavailable, using keyword fallback")
+    except (json.JSONDecodeError, ConnectionError, TimeoutError, ValueError, RuntimeError) as exc:
+        logger.warning("LLM affect analysis unavailable, using keyword fallback: %s", exc, exc_info=True)
         result = _keyword_fallback(message)
 
     # Cache result

@@ -91,8 +91,8 @@ async def eval_task_retry(
                 "retried_status": retried.status,
             },
         )
-    except Exception as exc:
-        logger.exception("Recovery eval task_retry failed for task %s", task_id)
+    except (ValueError, RuntimeError, ConnectionError, TimeoutError, OSError) as exc:
+        logger.exception("Recovery eval task_retry failed for task %s: %s", task_id, exc)
         return RecoveryTestResult(
             name="task_retry",
             passed=False,
@@ -196,8 +196,8 @@ async def run_recovery_evaluation(
         try:
             result = await eval_fn()
             results.append(result)
-        except Exception as exc:
-            logger.exception("Recovery evaluation '%s' failed", name)
+        except (ValueError, RuntimeError, ConnectionError, TimeoutError, OSError) as exc:
+            logger.exception("Recovery evaluation '%s' failed: %s", name, exc)
             results.append(RecoveryTestResult(
                 name=name,
                 passed=False,

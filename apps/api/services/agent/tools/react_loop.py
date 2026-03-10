@@ -1,158 +1,69 @@
-"""ReAct loop engine: Think → Tool Call → Observe → Think.
+"""ReAct loop engine: Think -> Tool Call -> Observe -> Think.
 
 Borrows from:
 - HelloAgents ReActAgent: text-based tool_name[input] parsing, Finish[answer]
 - HelloAgents FunctionCallAgent: OpenAI native function calling
-- OpenAkita reasoning_engine: REASONING → ACTING → OBSERVING cycle
+- OpenAkita reasoning_engine: REASONING -> ACTING -> OBSERVING cycle
 - OpenAkita: loop detection via tool_pattern_window
 - NanoBot: interleaved CoT reflection after each tool round
 
 Dual-mode tool invocation:
 - Function Calling mode: when LLM provider supports tool_calls (OpenAI, Anthropic)
-- Text Parsing mode: when provider doesn't (Ollama, Mock) — regex fallback
+- Text Parsing mode: when provider doesn't (Ollama, Mock) -- regex fallback
 
 Max iterations: configurable (default 3).
 """
 
 import json
 import logging
-import re
 import time
 from typing import Any, AsyncIterator
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.agent.state import AgentContext, TaskPhase
-from services.agent.tools.base import MAX_TOOL_RESULT_CHARS, ToolRegistry, get_tool_registry
+from services.agent.tools.base import ToolRegistry, get_tool_registry
+from services.agent.tools.react_helpers import (
+    TOOL_RESULT_CONTEXT_CHARS,
+    build_text_mode_tools_prompt,
+    make_call_signature,
+    messages_to_user_content,
+    parse_finish,
+    parse_text_tool_call,
+    record_tool_call,
+)
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_ITERATIONS = 5
 
-# Use the same truncation limit as base.py for consistency
-_TOOL_RESULT_CONTEXT_CHARS = MAX_TOOL_RESULT_CHARS
+# Re-export helpers under their original private names for backward compatibility
+from services.agent.tools.react_helpers import (  # noqa: E402, F811
+    _find_balanced_bracket,
+    _build_text_mode_tools_prompt,
+    _parse_text_tool_call,
+    _parse_finish,
+    _make_call_signature,
+    _record_tool_call,
+    _messages_to_user_content,
+    _TOOL_RESULT_CONTEXT_CHARS,
+    _TOOL_CALL_START,
+)
 
-# Text-mode parsing patterns (HelloAgents ReActAgent pattern)
-# Simple pattern for initial detection (actual parsing uses _find_balanced_bracket)
-_TOOL_CALL_START = re.compile(r"(\w+)\[")
-
-
-def _find_balanced_bracket(text: str, open_pos: int) -> int | None:
-    """Find the closing ] that balances the [ at open_pos, handling nested brackets.
-
-    Returns the index of the closing bracket, or None if not found.
-    """
-    depth = 0
-    in_string = False
-    escape_next = False
-    for i in range(open_pos, len(text)):
-        c = text[i]
-        if escape_next:
-            escape_next = False
-            continue
-        if c == "\\":
-            escape_next = True
-            continue
-        if c == '"':
-            in_string = not in_string
-            continue
-        if in_string:
-            continue
-        if c == "[":
-            depth += 1
-        elif c == "]":
-            depth -= 1
-            if depth == 0:
-                return i
-    return None
-
-
-def _build_text_mode_tools_prompt(tools: list, max_iterations: int) -> str:
-    """Build the tool description section for text-based parsing mode."""
-    tool_descs = "\n".join(t.to_text_description() for t in tools)
-    return f"""
-
-## Available Tools
-You can call tools to gather information before answering.
-To call a tool, write on its own line: tool_name[{{"param": "value"}}]
-When you have enough information, write: Finish[your final answer]
-You may call at most {max_iterations} tools.
-
-{tool_descs}
-
-## Response Format
-1. Think about what information you need.
-2. Call a tool if needed: tool_name[{{"param": "value"}}]
-3. After receiving the observation, think again.
-4. When ready, write: Finish[your complete answer to the student]
-"""
-
-
-def _parse_text_tool_call(text: str, valid_names: set[str]) -> tuple[str | None, dict | None, str]:
-    """Parse a tool call from LLM text output using balanced bracket matching.
-
-    Returns: (tool_name, parsed_input, text_before_call)
-    Only returns tool_name if it matches a valid tool name.
-    """
-    for match in _TOOL_CALL_START.finditer(text):
-        tool_name = match.group(1)
-        if tool_name not in valid_names:
-            continue
-
-        open_pos = match.end() - 1  # Position of the [
-        close_pos = _find_balanced_bracket(text, open_pos)
-        if close_pos is None:
-            continue  # Unbalanced brackets, skip
-
-        raw_input = text[open_pos + 1:close_pos].strip()
-        before = text[:match.start()].strip()
-
-        # Parse input as JSON; fall back using tool's first param name
-        try:
-            parsed = json.loads(raw_input)
-            if not isinstance(parsed, dict):
-                parsed = {"query": str(parsed)}
-        except (json.JSONDecodeError, TypeError):
-            parsed = {"query": raw_input}
-
-        return tool_name, parsed, before
-
-    return None, None, text
-
-
-def _parse_finish(text: str) -> tuple[str | None, str]:
-    """Parse Finish[answer] from text using balanced bracket matching.
-
-    Returns: (answer_text, text_before_finish) or (None, text) if not found.
-    """
-    idx = text.find("Finish[")
-    if idx == -1:
-        return None, text
-    open_pos = idx + 6  # Position of the [
-    close_pos = _find_balanced_bracket(text, open_pos)
-    if close_pos is None:
-        return None, text
-    answer = text[open_pos + 1:close_pos].strip()
-    before = text[:idx].strip()
-    return answer, before
-
-
-def _make_call_signature(tool_name: str, params: dict) -> str:
-    """Create a signature for loop detection."""
-    return f"{tool_name}:{json.dumps(params, sort_keys=True, default=str)}"
-
-
-def _record_tool_call(ctx: AgentContext, tool_name: str, tool_input: dict | None, result_output: str, success: bool, iteration: int, duration_ms: float | None = None, error: str | None = None) -> None:
-    """Record a tool call in context with consistent format."""
-    ctx.tool_calls.append({
-        "tool": tool_name,
-        "input": tool_input or {},
-        "output": result_output[:_TOOL_RESULT_CONTEXT_CHARS],
-        "success": success,
-        "iteration": iteration,
-        "duration_ms": duration_ms,
-        "error": error,
-    })
+__all__ = [
+    "react_stream",
+    "DEFAULT_MAX_ITERATIONS",
+    # Backward-compatible re-exports
+    "_find_balanced_bracket",
+    "_build_text_mode_tools_prompt",
+    "_parse_text_tool_call",
+    "_parse_finish",
+    "_make_call_signature",
+    "_record_tool_call",
+    "_messages_to_user_content",
+    "_TOOL_RESULT_CONTEXT_CHARS",
+    "_TOOL_CALL_START",
+]
 
 
 # ── Main ReAct Stream ──
@@ -170,11 +81,11 @@ async def react_stream(
     """Execute ReAct loop, yielding structured events for each step.
 
     Yields dicts:
-    - {"type": "thought", "content": str}     — agent reasoning (not shown to user)
-    - {"type": "tool_start", "tool": str, "input": str} — tool invocation
-    - {"type": "tool_result", "tool": str, "result": str} — tool result
-    - {"type": "answer", "content": str}      — final answer chunk
-    - {"type": "answer_done"}                 — answer complete
+    - {"type": "thought", "content": str}     -- agent reasoning (not shown to user)
+    - {"type": "tool_start", "tool": str, "input": str} -- tool invocation
+    - {"type": "tool_result", "tool": str, "result": str} -- tool result
+    - {"type": "answer", "content": str}      -- final answer chunk
+    - {"type": "answer_done"}                 -- answer complete
 
     Automatically selects function calling or text parsing mode
     based on whether the client supports chat_with_tools().
@@ -183,7 +94,7 @@ async def react_stream(
     tools = registry.get_tools(tool_names)
 
     if not tools:
-        # No tools available — direct answer (no ReAct)
+        # No tools available -- direct answer (no ReAct)
         full = ""
         async for chunk in client.stream_chat(system_prompt, user_message, images=ctx.images or None):
             full += chunk
@@ -246,7 +157,7 @@ async def _react_function_calling(
         # Call LLM with tools
         try:
             text, tool_calls, usage = await client.chat_with_tools(messages, tool_schemas)
-        except Exception as e:
+        except (ConnectionError, TimeoutError, OSError, RuntimeError) as e:
             logger.error("LLM call failed on iteration %d: %s", iteration, e)
             # If we have tool results from prior iterations, build a fallback answer
             if ctx.tool_calls:
@@ -258,7 +169,7 @@ async def _react_function_calling(
                 yield {"type": "answer", "content": fallback}
                 yield {"type": "answer_done"}
                 return
-            raise  # No tool results — re-raise to caller
+            raise  # No tool results -- re-raise to caller
         last_text = text or ""
 
         # Accumulate token usage across all ReAct iterations (not just last call)
@@ -266,7 +177,7 @@ async def _react_function_calling(
         ctx.output_tokens += usage.get("output_tokens", 0)
 
         if not tool_calls:
-            # No tool calls — LLM is ready to answer directly
+            # No tool calls -- LLM is ready to answer directly
             break
 
         used_tools = True
@@ -298,13 +209,13 @@ async def _react_function_calling(
             call_id = tc["id"]
 
             # Loop detection (OpenAkita pattern)
-            sig = _make_call_signature(tool_name, tool_input)
+            sig = make_call_signature(tool_name, tool_input)
             if sig in call_history:
                 logger.info("Skipping duplicate tool call: %s", tool_name)
                 messages.append({
                     "role": "tool",
                     "tool_call_id": call_id,
-                    "content": "(Skipped: duplicate call — same tool and parameters already executed)",
+                    "content": "(Skipped: duplicate call -- same tool and parameters already executed)",
                 })
                 continue
             call_history.add(sig)
@@ -324,27 +235,26 @@ async def _react_function_calling(
 
             ctx.transition(TaskPhase.OBSERVING)
             result_explanation = tool_obj.explain_result(result) if tool_obj else ""
-            yield {"type": "tool_result", "tool": tool_name, "result": result.output[:_TOOL_RESULT_CONTEXT_CHARS], "explanation": result_explanation}
+            yield {"type": "tool_result", "tool": tool_name, "result": result.output[:TOOL_RESULT_CONTEXT_CHARS], "explanation": result_explanation}
 
-            _record_tool_call(ctx, tool_name, tool_input, result.output, result.success, iteration, duration_ms=_duration_ms, error=result.error)
+            record_tool_call(ctx, tool_name, tool_input, result.output, result.success, iteration, duration_ms=_duration_ms, error=result.error)
 
             # Add tool result to messages (truncated to avoid context overflow)
-            tool_content = result.output[:_TOOL_RESULT_CONTEXT_CHARS] if result.success else f"Error: {result.error or result.output or 'unknown error'}"
+            tool_content = result.output[:TOOL_RESULT_CONTEXT_CHARS] if result.success else f"Error: {result.error or result.output or 'unknown error'}"
             messages.append({
                 "role": "tool",
                 "tool_call_id": call_id,
                 "content": tool_content,
             })
     else:
-        # Exhausted iterations — force final answer
+        # Exhausted iterations -- force final answer
         messages.append({
             "role": "user",
             "content": "You have used all available tool calls. Now provide your final answer based on the information gathered.",
         })
 
     if not used_tools and last_text:
-        # LLM provided an answer without using any tools — use it directly
-        # (avoids wasting an extra LLM call to regenerate the same answer)
+        # LLM provided an answer without using any tools -- use it directly
         ctx.response = last_text
         yield {"type": "answer", "content": last_text}
         yield {"type": "answer_done"}
@@ -354,7 +264,7 @@ async def _react_function_calling(
     full_answer = ""
     async for chunk in client.stream_chat(
         system_prompt,
-        _messages_to_user_content(messages),
+        messages_to_user_content(messages),
         images=ctx.images or None,
     ):
         full_answer += chunk
@@ -378,7 +288,7 @@ async def _react_text_parsing(
     max_iterations: int,
 ) -> AsyncIterator[dict]:
     """ReAct loop using text-based tool_name[input] parsing (HelloAgents pattern)."""
-    enhanced_prompt = system_prompt + _build_text_mode_tools_prompt(tools, max_iterations)
+    enhanced_prompt = system_prompt + build_text_mode_tools_prompt(tools, max_iterations)
     call_history: set[str] = set()
     valid_tool_names = {t.name for t in tools}
 
@@ -397,7 +307,7 @@ async def _react_text_parsing(
             full_text += chunk
 
         # Check for Finish[answer]
-        answer, before = _parse_finish(full_text)
+        answer, before = parse_finish(full_text)
         if answer is not None:
             if before:
                 yield {"type": "thought", "content": before}
@@ -407,9 +317,9 @@ async def _react_text_parsing(
             return
 
         # Check for tool call (only matches valid tool names)
-        tool_name, tool_input, before_text = _parse_text_tool_call(full_text, valid_tool_names)
+        tool_name, tool_input, before_text = parse_text_tool_call(full_text, valid_tool_names)
         if not tool_name:
-            # No valid tool call found — treat as final answer
+            # No valid tool call found -- treat as final answer
             ctx.response = full_text
             yield {"type": "answer", "content": full_text}
             yield {"type": "answer_done"}
@@ -420,7 +330,7 @@ async def _react_text_parsing(
 
         # Loop detection
         safe_input = tool_input or {}
-        sig = _make_call_signature(tool_name, safe_input)
+        sig = make_call_signature(tool_name, safe_input)
         if sig in call_history:
             logger.info("Skipping duplicate text-mode tool call: %s", tool_name)
             conversation_parts.append(f"Observation: (Skipped duplicate call to {tool_name})")
@@ -442,9 +352,9 @@ async def _react_text_parsing(
 
         ctx.transition(TaskPhase.OBSERVING)
         result_explanation = tool_obj.explain_result(result) if tool_obj else ""
-        yield {"type": "tool_result", "tool": tool_name, "result": result.output[:_TOOL_RESULT_CONTEXT_CHARS], "explanation": result_explanation}
+        yield {"type": "tool_result", "tool": tool_name, "result": result.output[:TOOL_RESULT_CONTEXT_CHARS], "explanation": result_explanation}
 
-        _record_tool_call(ctx, tool_name, safe_input, result.output, result.success, iteration, duration_ms=_duration_ms, error=result.error)
+        record_tool_call(ctx, tool_name, safe_input, result.output, result.success, iteration, duration_ms=_duration_ms, error=result.error)
 
         # Append observation for next iteration
         obs = result.output if result.success else f"Error: {result.error or result.output or 'unknown error'}"
@@ -453,7 +363,7 @@ async def _react_text_parsing(
             "Continue reasoning. Call another tool or write Finish[your answer]."
         )
 
-    # Exhausted iterations — force final answer
+    # Exhausted iterations -- force final answer
     conversation_parts.append(
         "You have used all available tool calls. "
         "Now write Finish[your complete answer] based on what you have gathered."
@@ -464,58 +374,8 @@ async def _react_text_parsing(
         full_text += chunk
 
     # Try to extract Finish[...] from forced answer
-    extracted_answer, _ = _parse_finish(full_text)
+    extracted_answer, _ = parse_finish(full_text)
     answer = extracted_answer if extracted_answer is not None else full_text
     ctx.response = answer
     yield {"type": "answer", "content": answer}
     yield {"type": "answer_done"}
-
-
-# ── Helpers ──
-
-
-def _messages_to_user_content(messages: list[dict]) -> str:
-    """Flatten a messages list into a single user-content string for stream_chat().
-
-    Used when falling back from chat_with_tools to stream_chat for the final answer.
-    Handles both OpenAI and Anthropic message formats.
-    """
-    parts = []
-    for msg in messages[1:]:  # Skip system message
-        role = msg.get("role", "")
-        content = msg.get("content", "")
-
-        if role == "user":
-            if isinstance(content, str):
-                parts.append(content)
-            elif isinstance(content, list):
-                # Anthropic format: content blocks
-                for block in content:
-                    if isinstance(block, dict):
-                        if block.get("type") == "text":
-                            parts.append(block.get("text", ""))
-                        elif block.get("type") == "tool_result":
-                            parts.append(f"[Tool result]: {block.get('content', '')}")
-
-        elif role == "assistant":
-            if isinstance(content, str) and content:
-                parts.append(f"[Assistant thought]: {content}")
-            elif isinstance(content, list):
-                for block in content:
-                    if isinstance(block, dict):
-                        if block.get("type") == "text":
-                            parts.append(f"[Assistant thought]: {block.get('text', '')}")
-                        elif block.get("type") == "tool_use":
-                            parts.append(f"[Tool call: {block.get('name', '?')}]")
-            # Also capture tool_calls from OpenAI format (assistant with no text content)
-            tool_calls = msg.get("tool_calls", [])
-            if tool_calls:
-                for tc in tool_calls:
-                    func = tc.get("function", tc)
-                    parts.append(f"[Tool call: {func.get('name', '?')}]")
-
-        elif role == "tool":
-            if isinstance(content, str):
-                parts.append(f"[Tool result]: {content}")
-
-    return "\n\n".join(parts)

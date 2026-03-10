@@ -49,13 +49,15 @@ export function TabbedSection<T extends string>({
   return (
     <div className="flex-1 flex flex-col overflow-hidden" data-testid={testId}>
       <div className="px-3 py-1.5 border-b border-border/60 shrink-0 overflow-x-auto scrollbar-none">
-        <div className="flex items-center gap-1 min-w-max">
+        <div role="tablist" className="flex items-center gap-1 min-w-max">
           {tabs.map((tab) => (
             <Button
               key={tab.id}
               type="button"
+              role="tab"
               size="sm"
               variant={resolvedActiveTab === tab.id ? "secondary" : "ghost"}
+              aria-selected={resolvedActiveTab === tab.id}
               className="h-6 px-2.5 text-xs rounded-xl min-h-[44px] min-w-[44px] shrink-0"
               data-testid={tab.testId}
               onClick={() => {
@@ -69,9 +71,11 @@ export function TabbedSection<T extends string>({
         </div>
       </div>
 
-      <Suspense fallback={<SubViewSkeleton />}>
-        {children(resolvedActiveTab)}
-      </Suspense>
+      <div role="tabpanel" aria-label={`${resolvedActiveTab} panel`}>
+        <Suspense fallback={<SubViewSkeleton />}>
+          {children(resolvedActiveTab)}
+        </Suspense>
+      </div>
     </div>
   );
 }

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # OpenTutor — One-click local development setup & launch
-# Usage: ./scripts/quickstart.sh
+# Usage: ./scripts/quickstart.sh [--exit-after-ready]
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -10,9 +10,81 @@ API_DIR="${ROOT_DIR}/apps/api"
 WEB_DIR="${ROOT_DIR}/apps/web"
 ENV_FILE="${ROOT_DIR}/.env"
 VENV_DIR="${API_DIR}/.venv"
+API_PORT="${API_PORT:-8000}"
+WEB_PORT="${WEB_PORT:-3001}"
+API_BASE_URL="http://localhost:${API_PORT}"
+WEB_BASE_URL="http://localhost:${WEB_PORT}"
 API_PID=""
 WEB_PID=""
 DB_DISPLAY=""
+EXIT_AFTER_READY="${QUICKSTART_EXIT_AFTER_READY:-0}"
+READY_TIMEOUT_SECONDS="${QUICKSTART_READY_TIMEOUT_SECONDS:-120}"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  scripts/quickstart.sh [--exit-after-ready]
+
+Options:
+  --exit-after-ready   Exit with code 0 after API/Web become ready.
+                       Useful for CI and release rehearsal automation.
+EOF
+}
+
+normalize_bool() {
+  local value="${1:-false}"
+  value="$(to_lower "${value}")"
+  case "${value}" in
+    1|true|yes|on) printf 'true\n' ;;
+    *) printf 'false\n' ;;
+  esac
+}
+
+wait_for_service_or_process() {
+  local label="$1"
+  local url="$2"
+  local pid="$3"
+  local timeout_seconds="$4"
+  local started_at
+  local status
+
+  started_at="$(date +%s)"
+  while true; do
+    status="$(curl -sS -o /dev/null -w '%{http_code}' "${url}" || true)"
+    if [[ "${status}" =~ ^(2|3) ]]; then
+      log "READY: ${label} (${url})"
+      return 0
+    fi
+
+    if ! kill -0 "${pid}" 2>/dev/null; then
+      fail "${label} exited before readiness. Check the [$(to_lower "${label}")] logs above and fix the reported startup error."
+    fi
+
+    if (( "$(date +%s)" - started_at >= timeout_seconds )); then
+      fail "${label} did not become ready within ${timeout_seconds}s: ${url}"
+    fi
+
+    sleep 2
+  done
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --exit-after-ready)
+      EXIT_AFTER_READY=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      fail "Unknown argument: $1. Run 'bash scripts/quickstart.sh --help' for valid options."
+      ;;
+  esac
+done
+
+EXIT_AFTER_READY="$(normalize_bool "${EXIT_AFTER_READY}")"
 
 # ---------------------------------------------------------------------------
 # Cleanup on exit
@@ -20,8 +92,14 @@ DB_DISPLAY=""
 cleanup() {
   log ""
   log "Shutting down..."
-  [[ -n "${WEB_PID}" ]] && kill "${WEB_PID}" 2>/dev/null && wait "${WEB_PID}" 2>/dev/null
-  [[ -n "${API_PID}" ]] && kill "${API_PID}" 2>/dev/null && wait "${API_PID}" 2>/dev/null
+  if [[ -n "${WEB_PID}" ]]; then
+    kill "${WEB_PID}" 2>/dev/null || true
+    wait "${WEB_PID}" 2>/dev/null || true
+  fi
+  if [[ -n "${API_PID}" ]]; then
+    kill "${API_PID}" 2>/dev/null || true
+    wait "${API_PID}" 2>/dev/null || true
+  fi
   log "Done."
 }
 trap cleanup EXIT INT TERM
@@ -177,26 +255,47 @@ fi
 # ---------------------------------------------------------------------------
 step "Starting services"
 
+if pgrep -f "${WEB_DIR}/node_modules/.bin/next dev" >/dev/null 2>&1; then
+  fail "Detected an existing Next.js dev process for ${WEB_DIR}. Stop it before running quickstart (for example: pkill -f '${WEB_DIR}/node_modules/.bin/next dev')."
+fi
+
+next_lock_file="${WEB_DIR}/.next/dev/lock"
+if [[ -f "${next_lock_file}" ]]; then
+  if command -v lsof >/dev/null 2>&1 && lsof "${next_lock_file}" >/dev/null 2>&1; then
+    fail "Next.js lock file is active at ${next_lock_file}. Stop the running next dev process and retry."
+  fi
+  rm -f "${next_lock_file}"
+  log "  Removed stale Next.js lock: ${next_lock_file}"
+fi
+
 cd "${API_DIR}"
-log "  Starting API server (port 8000) ..."
-"${PY_BIN}" -m uvicorn main:app --host 127.0.0.1 --port 8000 --reload 2>&1 | sed 's/^/  [api] /' &
+log "  Starting API server (port ${API_PORT}) ..."
+"${PY_BIN}" -m uvicorn main:app --host 127.0.0.1 --port "${API_PORT}" --reload > >(sed 's/^/  [api] /') 2>&1 &
 API_PID=$!
 
 cd "${WEB_DIR}"
-log "  Starting Web server (port 3001) ..."
-npm run dev 2>&1 | sed 's/^/  [web] /' &
+log "  Starting Web server (port ${WEB_PORT}) ..."
+npx next dev --port "${WEB_PORT}" > >(sed 's/^/  [web] /') 2>&1 &
 WEB_PID=$!
+
+sleep 2
+if ! kill -0 "${API_PID}" 2>/dev/null; then
+  fail "API server exited early. Check the [api] logs above for the root cause (common fix: free port ${API_PORT} or set API_PORT to an unused port), then retry quickstart."
+fi
+if ! kill -0 "${WEB_PID}" 2>/dev/null; then
+  fail "Web server exited early. Check the [web] logs above for the root cause (common fixes: free port ${WEB_PORT}, stop other 'next dev' instances, or remove stale .next/dev lock), then retry quickstart."
+fi
 
 # ---------------------------------------------------------------------------
 # 10. Wait for readiness
 # ---------------------------------------------------------------------------
 step "Waiting for services to become ready"
 
-wait_for_url "API" "http://localhost:8000/api/health" 60
-wait_for_url "Web" "http://localhost:3001" 60
+wait_for_service_or_process "API" "${API_BASE_URL}/api/health" "${API_PID}" "${READY_TIMEOUT_SECONDS}"
+wait_for_service_or_process "Web" "${WEB_BASE_URL}" "${WEB_PID}" "${READY_TIMEOUT_SECONDS}"
 
 # Show health status
-health="$(curl -sS http://localhost:8000/api/health 2>/dev/null || echo '{}')"
+health="$(curl -sS "${API_BASE_URL}/api/health" 2>/dev/null || echo '{}')"
 health_lines="$(
   HEALTH_JSON="${health}" "${PY_BIN}" - <<'PY'
 import json
@@ -221,9 +320,9 @@ local_beta_blockers="$(printf '%s\n' "${health_lines}" | sed -n '4p')"
 log ""
 log "============================================"
 log "  OpenTutor is running!"
-log "  Web:    http://localhost:3001"
-log "  API:    http://localhost:8000/api"
-log "  Health: http://localhost:8000/api/health"
+log "  Web:    ${WEB_BASE_URL}"
+log "  API:    ${API_BASE_URL}/api"
+log "  Health: ${API_BASE_URL}/api/health"
 log "  DB:     ${database_backend}"
 log ""
 if [[ "${llm_status}" == "ready" ]]; then
@@ -242,6 +341,12 @@ fi
 log ""
 log "  Press Ctrl+C to stop all services."
 log "============================================"
+
+if [[ "${EXIT_AFTER_READY}" == "true" ]]; then
+  log ""
+  log "  Exit-after-ready mode enabled. Shutting down services with success."
+  exit 0
+fi
 
 # Keep running until interrupted
 wait

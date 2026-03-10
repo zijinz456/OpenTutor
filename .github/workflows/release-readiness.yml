@@ -1,0 +1,72 @@
+name: Release Readiness
+
+on:
+  workflow_dispatch:
+    inputs:
+      stability_windows:
+        description: "How many latest completed CI runs on main must be green"
+        required: true
+        default: "2"
+      run_ci_stability_check:
+        description: "Run CI stability window check after rehearsal rounds"
+        required: true
+        type: boolean
+        default: true
+
+jobs:
+  ubuntu-clean-rehearsal:
+    name: Ubuntu Clean Rehearsal (${{ matrix.round }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    strategy:
+      fail-fast: false
+      matrix:
+        round: [round-1, round-2]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+
+      - name: Run release rehearsal round
+        run: bash scripts/release_rehearsal_round.sh --round "${{ matrix.round }}"
+
+      - name: Upload rehearsal report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-rehearsal-${{ matrix.round }}
+          path: tmp/release-rehearsal/${{ matrix.round }}
+          if-no-files-found: warn
+
+  ci-stability-window:
+    name: CI Stability Window
+    runs-on: ubuntu-latest
+    needs: ubuntu-clean-rehearsal
+    if: ${{ always() && (inputs.run_ci_stability_check == true || inputs.run_ci_stability_check == 'true') }}
+    permissions:
+      actions: read
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Verify latest CI windows are green
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          bash scripts/check_ci_stability.sh \
+            --repo "${{ github.repository }}" \
+            --branch main \
+            --workflow ci.yml \
+            --windows "${{ inputs.stability_windows }}"

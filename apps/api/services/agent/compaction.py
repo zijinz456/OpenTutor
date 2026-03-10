@@ -10,6 +10,7 @@ Strategies:
 - Tool schema pruning (only include tools the agent can use)
 """
 
+import json
 import logging
 from typing import Any
 
@@ -215,7 +216,7 @@ async def incremental_compact(
         )
         logger.info("Incremental compaction: updated summary (%d chars)", len(updated_summary))
         return updated_summary
-    except Exception as e:
+    except (ConnectionError, TimeoutError, ValueError, RuntimeError) as e:
         logger.exception("Incremental compaction failed: %s", e)
         return None
 
@@ -280,7 +281,7 @@ async def memory_flush(
         logger.info("Memory flush: extracted %d items before compaction", len(items))
         return items
 
-    except Exception as e:
+    except (ConnectionError, TimeoutError, ValueError, json.JSONDecodeError, RuntimeError) as e:
         logger.exception("Memory flush failed (non-critical): %s", e)
         return []
 
@@ -345,7 +346,7 @@ async def compact_session(
         }
         return [summary_msg] + recent, flushed_items
 
-    except Exception as e:
+    except (ConnectionError, TimeoutError, ValueError, RuntimeError) as e:
         logger.exception("LLM compaction failed, using emergency trim: %s", e)
         context_window = get_context_window(model_name)
         return emergency_trim(messages, int(context_window * 0.5)), flushed_items

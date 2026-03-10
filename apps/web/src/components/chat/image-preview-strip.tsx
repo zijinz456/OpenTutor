@@ -17,10 +17,11 @@ export function ImagePreviewStrip({ images, onRemove }: ImagePreviewStripProps) 
   if (images.length === 0) return null;
 
   return (
-    <div className="mb-2 flex gap-2 overflow-x-auto scrollbar-thin pb-1">
+    <div role="list" aria-label="Attached images" className="mb-2 flex gap-2 overflow-x-auto scrollbar-thin pb-1">
       {images.map((img, i) => (
         <div
           key={`${img.filename ?? "img"}-${i}`}
+          role="listitem"
           className="relative shrink-0 group"
         >
           <Image

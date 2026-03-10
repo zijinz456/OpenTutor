@@ -178,4 +178,7 @@ class MetricsMiddleware(BaseHTTPMiddleware):
         if response.status_code >= 400:
             _store.error_count[key] += 1
 
+        if duration_ms > 500:
+            logger.warning("Slow request: %s %.0fms status=%d", key, duration_ms, response.status_code)
+
         return response

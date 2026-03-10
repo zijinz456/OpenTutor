@@ -2,6 +2,16 @@
 
 OpenTutor Zenus now exposes a bundled regression benchmark at `POST /api/eval/regression`.
 
+`strict` mode is supported via request payload:
+
+```json
+{
+  "strict": true
+}
+```
+
+When `strict=true`, skipped `retrieval` or `recovery` suites are treated as failures.
+
 What it checks by default:
 
 - routing accuracy against golden intent cases
@@ -47,4 +57,4 @@ Thresholds are currently enforced in `apps/api/services/evaluation/benchmark_run
 CI now enforces two gates:
 
 - an offline benchmark gate in `.github/workflows/ci.yml`
-- an API-level regression gate against `POST /api/eval/regression`
+- an API-level strict regression gate against `POST /api/eval/regression` with fixture payload

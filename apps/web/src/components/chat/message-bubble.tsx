@@ -42,6 +42,8 @@ export function MessageBubble({ message }: MessageBubbleProps) {
   return (
     <>
       <div
+        role="article"
+        aria-label={isUser ? "Your message" : "Assistant message"}
         className={cn("flex mb-2", isUser ? "justify-end" : "justify-start")}
         data-testid={isUser ? "chat-message-user" : "chat-message-assistant"}
         data-role={message.role}
@@ -61,6 +63,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
                 <button
                   key={`${img.filename ?? "img"}-${i}`}
                   type="button"
+                  aria-label={`Expand ${img.filename ?? `image ${i + 1}`}`}
                   className="rounded-md overflow-hidden border border-white/20 hover:opacity-80 transition-opacity"
                   onClick={() =>
                     setExpandedImage(`data:${img.media_type};base64,${img.data}`)
@@ -202,8 +205,10 @@ export function MessageBubble({ message }: MessageBubbleProps) {
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 cursor-pointer"
           onClick={() => setExpandedImage(null)}
+          onKeyDown={(e) => { if (e.key === "Escape") setExpandedImage(null); }}
           role="dialog"
-          aria-label="Expanded image"
+          aria-label="Expanded image view. Click or press Escape to close."
+          aria-modal="true"
         >
           <Image
             src={expandedImage}

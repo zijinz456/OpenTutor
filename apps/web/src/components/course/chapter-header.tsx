@@ -11,7 +11,7 @@ interface ChapterHeaderProps {
 
 export function ChapterHeader({ courseId, courseName, chapterTitle }: ChapterHeaderProps) {
   return (
-    <header className="border-b border-border/60 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 sticky top-0 z-30">
+    <header role="banner" aria-label="Chapter navigation" className="border-b border-border/60 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 sticky top-0 z-30">
       <div className="max-w-4xl mx-auto px-4 py-3 flex items-center gap-3">
         <Link
           href={`/course/${courseId}`}

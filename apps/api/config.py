@@ -56,7 +56,7 @@ class Settings(BaseSettings):
     # Authentication
     auth_enabled: bool = False
     deployment_mode: str = "single_user"  # single_user | multi_user
-    jwt_secret_key: str = "change-me-in-production"
+    jwt_secret_key: str = ""
     jwt_algorithm: str = "HS256"
     jwt_access_token_expire_minutes: int = 30
     jwt_refresh_token_expire_days: int = 7
@@ -174,20 +174,36 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _validate_security(self):
+        import logging as _logging
+
+        _log = _logging.getLogger("opentutor.config")
+
+        # Generate a random CSRF signing key when jwt_secret_key is not set
+        # (CSRF middleware needs a signing key even when auth is disabled)
+        if not self.jwt_secret_key:
+            import secrets as _secrets
+            self.jwt_secret_key = _secrets.token_hex(32)
+
         if self.auth_enabled:
-            if self.jwt_secret_key == "change-me-in-production":
-                raise ValueError(
-                    "jwt_secret_key must be changed from the default when auth is enabled"
-                )
             if len(self.jwt_secret_key) < 32:
                 raise ValueError(
                     "jwt_secret_key must be at least 32 characters when auth is enabled"
                 )
-        if self.environment == "production":
-            if self.jwt_secret_key == "change-me-in-production":
-                raise ValueError(
-                    "jwt_secret_key must be changed from the default in production"
-                )
+        elif self.environment != "development":
+            _log.warning(
+                "SECURITY WARNING: auth_enabled=False in '%s' environment. "
+                "Anyone with network access can use this instance without authentication. "
+                "Set AUTH_ENABLED=true and configure JWT_SECRET_KEY for production use.",
+                self.environment,
+            )
+
+        if self.environment in ("production", "staging"):
+            if self.auth_enabled:
+                env_key = os.environ.get("JWT_SECRET_KEY", "")
+                if not env_key or len(env_key) < 32:
+                    raise ValueError(
+                        "JWT_SECRET_KEY must be explicitly set (>= 32 chars) in production with auth enabled"
+                    )
             if "REDACTED_DEV_PASSWORD" in self.database_url:
                 raise ValueError(
                     "Default database password must be changed in production"

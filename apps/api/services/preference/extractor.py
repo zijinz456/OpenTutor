@@ -131,7 +131,7 @@ async def extract_preference_signal(
     except json.JSONDecodeError:
         logger.debug(f"No valid JSON in extraction result: {result[:100]}")
         return None
-    except Exception as e:
+    except (ConnectionError, TimeoutError, RuntimeError) as e:
         logger.exception("Signal extraction failed")
         return None
 
@@ -309,7 +309,7 @@ async def collect_behavior_signals(
             s["user_id"] = user_id
             s["course_id"] = course_id
         signals.extend(quiz_signals)
-    except Exception as e:
+    except (ValueError, RuntimeError, OSError) as e:
         logger.exception("Quiz performance inference skipped")
 
     # Interaction pattern signals
@@ -319,7 +319,7 @@ async def collect_behavior_signals(
             s["user_id"] = user_id
             s["course_id"] = course_id
         signals.extend(pattern_signals)
-    except Exception as e:
+    except (ValueError, RuntimeError, OSError) as e:
         logger.exception("Interaction pattern inference skipped")
 
     return signals

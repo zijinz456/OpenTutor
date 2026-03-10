@@ -153,6 +153,7 @@ export function BlockWrapper({ block, courseId, aiActionsEnabled }: BlockWrapper
             <button
               onClick={handleApprove}
               className="inline-flex items-center gap-1 text-[11px] font-medium text-success bg-success-muted px-2.5 py-1 rounded-md hover:bg-success/20 transition-colors"
+              aria-label={block.agentMeta?.approvalCta || t("block.approve")}
             >
               <Check className="size-3" />
               {block.agentMeta?.approvalCta || t("block.approve")}
@@ -160,6 +161,7 @@ export function BlockWrapper({ block, courseId, aiActionsEnabled }: BlockWrapper
             <button
               onClick={handleDismiss}
               className="inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground hover:text-destructive px-1.5 py-1 rounded-md transition-colors"
+              aria-label={t("block.dismiss")}
             >
               <X className="size-3" />
             </button>

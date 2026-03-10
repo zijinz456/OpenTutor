@@ -11,7 +11,8 @@ import pytest
 
 # ── Search: RRF scoring ──
 
-from services.search.hybrid import _document_signal_score, _tokenize_query, hybrid_search, rrf_score, RRF_K
+from services.search.scoring import _document_signal_score, _tokenize_query, rrf_score, RRF_K
+from services.search.fusion import hybrid_search
 from services.search.rag_fusion import rag_fusion_search
 from services.agent.task_planner import execute_plan_step
 from services.agent.state import AgentContext, IntentType, TaskPhase
@@ -29,7 +30,7 @@ from services.activity.tasks import (
 )
 from services.agent.verifier import verify_and_repair
 from services.scheduler import engine as scheduler_engine
-from routers.preferences import build_learning_profile_summary
+from routers.preferences_crud import build_learning_profile_summary
 from services.preference.engine import resolve_preferences
 
 
@@ -273,7 +274,8 @@ class _FakeSessionContext:
 
 def _patch_task_session(monkeypatch, task: AgentTask) -> _FakeSession:
     session = _FakeSession(task)
-    monkeypatch.setattr(activity_engine, "async_session", lambda: _FakeSessionContext(session))
+    from services.activity import engine_lifecycle
+    monkeypatch.setattr(engine_lifecycle, "async_session", lambda: _FakeSessionContext(session))
     return session
 
 
@@ -447,11 +449,13 @@ async def test_weekly_scheduler_enqueues_durable_task_and_creates_goal(monkeypat
     user = User(id=uuid.uuid4(), email="scheduler@test.dev", hashed_password="x")
     session = _SchedulerSession(user)
 
-    monkeypatch.setattr(scheduler_engine, "async_session", lambda: _FakeSessionContext(session))
+    from services.scheduler import engine_jobs_maintenance, engine_helpers
+    monkeypatch.setattr(engine_jobs_maintenance, "async_session", lambda: _FakeSessionContext(session))
+    monkeypatch.setattr(engine_helpers, "async_session", lambda: _FakeSessionContext(session))
     submit_task = AsyncMock()
     push_notification = AsyncMock()
-    monkeypatch.setattr(scheduler_engine, "submit_task", submit_task)
-    monkeypatch.setattr(scheduler_engine, "_push_notification", push_notification)
+    monkeypatch.setattr(engine_jobs_maintenance, "submit_task", submit_task)
+    monkeypatch.setattr(engine_jobs_maintenance, "_push_notification", push_notification)
 
     await scheduler_engine.weekly_prep_job()
 
@@ -732,7 +736,7 @@ async def test_execute_plan_step_rejects_non_actionable_study_plan(monkeypatch):
 async def test_verifier_rejects_generic_nonanswer_for_learning_request():
     class _Agent:
         def get_llm_client(self):
-            raise AssertionError("repair should not run in this test")
+            raise RuntimeError("repair should not run in this test")
 
         def build_system_prompt(self, _ctx):
             return "system"
@@ -755,7 +759,7 @@ async def test_verifier_rejects_generic_nonanswer_for_learning_request():
 async def test_verifier_records_acceptance_diagnostics_for_grounded_answer():
     class _Agent:
         def get_llm_client(self):
-            raise AssertionError("repair should not run in this test")
+            raise RuntimeError("repair should not run in this test")
 
         def build_system_prompt(self, _ctx):
             return "system"
@@ -790,7 +794,7 @@ async def test_verifier_catches_socratic_violation_direct_answer():
 
     class _Agent:
         def get_llm_client(self):
-            raise AssertionError("should not repair in this test")
+            raise RuntimeError("should not repair in this test")
 
         def build_system_prompt(self, _ctx):
             return "system"
@@ -817,7 +821,7 @@ async def test_verifier_allows_socratic_answer_with_followup():
 
     class _Agent:
         def get_llm_client(self):
-            raise AssertionError("should not repair in this test")
+            raise RuntimeError("should not repair in this test")
 
         def build_system_prompt(self, _ctx):
             return "system"
@@ -872,9 +876,9 @@ async def test_hybrid_search_uses_signal_reranking(monkeypatch):
     async def fake_vector_search(_db, _course_id, _query, limit=10):
         return []
 
-    monkeypatch.setattr("services.search.hybrid.keyword_search", fake_keyword_search)
-    monkeypatch.setattr("services.search.hybrid.tree_search", fake_tree_search)
-    monkeypatch.setattr("services.search.hybrid.vector_search", fake_vector_search)
+    monkeypatch.setattr("services.search.fusion.keyword_search", fake_keyword_search)
+    monkeypatch.setattr("services.search.fusion.tree_search", fake_tree_search)
+    monkeypatch.setattr("services.search.fusion.vector_search", fake_vector_search)
 
     results = await hybrid_search(None, uuid.uuid4(), "common pitfalls in binary search", limit=2)
 
@@ -910,9 +914,9 @@ async def test_hybrid_search_rewards_query_facet_coverage(monkeypatch):
     async def fake_vector_search(_db, _course_id, _query, limit=10):
         return []
 
-    monkeypatch.setattr("services.search.hybrid.keyword_search", fake_keyword_search)
-    monkeypatch.setattr("services.search.hybrid.tree_search", fake_tree_search)
-    monkeypatch.setattr("services.search.hybrid.vector_search", fake_vector_search)
+    monkeypatch.setattr("services.search.fusion.keyword_search", fake_keyword_search)
+    monkeypatch.setattr("services.search.fusion.tree_search", fake_tree_search)
+    monkeypatch.setattr("services.search.fusion.vector_search", fake_vector_search)
 
     results = await hybrid_search(None, uuid.uuid4(), "binary search invariants and off-by-one errors", limit=2)
 
@@ -963,9 +967,9 @@ async def test_hybrid_search_aggregates_duplicate_section_hits(monkeypatch):
     async def fake_vector_search(_db, _course_id, _query, limit=10):
         return []
 
-    monkeypatch.setattr("services.search.hybrid.keyword_search", fake_keyword_search)
-    monkeypatch.setattr("services.search.hybrid.tree_search", fake_tree_search)
-    monkeypatch.setattr("services.search.hybrid.vector_search", fake_vector_search)
+    monkeypatch.setattr("services.search.fusion.keyword_search", fake_keyword_search)
+    monkeypatch.setattr("services.search.fusion.tree_search", fake_tree_search)
+    monkeypatch.setattr("services.search.fusion.vector_search", fake_vector_search)
 
     results = await hybrid_search(None, uuid.uuid4(), "binary search invariants and boundary updates", limit=3)
 

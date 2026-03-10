@@ -200,7 +200,7 @@ export function ActivityView({ courseId }: ActivityViewProps) {
   /* ---------- Render ---------- */
 
   return (
-    <div className="flex-1 flex flex-col gap-4 p-4 overflow-y-auto scrollbar-thin">
+    <div role="region" aria-label="Agent activity" className="flex-1 flex flex-col gap-4 p-4 overflow-y-auto scrollbar-thin">
       {/* Pending approval */}
       {pending.length > 0 && (
         <section>

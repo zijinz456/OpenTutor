@@ -9,6 +9,7 @@ Phase 2: Notion Integration
 import logging
 from typing import Any
 
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.agent.tools.base import Tool, ToolCategory, ToolParameter, ToolResult
@@ -60,7 +61,8 @@ class ExportNotionTool(Tool):
                 )
             )
             credential = result.scalar_one_or_none()
-        except Exception:
+        except (SQLAlchemyError, AttributeError, RuntimeError):
+            logger.debug("Could not query Notion integration credential", exc_info=True)
             credential = None
 
         if not credential:
@@ -141,6 +143,6 @@ class ExportNotionTool(Tool):
 
         except ImportError:
             return ToolResult(success=False, output="", error="notion-client package is not installed.")
-        except Exception as e:
+        except (ConnectionError, TimeoutError, ValueError, KeyError, RuntimeError, OSError) as e:
             logger.exception("Notion export failed: %s", e)
             return ToolResult(success=False, output="", error=f"Notion export failed: {e}")

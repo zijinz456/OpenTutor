@@ -6,6 +6,7 @@ Replaces: PlanningAgent. Essentially a rename with the same core logic.
 import logging
 from typing import AsyncIterator
 
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.agent.base import BaseAgent
@@ -125,5 +126,5 @@ class PlanAgent(ReActMixin, BaseAgent):
             )
             await db.flush()
             logger.info("Study plan saved for user=%s course=%s", ctx.user_id, ctx.course_id)
-        except Exception as e:
+        except (SQLAlchemyError, ConnectionError, TimeoutError) as e:
             logger.exception("Failed to save study plan: %s", e)

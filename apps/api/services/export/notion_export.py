@@ -76,7 +76,7 @@ async def export_flashcards_to_notion(
                 },
             )
             created += 1
-        except Exception as e:
+        except (OSError, ConnectionError, TimeoutError, RuntimeError, ValueError) as e:
             logger.exception("Notion page creation failed for card")
             errors += 1
 
@@ -139,7 +139,7 @@ async def export_study_plan_to_notion(
             "page_id": page["id"],
             "url": page.get("url", ""),
         }
-    except Exception as e:
+    except (OSError, ConnectionError, TimeoutError, RuntimeError, ValueError) as e:
         logger.exception("Notion study plan export failed")
         return {"status": "error", "error": str(e)}
 
@@ -186,7 +186,7 @@ async def export_notes_to_notion(
                 children=children,
             )
             created += 1
-        except Exception as e:
+        except (OSError, ConnectionError, TimeoutError, RuntimeError, ValueError) as e:
             logger.exception("Notion note export failed")
 
     return {"status": "success", "pages_created": created}

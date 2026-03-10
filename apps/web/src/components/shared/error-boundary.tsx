@@ -26,13 +26,14 @@ export class ErrorBoundary extends Component<Props, State> {
     if (this.state.hasError) {
       return (
         this.props.fallback ?? (
-          <div className="flex flex-col items-center justify-center p-8 text-center gap-3 animate-fade-in">
+          <div role="alert" className="flex flex-col items-center justify-center p-8 text-center gap-3 animate-fade-in">
             <p className="text-sm font-medium text-destructive">Something went wrong</p>
             <p className="text-xs text-muted-foreground max-w-sm">
               {this.state.error?.message}
             </p>
             <button
               onClick={() => this.setState({ hasError: false, error: null })}
+              aria-label="Retry loading this component"
               className="text-xs text-brand hover:underline"
             >
               Try again

@@ -190,7 +190,7 @@ def compute_mastery_adaptive(
             return compute_mastery_from_sequence(results, question_type, params=params)
     except ImportError:
         pass
-    except Exception as e:
+    except (KeyError, ValueError, RuntimeError) as e:
         logger.warning("Trained BKT param lookup failed for '%s': %s", concept, e)
 
     # Fallback to heuristic estimation

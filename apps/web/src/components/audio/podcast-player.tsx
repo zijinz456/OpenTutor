@@ -139,6 +139,8 @@ export function PodcastPlayer({
       <CardContent className="space-y-4">
         {/* Progress bar */}
         <div
+          aria-label={`Playback progress: ${formatTime(currentTime)} of ${formatTime(duration)}`}
+          tabIndex={0}
           className="relative h-2 cursor-pointer rounded-full bg-muted"
           onClick={(e) => {
             const rect = e.currentTarget.getBoundingClientRect();
@@ -165,6 +167,7 @@ export function PodcastPlayer({
               size="icon"
               onClick={() => skip(-15)}
               title="Back 15s"
+              aria-label="Skip back 15 seconds"
             >
               <SkipBack className="size-4" />
             </Button>
@@ -175,6 +178,7 @@ export function PodcastPlayer({
               size="icon"
               onClick={isPlaying ? pause : play}
               title={isPlaying ? "Pause" : "Play"}
+              aria-label={isPlaying ? "Pause" : "Play"}
             >
               {isPlaying ? (
                 <Pause className="size-4" />
@@ -189,6 +193,7 @@ export function PodcastPlayer({
               size="icon"
               onClick={() => skip(15)}
               title="Forward 15s"
+              aria-label="Skip forward 15 seconds"
             >
               <SkipForward className="size-4" />
             </Button>
@@ -200,6 +205,7 @@ export function PodcastPlayer({
               onClick={cycleSpeed}
               className="rounded-full bg-muted px-2 py-0.5 font-mono text-xs hover:bg-muted/80"
               title="Change playback speed"
+              aria-label={`Playback speed ${playbackRate}x. Click to change.`}
             >
               {playbackRate}x
             </button>

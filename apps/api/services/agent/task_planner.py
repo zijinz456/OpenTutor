@@ -281,7 +281,7 @@ async def execute_plan_step(
             "verifier_diagnostics": verifier_diagnostics if isinstance(verifier_diagnostics, dict) else None,
             "provenance": provenance if isinstance(provenance, dict) else None,
         }
-    except Exception as e:
+    except (ConnectionError, TimeoutError, ValueError, RuntimeError, OSError) as e:
         logger.exception("Plan step %s failed: %s", step_type, e)
         return {
             "step_index": step["step_index"],

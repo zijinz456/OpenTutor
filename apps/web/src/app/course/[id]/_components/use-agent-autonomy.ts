@@ -1,0 +1,135 @@
+"use client";
+
+import { useEffect, type MutableRefObject } from "react";
+import { useWorkspaceStore } from "@/store/workspace";
+import type { BlockType, LearningMode } from "@/lib/block-system/types";
+import type { HealthStatus } from "@/lib/api";
+import { BLOCK_REGISTRY } from "@/lib/block-system/registry";
+import {
+  getUnlockContext,
+  isBlockUnlocked,
+  updateUnlockContext,
+} from "@/lib/block-system/feature-unlock";
+import { useT, useTF } from "@/lib/i18n-context";
+
+function checkAndSuggestUnlockedBlocks(
+  courseId: string,
+  totalCourses: number,
+  mode: LearningMode | undefined,
+  aiActionsEnabled: boolean,
+  t: (key: string) => string,
+) {
+  if (!aiActionsEnabled) return;
+  const ctx = { ...getUnlockContext(courseId, totalCourses), mode };
+  if ((ctx.sessionCount ?? 0) < 3) return;
+
+  const store = useWorkspaceStore.getState();
+  const currentBlocks = store.spaceLayout.blocks;
+  const suggestedKey = `opentutor_suggested_unlocks_${courseId}`;
+
+  let alreadySuggested: string[] = [];
+  try {
+    const raw = localStorage.getItem(suggestedKey);
+    if (raw) alreadySuggested = JSON.parse(raw);
+  } catch { /* ignore */ }
+
+  const UNLOCK_SUGGESTIONS: Array<{ type: BlockType; message: string }> = [
+    { type: "knowledge_graph", message: t("course.unlock.knowledgeGraph") },
+    { type: "wrong_answers", message: t("course.unlock.wrongAnswers") },
+    { type: "forecast", message: t("course.unlock.forecast") },
+    { type: "plan", message: t("course.unlock.plan") },
+  ];
+
+  for (const suggestion of UNLOCK_SUGGESTIONS) {
+    if (!isBlockUnlocked(suggestion.type, ctx).unlocked) continue;
+    if (alreadySuggested.includes(suggestion.type)) continue;
+    if (currentBlocks.some((b) => b.type === suggestion.type)) continue;
+
+    const blockLabel = BLOCK_REGISTRY[suggestion.type]?.label ?? suggestion.type.replace(/_/g, " ");
+
+    store.agentAddBlock(
+      "agent_insight",
+      {
+        insightType: "feature_unlock",
+        suggestedBlockType: suggestion.type,
+        reason: suggestion.message,
+      },
+      {
+        reason: suggestion.message,
+        needsApproval: true,
+        dismissible: true,
+        approvalCta: `${t("course.unlock.add")} ${blockLabel}`,
+      },
+    );
+
+    alreadySuggested.push(suggestion.type);
+    try {
+      localStorage.setItem(suggestedKey, JSON.stringify(alreadySuggested));
+    } catch { /* ignore */ }
+
+    break;
+  }
+}
+
+export function useUnlockSuggestions(
+  courseId: string,
+  courses: unknown[],
+  contentTree: unknown[],
+  health: HealthStatus | null,
+  blocksInitialized: MutableRefObject<boolean>,
+) {
+  const spaceMode = useWorkspaceStore((s) => s.spaceLayout.mode);
+  const t = useT();
+
+  useEffect(() => {
+    if (!blocksInitialized.current) return;
+    if (courses.length === 0) return;
+
+    if (contentTree.length > 0) {
+      updateUnlockContext(courseId, { sourceDocCount: contentTree.length });
+    }
+    const llmReady = health?.llm_status !== "mock_fallback" && health?.llm_status !== "configuration_required";
+    checkAndSuggestUnlockedBlocks(courseId, courses.length, spaceMode, llmReady, t);
+  }, [courseId, contentTree.length, courses.length, spaceMode, health?.llm_status, t, blocksInitialized]);
+}
+
+export function useReviewCheck(
+  courseId: string,
+  course: unknown | null,
+  aiActionsEnabled: boolean,
+) {
+  const tf = useTF();
+
+  useEffect(() => {
+    if (!course || !aiActionsEnabled) return;
+    const checkKey = `agent_review_check_${courseId}`;
+    if (sessionStorage.getItem(checkKey) === "true") return;
+    sessionStorage.setItem(checkKey, "true");
+
+    import("@/lib/api/progress").then(({ getReviewSession }) => {
+      getReviewSession(courseId)
+        .then((result) => {
+          const urgentItems = result?.items?.filter(
+            (item) => item.urgency === "urgent" || item.urgency === "overdue",
+          ) ?? [];
+          if (urgentItems.length > 0) {
+            const store = useWorkspaceStore.getState();
+            const hasInsight = store.spaceLayout.blocks.some(
+              (b) => b.type === "agent_insight" && b.config.insightType === "review_needed",
+            );
+            if (!hasInsight) {
+              store.agentAddBlock(
+                "agent_insight",
+                { insightType: "review_needed" },
+                {
+                  reason: tf("course.reviewNeeded", { count: urgentItems.length }),
+                  dismissible: true,
+                },
+              );
+            }
+          }
+        })
+        .catch((e) => console.error("[Course] LECTOR review check failed:", e));
+    });
+  }, [course, courseId, aiActionsEnabled, tf]);
+}

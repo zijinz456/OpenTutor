@@ -80,6 +80,7 @@ export function UrlScrapePopover({
           size="icon-xs"
           className="mb-0.5 text-muted-foreground hover:text-foreground"
           title="Add URL"
+          aria-label="Add URL"
           disabled={disabled}
         >
           {isScraping ? (
@@ -96,6 +97,7 @@ export function UrlScrapePopover({
         <div className="flex items-center gap-1.5">
           <input
             type="url"
+            aria-label="URL to add to course"
             value={urlInput}
             onChange={(e) => setUrlInput(e.target.value)}
             onKeyDown={handleUrlKeyDown}
