@@ -193,10 +193,10 @@ export default function ReviewPage() {
                   {current.urgency}
                 </span>
                 <span className="text-xs text-muted-foreground">
-                  {tf("review.mastery", { value: Math.round(current.mastery * 100) })}
+                  {tf("review.mastery", { value: Math.round((current.mastery ?? 0) * 100) })}
                 </span>
                 <span className="text-xs text-muted-foreground">
-                  {tf("review.stability", { value: current.stability_days.toFixed(1) })}
+                  {tf("review.stability", { value: (current.stability_days ?? 0).toFixed(1) })}
                 </span>
               </div>
 

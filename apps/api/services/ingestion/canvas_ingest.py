@@ -137,7 +137,13 @@ async def link_pdfs_to_canvas_topics(
             )
         )
         for topic_node in existing_topics.scalars().all():
-            topic_cache[topic_node.title] = topic_node
+            # Prefer canvas_module over url when duplicate titles exist
+            existing = topic_cache.get(topic_node.title)
+            if existing is None or (
+                existing.source_type != "canvas_module"
+                and topic_node.source_type == "canvas_module"
+            ):
+                topic_cache[topic_node.title] = topic_node
 
         # Get max order_index for new topic nodes
         from sqlalchemy import func
@@ -184,18 +190,31 @@ async def link_pdfs_to_canvas_topics(
 
             # Find or create the topic parent node
             if module_name not in topic_cache:
-                topic_node = CourseContentTree(
-                    course_id=course_id,
-                    title=module_name,
-                    level=0,
-                    order_index=next_order,
-                    source_type="canvas_module",
-                    source_file="canvas_structure",
+                # Check DB for an existing node with same course_id, title,
+                # and source_type to avoid duplicates on re-sync.
+                existing_result = await db.execute(
+                    select(CourseContentTree).where(
+                        CourseContentTree.course_id == course_id,
+                        CourseContentTree.title == module_name,
+                        CourseContentTree.source_type == "canvas_module",
+                    ).limit(1)
                 )
-                db.add(topic_node)
-                await db.flush()
-                topic_cache[module_name] = topic_node
-                next_order += 1
+                existing_node = existing_result.scalar_one_or_none()
+                if existing_node is not None:
+                    topic_cache[module_name] = existing_node
+                else:
+                    topic_node = CourseContentTree(
+                        course_id=course_id,
+                        title=module_name,
+                        level=0,
+                        order_index=next_order,
+                        source_type="canvas_module",
+                        source_file="canvas_structure",
+                    )
+                    db.add(topic_node)
+                    await db.flush()
+                    topic_cache[module_name] = topic_node
+                    next_order += 1
 
             parent_node = topic_cache[module_name]
             matched_root.parent_id = parent_node.id

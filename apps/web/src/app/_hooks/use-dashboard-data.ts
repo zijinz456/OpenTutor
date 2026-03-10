@@ -60,23 +60,31 @@ export function useDashboardData() {
   const totalRunningTasks = courses.reduce((sum, c) => sum + (c.pending_task_count ?? 0), 0);
   const totalUrgentReviews = reviewSummaries.reduce((s, r) => s + r.overdueCount + r.urgentCount, 0);
 
-  // Onboarding + single-course redirect
+  // Onboarding + single-course redirect (only after initial fetch completes)
+  const [fetchTriggered, setFetchTriggered] = useState(false);
   useEffect(() => {
     if (typeof window === "undefined") return;
+    if (!fetchTriggered || loading) return; // wait for initial fetch to complete
+
+    // If courses exist, mark onboarded and skip setup
+    if (courses.length > 0) {
+      window.localStorage.setItem("opentutor_onboarded", "true");
+      if (courses.length === 1) {
+        router.replace(`/course/${courses[0].id}`);
+      }
+      return;
+    }
+
+    // No courses after fetch — check onboarded flag
     const onboarded = window.localStorage.getItem("opentutor_onboarded");
     if (!onboarded) {
       router.replace("/setup");
-      return;
     }
-    const state = useCourseStore.getState();
-    if (!state.loading && state.courses.length === 1) {
-      router.replace(`/course/${state.courses[0].id}`);
-    }
-  }, [router, courses, loading]);
+  }, [router, courses, loading, fetchTriggered]);
 
   // Load courses and health + init study notifications
   useEffect(() => {
-    useCourseStore.getState().fetchCourses();
+    useCourseStore.getState().fetchCourses().then(() => setFetchTriggered(true));
     const refreshHealth = () =>
       getHealthStatus()
         .then((d) => { ttlCache.set("dash:health", d, 30_000); setHealth(d); })
@@ -283,7 +291,7 @@ export function useDashboardData() {
       const layout = buildLayoutFromMode(item.suggestedMode);
       localStorage.setItem(`opentutor_blocks_${item.courseId}`, JSON.stringify(layout));
       updateUnlockContext(item.courseId, { mode: item.suggestedMode });
-      await updateCourseLayout(item.courseId, layout as unknown as Record<string, unknown>);
+      await updateCourseLayout(item.courseId, layout);
       await logAgentDecision({
         course_id: item.courseId, action: "apply_mode_recommendation",
         title: `${t("home.modeRecommendations.apply")} · ${item.courseName}`, reason: item.reason,

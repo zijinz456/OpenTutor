@@ -114,7 +114,7 @@ export function SearchDialog({ open, onClose, courseId }: SearchDialogProps) {
               role="listitem"
               onClick={() => {
                 const targetCourseId = courseId ?? r.courseId;
-                router.push(`/course/${targetCourseId}/${r.id}`);
+                router.push(`/course/${targetCourseId}/unit/${r.id}`);
                 handleClose();
               }}
               className="w-full flex items-start gap-3 px-4 py-3 text-left hover:bg-muted/50 transition-colors border-b border-border/60 last:border-0"
