@@ -220,6 +220,18 @@ async def update_course(
     return course
 
 
+@router.get("/{course_id}/layout", summary="Get workspace layout", description="Return the saved workspace layout from course metadata.")
+async def get_layout(
+    course_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the saved workspace layout configuration from course metadata."""
+    course = await get_course_or_404(db, course_id, user_id=user.id)
+    metadata = course.metadata_ or {}
+    return metadata.get("spaceLayout", {})
+
+
 @router.patch("/{course_id}/layout", summary="Update workspace layout", description="Save the workspace layout configuration in course metadata.")
 async def update_layout(
     course_id: uuid.UUID,

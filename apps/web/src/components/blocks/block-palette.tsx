@@ -8,6 +8,7 @@ import { useCourseStore } from "@/store/course";
 import { isBlockUnlocked, getUnlockContext } from "@/lib/block-system/feature-unlock";
 import { useParams } from "next/navigation";
 import { useT } from "@/lib/i18n-context";
+import { recordBlockEvent } from "@/hooks/use-block-engagement";
 
 export function BlockPalette() {
   const t = useT();
@@ -61,6 +62,7 @@ export function BlockPalette() {
                   onClick={() => {
                     if (!unlocked) return;
                     addBlock(type);
+                    recordBlockEvent(courseId, type, "manual_add");
                     setOpen(false);
                   }}
                   className={`flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-left transition-colors ${

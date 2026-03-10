@@ -2,7 +2,7 @@
  * Chat streaming event handlers — extracted from chat store.
  */
 
-import type { ChatAction, ChatMessageMetadata, ClarifyOption, PlanProgressEvent } from "@/lib/api";
+import type { ChatAction, ChatMessageMetadata, ClarifyOption, PlanProgressEvent, BlockUpdateOp, CognitiveState } from "@/lib/api";
 
 export interface StreamEventHandlers {
   onContent: (content: string) => void;
@@ -16,24 +16,67 @@ export interface StreamEventHandlers {
 }
 
 /**
- * Apply layout simplification from cognitive load analysis.
- * Best-effort: silently fails if workspace store isn't available.
+ * Apply block decisions from the Block Decision Engine.
+ * Translates BlockUpdateOps into workspace store batch operations.
  */
-export async function applyLayoutSimplification(
-  simplification: { should_simplify: boolean; blocks_to_hide: string[]; reason: string } | undefined,
+export async function applyBlockDecisions(
+  result: { operations: BlockUpdateOp[]; cognitiveState: CognitiveState; explanation: string },
 ): Promise<void> {
-  if (!simplification?.should_simplify || !simplification.blocks_to_hide.length) return;
   try {
     const { useWorkspaceStore } = await import("@/store/workspace");
     const ws = useWorkspaceStore.getState();
-    const ops = simplification.blocks_to_hide
-      .map((type: string) => {
-        const block = ws.spaceLayout.blocks.find((b) => b.type === type);
-        return block ? { action: "remove" as const, blockId: block.id } : null;
-      })
-      .filter(Boolean) as Array<{ action: "remove"; blockId: string }>;
-    if (ops.length > 0) {
-      ws.batchUpdateBlocks(ops);
+
+    // Always persist cognitive state for the badge
+    if (result.cognitiveState) {
+      ws.setCognitiveState(result.cognitiveState);
+    }
+
+    if (!result.operations.length) return;
+
+    const batchOps: Array<
+      | { action: "add"; type: string; config?: Record<string, unknown>; size?: string }
+      | { action: "remove"; blockId: string }
+      | { action: "resize"; blockId: string; size: string }
+      | { action: "update_config"; blockId: string; config: Record<string, unknown> }
+    > = [];
+
+    for (const op of result.operations) {
+      if (op.action === "add") {
+        batchOps.push({
+          action: "add",
+          type: op.block_type,
+          config: op.config,
+          size: op.size,
+        });
+      } else if (op.action === "remove") {
+        const block = ws.spaceLayout.blocks.find((b) => b.type === op.block_type);
+        if (block) {
+          batchOps.push({ action: "remove", blockId: block.id });
+        }
+      } else if (op.action === "resize") {
+        const block = ws.spaceLayout.blocks.find((b) => b.type === op.block_type);
+        if (block && op.size) {
+          batchOps.push({ action: "resize", blockId: block.id, size: op.size });
+        }
+      } else if (op.action === "update_config") {
+        const block = ws.spaceLayout.blocks.find((b) => b.type === op.block_type);
+        if (block && op.config) {
+          batchOps.push({ action: "update_config", blockId: block.id, config: op.config });
+        }
+      }
+    }
+
+    if (batchOps.length > 0) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ws.batchUpdateBlocks(batchOps as any);
+
+      // Show adaptation toast with undo support
+      try {
+        const { showAdaptationToast } = await import("@/components/shared/adaptation-toast");
+        showAdaptationToast(result.explanation, result.operations, () => ws.undoLayout());
+      } catch {
+        // Toast is best-effort
+      }
     }
   } catch {
     // Best-effort

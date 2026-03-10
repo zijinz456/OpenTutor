@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { useT } from "@/lib/i18n-context";
 import { syncCourse } from "@/lib/api";
 import { useCourseStore } from "@/store/course";
+import { useWorkspaceStore } from "@/store/workspace";
 
 
 interface WorkspaceHeaderProps {
@@ -25,6 +26,7 @@ export function WorkspaceHeader({
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const fetchContentTree = useCourseStore((s) => s.fetchContentTree);
   const fetchIngestionJobs = useCourseStore((s) => s.fetchIngestionJobs);
+  const cognitiveState = useWorkspaceStore((s) => s.cognitiveState);
 
   const handleSync = useCallback(async () => {
     if (!courseId || syncing) return;
@@ -98,6 +100,23 @@ export function WorkspaceHeader({
       </div>
 
       <div className="ml-auto flex items-center gap-1">
+        {/* Cognitive state badge */}
+        {cognitiveState && (
+          <span
+            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium transition-colors ${
+              cognitiveState.level === "high"
+                ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
+                : cognitiveState.level === "medium"
+                  ? "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400"
+                  : "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
+            }`}
+            title={`Cognitive load: ${Math.round(cognitiveState.score * 100)}%`}
+          >
+            <span className="size-1.5 rounded-full bg-current" />
+            {cognitiveState.level === "high" ? "Overloaded" : cognitiveState.level === "medium" ? "Moderate" : "Focused"}
+          </span>
+        )}
+
         {/* Learning mode selector */}
         <ModeSelector />
 

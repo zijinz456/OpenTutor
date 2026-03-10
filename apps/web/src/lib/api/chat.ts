@@ -173,7 +173,24 @@ type StreamEvent =
   | { type: "tool_status"; status: "running" | "complete"; tool: string; explanation?: string }
   | { type: "tool_progress"; tool: string; message: string; step: number; total: number }
   | { type: "clarify"; clarify: ClarifyOption }
+  | { type: "block_update"; operations: BlockUpdateOp[]; cognitiveState: CognitiveState; explanation: string }
   | { type: "done"; sessionId?: string; agent?: string; intent?: string; tokens?: number; metadata?: ChatMessageMetadata };
+
+export interface BlockUpdateOp {
+  action: "add" | "remove" | "resize" | "reorder" | "update_config";
+  block_type: string;
+  reason: string;
+  signal_source: string;
+  urgency: number;
+  config?: Record<string, unknown>;
+  size?: string;
+}
+
+export interface CognitiveState {
+  score: number;
+  level: string;
+  top_signals: Array<{ name: string; value: number }>;
+}
 
 export interface ClarifyOption {
   key: string;
@@ -202,6 +219,10 @@ interface ChatStreamOptions {
   interrupt?: boolean;
   /** Current learning mode from workspace store. */
   learningMode?: string;
+  /** Current block types visible in the workspace. */
+  blockTypes?: string[];
+  /** Block types the user recently dismissed (last 7 days). */
+  dismissedBlockTypes?: string[];
 }
 
 // ── Chat (SSE streaming) ──
@@ -222,6 +243,8 @@ export async function* streamChat(
       images: opts.images ?? [],
       ...(opts.interrupt ? { interrupt: true } : {}),
       ...(opts.learningMode ? { learning_mode: opts.learningMode } : {}),
+      ...(opts.blockTypes?.length ? { block_types: opts.blockTypes } : {}),
+      ...(opts.dismissedBlockTypes?.length ? { dismissed_block_types: opts.dismissedBlockTypes } : {}),
     }),
     signal: opts.signal,
   });
@@ -322,6 +345,13 @@ export async function* streamChat(
             },
           };
         }
+      } else if (resolvedEvent === "block_update") {
+        yield {
+          type: "block_update",
+          operations: (data.operations ?? []) as BlockUpdateOp[],
+          cognitiveState: (data.cognitive_state ?? { score: 0, level: "low", top_signals: [] }) as CognitiveState,
+          explanation: (data.explanation ?? "") as string,
+        };
       } else if (resolvedEvent === "done") {
         yield {
           type: "done",

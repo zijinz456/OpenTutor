@@ -23,6 +23,40 @@ export function nextBlockId(): string {
 }
 
 export const MAX_LAYOUT_HISTORY = 10;
+const DISMISS_STORAGE_KEY_PREFIX = "opentutor_dismiss_";
+const DISMISS_RETENTION_MS = 7 * 86_400_000; // 7 days
+
+interface DismissRecord {
+  type: string;
+  reason?: string;
+  ts: number;
+}
+
+/** Get block types dismissed in the last 7 days for a course. */
+export function getDismissHistory(courseId: string): string[] {
+  try {
+    const raw = localStorage.getItem(`${DISMISS_STORAGE_KEY_PREFIX}${courseId}`);
+    if (!raw) return [];
+    const records: DismissRecord[] = JSON.parse(raw);
+    const cutoff = Date.now() - DISMISS_RETENTION_MS;
+    return [...new Set(records.filter((r) => r.ts > cutoff).map((r) => r.type))];
+  } catch {
+    return [];
+  }
+}
+
+function recordDismiss(courseId: string, blockType: string, reason?: string): void {
+  try {
+    const key = `${DISMISS_STORAGE_KEY_PREFIX}${courseId}`;
+    const raw = localStorage.getItem(key);
+    const records: DismissRecord[] = raw ? JSON.parse(raw) : [];
+    records.push({ type: blockType, reason, ts: Date.now() });
+    const cutoff = Date.now() - DISMISS_RETENTION_MS;
+    localStorage.setItem(key, JSON.stringify(records.filter((r) => r.ts > cutoff)));
+  } catch {
+    // Best-effort
+  }
+}
 
 export interface BlockSystemState {
   spaceLayout: SpaceLayout;
@@ -49,6 +83,8 @@ export interface BlockSystemState {
       | { action: "add"; type: BlockType; config?: Record<string, unknown>; size?: BlockSize }
       | { action: "remove"; blockId: string }
       | { action: "reorder"; orderedTypes: BlockType[] }
+      | { action: "resize"; blockId: string; size: BlockSize }
+      | { action: "update_config"; blockId: string; config: Record<string, unknown> }
     >,
   ) => void;
 }
@@ -210,6 +246,13 @@ export function createBlockSlice<TState extends BlockSystemState>(
     },
 
     dismissAgentBlock: (blockId) => {
+      const block = get().spaceLayout.blocks.find((b) => b.id === blockId);
+      if (block) {
+        // Derive courseId from URL path: /course/{id}/...
+        const match = globalThis.location?.pathname?.match(/\/course\/([^/]+)/);
+        const courseId = match?.[1] ?? "global";
+        recordDismiss(courseId, block.type, block.agentMeta?.reason);
+      }
       set((s) => ({
         spaceLayout: {
           ...s.spaceLayout,
@@ -277,6 +320,12 @@ export function createBlockSlice<TState extends BlockSystemState>(
             }
             for (const remaining of byType.values()) reordered.push(...remaining);
             blocks = reordered;
+          } else if (op.action === "resize") {
+            blocks = blocks.map((b) => (b.id === op.blockId ? { ...b, size: op.size } : b));
+          } else if (op.action === "update_config") {
+            blocks = blocks.map((b) =>
+              b.id === op.blockId ? { ...b, config: { ...b.config, ...op.config } } : b,
+            );
           }
         }
 

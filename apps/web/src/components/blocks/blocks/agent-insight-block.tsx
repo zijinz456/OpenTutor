@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { Sparkles, ArrowRight, GraduationCap, Compass, Clock, Shield, AlertTriangle, Flame, LayoutGrid } from "lucide-react";
+import { Sparkles, ArrowRight, GraduationCap, Compass, Clock, Shield, AlertTriangle, Flame, LayoutGrid, Brain, BookOpen, HandMetal } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useWorkspaceStore } from "@/store/workspace";
 import type { BlockComponentProps } from "@/lib/block-system/registry";
@@ -53,6 +53,25 @@ const INSIGHT_CONFIG: Record<string, {
     titleKey: "insight.featureUnlock.title",
     descKey: "",  // Will use reason from config
     ctaKey: "insight.featureUnlock.cta",
+  },
+  cognitive_alert: {
+    icon: Brain,
+    titleKey: "insight.cognitiveAlert.title",
+    descKey: "insight.cognitiveAlert.desc",
+    ctaKey: "insight.cognitiveAlert.cta",
+  },
+  weak_topic_focus: {
+    icon: BookOpen,
+    titleKey: "insight.weakTopicFocus.title",
+    descKey: "insight.weakTopicFocus.desc",
+    ctaKey: "insight.weakTopicFocus.cta",
+  },
+  welcome_back: {
+    icon: HandMetal,
+    titleKey: "insight.welcomeBack.title",
+    descKey: "insight.welcomeBack.desc",
+    ctaKey: "insight.welcomeBack.cta",
+    autoDismissMs: 15_000,
   },
 };
 
@@ -116,6 +135,19 @@ export default function AgentInsightBlock({ courseId, blockId, config }: BlockCo
         addBlock(blockType as BlockType, {}, "agent");
         dismissAgentBlock(blockId);
       }
+    } else if (insightType === "cognitive_alert") {
+      // Undo the layout simplification
+      const undoLayout = useWorkspaceStore.getState().undoLayout;
+      undoLayout();
+      dismissAgentBlock(blockId);
+    } else if (insightType === "weak_topic_focus") {
+      // Add a review block targeting the weak topics
+      addBlock("review", { topics: config.weakTopics ?? [] }, "agent");
+      dismissAgentBlock(blockId);
+    } else if (insightType === "welcome_back") {
+      // Navigate to review
+      addBlock("review", {}, "agent");
+      dismissAgentBlock(blockId);
     }
   };
 
@@ -169,6 +201,24 @@ export default function AgentInsightBlock({ courseId, blockId, config }: BlockCo
             ))}
           </div>
         ) : null}
+        {insightType === "cognitive_alert" && Array.isArray(config.hiddenBlocks) && config.hiddenBlocks.length > 0 && (
+          <div className="mt-1.5 flex flex-wrap gap-1">
+            {(config.hiddenBlocks as string[]).map((bt) => (
+              <span key={bt} className="inline-flex rounded-full bg-red-100 dark:bg-red-900/30 px-2 py-0.5 text-[10px] text-red-700 dark:text-red-400">
+                {bt}
+              </span>
+            ))}
+          </div>
+        )}
+        {insightType === "weak_topic_focus" && Array.isArray(config.weakTopics) && config.weakTopics.length > 0 && (
+          <div className="mt-1.5 flex flex-wrap gap-1">
+            {(config.weakTopics as string[]).map((topic) => (
+              <span key={topic} className="inline-flex rounded-full bg-yellow-100 dark:bg-yellow-900/30 px-2 py-0.5 text-[10px] text-yellow-700 dark:text-yellow-400">
+                {topic}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
       {ctaLabel && !needsApproval && (

@@ -34,6 +34,9 @@ class ChatRequest(BaseModel):
     interrupt: bool = False
     # v3.3: Learning mode from frontend (course_following, self_paced, exam_prep, maintenance)
     learning_mode: str | None = None
+    # v4: Block system context — current blocks and recently dismissed types
+    block_types: list[str] = Field(default_factory=list)
+    dismissed_block_types: list[str] = Field(default_factory=list)
 
 
 class ChatResponse(BaseModel):

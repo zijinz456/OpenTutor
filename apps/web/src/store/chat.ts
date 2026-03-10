@@ -14,7 +14,8 @@ import {
 } from "@/lib/api";
 import { ttlCache } from "@/lib/cache";
 import { useWorkspaceStore } from "@/store/workspace";
-import { applyLayoutSimplification, categorizeError } from "./chat-stream";
+import { applyBlockDecisions, categorizeError } from "./chat-stream";
+import { getDismissHistory } from "./workspace-blocks";
 
 /** TTL for cached chat session lists (per course). */
 const SESSIONS_TTL_MS = 30_000; // 30 seconds
@@ -267,6 +268,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const controller = new AbortController();
     set({ _abortController: controller });
     try {
+      const wsState = useWorkspaceStore.getState();
       for await (const event of streamChat({
         courseId,
         message: content,
@@ -277,7 +279,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         signal: controller.signal,
         images: options?.images,
         interrupt: wasInterrupted ? true : undefined,
-        learningMode: useWorkspaceStore.getState().spaceLayout?.mode,
+        learningMode: wsState.spaceLayout?.mode,
+        blockTypes: wsState.spaceLayout?.blocks?.map((b) => b.type),
+        dismissedBlockTypes: getDismissHistory(courseId),
       })) {
         if (event.type === "content") {
           set((s) => {
@@ -313,6 +317,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
           set({ toolStatus: { tool: event.tool, status: "running", explanation: `${event.message}${pct}` } });
         } else if (event.type === "clarify") {
           set({ clarifyOptions: event.clarify });
+        } else if (event.type === "block_update") {
+          await applyBlockDecisions(event);
         } else if (event.type === "replace") {
           set((s) => {
             const nextMBC = {
@@ -334,12 +340,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
             }
           }
 
-          // Apply layout simplification if cognitive load is high
-          await applyLayoutSimplification(
-            event.metadata?.layout_simplification as
-              | { should_simplify: boolean; blocks_to_hide: string[]; reason: string }
-              | undefined,
-          );
+          // NOTE: layout_simplification removed — block_update event now handles this
+          // via the Block Decision Engine (applyBlockDecisions).
 
           set((s) => {
             const nextMBC = {

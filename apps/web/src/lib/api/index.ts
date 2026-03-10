@@ -55,6 +55,8 @@ export type {
   ClarifyOption,
   PlanProgressEvent,
   ImageAttachment,
+  BlockUpdateOp,
+  CognitiveState,
 } from "./chat";
 
 export {

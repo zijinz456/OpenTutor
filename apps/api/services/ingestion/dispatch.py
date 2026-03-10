@@ -115,6 +115,36 @@ async def dispatch_content(db: AsyncSession, job: IngestionJob) -> dict:
         db.add(assignment)
         result["assignments"] = 1
 
+    # ── Cold-start layout (first document only) ──
+    try:
+        from models.course import Course
+        from services.block_decision.cold_start import compute_cold_start_layout
+
+        course_result = await db.execute(
+            select(Course).where(Course.id == job.course_id)
+        )
+        course = course_result.scalar_one_or_none()
+        if course:
+            existing_meta = course.metadata_ or {}
+            if not existing_meta.get("spaceLayout"):
+                # Count LOOM concepts if available
+                loom_count = 0
+                try:
+                    from models.progress import LearningProgress
+                    count_result = await db.execute(
+                        sa.select(sa.func.count(LearningProgress.id)).where(
+                            LearningProgress.course_id == job.course_id
+                        )
+                    )
+                    loom_count = count_result.scalar() or 0
+                except (sa.exc.SQLAlchemyError, ImportError) as exc:
+                    logger.debug("Could not count LOOM nodes for layout: %s", exc)
+                cold_layout = compute_cold_start_layout(category, loom_count)
+                course.metadata_ = {**existing_meta, "spaceLayout": cold_layout}
+                result["cold_start_layout"] = True
+    except (sa.exc.SQLAlchemyError, ImportError, ValueError) as e:
+        logger.debug("Cold-start layout skipped: %s", e)
+
     # ── Automatic deadline extraction (all categories) ──
     if job.course_id and job.extracted_markdown:
         try:
