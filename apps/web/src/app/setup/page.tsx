@@ -61,6 +61,8 @@ function SetupInner() {
               onUrlChange={s.setUrl}
               urlError={s.urlError}
               onValidateUrl={s.validateUrl}
+              autoScrape={s.autoScrape}
+              onAutoScrapeChange={s.setAutoScrape}
               isCanvasDetected={s.isCanvasDetected}
               canvasSessionValid={s.canvasSessionValid}
               canvasAuthenticating={s.canvasLogging}

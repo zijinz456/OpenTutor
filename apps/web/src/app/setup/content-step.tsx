@@ -17,6 +17,8 @@ interface ContentStepProps {
   onUrlChange: (v: string) => void;
   urlError: string | null;
   onValidateUrl: (v: string) => void;
+  autoScrape: boolean;
+  onAutoScrapeChange: (v: boolean) => void;
   isCanvasDetected: boolean;
   canvasSessionValid: boolean;
   canvasAuthenticating: boolean;
@@ -30,6 +32,7 @@ export function ContentStep({
   projectName, onProjectNameChange, nameError, onValidateName,
   files, onFilesChange,
   url, onUrlChange, urlError, onValidateUrl,
+  autoScrape, onAutoScrapeChange,
   isCanvasDetected, canvasSessionValid, canvasAuthenticating,
   onAuthCanvas, onStartLearning, onSkip, t,
 }: ContentStepProps) {
@@ -202,6 +205,28 @@ export function ContentStep({
             <div className="p-3 px-4 bg-success-muted border border-success/30 rounded-md text-sm text-success leading-relaxed">
               <span className="font-semibold">{t("new.canvasAuthedTitle")}</span>{" "}
               {t("new.canvasAuthedBody")}
+            </div>
+          )}
+
+          {/* Auto-scrape settings */}
+          {url.trim() && !urlError && (
+            <div className="flex flex-col gap-3 p-3 rounded-lg border border-border bg-muted/30">
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  data-testid="setup-autoscrape-toggle"
+                  title={t("new.autoscrapeToggle")}
+                  aria-pressed={autoScrape ? "true" : "false"}
+                  onClick={() => onAutoScrapeChange(!autoScrape)}
+                  className={`w-10 h-5 rounded-full relative transition-colors shrink-0 ${autoScrape ? "bg-brand" : "bg-muted-foreground/30"}`}
+                >
+                  <div className={`w-4 h-4 bg-background rounded-full absolute top-[2px] transition-all ${autoScrape ? "right-[2px]" : "left-[2px]"}`} />
+                </button>
+                <div>
+                  <span className="text-sm font-medium text-foreground">{t("new.autoscrapeToggle")}</span>
+                  <p className="text-xs text-muted-foreground mt-0.5">{t("new.autoscrapeDesc")}</p>
+                </div>
+              </div>
             </div>
           )}
         </div>
