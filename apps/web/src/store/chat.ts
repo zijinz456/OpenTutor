@@ -368,7 +368,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
         return;
       }
       const msg = (e as Error).message || "";
-      set({ error: msg, errorCategory: categorizeError(msg) });
+      // Remove the empty assistant bubble on failure so user sees a clean error state
+      set((s) => {
+        const courseMsgs = s.messagesByCourse[courseId] ?? [];
+        const lastMsg = courseMsgs[courseMsgs.length - 1];
+        const shouldRemoveEmpty = lastMsg?.id === assistantMsg.id && !lastMsg.content;
+        const nextMBC = shouldRemoveEmpty
+          ? { ...s.messagesByCourse, [courseId]: courseMsgs.slice(0, -1) }
+          : s.messagesByCourse;
+        return {
+          messagesByCourse: nextMBC,
+          ...deriveActive({ ...s, messagesByCourse: nextMBC }),
+          error: msg,
+          errorCategory: categorizeError(msg),
+        };
+      });
     } finally {
       set({ isStreaming: false, toolStatus: null, _abortController: null });
     }

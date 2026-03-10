@@ -30,8 +30,9 @@ Examples of unacceptable behavior:
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported to the project maintainers. All complaints will be reviewed and
-investigated promptly and fairly.
+reported by contacting the maintainer at **zijinz456@gmail.com** or by opening
+a [private security advisory](https://github.com/zijinz456/OpenTutor/security/advisories).
+All complaints will be reviewed and investigated promptly and fairly.
 
 ## Attribution
 
