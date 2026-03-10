@@ -106,6 +106,9 @@ jobs:
       DATABASE_URL: sqlite+aiosqlite:////tmp/opentutor-ci-smoke.db
       API_BASE: http://127.0.0.1:8004
       STRICT_LLM: "1"
+      LLM_PROVIDER: custom
+      CUSTOM_LLM_BASE_URL: http://127.0.0.1:18081/v1
+      CUSTOM_LLM_MODEL: mock-smoke-model
       DISABLE_RATE_LIMIT: "1"
       CODE_SANDBOX_BACKEND: process
       APP_AUTO_CREATE_TABLES: "true"
@@ -136,6 +139,17 @@ jobs:
           ## Topic A
           Notes for CI smoke test.
           EOF
+
+      - name: Start mock LLM API
+        run: |
+          python scripts/mock_openai_server.py --host 127.0.0.1 --port 18081 --model mock-smoke-model > /tmp/opentutor_mock_llm.log 2>&1 &
+          echo $! > /tmp/opentutor_mock_llm.pid
+          for i in $(seq 1 20); do
+            curl -sf http://127.0.0.1:18081/v1/models && break
+            echo "Waiting for mock LLM API... attempt $i"
+            sleep 1
+          done
+          curl -f http://127.0.0.1:18081/v1/models
 
       - name: Start API
         run: |
@@ -207,6 +221,12 @@ jobs:
         run: |
           echo "===== /tmp/opentutor_api.log ====="
           cat /tmp/opentutor_api.log || true
+
+      - name: Dump mock LLM log on failure
+        if: failure()
+        run: |
+          echo "===== /tmp/opentutor_mock_llm.log ====="
+          cat /tmp/opentutor_mock_llm.log || true
 
   e2e-ui:
     name: Browser E2E (All Specs)
