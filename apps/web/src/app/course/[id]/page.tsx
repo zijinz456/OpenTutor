@@ -11,6 +11,7 @@ import { BlockGrid } from "@/components/blocks/block-grid";
 import { ChatFab } from "@/components/chat/chat-fab";
 import { ChatDrawer } from "@/components/chat/chat-drawer";
 import { SearchDialog } from "@/components/shared/search-dialog";
+import { ErrorBoundary } from "@/components/shared/error-boundary";
 import { useT } from "@/lib/i18n-context";
 import { useCourseData } from "./_components/use-course-data";
 import { useBlockPersistence } from "./_components/use-block-persistence";
@@ -18,6 +19,7 @@ import { useChatActions, useQueueModeSuggestion } from "./_components/use-chat-a
 import { useUnlockSuggestions, useReviewCheck } from "./_components/use-agent-autonomy";
 import { useModeEvaluator, useInitPrompt, useGreeting } from "./_components/use-agent-lifecycle";
 import { TemplatePicker } from "./_components/template-picker";
+import { SyncSettingsPanel } from "@/components/course/sync-settings-panel";
 
 export default function CoursePage() {
   const params = useParams();
@@ -56,8 +58,9 @@ export default function CoursePage() {
     <div className="min-h-screen bg-background flex flex-col">
       <WorkspaceHeader courseName={course?.name || t("course.defaultTitle")} courseId={courseId} />
 
-      <div className="px-5 pt-4 max-w-5xl mx-auto w-full space-y-2">
+      <div className="px-5 pt-4 max-w-5xl mx-auto w-full space-y-3">
         <RuntimeAlert health={health} />
+        <SyncSettingsPanel courseId={courseId} />
         <IngestionProgress
           courseId={courseId}
           onIngestionComplete={() => {
@@ -70,18 +73,22 @@ export default function CoursePage() {
       </div>
 
       <main className="flex-1 max-w-5xl mx-auto w-full px-5 py-8 space-y-6">
-        {hasBlocks ? (
-          <BlockGrid courseId={courseId} aiActionsEnabled={aiActionsEnabled} />
-        ) : (
-          <>
-            <ContinueLearningCta courseId={courseId} nodes={contentTree} />
-            <TemplatePicker onApplyTemplate={applyBlockTemplate} />
-          </>
-        )}
+        <ErrorBoundary section="workspace">
+          {hasBlocks ? (
+            <BlockGrid courseId={courseId} aiActionsEnabled={aiActionsEnabled} />
+          ) : (
+            <>
+              <ContinueLearningCta courseId={courseId} nodes={contentTree} />
+              <TemplatePicker onApplyTemplate={applyBlockTemplate} />
+            </>
+          )}
+        </ErrorBoundary>
       </main>
 
       <ChatFab open={chatOpen} onToggle={() => setChatOpen((v) => !v)} />
-      <ChatDrawer courseId={courseId} open={chatOpen} aiActionsEnabled={aiActionsEnabled} />
+      <ErrorBoundary section="chat">
+        <ChatDrawer courseId={courseId} open={chatOpen} aiActionsEnabled={aiActionsEnabled} />
+      </ErrorBoundary>
       <SearchDialog open={searchOpen} onClose={() => setSearchOpen(false)} courseId={courseId} />
     </div>
   );

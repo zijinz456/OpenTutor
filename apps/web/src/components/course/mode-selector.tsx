@@ -69,7 +69,7 @@ export function ModeSelector({ onModeChange }: ModeSelectorProps) {
         updateUnlockContext(courseId, { mode });
         const layout = useWorkspaceStore.getState().spaceLayout;
         localStorage.setItem(`opentutor_blocks_${courseId}`, JSON.stringify(layout));
-        updateCourseLayout(courseId, layout as unknown as Record<string, unknown>).catch(() => undefined);
+        updateCourseLayout(courseId, layout).catch(() => undefined);
       }
       onModeChange?.(mode);
       setOpen(false);

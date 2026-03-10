@@ -285,11 +285,15 @@ export async function logAgentDecision(body: AgendaDecisionLogRequest): Promise<
 
 // ── Learning Templates ──
 
-interface LearningTemplate {
+export interface LearningTemplate {
   id: string;
   name: string;
   description?: string;
   config: Record<string, unknown>;
+  is_builtin?: boolean;
+  target_audience?: string;
+  tags?: string[];
+  preferences?: Record<string, string>;
 }
 
 export async function listTemplates(): Promise<LearningTemplate[]> {

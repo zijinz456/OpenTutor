@@ -9,10 +9,7 @@ from sqlalchemy import text
 
 from config import settings
 import database as database_module
-try:
-    from services.agent.container_sandbox import container_runtime_available
-except ImportError:
-    container_runtime_available = lambda: False  # Module removed
+from services.agent.code_execution import sandbox_runtime_available
 from services.llm.readiness import get_llm_runtime_status
 from services.migrations import MigrationState, inspect_database_migrations
 
@@ -107,7 +104,7 @@ async def get_health_status() -> dict[str, Any]:
     probe_details = llm_runtime["provider_details"]
     llm_status = llm_runtime["status"]
     database_backend = _database_backend()
-    sandbox_available = container_runtime_available()
+    sandbox_available = sandbox_runtime_available()
     local_beta_blockers, local_beta_warnings = _local_beta_readiness(
         db_ok=db_ok,
         migration_state=migration_state,

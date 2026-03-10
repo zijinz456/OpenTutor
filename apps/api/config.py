@@ -216,22 +216,24 @@ class Settings(BaseSettings):
             )
 
         if self.environment in ("production", "staging"):
-            if self.auth_enabled:
-                env_key = os.environ.get("JWT_SECRET_KEY", "")
-                if not env_key or len(env_key) < 32:
-                    raise ValueError(
-                        "JWT_SECRET_KEY must be explicitly set (>= 32 chars) in production with auth enabled"
-                    )
+            if not self.auth_enabled:
+                raise ValueError(
+                    "AUTH_ENABLED must be true in production/staging. "
+                    "Running without authentication in production is a critical security risk."
+                )
+            env_key = os.environ.get("JWT_SECRET_KEY", "")
+            if not env_key or len(env_key) < 32:
+                raise ValueError(
+                    "JWT_SECRET_KEY must be explicitly set (>= 32 chars) in production with auth enabled"
+                )
             if "REDACTED_DEV_PASSWORD" in self.database_url:
                 raise ValueError(
                     "Default database password must be changed in production"
                 )
-            # Require encryption_key when OAuth integrations are configured
-            has_oauth = bool(self.google_client_id and self.google_client_secret)
-            if has_oauth and not self.encryption_key:
+            if not self.encryption_key:
                 raise ValueError(
-                    "encryption_key is required in production when OAuth integrations "
-                    "are configured (Google Calendar, etc.). Generate one with: "
+                    "ENCRYPTION_KEY is required in production for at-rest encryption "
+                    "of sensitive data (OAuth tokens, etc.). Generate one with: "
                     "python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
                 )
         return self

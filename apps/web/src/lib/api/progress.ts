@@ -250,6 +250,7 @@ export type {
   AgentTaskReview,
   AgentTaskVerifierDiagnostics,
   AgentTaskStepResult,
+  LearningTemplate,
   NextActionResponse,
   StudyGoal,
   AgendaRun,

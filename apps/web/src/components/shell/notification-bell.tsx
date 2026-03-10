@@ -9,7 +9,6 @@ import {
   markNotificationRead,
   markAllNotificationsRead,
   type AppNotification,
-  type ChatAction,
 } from "@/lib/api";
 import { useT } from "@/lib/i18n-context";
 import { useChatStore } from "@/store/chat";
@@ -156,8 +155,12 @@ export function NotificationBell() {
                           onClick={(e) => {
                             e.stopPropagation();
                             const onAction = useChatStore.getState().onAction;
-                            if (onAction) {
-                              onAction(n.data as unknown as ChatAction);
+                            if (onAction && n.data) {
+                              onAction({
+                                action: String(n.data.action),
+                                value: n.data.value != null ? String(n.data.value) : undefined,
+                                extra: n.data.extra != null ? String(n.data.extra) : undefined,
+                              });
                             }
                             if (!n.read) void handleMarkRead(n.id);
                             setOpen(false);

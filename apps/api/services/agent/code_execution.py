@@ -56,6 +56,30 @@ def get_effective_sandbox_backend() -> str:
     return backend
 
 
+def _container_runtime_available() -> bool:
+    try:
+        from services.agent.container_sandbox import container_runtime_available
+    except ImportError:
+        return False
+    try:
+        return bool(container_runtime_available())
+    except (RuntimeError, ValueError, OSError):
+        logger.exception("Container runtime availability probe failed")
+        return False
+
+
+def sandbox_runtime_available() -> bool:
+    """Return whether current sandbox policy has an executable runtime."""
+    backend = get_effective_sandbox_backend()
+    if backend == "process":
+        return process_sandbox_allowed()
+    if backend == "container":
+        return _container_runtime_available()
+    if backend == "auto":
+        return _container_runtime_available() or process_sandbox_allowed()
+    return False
+
+
 def push_sandbox_backend_override(backend: str):
     return _sandbox_backend_override.set(backend)
 
@@ -265,28 +289,69 @@ class CodeExecutionAgent(BaseAgent):
 
     def _execute_safe(self, code: str) -> dict:
         """Execute code in the configured sandbox backend."""
-        try:
-            from services.agent.container_sandbox import (
-                ContainerSandboxUnavailable,
-                execute_in_container,
-            )
-        except ImportError:
-            # container_sandbox module removed — always use process fallback
-            logger.debug("container_sandbox module not available, using process sandbox")
-            return self._execute_in_process_sandbox(code)
-
-        runner_path = Path(__file__).with_name("sandbox_runner.py")
         backend = get_effective_sandbox_backend()
+        runner_path = Path(__file__).with_name("sandbox_runner.py")
+
+        if backend == "process":
+            if not process_sandbox_allowed():
+                return {
+                    "success": False,
+                    "output": "",
+                    "error": (
+                        "Process sandbox is disabled. "
+                        "Set ALLOW_INSECURE_PROCESS_SANDBOX=true only for trusted dev/test environments."
+                    ),
+                    "backend": "process",
+                }
+            return self._execute_in_process_sandbox(code)
 
         if backend in {"auto", "container"}:
             try:
+                from services.agent.container_sandbox import (
+                    ContainerSandboxUnavailable,
+                    execute_in_container,
+                )
+            except ImportError:
+                if backend == "auto" and process_sandbox_allowed():
+                    logger.warning(
+                        "Container sandbox module unavailable; falling back to process sandbox due "
+                        "to ALLOW_INSECURE_PROCESS_SANDBOX/PYTEST override."
+                    )
+                    return self._execute_in_process_sandbox(code)
+                return {
+                    "success": False,
+                    "output": "",
+                    "error": (
+                        "Container sandbox backend is unavailable. "
+                        "Install/enable container sandbox runtime or explicitly enable "
+                        "ALLOW_INSECURE_PROCESS_SANDBOX=true for trusted dev/test use."
+                    ),
+                    "backend": "container",
+                }
+
+            try:
                 return execute_in_container(code, runner_path=runner_path)
             except ContainerSandboxUnavailable as exc:
-                if backend == "container" or not process_sandbox_allowed():
-                    return {"success": False, "output": "", "error": str(exc), "backend": "container"}
-                logger.info("Container sandbox unavailable, falling back to process sandbox: %s", exc)
+                if backend == "auto" and process_sandbox_allowed():
+                    logger.warning(
+                        "Container sandbox unavailable (%s); falling back to process sandbox due "
+                        "to ALLOW_INSECURE_PROCESS_SANDBOX/PYTEST override.",
+                        exc,
+                    )
+                    return self._execute_in_process_sandbox(code)
+                return {
+                    "success": False,
+                    "output": "",
+                    "error": str(exc),
+                    "backend": "container",
+                }
 
-        return self._execute_in_process_sandbox(code)
+        return {
+            "success": False,
+            "output": "",
+            "error": f"Unsupported sandbox backend: {backend}",
+            "backend": backend,
+        }
 
     async def execute(self, ctx: AgentContext, db: AsyncSession) -> AgentContext:
         """Extract code, validate, execute, then generate explanation."""

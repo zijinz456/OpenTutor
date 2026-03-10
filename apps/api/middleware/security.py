@@ -129,15 +129,24 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     def _maybe_cleanup_buckets(self) -> None:
         """Evict stale rate limit buckets to prevent unbounded memory growth."""
         now = time.monotonic()
-        if now - self._last_cleanup < self._cleanup_interval:
-            return
-        self._last_cleanup = now
-        stale_threshold = STALE_BUCKET_SECONDS
-        stale_keys = [k for k, b in self._buckets.items() if now - b.last_refill > stale_threshold]
-        for k in stale_keys:
-            del self._buckets[k]
-        if stale_keys:
-            logger.debug("Rate limiter: evicted %d stale buckets (%d remaining)", len(stale_keys), len(self._buckets))
+        bucket_count = len(self._buckets)
+
+        # Force eviction when bucket count exceeds max, regardless of interval
+        if bucket_count > self._max_buckets or now - self._last_cleanup >= self._cleanup_interval:
+            self._last_cleanup = now
+            stale_threshold = STALE_BUCKET_SECONDS
+            stale_keys = [k for k, b in self._buckets.items() if now - b.last_refill > stale_threshold]
+            for k in stale_keys:
+                del self._buckets[k]
+            # If still over limit after stale eviction, evict oldest buckets
+            if len(self._buckets) > self._max_buckets:
+                sorted_keys = sorted(self._buckets.keys(), key=lambda k: self._buckets[k].last_refill)
+                excess = len(self._buckets) - self._max_buckets
+                for k in sorted_keys[:excess]:
+                    del self._buckets[k]
+                logger.warning("Rate limiter: force-evicted %d buckets (was over max %d)", excess, self._max_buckets)
+            elif stale_keys:
+                logger.debug("Rate limiter: evicted %d stale buckets (%d remaining)", len(stale_keys), len(self._buckets))
 
     # ── Simple mode ──
 

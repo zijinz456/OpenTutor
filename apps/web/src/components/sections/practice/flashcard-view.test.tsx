@@ -61,9 +61,12 @@ describe("FlashcardView", () => {
     vi.clearAllMocks();
   });
 
-  it("renders loading state initially", () => {
+  it("renders loading state initially", async () => {
     render(<FlashcardView courseId="test-course" />);
     expect(screen.getByRole("status")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    });
   });
 
   it("renders flashcard question after loading", async () => {

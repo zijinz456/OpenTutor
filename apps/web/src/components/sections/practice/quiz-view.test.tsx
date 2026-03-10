@@ -64,9 +64,12 @@ describe("QuizView", () => {
     vi.clearAllMocks();
   });
 
-  it("shows loading state initially", () => {
+  it("shows loading state initially", async () => {
     render(<QuizView courseId="test" />);
     expect(screen.getByRole("status")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    });
   });
 
   it("renders quiz question after loading", async () => {

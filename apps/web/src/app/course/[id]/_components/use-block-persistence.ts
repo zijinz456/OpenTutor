@@ -61,7 +61,7 @@ export function useBlockPersistence(
     persistTimer.current = setTimeout(() => {
       const layout = useWorkspaceStore.getState().spaceLayout;
       localStorage.setItem(`opentutor_blocks_${courseId}`, JSON.stringify(layout));
-      updateCourseLayout(courseId, layout as unknown as Record<string, unknown>).catch((e) => console.error("[Course] layout persist failed:", e));
+      updateCourseLayout(courseId, layout).catch((e) => console.error("[Course] layout persist failed:", e));
     }, 2000);
     return () => clearTimeout(persistTimer.current);
   }, [blocks, courseId]);

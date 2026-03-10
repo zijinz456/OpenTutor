@@ -277,10 +277,13 @@ async def list_course_files(
     db: AsyncSession = Depends(get_db),
 ):
     """List uploaded files for a course."""
+    await get_course_or_404(db, course_id, user_id=user.id)
+
     result = await db.execute(
         select(IngestionJob)
         .where(
             IngestionJob.course_id == course_id,
+            IngestionJob.user_id == user.id,
             IngestionJob.status == "completed",
             IngestionJob.file_path.isnot(None),
         )
@@ -363,7 +366,10 @@ async def get_uploaded_file(
 ):
     """Serve an uploaded file for preview (e.g., PDF viewer)."""
     result = await db.execute(
-        select(IngestionJob).where(IngestionJob.id == job_id)
+        select(IngestionJob).where(
+            IngestionJob.id == job_id,
+            IngestionJob.user_id == user.id,
+        )
     )
     job = result.scalar_one_or_none()
     if not job or not job.file_path:

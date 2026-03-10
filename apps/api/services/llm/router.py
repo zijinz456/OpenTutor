@@ -10,6 +10,10 @@ Internal implementation lives in:
 - providers/          -- OpenAIClient, AnthropicClient, MockLLMClient
 """
 
+from __future__ import annotations
+
+import asyncio
+import threading
 import time
 import logging
 
@@ -57,7 +61,7 @@ class ProviderRegistry:
         self._model_variants: dict[str, LLMClient] = {}
         # Background health monitor (OpenClaw pattern)
         self._probe_cache: dict[str, dict] = {}
-        self._probe_task: object | None = None  # asyncio.Task
+        self._probe_task: "asyncio.Task[None] | None" = None
 
     def register(self, name: str, client: LLMClient, primary: bool = False):
         """Register a provider."""
@@ -227,6 +231,7 @@ class ProviderRegistry:
 # ──────────────────────────────────────────────────────────────
 
 _registry: ProviderRegistry | None = None
+_registry_lock = threading.Lock()
 
 
 def _register_variant(registry: ProviderRegistry, provider: str, variant_model: str, hint: str):
@@ -374,17 +379,21 @@ def get_llm_client(provider: str | None = None) -> LLMClient:
     """Get or create LLM client from the Provider Registry.
 
     With circuit breaker fallback: if primary is down, automatically
-    tries the next available provider.
+    tries the next available provider.  Thread-safe initialization.
     """
     global _registry
     if _registry is None:
-        _registry = _build_registry()
+        with _registry_lock:
+            if _registry is None:
+                _registry = _build_registry()
     return _registry.get(provider)
 
 
 def get_registry() -> ProviderRegistry:
-    """Get the global provider registry."""
+    """Get the global provider registry (thread-safe)."""
     global _registry
     if _registry is None:
-        _registry = _build_registry()
+        with _registry_lock:
+            if _registry is None:
+                _registry = _build_registry()
     return _registry

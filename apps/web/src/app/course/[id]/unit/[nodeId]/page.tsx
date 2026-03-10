@@ -10,6 +10,7 @@ import { ChatDrawer } from "@/components/chat/chat-drawer";
 import { toast } from "sonner";
 import { useT, useTF } from "@/lib/i18n-context";
 
+import { ErrorBoundary } from "@/components/shared/error-boundary";
 import { useUnitData } from "./_components/use-unit-data";
 import { ContentBlock } from "./_components/content-block";
 import { ErrorAnalysis, ErrorPatternSection } from "./_components/error-analysis";
@@ -66,19 +67,27 @@ export default function UnitPage() {
 
         <StatsRow subsectionCount={node.children?.length ?? 0} wrongAnswerCount={wrongAnswers.length} urgentReviewCount={urgentReviews} t={t} />
 
-        <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <ErrorPatternSection wrongAnswers={wrongAnswers} errorPatterns={errorPatterns} t={t} />
-          <NextActionsSection courseId={courseId} masterySummary={masterySummary} errorTrend={errorTrend} difficultyRec={difficultyRec} quizModeHint={quizModeHint} aiActionsEnabled={aiActionsEnabled} generatingFocusedQuiz={generatingFocusedQuiz} onGenerateFocusedQuiz={() => void handleGenerateFocusedQuiz()} onNavigate={(path) => router.push(path)} t={t} tf={tf} />
-        </section>
+        <ErrorBoundary section="error analysis">
+          <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <ErrorPatternSection wrongAnswers={wrongAnswers} errorPatterns={errorPatterns} t={t} />
+            <NextActionsSection courseId={courseId} masterySummary={masterySummary} errorTrend={errorTrend} difficultyRec={difficultyRec} quizModeHint={quizModeHint} aiActionsEnabled={aiActionsEnabled} generatingFocusedQuiz={generatingFocusedQuiz} onGenerateFocusedQuiz={() => void handleGenerateFocusedQuiz()} onNavigate={(path) => router.push(path)} t={t} tf={tf} />
+          </section>
+        </ErrorBoundary>
 
-        <section className="rounded-2xl bg-card card-shadow p-5">
-          <h2 className="text-lg font-semibold mb-4">{t("course.notes")}</h2>
-          <ContentBlock node={node} />
-        </section>
+        <ErrorBoundary section="notes">
+          <section className="rounded-2xl bg-card card-shadow p-5">
+            <h2 className="text-lg font-semibold mb-4">{t("course.notes")}</h2>
+            <ContentBlock node={node} />
+          </section>
+        </ErrorBoundary>
 
-        <PracticePanel courseId={courseId} difficultyLevel={difficultyRec.level} aiActionsEnabled={aiActionsEnabled} generatingFocusedQuiz={generatingFocusedQuiz} onGenerateFocusedQuiz={() => void handleGenerateFocusedQuiz()} t={t} tf={tf} />
+        <ErrorBoundary section="practice">
+          <PracticePanel courseId={courseId} difficultyLevel={difficultyRec.level} aiActionsEnabled={aiActionsEnabled} generatingFocusedQuiz={generatingFocusedQuiz} onGenerateFocusedQuiz={() => void handleGenerateFocusedQuiz()} t={t} tf={tf} />
+        </ErrorBoundary>
 
-        <GraphPanel courseId={courseId} focusTerms={focusTerms} t={t} />
+        <ErrorBoundary section="knowledge graph">
+          <GraphPanel courseId={courseId} focusTerms={focusTerms} t={t} />
+        </ErrorBoundary>
 
         <section className="rounded-2xl bg-card card-shadow p-5">
           <h2 className="text-lg font-semibold mb-4">{t("unit.errorAnalysis")}</h2>
