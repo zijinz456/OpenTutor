@@ -6,7 +6,7 @@ import { MessageBubble } from "@/components/chat/message-bubble";
 import { ClarifyCard } from "@/components/chat/clarify-card";
 import { StreamingIndicator } from "@/components/chat/streaming-indicator";
 import { useChatStore, type ChatMessage } from "@/store/chat";
-import { MessageSquare, AlertCircle } from "lucide-react";
+import { MessageSquare, AlertCircle, RotateCcw } from "lucide-react";
 
 interface MessageListProps {
   messages: ChatMessage[];
@@ -38,6 +38,7 @@ export function MessageList({ messages }: MessageListProps) {
     (isStreaming ? 1 : 0);
   const totalCount = messages.length + extraCount;
 
+  // eslint-disable-next-line react-hooks/incompatible-library
   const virtualizer = useVirtualizer({
     count: totalCount,
     getScrollElement: () => parentRef.current,
@@ -118,7 +119,7 @@ export function MessageList({ messages }: MessageListProps) {
         })}
       </div>
 
-      {/* Error banner */}
+      {/* Error banner with retry */}
       {error && !isStreaming && (
         <div role="alert" className="sticky bottom-0 mx-3 mb-2 flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive animate-fade-in">
           <AlertCircle className="size-4 shrink-0 mt-0.5" />
@@ -128,6 +129,24 @@ export function MessageList({ messages }: MessageListProps) {
               <p className="mt-0.5 opacity-70 truncate">{error}</p>
             )}
           </div>
+          {activeCourseId && messages.length > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
+                if (lastUserMsg && activeCourseId) {
+                  useChatStore.getState().sendMessage(activeCourseId, lastUserMsg.content, {
+                    images: lastUserMsg.images,
+                  });
+                }
+              }}
+              className="flex items-center gap-1 rounded-md border border-destructive/30 px-2 py-1 text-xs font-medium hover:bg-destructive/10 transition-colors shrink-0"
+              aria-label="Retry last message"
+            >
+              <RotateCcw className="size-3" />
+              Retry
+            </button>
+          )}
         </div>
       )}
     </div>

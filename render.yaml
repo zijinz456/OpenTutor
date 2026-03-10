@@ -25,8 +25,19 @@ services:
         value: "true"
       - key: ENVIRONMENT
         value: production
+      - key: AUTH_ENABLED
+        value: "true"
       - key: JWT_SECRET_KEY
         generateValue: true
+      - key: LLM_PROVIDER
+        sync: false  # Set your LLM provider (ollama, openai, deepseek, etc.)
+      - key: LLM_MODEL
+        sync: false  # Set your model name (e.g., deepseek-chat, gpt-4o-mini)
+      - key: CORS_ORIGINS
+        fromService:
+          type: web
+          name: opentutor-web
+          envVarKey: RENDER_EXTERNAL_URL
 
   - type: web
     name: opentutor-web

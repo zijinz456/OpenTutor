@@ -4,9 +4,21 @@
  * Simple fetch-based client. Phase 1 may upgrade to tRPC or orpc.
  */
 
+import { toast } from "sonner";
 import { buildAuthHeaders } from "@/lib/auth";
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_URL || "/api";
+
+/** Show a toast for API errors (non-chat requests). */
+function showApiErrorToast(err: ApiError): void {
+  if (typeof window === "undefined") return;
+  const description = err.status === 429
+    ? "Rate limit reached. Please wait a moment."
+    : err.status === 503
+      ? "Service temporarily unavailable."
+      : err.detail || err.message;
+  toast.error("Request failed", { description, duration: 5000 });
+}
 
 export type JsonObject = Record<string, unknown>;
 export type NullableDateTime = string | null;
@@ -107,6 +119,7 @@ export async function request<T>(path: string, options?: RequestInit): Promise<T
           await new Promise((r) => setTimeout(r, RETRY_BASE_MS * 2 ** attempt));
           continue;
         }
+        showApiErrorToast(err);
         throw err;
       }
 

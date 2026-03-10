@@ -164,27 +164,61 @@ def _start_health_monitor() -> None:
     registry.start_health_monitor(interval=30.0)
 
 
+def _should_run_health_monitor() -> bool:
+    """Disable health monitor in pytest to avoid cross-loop teardown races."""
+    return not os.environ.get("PYTEST_CURRENT_TEST")
+
+
 async def _stop_health_monitor() -> None:
     from services.llm.router import get_registry
 
     registry = get_registry()
-    await registry.stop_health_monitor()
+    try:
+        await registry.stop_health_monitor()
+    except RuntimeError as exc:
+        if "Event loop is closed" in str(exc):
+            logger.debug("Skipping health monitor shutdown after loop closed")
+            return
+        raise
+
+
+def _print_auth_warning() -> None:
+    """Print a visible console warning when authentication is disabled."""
+    if settings.auth_enabled:
+        return
+    logger.warning(
+        "\n"
+        "╔══════════════════════════════════════════════════════════════╗\n"
+        "║  ⚠  AUTHENTICATION IS DISABLED (AUTH_ENABLED=false)        ║\n"
+        "║                                                            ║\n"
+        "║  This is fine for local single-user use.                   ║\n"
+        "║  DO NOT expose this instance to the public internet.       ║\n"
+        "║                                                            ║\n"
+        "║  To enable auth:                                           ║\n"
+        "║    1. Set AUTH_ENABLED=true in .env                        ║\n"
+        "║    2. Set JWT_SECRET_KEY to a random string (>=32 chars)   ║\n"
+        "╚══════════════════════════════════════════════════════════════╝"
+    )
 
 
 async def run_startup_hooks() -> None:
+    _print_auth_warning()
     await _maybe_create_tables()
     await _maybe_bootstrap_migration_tracking()
     await _maybe_seed_system_data()
-    await _detect_local_llm()
+    if _should_run_health_monitor():
+        await _detect_local_llm()
     _maybe_start_scheduler()
     _maybe_start_activity_engine()
-    _start_health_monitor()
+    if _should_run_health_monitor():
+        _start_health_monitor()
 
 
 async def run_shutdown_hooks() -> None:
     from services.agent.orchestrator import wait_for_background_tasks
 
-    await _stop_health_monitor()
+    if _should_run_health_monitor():
+        await _stop_health_monitor()
     await _maybe_stop_activity_engine()
     _maybe_stop_scheduler()
     await wait_for_background_tasks()

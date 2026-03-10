@@ -45,8 +45,8 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
-      LLM_PROVIDER: ${LLM_PROVIDER:-openai}
-      LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      LLM_MODEL: ${LLM_MODEL:-llama3.2:3b}
       OLLAMA_BASE_URL: ${DOCKER_OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       LMSTUDIO_BASE_URL: ${DOCKER_LMSTUDIO_BASE_URL:-http://host.docker.internal:1234/v1}
       VLLM_BASE_URL: ${DOCKER_VLLM_BASE_URL:-http://host.docker.internal:8000/v1}
@@ -61,7 +61,6 @@ services:
       CODE_SANDBOX_IMAGE: ${CODE_SANDBOX_IMAGE:-python:3.11-alpine}
       ALLOW_INSECURE_PROCESS_SANDBOX: ${ALLOW_INSECURE_PROCESS_SANDBOX:-false}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3001,http://127.0.0.1:3001}
-      SERVE_BUILTIN_UI: "false"
       UPLOAD_DIR: /app/uploads
       SCRAPE_FIXTURE_DIR: /fixtures/e2e/scrape
     volumes:

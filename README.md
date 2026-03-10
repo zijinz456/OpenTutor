@@ -16,8 +16,7 @@ Upload any material — get notes, quizzes, flashcards, and an AI tutor that ada
 
 </div>
 
-<!-- Replace with actual screenshot when available -->
-<!-- <p align="center"><img src="docs/assets/screenshot.png" alt="OpenTutor Screenshot" width="800" /></p> -->
+<p align="center"><img src="docs/assets/screenshot-workspace.png" alt="OpenTutor — AI-generated notes with LaTeX, block-based workspace" width="800" /></p>
 
 ## What is OpenTutor?
 
@@ -35,9 +34,9 @@ Upload → AI Teaches → You Practice → AI Remembers → AI Reminds → Repea
 
 - **Block-Based Adaptive Workspace** — 12 composable learning blocks (notes, quiz, flashcards, knowledge graph, study plan, analytics, etc). The system progressively unlocks features based on your learning behavior and suggests layout changes via AI.
 
-- **Knowledge Graph (LOOM)** — Tracks concept mastery, prerequisite relationships, and weak areas. *Experimental — active development.*
+- **Knowledge Graph (LOOM)** `[Experimental]` — Tracks concept mastery, prerequisite relationships, and weak areas. Based on [LOOM](https://arxiv.org/abs/2511.21037). ~40% complete — decay modeling and cross-course linking are in progress.
 
-- **Spaced Repetition (FSRS 4.5 + LECTOR)** — FSRS scheduling for flashcards. LECTOR adds semantic review prioritization based on knowledge graph relationships. *LECTOR is experimental.*
+- **Spaced Repetition (FSRS 4.5 + LECTOR)** — FSRS scheduling for flashcards. LECTOR `[Experimental]` adds semantic review prioritization based on knowledge graph relationships. ~30% complete — confusion pairs and adaptive weights are in progress.
 
 - **Proactive Review Reminders** — Checks for concepts at risk of being forgotten and sends in-app notifications.
 
@@ -77,6 +76,11 @@ Upload → AI Teaches → You Practice → AI Remembers → AI Reminds → Repea
 
 - One-command local: ~10-30 minutes (depends on network and npm/pip cache)
 - Docker: ~8-25 minutes (depends on image build cache)
+
+### One-Click Deploy
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/zijinz456/OpenTutor)
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/template?referralCode=opentutor&repo=https://github.com/zijinz456/OpenTutor)
 
 ### Docker (recommended)
 
