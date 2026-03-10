@@ -112,8 +112,8 @@ async def _detect_local_llm() -> None:
                 if resp.status_code == 200:
                     models = resp.json().get("models", [])
                     return {"provider": "ollama", "url": settings.ollama_base_url, "models": [m.get("name", "?") for m in models]}
-        except (httpx.HTTPError, OSError, ValueError):
-            pass
+        except (httpx.HTTPError, OSError, ValueError) as exc:
+            logger.debug("Ollama probe failed: %s", exc)
         return None
 
     async def _probe_lmstudio() -> dict | None:
@@ -124,8 +124,8 @@ async def _detect_local_llm() -> None:
                     data = resp.json()
                     models = [m["id"] for m in data.get("data", [])]
                     return {"provider": "lmstudio", "url": settings.lmstudio_base_url, "models": models}
-        except (httpx.HTTPError, OSError, ValueError):
-            pass
+        except (httpx.HTTPError, OSError, ValueError) as exc:
+            logger.debug("LM Studio probe failed: %s", exc)
         return None
 
     results = await asyncio.gather(_probe_ollama(), _probe_lmstudio(), return_exceptions=True)
