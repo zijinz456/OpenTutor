@@ -5,12 +5,11 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { useT } from "@/lib/i18n-context";
-import { applyTemplate, listTemplates } from "@/lib/api";
-import type { Template } from "./types";
+import { applyTemplate, listTemplates, type LearningTemplate } from "@/lib/api";
 
 export function TemplatesSection() {
   const t = useT();
-  const [templates, setTemplates] = useState<Template[]>([]);
+  const [templates, setTemplates] = useState<LearningTemplate[]>([]);
   const [applying, setApplying] = useState<string | null>(null);
 
   useEffect(() => {
@@ -20,7 +19,7 @@ export function TemplatesSection() {
   async function loadTemplates(): Promise<void> {
     try {
       const data = await listTemplates();
-      setTemplates(data as unknown as Template[]);
+      setTemplates(data);
     } catch {
       // Templates may not be seeded yet
     }
@@ -67,7 +66,7 @@ export function TemplatesSection() {
                 {template.description}
               </p>
               <div className="flex flex-wrap gap-1">
-                {template.tags?.map((tag) => (
+                {template.tags?.map((tag: string) => (
                   <Badge key={tag} variant="outline" className="text-xs">
                     {tag}
                   </Badge>

@@ -133,6 +133,14 @@ let currentCourse=null,streaming=false;
 function $(id){return document.getElementById(id)}
 function show(id){$(id).classList.remove('hidden')}
 function hide(id){$(id).classList.add('hidden')}
+function safeLink(url){
+  try{
+    const u=new URL(url,window.location.origin);
+    const protocol=(u.protocol||'').toLowerCase();
+    if(protocol==='http:'||protocol==='https:'||protocol==='mailto:')return u.href;
+  }catch(_e){}
+  return null;
+}
 
 // ── Dark mode ──
 function initDark(){
@@ -166,7 +174,10 @@ function md(text){
     .replace(/```(\w*)\n([\s\S]*?)```/g,(_,lang,code)=>`<pre><code>${code.trim()}</code></pre>`)
     .replace(/`([^`]+)`/g,'<code>$1</code>')
     .replace(/\!\[([^\]]*)\]\(([^)]+)\)/g,'<img src="$2" alt="$1" style="max-width:100%;border-radius:8px">')
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g,'<a href="$2" target="_blank" rel="noopener">$1</a>')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g,(_,label,url)=>{
+      const href=safeLink(url);
+      return href?`<a href="${href}" target="_blank" rel="noopener">${label}</a>`:`<span>${label}</span>`;
+    })
     .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
     .replace(/\*(.+?)\*/g,'<em>$1</em>')
     .replace(/^### (.+)$/gm,'<h3>$1</h3>')
@@ -251,11 +262,21 @@ async function uploadFile(input){
   if(!file||!currentCourse)return;
   const fd=new FormData();
   fd.append('file',file);
+  fd.append('course_id',currentCourse.id);
   addBotMessage('Uploading **'+file.name+'**...');
   try{
-    const res=await fetch(API+'/content/courses/'+currentCourse.id+'/upload',{method:'POST',body:fd});
-    if(!res.ok)throw new Error('Upload failed: '+res.status);
-    const data=await res.json();
+    const res=await fetch(API+'/content/upload',{method:'POST',body:fd});
+    if(!res.ok){
+      const payload=await res.json().catch(()=>({}));
+      const detail=payload.detail||payload.message||'';
+      let hint='Upload failed';
+      if(res.status===401)hint='Upload failed: authentication required';
+      else if(res.status===403)hint='Upload failed: permission denied';
+      else if(res.status===404)hint='Upload failed: target course not found';
+      else if(res.status===422)hint='Upload failed: invalid file or request parameters';
+      throw new Error(hint+(detail?` (${detail})`:` (HTTP ${res.status})`));
+    }
+    await res.json();
     addBotMessage('Uploaded! Content is being processed. You can start chatting while it processes.');
     await loadCourses();
   }catch(e){addBotMessage('Upload error: '+e.message)}

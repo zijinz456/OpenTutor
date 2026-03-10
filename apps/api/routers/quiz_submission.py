@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import async_session, get_db
+from models.course import Course
 from models.practice import PracticeProblem, PracticeResult
 from models.user import User
 from schemas.quiz import (
@@ -36,6 +37,8 @@ async def list_problems(
     db: AsyncSession = Depends(get_db),
 ):
     """List user-facing practice problems for a course."""
+    await get_course_or_404(db, course_id, user_id=user.id)
+
     result = await db.execute(
         select(PracticeProblem)
         .where(PracticeProblem.course_id == course_id)
@@ -100,7 +103,12 @@ async def submit_answer(
 ):
     """Submit an answer to a practice problem."""
     result = await db.execute(
-        select(PracticeProblem).where(PracticeProblem.id == body.problem_id)
+        select(PracticeProblem)
+        .join(Course, PracticeProblem.course_id == Course.id)
+        .where(
+            PracticeProblem.id == body.problem_id,
+            Course.user_id == user.id,
+        )
     )
     problem = result.scalar_one_or_none()
     if not problem:

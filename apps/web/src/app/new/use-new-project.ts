@@ -211,7 +211,7 @@ export function useNewProject() {
     const metadata = {
       ...buildMetadata(features, autoScrape, url, mode),
       learning_mode: learningMode,
-      spaceLayout: layout as unknown as Record<string, unknown>,
+      spaceLayout: layout,
     };
 
     // Prime workspace state so the first paint on /course is mode-correct.

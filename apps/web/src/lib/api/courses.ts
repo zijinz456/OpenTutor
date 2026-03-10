@@ -4,6 +4,7 @@ import { API_BASE, parseApiError, request } from "./client";
 
 import type { ContentMutationResult, SavedGeneratedAsset } from "./client";
 import type { GeneratedAssetBatchSummary } from "./practice";
+import type { SpaceLayout } from "@/lib/block-system/types";
 
 // ── Courses ──
 
@@ -24,7 +25,7 @@ export interface CourseMetadata {
   workspace_features?: Partial<CourseWorkspaceFeatures> | null;
   auto_scrape?: CourseAutoScrapeSettings | null;
   layout?: Record<string, unknown> | null;
-  spaceLayout?: Record<string, unknown> | null;
+  spaceLayout?: SpaceLayout | Record<string, unknown> | null;
   learning_mode?: string | null;
   [key: string]: unknown;
 }
@@ -122,7 +123,7 @@ export async function deleteCourse(id: string): Promise<void> {
 
 export async function updateCourseLayout(
   courseId: string,
-  layout: Record<string, unknown>,
+  layout: SpaceLayout | Record<string, unknown>,
 ): Promise<{ status: string; layout: Record<string, unknown> }> {
   return request(`/courses/${courseId}/layout`, {
     method: "PATCH",

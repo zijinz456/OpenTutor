@@ -79,6 +79,7 @@ export function useSetup() {
   const [showCanvasLogin, setShowCanvasLogin] = useState(false);
   const [canvasLogging, setCanvasLogging] = useState(false);
   const [canvasLoginError, setCanvasLoginError] = useState<string | null>(null);
+  const [autoScrape, setAutoScrape] = useState(true);
 
   // ── Template + Mode state ──
   const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
@@ -321,7 +322,7 @@ export function useSetup() {
       addLog(t("new.logProjectCreated"), "text-success");
 
       await submitSources({
-        course, files, url, mode: sourceMode, autoScrape: true, canvasSessionValid, projectName,
+        course, files, url, mode: sourceMode, autoScrape, canvasSessionValid, projectName,
         addLog, setCanvasSessionValid, setShowCanvasLogin, setCanvasLogging,
         setCanvasLoginError, setNoSourcesSubmitted, t,
       });
@@ -330,7 +331,7 @@ export function useSetup() {
     } finally {
       setIsSubmittingContent(false);
     }
-  }, [addCourse, canvasSessionValid, files, projectName, selectedMode, selectedTemplate, t, url]);
+  }, [addCourse, autoScrape, canvasSessionValid, files, projectName, selectedMode, selectedTemplate, t, url]);
 
   // ── Enter workspace ──
   const enterWorkspace = useCallback(async () => {
@@ -368,6 +369,7 @@ export function useSetup() {
     url, setUrl, urlError, validateUrl,
     isCanvasDetected, canvasSessionValid, handleAuthCanvas,
     showCanvasLogin, setShowCanvasLogin, canvasLogging, canvasLoginError,
+    autoScrape, setAutoScrape,
     // Parsing + Discovery
     parseSteps, parseProgress, parseLogs,
     hasCompletedJob, allJobsFailed, noSourcesSubmitted,

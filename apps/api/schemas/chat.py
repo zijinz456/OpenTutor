@@ -1,8 +1,9 @@
 """Pydantic schemas for chat endpoints."""
 
+import json
 import uuid
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class ChatMessage(BaseModel):
@@ -25,7 +26,7 @@ class ChatRequest(BaseModel):
     history: list[ChatMessage] = Field(default_factory=list, max_length=100)  # Recent conversation history for multi-turn context
     # v3: Tab context and scene awareness
     active_tab: str | None = None       # "notes" / "quiz" / "plan" / "review" / ...
-    tab_context: dict | None = None     # Current tab content summary for context-aware responses
+    tab_context: dict | None = Field(default=None, max_length=50)  # Current tab content summary (max 50 keys to prevent DoS)
     scene: str | None = None            # Frontend-provided current scene (from course.active_scene)
     session_id: uuid.UUID | None = None # Chat session ID for conversation grouping
     # v3.2: Multimodal — image attachments for vision-based questions
@@ -37,6 +38,15 @@ class ChatRequest(BaseModel):
     # v4: Block system context — current blocks and recently dismissed types
     block_types: list[str] = Field(default_factory=list)
     dismissed_block_types: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_tab_context_size(self):
+        """Prevent DoS via oversized tab_context payloads (max 50 KB serialized)."""
+        if self.tab_context is not None:
+            serialized = json.dumps(self.tab_context, default=str)
+            if len(serialized) > 51_200:  # 50 KB
+                raise ValueError("tab_context exceeds maximum allowed size (50 KB)")
+        return self
 
 
 class ChatResponse(BaseModel):

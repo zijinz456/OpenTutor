@@ -161,73 +161,82 @@ async def chat_stream(
     )
     await db.commit()
 
+    # SSE stream timeout: 5 minutes max to prevent resource exhaustion from dangling connections
+    _SSE_TIMEOUT_SECONDS = 300
+
     async def event_generator():
+        import asyncio
+
         assistant_chunks: list[str] = []
         assistant_content = ""
         assistant_metadata: dict | None = None
         try:
-            async for event in orchestrate_stream(
-                user_id=user.id,
-                course_id=body.course_id,
-                message=body.message,
-                db=db,
-                db_factory=session_factory,
-                conversation_id=body.conversation_id,
-                session_id=session.id,
-                history=[m.model_dump() for m in body.history],
-                active_tab=body.active_tab or "",
-                tab_context=body.tab_context,
-                scene=resolved_scene,
-                images=[img.model_dump() for img in body.images] if body.images else None,
-                learning_mode=body.learning_mode,
-                block_types=body.block_types or None,
-                dismissed_block_types=body.dismissed_block_types or None,
-            ):
-                # Stop streaming if client disconnected (saves LLM cost)
-                if await request.is_disconnected():
-                    logger.info("Client disconnected during SSE stream for session %s", session.id)
-                    break
-                if event.get("event") == "message":
-                    try:
-                        payload = json.loads(event["data"])
-                    except (KeyError, json.JSONDecodeError, TypeError):
-                        payload = {}
-                    if payload.get("content"):
-                        assistant_chunks.append(payload["content"])
-                        assistant_content = "".join(assistant_chunks)
-                elif event.get("event") == "done":
-                    try:
-                        payload = json.loads(event["data"])
-                    except (KeyError, json.JSONDecodeError, TypeError):
-                        payload = {}
-                    assistant_metadata = {
-                        "agent": payload.get("agent"),
-                        "intent": payload.get("intent"),
-                        "tokens": payload.get("tokens"),
-                        "provenance": payload.get("provenance"),
-                        "actions": payload.get("actions", []),
-                        "verifier": payload.get("verifier"),
-                        "verifier_diagnostics": payload.get("verifier_diagnostics"),
-                        "task_link": payload.get("task_link"),
-                        "reflection": payload.get("reflection"),
-                    }
-                elif event.get("event") == "replace":
-                    try:
-                        payload = json.loads(event["data"])
-                    except (KeyError, json.JSONDecodeError, TypeError):
-                        payload = {}
-                    assistant_content = payload.get("content", assistant_content)
-                yield event
+            async with asyncio.timeout(_SSE_TIMEOUT_SECONDS):
+                async for event in orchestrate_stream(
+                    user_id=user.id,
+                    course_id=body.course_id,
+                    message=body.message,
+                    db=db,
+                    db_factory=session_factory,
+                    conversation_id=body.conversation_id,
+                    session_id=session.id,
+                    history=[m.model_dump() for m in body.history],
+                    active_tab=body.active_tab or "",
+                    tab_context=body.tab_context,
+                    scene=resolved_scene,
+                    images=[img.model_dump() for img in body.images] if body.images else None,
+                    learning_mode=body.learning_mode,
+                    block_types=body.block_types or None,
+                    dismissed_block_types=body.dismissed_block_types or None,
+                ):
+                    # Stop streaming if client disconnected (saves LLM cost)
+                    if await request.is_disconnected():
+                        logger.info("Client disconnected during SSE stream for session %s", session.id)
+                        break
+                    if event.get("event") == "message":
+                        try:
+                            payload = json.loads(event["data"])
+                        except (KeyError, json.JSONDecodeError, TypeError):
+                            payload = {}
+                        if payload.get("content"):
+                            assistant_chunks.append(payload["content"])
+                            assistant_content = "".join(assistant_chunks)
+                    elif event.get("event") == "done":
+                        try:
+                            payload = json.loads(event["data"])
+                        except (KeyError, json.JSONDecodeError, TypeError):
+                            payload = {}
+                        assistant_metadata = {
+                            "agent": payload.get("agent"),
+                            "intent": payload.get("intent"),
+                            "tokens": payload.get("tokens"),
+                            "provenance": payload.get("provenance"),
+                            "actions": payload.get("actions", []),
+                            "verifier": payload.get("verifier"),
+                            "verifier_diagnostics": payload.get("verifier_diagnostics"),
+                            "task_link": payload.get("task_link"),
+                            "reflection": payload.get("reflection"),
+                        }
+                    elif event.get("event") == "replace":
+                        try:
+                            payload = json.loads(event["data"])
+                        except (KeyError, json.JSONDecodeError, TypeError):
+                            payload = {}
+                        assistant_content = payload.get("content", assistant_content)
+                    yield event
             # Use a fresh DB session for persistence to avoid stale state after SSE streaming
             try:
                 async with session_factory() as persist_db:
                     await _persist_chat_turn(persist_db, session.id, body.message, assistant_content, assistant_metadata)
             except SQLAlchemyError as persist_err:
                 logger.exception("Failed to persist chat turn: %s", persist_err)
+        except TimeoutError:
+            logger.warning("SSE stream timed out after %ds for session %s", _SSE_TIMEOUT_SECONDS, session.id)
+            yield {"event": "error", "data": json.dumps({"error": "Response timed out. Please try again with a simpler question."})}
         except AppError as e:
             logger.exception("Orchestrator AppError: %s", e)
             yield {"event": "error", "data": json.dumps({"error": e.message})}
-        except (ValueError, KeyError, SQLAlchemyError, ConnectionError, TimeoutError, OSError, RuntimeError) as e:
+        except (ValueError, KeyError, SQLAlchemyError, ConnectionError, OSError, RuntimeError) as e:
             from libs.exceptions import is_llm_unavailable_error
             if is_llm_unavailable_error(e):
                 error_msg = "The AI service is temporarily unavailable. Please try again shortly."
@@ -235,12 +244,6 @@ async def chat_stream(
                 error_msg = "An internal error occurred. Please try again."
             logger.exception("Orchestrator error: %s", e)
             yield {"event": "error", "data": json.dumps({"error": error_msg})}
-        except Exception as e:
-            # Last-resort SSE fallback — must not crash the generator or the
-            # client gets no error feedback at all.  All known exception types
-            # are handled above; this only catches truly unexpected failures.
-            logger.exception("Orchestrator unexpected error: %s", e)
-            yield {"event": "error", "data": json.dumps({"error": "An internal error occurred. Please try again."})}
 
     return EventSourceResponse(event_generator())
 

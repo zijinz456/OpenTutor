@@ -6,7 +6,6 @@ from typing import TypeVar
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from config import settings
 from libs.exceptions import NotFoundError
 from models.course import Course
 
@@ -23,11 +22,11 @@ async def get_or_404(
 ) -> T:
     """Return a record by primary key or raise NotFoundError.
 
-    When auth is enabled and user_id is provided, also checks ownership
-    via the model's ``user_id`` column (if it exists).
+    When ``user_id`` is provided, also checks ownership via the model's
+    ``user_id`` column (if it exists).
     """
     query = select(model).where(model.id == record_id)  # type: ignore[attr-defined]
-    if settings.auth_enabled and user_id is not None and hasattr(model, "user_id"):
+    if user_id is not None and hasattr(model, "user_id"):
         query = query.where(model.user_id == user_id)  # type: ignore[attr-defined]
 
     result = await db.execute(query)

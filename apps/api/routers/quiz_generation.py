@@ -150,7 +150,10 @@ async def extract_quiz(body: ExtractRequest, user: User = Depends(get_current_us
     try:
         if body.content_node_id:
             result = await db.execute(
-                select(CourseContentTree).where(CourseContentTree.id == body.content_node_id)
+                select(CourseContentTree).where(
+                    CourseContentTree.id == body.content_node_id,
+                    CourseContentTree.course_id == body.course_id,
+                )
             )
             node = result.scalar_one_or_none()
             if not node or not node.content:

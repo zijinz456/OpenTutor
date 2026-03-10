@@ -10,12 +10,15 @@ services:
           memory: 4G
           cpus: "4.0"
     environment:
+      ENVIRONMENT: production
       AUTH_ENABLED: "true"
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY must be set in production}
       LLM_REQUIRED: "true"
       APP_AUTO_CREATE_TABLES: "false"
       APP_AUTO_SEED_SYSTEM: "false"
       APP_RUN_SCHEDULER: "true"
       APP_RUN_ACTIVITY_ENGINE: "true"
+      SERVE_BUILTIN_UI: "false"
       CORS_ORIGINS: ${CORS_ORIGINS:?CORS_ORIGINS must be set in production}
     volumes:
       - uploads:/app/uploads

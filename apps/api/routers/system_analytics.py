@@ -11,12 +11,16 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
+from models.course import Course
 from models.knowledge_graph import KnowledgeNode, KnowledgeEdge, ConceptMastery
+from models.user import User
+from services.auth.dependency import get_current_user
+from services.course_access import get_course_or_404
 from services.experiments.framework import list_experiments, ExperimentStatus
 from services.experiments.metrics import compute_learning_metrics
 
@@ -24,17 +28,32 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-async def _loom_metrics(db: AsyncSession, course_id: uuid.UUID | None = None) -> dict:
+async def _loom_metrics(
+    db: AsyncSession,
+    course_id: uuid.UUID | None = None,
+    owner_user_id: uuid.UUID | None = None,
+) -> dict:
     """Compute LOOM knowledge graph metrics."""
     node_q = select(func.count()).select_from(KnowledgeNode)
     edge_q = select(func.count()).select_from(KnowledgeEdge)
 
-    if course_id:
-        node_q = node_q.where(KnowledgeNode.course_id == course_id)
+    course_scope = None
+    if course_id and owner_user_id:
+        course_scope = select(Course.id).where(
+            Course.id == course_id,
+            Course.user_id == owner_user_id,
+        )
+    elif course_id:
+        course_scope = select(Course.id).where(Course.id == course_id)
+    elif owner_user_id:
+        course_scope = select(Course.id).where(Course.user_id == owner_user_id)
+
+    if course_scope is not None:
+        node_q = node_q.where(KnowledgeNode.course_id.in_(course_scope))
         # Edges: filter by source node's course
         edge_q = edge_q.join(
             KnowledgeNode, KnowledgeEdge.source_id == KnowledgeNode.id
-        ).where(KnowledgeNode.course_id == course_id)
+        ).where(KnowledgeNode.course_id.in_(course_scope))
 
     total_nodes = (await db.execute(node_q)).scalar() or 0
     total_edges = (await db.execute(edge_q)).scalar() or 0
@@ -49,10 +68,10 @@ async def _loom_metrics(db: AsyncSession, course_id: uuid.UUID | None = None) ->
         select(KnowledgeEdge.relation_type, func.count())
         .group_by(KnowledgeEdge.relation_type)
     )
-    if course_id:
+    if course_scope is not None:
         type_q = type_q.join(
             KnowledgeNode, KnowledgeEdge.source_id == KnowledgeNode.id
-        ).where(KnowledgeNode.course_id == course_id)
+        ).where(KnowledgeNode.course_id.in_(course_scope))
 
     type_result = await db.execute(type_q)
     edge_types = {row[0]: row[1] for row in type_result.all()}
@@ -146,20 +165,28 @@ def _experiment_summary() -> list[dict]:
 async def get_system_analytics(
     course_id: uuid.UUID | None = None,
     user_id: uuid.UUID | None = None,
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Return aggregated system analytics across LOOM, LECTOR, and experiments.
 
     Optional filters: course_id, user_id.
     """
-    loom = await _loom_metrics(db, course_id)
-    lector = await _lector_metrics(db, user_id, course_id)
+    if user_id is not None and user_id != user.id:
+        raise HTTPException(status_code=403, detail="Forbidden: user_id does not match authenticated user")
+
+    resolved_user_id = user_id or user.id
+    if course_id is not None:
+        await get_course_or_404(db, course_id, user_id=user.id)
+
+    loom = await _loom_metrics(db, course_id=course_id, owner_user_id=user.id)
+    lector = await _lector_metrics(db, resolved_user_id, course_id)
     experiments = _experiment_summary()
 
     # If user_id and course_id provided, also compute per-user learning metrics
     learning = None
-    if user_id and course_id:
-        learning = await compute_learning_metrics(db, user_id, course_id)
+    if resolved_user_id and course_id:
+        learning = await compute_learning_metrics(db, resolved_user_id, course_id)
 
     return {
         "loom": loom,

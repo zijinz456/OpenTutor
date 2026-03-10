@@ -3,6 +3,7 @@
  */
 
 import type { ChatAction, ChatMessageMetadata, ClarifyOption, PlanProgressEvent, BlockUpdateOp, CognitiveState } from "@/lib/api";
+import type { BlockType, BlockSize } from "@/lib/block-system/types";
 
 export interface StreamEventHandlers {
   onContent: (content: string) => void;
@@ -34,9 +35,9 @@ export async function applyBlockDecisions(
     if (!result.operations.length) return;
 
     const batchOps: Array<
-      | { action: "add"; type: string; config?: Record<string, unknown>; size?: string }
+      | { action: "add"; type: BlockType; config?: Record<string, unknown>; size?: BlockSize }
       | { action: "remove"; blockId: string }
-      | { action: "resize"; blockId: string; size: string }
+      | { action: "resize"; blockId: string; size: BlockSize }
       | { action: "update_config"; blockId: string; config: Record<string, unknown> }
     > = [];
 
@@ -44,9 +45,9 @@ export async function applyBlockDecisions(
       if (op.action === "add") {
         batchOps.push({
           action: "add",
-          type: op.block_type,
+          type: op.block_type as BlockType,
           config: op.config,
-          size: op.size,
+          size: op.size as BlockSize | undefined,
         });
       } else if (op.action === "remove") {
         const block = ws.spaceLayout.blocks.find((b) => b.type === op.block_type);
@@ -56,7 +57,7 @@ export async function applyBlockDecisions(
       } else if (op.action === "resize") {
         const block = ws.spaceLayout.blocks.find((b) => b.type === op.block_type);
         if (block && op.size) {
-          batchOps.push({ action: "resize", blockId: block.id, size: op.size });
+          batchOps.push({ action: "resize", blockId: block.id, size: op.size as BlockSize });
         }
       } else if (op.action === "update_config") {
         const block = ws.spaceLayout.blocks.find((b) => b.type === op.block_type);
@@ -67,8 +68,7 @@ export async function applyBlockDecisions(
     }
 
     if (batchOps.length > 0) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ws.batchUpdateBlocks(batchOps as any);
+      ws.batchUpdateBlocks(batchOps);
 
       // Show adaptation toast with undo support
       try {
