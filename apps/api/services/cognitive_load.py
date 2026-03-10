@@ -53,7 +53,7 @@ async def compute_cognitive_load(
 
     # ── Signal 2: Session length fatigue ──
     # Cognitive performance degrades after ~45 min of focused study
-    session_fatigue = min(session_messages / 40.0, 1.0)  # ~40 messages ≈ 45 min
+    session_fatigue = min(session_messages / settings.cognitive_load_session_messages_norm, 1.0)
     signals["session_length"] = session_fatigue
     load += session_fatigue * settings.cognitive_load_weight_session_length
 
@@ -73,7 +73,7 @@ async def compute_cognitive_load(
             )
         ).scalar() or 0
         # Normalize: 5+ unmastered errors = high load signal
-        error_signal = min(recent_errors / 5.0, 1.0)
+        error_signal = min(recent_errors / settings.cognitive_load_error_count_norm, 1.0)
         signals["unmastered_errors"] = error_signal
         load += error_signal * settings.cognitive_load_weight_errors
     except (_SQLAlchemyError, OSError) as e:
@@ -84,7 +84,7 @@ async def compute_cognitive_load(
     # Short, terse messages may indicate frustration or overload
     msg_len = len(user_message.strip())
     if msg_len > 0:
-        brevity_signal = max(0.0, 1.0 - (msg_len / 100.0))  # <100 chars = some signal
+        brevity_signal = max(0.0, 1.0 - (msg_len / settings.cognitive_load_brevity_length_norm))
         # Only count if we have session context (student was writing longer before)
         if session_messages > 3:
             signals["message_brevity"] = brevity_signal
@@ -116,7 +116,7 @@ async def compute_cognitive_load(
         if progress and progress.quiz_attempts and progress.quiz_attempts > 0:
             accuracy = progress.quiz_correct / progress.quiz_attempts
             # Low accuracy = high cognitive load
-            perf_signal = max(0.0, 1.0 - (accuracy / 0.7))  # Below 70% = signal
+            perf_signal = max(0.0, 1.0 - (accuracy / settings.cognitive_load_quiz_accuracy_target))
             signals["quiz_performance"] = perf_signal
             load += perf_signal * settings.cognitive_load_weight_quiz_performance
         else:
@@ -141,10 +141,11 @@ async def compute_cognitive_load(
         if len(times) >= 3:
             import statistics
             median_ms = statistics.median(times)
-            # 15s median = no signal, 60s+ median = full signal
-            timing_signal = min(max((median_ms - 15000) / 45000, 0.0), 1.0)
+            timing_signal = min(max(
+                (median_ms - settings.cognitive_load_hesitation_min_ms)
+                / settings.cognitive_load_hesitation_range_ms, 0.0), 1.0)
             signals["answer_hesitation"] = timing_signal
-            load += timing_signal * 0.10
+            load += timing_signal * settings.cognitive_load_weight_answer_hesitation
         else:
             signals["answer_hesitation"] = 0.0
     except (_SQLAlchemyError, OSError, ValueError) as e:
@@ -157,9 +158,10 @@ async def compute_cognitive_load(
     affect = await analyze_student_affect(user_message) if user_message else {}
     frustration = affect.get("frustration", 0.0)
     confusion = affect.get("confusion", 0.0)
-    nlp_signal = frustration * 0.6 + confusion * 0.4  # Weighted combination
+    nlp_signal = (frustration * settings.cognitive_load_nlp_frustration_weight
+                  + confusion * settings.cognitive_load_nlp_confusion_weight)
     signals["nlp_affect"] = nlp_signal
-    load += nlp_signal * 0.15  # 15% weight for NLP signal
+    load += nlp_signal * settings.cognitive_load_weight_nlp_affect
 
     # ── Signal 9: Relative baseline calibration ──
     from services.cognitive_load_calibrator import (
@@ -175,7 +177,7 @@ async def compute_cognitive_load(
     if relative["calibrated"]:
         for adj_name, adj_value in relative["adjustments"].items():
             signals[adj_name] = adj_value
-            load += adj_value * 0.1
+            load += adj_value * settings.cognitive_load_weight_relative_baseline
 
     # Clamp
     score = max(0.0, min(load, 1.0))
@@ -287,7 +289,7 @@ def suggest_layout_simplification(
             "reason": str,
         }
     """
-    if cognitive_load_score < 0.7:
+    if cognitive_load_score < settings.cognitive_load_layout_simplify_threshold:
         return {"should_simplify": False, "blocks_to_hide": [], "reason": ""}
 
     # Hide non-essential blocks, most dispensable first
@@ -322,7 +324,7 @@ def adjust_review_order_for_load(
     Under high cognitive load, presenting easier (more stable) cards first
     lets the student build confidence before tackling harder material.
     """
-    if cognitive_load_score < 0.5 or not cards:
+    if cognitive_load_score < settings.cognitive_load_review_reorder_threshold or not cards:
         return cards
     # Sort by FSRS stability descending (most stable = easiest recall)
     return sorted(
