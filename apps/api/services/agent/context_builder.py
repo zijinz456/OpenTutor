@@ -264,4 +264,14 @@ async def load_context(
         _run_latex_ocr(),
     )
 
+    # Build compact layout context for agent awareness
+    block_types = ctx.metadata.get("block_types")
+    if block_types:
+        dismissed = ctx.metadata.get("dismissed_block_types", [])
+        mode = ctx.learning_mode or "unknown"
+        parts = [f"Current workspace blocks: {', '.join(block_types)}. Mode: {mode}."]
+        if dismissed:
+            parts.append(f"Recently dismissed: {', '.join(dismissed)}.")
+        ctx.metadata["layout_context"] = " ".join(parts)
+
     return ctx

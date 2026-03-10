@@ -12,6 +12,7 @@ import { useWorkspaceStore } from "@/store/workspace";
 import { cn } from "@/lib/utils";
 import { useT } from "@/lib/i18n-context";
 import { toast } from "sonner";
+import { recordBlockEvent, useBlockEngagement } from "@/hooks/use-block-engagement";
 
 const BLOCK_FULL_PAGE_LINKS: Partial<Record<BlockType, (courseId: string) => string>> = {
   notes: (courseId) => `/course/${courseId}/notes`,
@@ -39,6 +40,8 @@ export function BlockWrapper({ block, courseId, aiActionsEnabled }: BlockWrapper
   const dismissAgentBlock = useWorkspaceStore((s) => s.dismissAgentBlock);
   const setLearningMode = useWorkspaceStore((s) => s.setLearningMode);
   const applyBlockTemplate = useWorkspaceStore((s) => s.applyBlockTemplate);
+
+  const engagementRef = useBlockEngagement(block.id, block.type, courseId);
 
   const entry = BLOCK_REGISTRY[block.type];
   if (!entry) return null;
@@ -102,6 +105,7 @@ export function BlockWrapper({ block, courseId, aiActionsEnabled }: BlockWrapper
       }
     }
     approveAgentBlock(block.id);
+    recordBlockEvent(courseId, block.type, "approve");
   };
 
   const handleDismiss = () => {
@@ -110,10 +114,12 @@ export function BlockWrapper({ block, courseId, aiActionsEnabled }: BlockWrapper
       logModeSuggestionDecision("dismiss_mode_suggestion", suggestedMode);
     }
     dismissAgentBlock(block.id);
+    recordBlockEvent(courseId, block.type, "dismiss");
   };
 
   return (
     <div
+      ref={engagementRef}
       role="region"
       aria-label={entry.label}
       tabIndex={0}
@@ -182,6 +188,7 @@ export function BlockWrapper({ block, courseId, aiActionsEnabled }: BlockWrapper
           <button
             onClick={() => {
               removeBlock(block.id);
+              recordBlockEvent(courseId, block.type, "manual_remove");
               toast(t("block.removed"), {
                 action: {
                   label: t("block.undo"),

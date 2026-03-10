@@ -14,6 +14,7 @@ import {
   getVisibleSections,
   toggleSection,
 } from "@/lib/layout-presets";
+import type { CognitiveState } from "@/lib/api";
 import { type BlockSystemState, createBlockSlice } from "./workspace-blocks";
 
 export type SectionId = "notes" | "practice" | "analytics" | "plan";
@@ -40,6 +41,9 @@ interface CoreWorkspaceState {
   setLayout: (layout: WorkspaceLayout) => void;
   applyPreset: (presetId: PresetId) => void;
   toggleLayoutSection: (sectionId: SectionId, visible: boolean) => void;
+  /** Latest cognitive state from the Block Decision Engine. */
+  cognitiveState: CognitiveState | null;
+  setCognitiveState: (state: CognitiveState) => void;
 }
 
 type WorkspaceState = CoreWorkspaceState & BlockSystemState;
@@ -97,6 +101,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const next = toggleSection(get().layout, sectionId, visible);
     get().setLayout(next);
   },
+
+  cognitiveState: null,
+  setCognitiveState: (state) => set({ cognitiveState: state }),
 
   // Block system (extracted to workspace-blocks.ts)
   ...createBlockSlice(set, get),

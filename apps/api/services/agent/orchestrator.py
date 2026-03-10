@@ -67,15 +67,50 @@ async def prepare_agent_turn(
             user_message=ctx.user_message,
         )
         ctx.metadata["cognitive_load"] = cl
-        if cl.get("score", 0) >= 0.7:
-            from services.cognitive_load import suggest_layout_simplification
-            block_types = ctx.metadata.get("block_types", [])
-            if block_types:
-                ctx.metadata["layout_simplification"] = suggest_layout_simplification(
-                    cl["score"], block_types
-                )
     except (SQLAlchemyError, ImportError, ConnectionError, TimeoutError, ValueError, AttributeError) as e:
         logger.debug("Cognitive load detection skipped: %s", e)
+
+    # Block Decision Engine — evaluate all signals against current layout
+    # Always runs (even with empty blocks) so cognitive state badge stays updated
+    try:
+        from services.block_decision.engine import compute_block_decisions
+        block_types = ctx.metadata.get("block_types", [])
+
+        # Collect agenda signals for richer decisions
+        agenda_signals: list[dict] = []
+        try:
+            from services.agent.signals import collect_signals
+            raw_signals = await collect_signals(ctx.user_id, ctx.course_id, db)
+            agenda_signals = [
+                {"signal_type": s.signal_type, "urgency": s.urgency,
+                 "detail": s.detail, "title": s.title}
+                for s in raw_signals
+            ]
+        except (SQLAlchemyError, ImportError, ValueError, RuntimeError) as sig_err:
+            logger.debug("Signal collection for block decisions skipped: %s", sig_err)
+
+        # Load user's block preferences for filtering
+        block_prefs = None
+        try:
+            from services.block_decision.preference import compute_block_preferences
+            raw_prefs = await compute_block_preferences(db, ctx.user_id, ctx.course_id)
+            if raw_prefs:
+                block_prefs = {"block_scores": raw_prefs}
+        except (ImportError, SQLAlchemyError, ValueError) as pref_err:
+            logger.debug("Block preference loading skipped: %s", pref_err)
+
+        decisions = await compute_block_decisions(
+            db, ctx.user_id, ctx.course_id,
+            current_blocks=block_types,
+            current_mode=ctx.learning_mode,
+            cognitive_load=ctx.metadata.get("cognitive_load"),
+            dismissed_types=ctx.metadata.get("dismissed_block_types", []),
+            signals=agenda_signals,
+            preferences=block_prefs,
+        )
+        ctx.metadata["block_decisions"] = decisions
+    except (ImportError, SQLAlchemyError, ConnectionError, TimeoutError, ValueError, AttributeError) as e:
+        logger.debug("Block decision engine skipped: %s", e)
 
     agent = get_agent(ctx.intent)
     ctx.delegated_agent = agent.name
@@ -158,6 +193,8 @@ async def orchestrate_stream(
     scene: str | None = None,
     images: list[dict] | None = None,
     learning_mode: str | None = None,
+    block_types: list[str] | None = None,
+    dismissed_block_types: list[str] | None = None,
 ) -> AsyncIterator[dict]:
     """Main orchestration entry point for streaming responses."""
     ctx = build_agent_context(
@@ -172,6 +209,8 @@ async def orchestrate_stream(
         scene=scene,
         images=images,
         learning_mode=learning_mode,
+        block_types=block_types,
+        dismissed_block_types=dismissed_block_types,
     )
 
     # Guided session detection (bypass normal routing)
@@ -288,13 +327,8 @@ async def orchestrate_stream(
             user_message=ctx.user_message,
         )
         ctx.metadata["cognitive_load"] = cl
-        if cl.get("score", 0) >= 0.7:
-            from services.cognitive_load import suggest_layout_simplification
-            block_types = ctx.metadata.get("block_types", [])
-            if block_types:
-                ctx.metadata["layout_simplification"] = suggest_layout_simplification(
-                    cl["score"], block_types
-                )
+        # NOTE: layout_simplification removed — Block Decision Engine (block_update event)
+        # now handles cognitive overload via rule_cognitive_overload in prepare_agent_turn.
         if cl.get("consecutive_high", 0) > 0:
             try:
                 from services.agent.kv_store import kv_set
@@ -382,6 +416,14 @@ async def orchestrate_stream(
     ctx.metadata["provenance"] = build_provenance(ctx)
     if ctx.response != streamed_response:
         yield {"event": "replace", "data": json.dumps({"content": ctx.response})}
+
+    # Emit block_update event — always send cognitive state for badge, ops may be empty
+    block_decisions = ctx.metadata.get("block_decisions")
+    if block_decisions:
+        yield {
+            "event": "block_update",
+            "data": json.dumps(block_decisions.to_dict()),
+        }
 
     yield {
         "event": "done",

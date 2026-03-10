@@ -180,6 +180,8 @@ async def chat_stream(
                 scene=resolved_scene,
                 images=[img.model_dump() for img in body.images] if body.images else None,
                 learning_mode=body.learning_mode,
+                block_types=body.block_types or None,
+                dismissed_block_types=body.dismissed_block_types or None,
             ):
                 # Stop streaming if client disconnected (saves LLM cost)
                 if await request.is_disconnected():

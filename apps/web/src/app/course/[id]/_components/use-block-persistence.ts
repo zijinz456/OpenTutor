@@ -36,6 +36,14 @@ export function useBlockPersistence(
     if (savedLayout && typeof savedLayout === "object") {
       try {
         loadBlocks(savedLayout as Parameters<typeof loadBlocks>[0]);
+        // Cold-start: add a welcome agent_insight if this is a first-document layout
+        if ((savedLayout as Record<string, unknown>).cold_start) {
+          const ws = useWorkspaceStore.getState();
+          ws.agentAddBlock("agent_insight", {
+            insightType: "welcome_back",
+            reason: "I analyzed your document and set up a personalized workspace. Try a quiz to help me gauge your level!",
+          }, { needsApproval: false, dismissible: true, reason: "cold_start" });
+        }
         return;
       } catch { /* ignore */ }
     }

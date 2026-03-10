@@ -8,6 +8,7 @@ from config import settings
 from routers import (
     agenda,
     auth,
+    block_routes,
     canvas,
     chat,
     courses,
@@ -57,6 +58,7 @@ CORE_ROUTERS = (
     (workflows.router, "/api/workflows", ["workflows"]),
     (knowledge_graph.router, "/api", ["knowledge-graph"]),
     (system_analytics.router, "/api", ["system-analytics"]),
+    (block_routes.router, "/api/blocks", ["blocks"]),
 )
 
 

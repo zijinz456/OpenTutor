@@ -174,6 +174,16 @@ class TutorAgent(ReActMixin, BaseAgent):
                 lines.append(f"- '{p.get('topic', '?')}' appears in: {courses_str} (mastery: {mastery_info})")
             parts.append("\n".join(lines))
 
+        # ── Block layout awareness ──
+        layout_ctx = ctx.metadata.get("layout_context")
+        if layout_ctx:
+            parts.append(
+                f"\n## Student's Workspace Layout\n{layout_ctx}\n"
+                "When suggesting actions like adding blocks or changing modes, "
+                "check the current layout first. Do not suggest adding blocks that already exist. "
+                "Do not re-suggest dismissed block types."
+            )
+
         # Scene tools
         scene_tools = get_all_tools(include_preference=False)
         parts.append(scene_tools)

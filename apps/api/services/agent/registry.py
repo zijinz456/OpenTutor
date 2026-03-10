@@ -46,6 +46,8 @@ def build_agent_context(
     scene: str | None = None,
     images: list[dict] | None = None,
     learning_mode: str | None = None,
+    block_types: list[str] | None = None,
+    dismissed_block_types: list[str] | None = None,
 ) -> AgentContext:
     """Create a normalized AgentContext for chat or workflow entry points."""
     ctx = AgentContext(
@@ -62,4 +64,8 @@ def build_agent_context(
     )
     if scene:
         ctx.scene = scene
+    if block_types:
+        ctx.metadata["block_types"] = block_types
+    if dismissed_block_types:
+        ctx.metadata["dismissed_block_types"] = dismissed_block_types
     return ctx
