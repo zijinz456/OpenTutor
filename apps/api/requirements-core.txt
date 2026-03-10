@@ -18,7 +18,7 @@ openai==1.65.2
 anthropic==0.46.0
 
 # File Parsing — host-safe baseline
-lxml>=5.3,<6.0
+lxml>=5.3,<7.0
 beautifulsoup4==4.12.3
 trafilatura==2.0.0
 python-pptx==1.0.2
