@@ -139,6 +139,7 @@ export type {
   AgentTaskStepResult,
   AgentTaskReview,
   AgentTaskVerifierDiagnostics,
+  LearningTemplate,
   NextActionResponse,
   StudyGoal,
   AgendaRun,
@@ -190,6 +191,10 @@ export {
   listIngestionJobs,
   syncCourse,
   createScrapeSource,
+  listScrapeSources,
+  updateScrapeSource,
+  deleteScrapeSource,
+  scrapeNow,
 } from "./ingestion";
 
 export type {

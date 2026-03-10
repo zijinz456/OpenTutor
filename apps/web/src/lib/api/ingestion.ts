@@ -79,3 +79,25 @@ export async function createScrapeSource(body: {
     body: JSON.stringify(body),
   });
 }
+
+export async function listScrapeSources(courseId: string): Promise<ScrapeSource[]> {
+  return request(`/scrape/sources?course_id=${courseId}`);
+}
+
+export async function updateScrapeSource(
+  sourceId: string,
+  body: { enabled?: boolean; interval_hours?: number; label?: string },
+): Promise<ScrapeSource> {
+  return request(`/scrape/sources/${sourceId}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function deleteScrapeSource(sourceId: string): Promise<void> {
+  return request(`/scrape/sources/${sourceId}`, { method: "DELETE" });
+}
+
+export async function scrapeNow(sourceId: string): Promise<{ status: string; content_changed: boolean; last_status: string }> {
+  return request(`/scrape/sources/${sourceId}/scrape-now`, { method: "POST" });
+}
