@@ -34,8 +34,21 @@ def _stub_config(**overrides):
         "cognitive_load_weight_brevity": 0.10,
         "cognitive_load_weight_help_seeking": 0.15,
         "cognitive_load_weight_quiz_performance": 0.15,
+        "cognitive_load_weight_answer_hesitation": 0.10,
+        "cognitive_load_weight_nlp_affect": 0.15,
+        "cognitive_load_weight_relative_baseline": 0.10,
         "cognitive_load_threshold_high": 0.6,
         "cognitive_load_threshold_medium": 0.3,
+        "cognitive_load_session_messages_norm": 40.0,
+        "cognitive_load_error_count_norm": 5.0,
+        "cognitive_load_brevity_length_norm": 100.0,
+        "cognitive_load_quiz_accuracy_target": 0.7,
+        "cognitive_load_hesitation_min_ms": 15000.0,
+        "cognitive_load_hesitation_range_ms": 45000.0,
+        "cognitive_load_nlp_frustration_weight": 0.6,
+        "cognitive_load_nlp_confusion_weight": 0.4,
+        "cognitive_load_layout_simplify_threshold": 0.7,
+        "cognitive_load_review_reorder_threshold": 0.5,
     }
     defaults.update(overrides)
     mock = MagicMock()

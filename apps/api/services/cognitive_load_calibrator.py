@@ -16,6 +16,15 @@ from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 
+# Calibration thresholds (named constants instead of magic numbers)
+CALIBRATION_MIN_MESSAGES = 20        # Messages needed before baseline is calibrated
+BREVITY_SEVERE_RATIO = 0.5          # Length ratio below this = strong brevity signal
+BREVITY_MODERATE_RATIO = 0.7        # Length ratio below this = moderate brevity signal
+BREVITY_SEVERE_SIGNAL = 0.3         # Signal strength for severe brevity
+BREVITY_MODERATE_SIGNAL = 0.15      # Signal strength for moderate brevity
+UNUSUAL_HELP_RATE_THRESHOLD = 0.1   # Below this rate = student rarely seeks help
+UNUSUAL_HELP_SIGNAL = 0.2           # Signal strength for unusual help-seeking
+
 # In-memory baselines (would be persisted in production)
 _baselines: dict[str, "StudentBaseline"] = {}
 
@@ -37,7 +46,7 @@ class StudentBaseline:
 
     @property
     def is_calibrated(self) -> bool:
-        return self.message_count >= 20  # Need at least 20 messages
+        return self.message_count >= CALIBRATION_MIN_MESSAGES
 
     def update(self, message: str, is_help_seeking: bool) -> None:
         self.message_count += 1
@@ -76,17 +85,17 @@ def compute_relative_load(
     # Brevity relative to baseline
     if baseline.avg_message_length > 0:
         length_ratio = current_message_length / baseline.avg_message_length
-        if length_ratio < 0.5:
-            adjustments["relative_brevity"] = 0.3  # Much shorter than usual
-        elif length_ratio < 0.7:
-            adjustments["relative_brevity"] = 0.15
+        if length_ratio < BREVITY_SEVERE_RATIO:
+            adjustments["relative_brevity"] = BREVITY_SEVERE_SIGNAL
+        elif length_ratio < BREVITY_MODERATE_RATIO:
+            adjustments["relative_brevity"] = BREVITY_MODERATE_SIGNAL
         else:
             adjustments["relative_brevity"] = 0.0
 
     # Help-seeking relative to baseline
-    if baseline.help_seeking_rate < 0.1 and current_is_help_seeking:
+    if baseline.help_seeking_rate < UNUSUAL_HELP_RATE_THRESHOLD and current_is_help_seeking:
         # Student rarely asks for help but is doing so now
-        adjustments["unusual_help_seeking"] = 0.2
+        adjustments["unusual_help_seeking"] = UNUSUAL_HELP_SIGNAL
     else:
         adjustments["unusual_help_seeking"] = 0.0
 

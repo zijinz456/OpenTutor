@@ -115,8 +115,23 @@ class Settings(BaseSettings):
     cognitive_load_weight_brevity: float = 0.10
     cognitive_load_weight_help_seeking: float = 0.15
     cognitive_load_weight_quiz_performance: float = 0.15
+    cognitive_load_weight_answer_hesitation: float = 0.10
+    cognitive_load_weight_nlp_affect: float = 0.15
+    cognitive_load_weight_relative_baseline: float = 0.10
     cognitive_load_threshold_high: float = 0.6
     cognitive_load_threshold_medium: float = 0.3
+
+    # Cognitive load normalization constants
+    cognitive_load_session_messages_norm: float = 40.0     # ~40 messages ≈ 45 min
+    cognitive_load_error_count_norm: float = 5.0           # 5+ unmastered errors = max signal
+    cognitive_load_brevity_length_norm: float = 100.0      # <100 chars = some signal
+    cognitive_load_quiz_accuracy_target: float = 0.7       # Below 70% accuracy = signal
+    cognitive_load_hesitation_min_ms: float = 15000.0      # 15s = no signal
+    cognitive_load_hesitation_range_ms: float = 45000.0    # 60s+ = full signal
+    cognitive_load_nlp_frustration_weight: float = 0.6
+    cognitive_load_nlp_confusion_weight: float = 0.4
+    cognitive_load_layout_simplify_threshold: float = 0.7
+    cognitive_load_review_reorder_threshold: float = 0.5
 
     # LECTOR review priority factors
     lector_factor_low_mastery: float = 0.5       # Multiplier for (0.8 - mastery)
