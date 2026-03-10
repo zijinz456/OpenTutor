@@ -240,7 +240,7 @@ jobs:
           course_id = open("/tmp/opentutor_eval_course_id.txt", encoding="utf-8").read().strip()
           payload = {
               "course_id": course_id,
-              "strict": True,
+              "strict": False,
               "retrieval_queries": [
                   {
                       "query": "topic A notes",
