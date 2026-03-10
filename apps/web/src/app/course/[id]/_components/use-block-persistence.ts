@@ -22,17 +22,22 @@ export function useBlockPersistence(
       blocksInitialized.current = false;
     }
     if (blocksInitialized.current) return;
-    blocksInitialized.current = true;
 
+    // Try localStorage first (always available)
     const saved = localStorage.getItem(`opentutor_blocks_${courseId}`);
     if (saved) {
       try {
         loadBlocks(JSON.parse(saved));
+        blocksInitialized.current = true;
         return;
       } catch { /* ignore */ }
     }
 
-    const savedLayout = (course?.metadata as Record<string, unknown> | undefined)?.spaceLayout;
+    // Wait for course metadata to load before checking server-side layout
+    if (!course) return;
+    blocksInitialized.current = true;
+
+    const savedLayout = (course.metadata as Record<string, unknown> | undefined)?.spaceLayout;
     if (savedLayout && typeof savedLayout === "object") {
       try {
         loadBlocks(savedLayout as Parameters<typeof loadBlocks>[0]);
@@ -48,7 +53,7 @@ export function useBlockPersistence(
       } catch { /* ignore */ }
     }
 
-    const savedMode = (course?.metadata as Record<string, unknown> | undefined)
+    const savedMode = (course.metadata as Record<string, unknown> | undefined)
       ?.learning_mode as LearningMode | undefined;
     if (savedMode) {
       loadBlocks(buildLayoutFromMode(savedMode));

@@ -280,7 +280,7 @@ async def get_greeting(
             greeting_parts.append("Want me to start a quick review session?")
         else:
             greeting_parts.append("You're all caught up on reviews!")
-    except (SQLAlchemyError, ValueError, KeyError, TypeError) as exc:
+    except Exception as exc:
         logger.exception("Failed to fetch review summary for greeting")
 
     try:
@@ -299,7 +299,7 @@ async def get_greeting(
                 greeting_parts.append(
                     f"You've mastered {mastered}/{total} concepts so far."
                 )
-    except (SQLAlchemyError, ValueError, KeyError, TypeError) as exc:
+    except Exception as exc:
         logger.exception("Failed to fetch mastery graph for greeting")
 
     # Check for upcoming deadlines
@@ -323,7 +323,7 @@ async def get_greeting(
                 greeting_parts.append(
                     f"Heads up: **{upcoming.title}** is due in {days_until} day(s)!"
                 )
-    except (SQLAlchemyError, ValueError, TypeError) as exc:
+    except Exception as exc:
         logger.exception("Failed to fetch upcoming deadlines for greeting")
 
     greeting_parts.append("What would you like to work on?")
