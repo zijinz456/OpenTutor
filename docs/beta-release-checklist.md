@@ -45,7 +45,7 @@ Automation runbook: `docs/release-closeout-runbook.md`
 ## 6) Final release call
 
 - [x] Two clean-environment reruns completed (no local state reuse assumptions)
-- [ ] CI pipeline green on the release commit (5 stages: lint, backend tests, frontend tests, build, benchmark)
+- [x] CI pipeline green on the release commit (5 stages: lint, backend tests, frontend tests, build, benchmark)
 - [ ] Tag release notes with current known limitations and experimental features
 - [ ] Performance benchmark passes: `python scripts/benchmark.py --threshold-ms 500`
 
@@ -53,12 +53,13 @@ Automation runbook: `docs/release-closeout-runbook.md`
 
 - [x] Round 1 rehearsal: `bash scripts/release_rehearsal_round.sh --round round-1`
 - [x] Round 2 rehearsal: `bash scripts/release_rehearsal_round.sh --round round-2`
-- [ ] CI stability window (main): `bash scripts/check_ci_stability.sh --repo owner/repo --branch main --workflow ci.yml --windows 2`
+- [x] CI stability window (main): `bash scripts/check_ci_stability.sh --repo owner/repo --branch main --workflow ci.yml --windows 2`
 - [ ] Optional GitHub workflow dispatch: `.github/workflows/release-readiness.yml`
 
 ### Latest closeout evidence (2026-03-10)
 
 - Round 1 report: `tmp/release-rehearsal/round-1/summary.md` (Passed: 8, Failed: 0, Skipped: 0)
 - Round 2 report: `tmp/release-rehearsal/round-2/summary.md` (Passed: 8, Failed: 0, Skipped: 0)
-- CI update: `main` run `#76` (workflow run `22901607317`, commit `1e2f621`) is fully green for `checks + api-smoke`; browser E2E and real-LLM jobs are intentionally skipped unless repo variables enable them.
-- Remaining for this checklist item: obtain one more consecutive successful completed `main` run for `ci.yml` and re-run `scripts/check_ci_stability.sh --windows 2`.
+- CI update: `main` runs `#63` (`22901607317`) and `#64` (`22902121131`) both succeeded for `ci.yml` on `push`.
+- CI stability command passed on 2026-03-10:
+  - `bash scripts/check_ci_stability.sh --repo zijinz456/OpenTutor --branch main --workflow ci.yml --windows 2`
