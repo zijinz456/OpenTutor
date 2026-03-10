@@ -297,32 +297,49 @@ def _extract_pptx_fallback(file_path: str) -> tuple[str, str]:
 def _extract_xlsx_fallback(file_path: str) -> tuple[str, str]:
     """XLSX fallback: extract sheets as markdown tables via openpyxl."""
     try:
+        import shutil
+        import tempfile
         from openpyxl import load_workbook
 
-        wb = load_workbook(file_path, read_only=True, data_only=True)
-        parts: list[str] = []
+        # openpyxl rejects non-.xlsx extensions — copy to a temp .xlsx if needed
+        load_path = file_path
+        tmp_path = None
+        if not file_path.lower().endswith((".xlsx", ".xlsm", ".xltx", ".xltm")):
+            tmp = tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False)
+            tmp_path = tmp.name
+            tmp.close()
+            shutil.copy2(file_path, tmp_path)
+            load_path = tmp_path
 
-        for sheet_name in wb.sheetnames:
-            ws = wb[sheet_name]
-            rows: list[list[str]] = []
-            for row in ws.iter_rows(values_only=True):
-                rows.append([str(cell) if cell is not None else "" for cell in row])
+        try:
+            wb = load_workbook(load_path, read_only=True, data_only=True)
+            parts: list[str] = []
 
-            # Skip empty sheets
-            if not rows or all(all(c == "" for c in r) for r in rows):
-                continue
+            for sheet_name in wb.sheetnames:
+                ws = wb[sheet_name]
+                rows: list[list[str]] = []
+                for row in ws.iter_rows(values_only=True):
+                    rows.append([str(cell) if cell is not None else "" for cell in row])
 
-            md_table = _table_to_markdown(rows)
-            if md_table:
-                header = f"## {sheet_name}" if len(wb.sheetnames) > 1 else ""
-                parts.append(f"{header}\n\n{md_table}" if header else md_table)
+                if not rows or all(all(c == "" for c in r) for r in rows):
+                    continue
 
-        wb.close()
-        return Path(file_path).stem, "\n\n".join(parts)
+                md_table = _table_to_markdown(rows)
+                if md_table:
+                    header = f"## {sheet_name}" if len(wb.sheetnames) > 1 else ""
+                    parts.append(f"{header}\n\n{md_table}" if header else md_table)
+
+            wb.close()
+            return Path(file_path).stem, "\n\n".join(parts)
+        finally:
+            if tmp_path:
+                Path(tmp_path).unlink(missing_ok=True)
     except ImportError:
         logger.debug("openpyxl not installed for XLSX extraction of %s", file_path)
     except (OSError, ValueError, KeyError) as e:
         logger.warning("XLSX extraction failed for %s: %s", Path(file_path).name, e)
+    except Exception as e:
+        logger.warning("XLSX extraction unexpected error for %s: %s", Path(file_path).name, e)
 
     return Path(file_path).stem, ""
 
