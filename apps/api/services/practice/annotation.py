@@ -90,31 +90,10 @@ def parse_question_array(text: str) -> list[dict[str, Any]]:
             return [payload]
         return []
 
-    from libs.text_utils import strip_code_fences
-    json_str = strip_code_fences(text)
+    from libs.text_utils import parse_llm_json
 
-    try:
-        parsed = json.loads(json_str)
-        return _normalize_question_payload(parsed)
-    except json.JSONDecodeError:
-        start = text.find("[")
-        end = text.rfind("]") + 1
-        if start >= 0 and end > start:
-            try:
-                parsed = json.loads(text[start:end])
-                return _normalize_question_payload(parsed)
-            except json.JSONDecodeError:
-                pass
-
-        start = text.find("{")
-        end = text.rfind("}") + 1
-        if start >= 0 and end > start:
-            try:
-                parsed = json.loads(text[start:end])
-                return _normalize_question_payload(parsed)
-            except json.JSONDecodeError:
-                return []
-        return []
+    parsed = parse_llm_json(text, default=[])
+    return _normalize_question_payload(parsed)
 
 
 def normalize_problem_annotation(

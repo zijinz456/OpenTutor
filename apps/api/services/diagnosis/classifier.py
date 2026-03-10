@@ -99,26 +99,17 @@ async def classify_error(
 
 def _parse_classification(response: str) -> dict:
     """Parse and validate LLM classification output."""
-    # Extract JSON from response (may have surrounding text)
-    start = response.find("{")
-    end = response.rfind("}") + 1
-    if start == -1 or end == 0:
-        return {
-            "category": "conceptual",
-            "confidence": 0.3,
-            "evidence": response.strip(),
-            "related_concept": "unknown",
-        }
+    from libs.text_utils import parse_llm_json
 
-    try:
-        result = json.loads(response[start:end])
-    except json.JSONDecodeError:
-        return {
-            "category": "conceptual",
-            "confidence": 0.3,
-            "evidence": response.strip(),
-            "related_concept": "unknown",
-        }
+    fallback = {
+        "category": "conceptual",
+        "confidence": 0.3,
+        "evidence": response.strip(),
+        "related_concept": "unknown",
+    }
+    result = parse_llm_json(response, default=None)
+    if not isinstance(result, dict):
+        return fallback
 
     # Validate and normalize
     category = result.get("category", "conceptual").strip().lower()

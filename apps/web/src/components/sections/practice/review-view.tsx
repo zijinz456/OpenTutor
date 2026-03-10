@@ -14,10 +14,11 @@ import {
   listWrongAnswers,
   retryWrongAnswer,
   submitAnswer,
-  type ConfusionPair,
   type WrongAnswer,
 } from "@/lib/api";
 import { AiFeatureBlocked } from "@/components/shared/ai-feature-blocked";
+import { WrongAnswerCard } from "./wrong-answer-card";
+import { ConfusionPairs } from "./confusion-pairs";
 import { toast } from "sonner";
 
 interface ReviewViewProps {
@@ -57,7 +58,7 @@ export function ReviewView({
     >
   >({});
 
-  const [confusionPairs, setConfusionPairs] = useState<ConfusionPair[]>([]);
+  const [confusionPairs, setConfusionPairs] = useState<import("@/lib/api").ConfusionPair[]>([]);
 
   const loadWrongAnswers = useCallback(async () => {
     try {
@@ -220,106 +221,22 @@ export function ReviewView({
           </div>
         ) : null}
 
-        {confusionPairs.length > 0 ? (
-          <div className="space-y-3" data-testid="confusion-pairs">
-            <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-              Confused Concepts
-            </h4>
-            {confusionPairs.slice(0, 5).map((pair) => (
-              <div
-                key={`${pair.concept_a}-${pair.concept_b}`}
-                className="rounded-2xl border border-warning/30 bg-warning-muted/10 p-3.5"
-              >
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1">
-                    <p className="text-xs font-semibold text-foreground">{pair.concept_a}</p>
-                    {pair.description_a ? (
-                      <p className="text-[11px] text-muted-foreground leading-relaxed">{pair.description_a}</p>
-                    ) : null}
-                  </div>
-                  <div className="space-y-1">
-                    <p className="text-xs font-semibold text-foreground">{pair.concept_b}</p>
-                    {pair.description_b ? (
-                      <p className="text-[11px] text-muted-foreground leading-relaxed">{pair.description_b}</p>
-                    ) : null}
-                  </div>
-                </div>
-                <p className="text-[10px] text-muted-foreground mt-2">
-                  Confused {pair.weight}× — review both concepts side by side
-                </p>
-              </div>
-            ))}
-          </div>
-        ) : null}
+        <ConfusionPairs pairs={confusionPairs} />
 
-        {wrongAnswers.map((item, index) => {
-          const draft = diagnosticDrafts[item.id];
-          const optionKeys = Object.keys(draft?.options ?? {}).sort();
-
-          return (
-            <div key={item.id} className="rounded-2xl card-shadow bg-card p-4 space-y-2" data-testid={`wrong-answer-${item.id}`}>
-              <div className="flex items-start justify-between gap-2">
-                <div>
-                  <p className="text-sm font-medium">
-                    {index + 1}. {item.question ?? "Untitled question"}
-                  </p>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    <Badge variant="outline">{item.question_type ?? "unknown"}</Badge>
-                    {item.error_category ? <Badge variant="secondary">{item.error_category}</Badge> : null}
-                    {item.diagnosis ? (
-                      <Badge variant="secondary">{item.diagnosis.replaceAll("_", " ")}</Badge>
-                    ) : null}
-                  </div>
-                </div>
-                <div className="flex items-center gap-1 shrink-0">
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    aria-label="Mark as mastered"
-                    onClick={() => void handleMarkMastered(item)}
-                    disabled={markingId === item.id || !item.correct_answer}
-                  >
-                    {markingId === item.id ? "..." : "✓"}
-                  </Button>
-                  <Button
-                    data-testid={`derive-${item.id}`}
-                    size="sm"
-                    variant="outline"
-                    aria-label="Derive diagnostic question"
-                    onClick={() => void handleDerive(item.id)}
-                    disabled={!aiActionsEnabled || derivingId === item.id}
-                  >
-                    {derivingId === item.id ? "..." : "Derive"}
-                  </Button>
-                </div>
-              </div>
-
-              {draft ? (
-                <div className="rounded-xl bg-muted/30 p-3.5 space-y-2" data-testid={`diagnostic-${item.id}`}>
-                  <p className="text-sm font-medium">{draft.question}</p>
-                  {optionKeys.map((key) => (
-                    <button
-                      key={key}
-                      type="button"
-                      data-testid={`diagnostic-${item.id}-${key}`}
-                      className="w-full rounded-xl border px-3.5 py-2.5 text-left text-sm hover:border-primary/50"
-                      onClick={() => void handleDiagnosticAnswer(item.id, key)}
-                      disabled={!aiActionsEnabled || draft.pending}
-                    >
-                      <span className="mr-2 font-medium">{key}.</span>
-                      {draft.options?.[key]}
-                    </button>
-                  ))}
-                  {draft.diagnosis ? (
-                    <p className="text-xs text-muted-foreground" data-testid={`diagnosis-${item.id}`}>
-                      {draft.diagnosis.replaceAll("_", " ")}
-                    </p>
-                  ) : null}
-                </div>
-              ) : null}
-            </div>
-          );
-        })}
+        {wrongAnswers.map((item, index) => (
+          <WrongAnswerCard
+            key={item.id}
+            item={item}
+            index={index}
+            draft={diagnosticDrafts[item.id]}
+            markingId={markingId}
+            derivingId={derivingId}
+            aiActionsEnabled={aiActionsEnabled}
+            onMarkMastered={handleMarkMastered}
+            onDerive={handleDerive}
+            onDiagnosticAnswer={handleDiagnosticAnswer}
+          />
+        ))}
       </div>
     </div>
   );

@@ -15,6 +15,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { AiFeatureBlocked } from "@/components/shared/ai-feature-blocked";
 import { updateUnlockContext, getUnlockContext } from "@/lib/block-system/feature-unlock";
+import { QuizOptions } from "./quiz-options";
+import { QuizResult } from "./quiz-result";
 
 interface QuizViewProps {
   courseId: string;
@@ -169,19 +171,6 @@ export function QuizView({
   const coreConcept = typeof metadata.core_concept === "string" ? metadata.core_concept : null;
   const bloomLevel = typeof metadata.bloom_level === "string" ? metadata.bloom_level : null;
 
-  const optionStyle = (key: string) => {
-    if (!result) {
-      return key === selectedOption
-        ? "border-primary bg-primary/10"
-        : "border-border hover:border-primary/50";
-    }
-    if (key === result.correct_answer) return "border-green-500 bg-green-500/10";
-    if (key === selectedOption && !result.is_correct) {
-      return "border-destructive bg-destructive/10";
-    }
-    return "border-border opacity-60";
-  };
-
   return (
     <div role="form" aria-label="Quiz question" className="flex-1 flex flex-col overflow-hidden" data-testid="quiz-panel">
       <div className="flex items-center gap-2 px-3 py-2 border-b border-border/60 shrink-0">
@@ -219,89 +208,20 @@ export function QuizView({
           {problem.question}
         </p>
 
-        <div className="space-y-3" role="radiogroup" aria-label="Answer options" aria-describedby="quiz-question-text">
-          {optionKeys.map((key) => (
-            <button
-              key={key}
-              role="radio"
-              aria-checked={selectedOption === key}
-              data-testid={`quiz-option-${key}`}
-              disabled={!!result || submitting}
-              onClick={() => void handleOptionClick(key)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
-                  if (!result && !submitting) void handleOptionClick(key);
-                }
-                // Arrow key navigation within radiogroup
-                if (e.key === "ArrowDown" || e.key === "ArrowRight") {
-                  e.preventDefault();
-                  const idx = optionKeys.indexOf(key);
-                  const next = optionKeys[(idx + 1) % optionKeys.length];
-                  const nextEl = document.querySelector(`[data-testid="quiz-option-${next}"]`) as HTMLElement;
-                  nextEl?.focus();
-                }
-                if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
-                  e.preventDefault();
-                  const idx = optionKeys.indexOf(key);
-                  const prev = optionKeys[(idx - 1 + optionKeys.length) % optionKeys.length];
-                  const prevEl = document.querySelector(`[data-testid="quiz-option-${prev}"]`) as HTMLElement;
-                  prevEl?.focus();
-                }
-              }}
-              className={`w-full text-left rounded-xl border px-3.5 py-3 text-sm min-h-[44px] transition-colors ${optionStyle(key)} disabled:cursor-default`}
-            >
-              <span className="font-medium mr-2">{key.toUpperCase()}.</span>
-              {problem.options?.[key]}
-            </button>
-          ))}
-        </div>
+        <QuizOptions
+          optionKeys={optionKeys}
+          options={problem.options ?? {}}
+          selectedOption={selectedOption}
+          result={result}
+          submitting={submitting}
+          onOptionClick={handleOptionClick}
+        />
 
         {submitError && (
           <p role="alert" className="text-xs text-destructive mt-2">{submitError}</p>
         )}
 
-        {result?.explanation ? (
-          <div className="space-y-1.5 pt-1" aria-live="assertive">
-            <Badge variant={result.is_correct ? "default" : "destructive"}>
-              {result.is_correct ? t("quiz.correct") : result.correct_answer?.toUpperCase()}
-            </Badge>
-            <p className="text-xs text-muted-foreground leading-relaxed">
-              {t("quiz.explanation")} {result.explanation}
-            </p>
-          </div>
-        ) : null}
-
-        {result?.prerequisite_gaps && result.prerequisite_gaps.length > 0 ? (
-          <div className="rounded-2xl border border-warning/30 bg-warning-muted/20 p-3.5 space-y-2">
-            <p className="text-xs font-semibold text-warning">
-              {t("quiz.prerequisiteGaps") !== "quiz.prerequisiteGaps"
-                ? t("quiz.prerequisiteGaps")
-                : "Prerequisite gaps detected"}
-            </p>
-            <div className="space-y-1.5">
-              {result.prerequisite_gaps.map((gap) => (
-                <div key={gap.concept_id} className="flex items-center justify-between text-xs">
-                  <span className="text-foreground">{gap.concept}</span>
-                  <div className="flex items-center gap-2">
-                    <div className="w-16 h-1.5 bg-muted rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-warning rounded-full"
-                        style={{ width: `${Math.round(gap.mastery * 100)}%` }}
-                      />
-                    </div>
-                    <span className="text-muted-foreground w-8 text-right">{Math.round(gap.mastery * 100)}%</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-            <p className="text-[10px] text-muted-foreground">
-              {t("quiz.prerequisiteHint") !== "quiz.prerequisiteHint"
-                ? t("quiz.prerequisiteHint")
-                : "Strengthen these foundational concepts to improve your understanding."}
-            </p>
-          </div>
-        ) : null}
+        {result ? <QuizResult result={result} /> : null}
       </div>
 
       <div className="flex items-center justify-between px-3 py-2 border-t border-border/60 shrink-0">

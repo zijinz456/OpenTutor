@@ -12,12 +12,13 @@ import {
   restructureNotes,
   saveGeneratedNotes,
   getAiNoteForNode,
-  type ContentNode,
   type AiNoteForNode,
 } from "@/lib/api";
 import { useBatchManager } from "@/hooks/use-batch-manager";
 import { MarkdownRenderer } from "@/components/shared/markdown-renderer";
 import { AiFeatureBlocked } from "@/components/shared/ai-feature-blocked";
+import { ContentNodeItem } from "./notes/content-node-item";
+import { findFirstContentNode, findNodeById } from "./notes/utils";
 import { toast } from "sonner";
 
 interface NotesSectionProps {
@@ -30,67 +31,6 @@ interface GeneratedNoteDraft {
   markdown: string;
   format: string;
   sourceNodeId: string;
-}
-
-function findFirstContentNode(nodes: ContentNode[]): ContentNode | null {
-  for (const node of nodes) {
-    if (node.content?.trim()) return node;
-    const child = findFirstContentNode(node.children ?? []);
-    if (child) return child;
-  }
-  return null;
-}
-
-function findNodeById(nodes: ContentNode[], nodeId: string | null): ContentNode | null {
-  if (!nodeId) return null;
-  for (const node of nodes) {
-    if (node.id === nodeId) return node;
-    const child = findNodeById(node.children ?? [], nodeId);
-    if (child) return child;
-  }
-  return null;
-}
-
-function ContentNodeItem({
-  node,
-  depth = 0,
-}: {
-  node: ContentNode;
-  depth?: number;
-}) {
-  const headingLevel = Math.min(node.level + 1, 6);
-
-  const headingClass = `font-semibold mb-1 ${
-    headingLevel === 1
-      ? "text-xl"
-      : headingLevel === 2
-        ? "text-lg"
-        : headingLevel === 3
-          ? "text-base"
-          : "text-sm"
-  }`;
-
-  return (
-    <div
-      id={`content-${node.id}`}
-      className="mb-4"
-      style={{ paddingLeft: depth > 0 ? `${depth * 16}px` : undefined }}
-    >
-      {(() => {
-        const Tag = `h${headingLevel}` as keyof React.JSX.IntrinsicElements;
-        return <Tag className={headingClass}>{node.title}</Tag>;
-      })()}
-      {node.content ? (
-        <MarkdownRenderer
-          content={node.content}
-          className="text-sm leading-relaxed prose prose-sm max-w-none dark:prose-invert"
-        />
-      ) : null}
-      {node.children?.map((child) => (
-        <ContentNodeItem key={child.id} node={child} depth={depth + 1} />
-      ))}
-    </div>
-  );
 }
 
 export function NotesSection({

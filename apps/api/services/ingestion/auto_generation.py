@@ -321,8 +321,8 @@ async def _auto_generate_learning_content(
                                 source="ai_generated", source_owner="ai", locked=False,
                             )
                             db.add(problem)
-                except (json.JSONDecodeError, ValueError):
-                    pass
+                except (json.JSONDecodeError, ValueError) as exc:
+                    logger.debug("Failed to parse LLM response for auto-generation: %s", exc)
         except (ConnectionError, TimeoutError) as e:
             logger.warning("Auto-generate learning content network error for '%s': %s", node.title, e)
         except (json.JSONDecodeError, ValueError, KeyError) as e:

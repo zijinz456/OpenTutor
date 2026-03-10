@@ -144,19 +144,11 @@ async def create_plan(
         prompt,
     )
 
-    try:
-        steps = json.loads(response)
-    except json.JSONDecodeError:
-        # Try to extract JSON from response
-        start = response.find("[")
-        end = response.rfind("]")
-        if start != -1 and end != -1:
-            try:
-                steps = json.loads(response[start:end + 1])
-            except json.JSONDecodeError:
-                steps = _fallback_plan(user_message)
-        else:
-            steps = _fallback_plan(user_message)
+    from libs.text_utils import parse_llm_json
+
+    steps = parse_llm_json(response, default=None)
+    if not isinstance(steps, list):
+        steps = _fallback_plan(user_message)
 
     # Validate and normalise steps
     validated = []

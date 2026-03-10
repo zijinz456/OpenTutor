@@ -15,6 +15,10 @@ from models.knowledge_graph import KnowledgeNode, KnowledgeEdge, ConceptMastery
 
 logger = logging.getLogger(__name__)
 
+# Mastery update parameters
+EMA_ALPHA = 0.3                # Exponential moving average learning rate
+FIRE_BOOST_PER_DEPTH = 0.05   # 5% mastery boost per FIRe propagation level
+
 
 # ── Mastery Tracking ──
 
@@ -68,10 +72,9 @@ async def update_concept_mastery(
     else:
         mastery.wrong_count += 1
 
-    # Exponential moving average (alpha = 0.3 for responsiveness)
-    alpha = 0.3
+    # Exponential moving average
     result_score = 1.0 if correct else 0.0
-    mastery.mastery_score = alpha * result_score + (1 - alpha) * mastery.mastery_score
+    mastery.mastery_score = EMA_ALPHA * result_score + (1 - EMA_ALPHA) * mastery.mastery_score
 
     # FSRS-based stability and scheduling
     from services.spaced_repetition.fsrs import FSRSCard, review_card as fsrs_review
@@ -155,7 +158,7 @@ async def _fire_propagate(
         prereq_mastery = mastery_result.scalar_one_or_none()
         if prereq_mastery:
             # Fractional boost: small mastery increase without full practice credit
-            boost = fraction * 0.05  # 5% * fraction
+            boost = fraction * FIRE_BOOST_PER_DEPTH
             prereq_mastery.mastery_score = min(1.0, prereq_mastery.mastery_score + boost)
 
         # Continue walking up the prerequisite chain

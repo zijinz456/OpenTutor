@@ -122,9 +122,10 @@ async def derive_diagnostic(
 
     response, _ = await client.chat(_DERIVE_SYSTEM, prompt)
 
-    try:
-        derived = json.loads(response)
-    except json.JSONDecodeError:
+    from libs.text_utils import parse_llm_json
+
+    derived = parse_llm_json(response, default=None)
+    if not isinstance(derived, dict) or "question" not in derived:
         derived = _extract_json_object(response)
 
     derived = _fill_defaults(derived, wa, problem)
