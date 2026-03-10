@@ -13,6 +13,7 @@ full session context (no multi-tenant noise).
 """
 
 import logging
+import re
 import uuid
 from datetime import datetime, timezone
 
@@ -32,6 +33,14 @@ _consecutive_high: dict[str, int] = {}  # user_id -> count
 # Cache last NLP affect result per user (reused between LLM calls).
 # Bounded with same limit.
 _last_affect: dict[str, dict] = {}  # user_id -> affect dict
+
+# Pre-compiled help-seeking patterns (word boundaries avoid false positives)
+_HELP_PATTERNS = [
+    re.compile(p) for p in [
+        r"\bhelp\b", r"\bhint\b", r"\bexplain\b", r"\bdon'?t understand\b",
+        r"\bconfused\b", r"\bstuck\b", r"\bhow do i\b",
+    ]
+]
 
 
 async def compute_cognitive_load(
@@ -101,15 +110,8 @@ async def compute_cognitive_load(
         signals["message_brevity"] = 0.0
 
     # ── Signal 5: Help-seeking indicators ──
-    # Detect explicit help-seeking using word boundaries to avoid false positives
-    # (e.g. "helpful" should not match "help", "explain" should not match "explained well")
-    import re as _re
-    _help_patterns = [
-        r"\bhelp\b", r"\bhint\b", r"\bexplain\b", r"\bdon'?t understand\b",
-        r"\bconfused\b", r"\bstuck\b", r"\bhow do i\b",
-    ]
     _msg_lower = user_message.lower()
-    help_signal = 1.0 if any(_re.search(p, _msg_lower) for p in _help_patterns) else 0.0
+    help_signal = 1.0 if any(p.search(_msg_lower) for p in _HELP_PATTERNS) else 0.0
     signals["help_seeking"] = help_signal
     load += help_signal * settings.cognitive_load_weight_help_seeking
 
