@@ -292,6 +292,7 @@ jobs:
     name: Browser E2E (All Specs)
     runs-on: ubuntu-latest
     needs: api-smoke
+    if: ${{ vars.ENABLE_E2E_TESTS == 'true' }}
 
     env:
       DATABASE_URL: sqlite+aiosqlite:////tmp/opentutor-ci-e2e.db
