@@ -10,6 +10,7 @@ from collections import deque
 from datetime import datetime, timezone
 
 from sqlalchemy import select, func
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.knowledge_graph import KnowledgeNode, KnowledgeEdge, ConceptMastery
@@ -218,5 +219,5 @@ async def _sync_to_learning_progress(
             # Small nudge (±0.05) to avoid overriding flashcard-specific mastery
             delta = (concept_mastery.mastery_score - current) * 0.15
             progress.mastery_score = max(0.0, min(1.0, current + delta))
-    except Exception:
-        logger.debug("ConceptMastery → LearningProgress sync failed (best-effort)", exc_info=True)
+    except (SQLAlchemyError, OSError) as e:
+        logger.warning("ConceptMastery → LearningProgress sync failed: %s", e)

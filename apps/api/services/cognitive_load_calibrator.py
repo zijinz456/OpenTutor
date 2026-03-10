@@ -14,6 +14,7 @@ import uuid
 from dataclasses import dataclass
 
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
@@ -113,10 +114,14 @@ async def load_baseline_from_db(db: AsyncSession, user_id: uuid.UUID) -> Student
                 _total_words=row.total_words,
                 _help_count=row.help_count,
             )
+            # Respect cache size bound
+            if len(_cache) >= _MAX_CACHE_SIZE:
+                evict_key = min(_cache, key=lambda k: _cache[k].message_count)
+                del _cache[evict_key]
             _cache[key] = baseline
             return baseline
-    except Exception as e:
-        logger.debug("Failed to load cognitive baseline from DB: %s", e)
+    except (SQLAlchemyError, OSError) as e:
+        logger.warning("Failed to load cognitive baseline from DB: %s", e)
 
     return get_or_create_baseline(user_id)
 
@@ -161,8 +166,8 @@ async def flush_baseline_to_db(db: AsyncSession, user_id: uuid.UUID) -> None:
 
         await db.flush()
         baseline._updates_since_flush = 0
-    except Exception as e:
-        logger.debug("Failed to flush cognitive baseline to DB: %s", e)
+    except (SQLAlchemyError, OSError) as e:
+        logger.warning("Failed to flush cognitive baseline to DB: %s", e)
 
 
 def compute_relative_load(
@@ -195,6 +200,8 @@ def compute_relative_load(
     if baseline.avg_word_count > 0 and current_word_count > 0:
         word_ratio = current_word_count / baseline.avg_word_count
         if word_ratio < BREVITY_SEVERE_RATIO:
+            adjustments["relative_word_brevity"] = BREVITY_SEVERE_SIGNAL
+        elif word_ratio < BREVITY_MODERATE_RATIO:
             adjustments["relative_word_brevity"] = BREVITY_MODERATE_SIGNAL
         else:
             adjustments["relative_word_brevity"] = 0.0

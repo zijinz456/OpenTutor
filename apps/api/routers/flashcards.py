@@ -118,7 +118,9 @@ async def review_flashcard_endpoint(
             cid = uuid.UUID(course_id) if isinstance(course_id, str) else course_id
             for concept in concept_names[:5]:  # Cap to avoid excessive DB ops
                 await update_concept_mastery(db, user.id, str(concept), cid, correct=is_correct)
-        except (SQLAlchemyError, ValueError, KeyError, ImportError):
+        except ImportError:
+            logger.warning("Flashcard → LOOM mastery sync failed: services.loom not found")
+        except (SQLAlchemyError, ValueError, KeyError):
             logger.debug("Flashcard → LOOM mastery sync failed (best-effort)")
 
     # Single commit covers FSRS persistence, analytics event, and mastery sync

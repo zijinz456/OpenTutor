@@ -246,7 +246,6 @@ async def orchestrate_stream(
     ctx = await load_context(ctx, db, db_factory=db_factory)
 
     # Detect complex multi-step requests — create background plan but still answer normally
-    _has_background_plan = False
     from services.agent.task_planner import is_complex_request
     if is_complex_request(ctx.user_message) and ctx.intent in (IntentType.PLAN, IntentType.LEARN):
         try:
@@ -288,7 +287,6 @@ async def orchestrate_stream(
                 "task_type": task.task_type,
                 "status": task.status,
             }
-            _has_background_plan = True
         except (SQLAlchemyError, ConnectionError, TimeoutError, ValueError, RuntimeError, ImportError) as e:
             logger.exception("Multi-step planning failed, falling back to single turn: %s", e)
 
