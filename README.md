@@ -113,6 +113,8 @@ cd apps/web && npm install && npm run dev
 
 Visit [http://localhost:3001](http://localhost:3001).
 
+> **Security Note:** Authentication is disabled by default (`AUTH_ENABLED=false`) for local single-user use. **Never expose OpenTutor to the public internet without enabling authentication.** Set `AUTH_ENABLED=true` and configure `JWT_SECRET_KEY` (>= 32 chars) in `.env` before any network-accessible deployment. See [SECURITY.md](SECURITY.md) for details.
+
 ## LLM Configuration
 
 Default: local Ollama. Switch to any provider by editing `.env`:

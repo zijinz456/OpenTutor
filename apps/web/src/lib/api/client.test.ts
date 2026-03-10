@@ -18,8 +18,8 @@ function jsonResponse(data: unknown, status = 200): Response {
 }
 
 describe("API_BASE", () => {
-  it("defaults to localhost:8000/api", () => {
-    expect(API_BASE).toBe("http://localhost:8000/api");
+  it("defaults to relative /api path", () => {
+    expect(API_BASE).toBe("/api");
   });
 });
 
