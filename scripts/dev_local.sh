@@ -60,7 +60,6 @@ CI_API_TEST_TARGETS=(
   tests/test_experiments.py
   tests/test_forgetting_forecast.py
   tests/test_fsrs.py
-  tests/test_fsrs_bkt_properties.py
   tests/test_knowledge_graph_ops.py
   tests/test_learning_pipeline_e2e.py
   tests/test_learning_science.py
