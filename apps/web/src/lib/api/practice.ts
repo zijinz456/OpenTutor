@@ -177,31 +177,6 @@ export async function submitAnswer(problemId: string, answer: string, answerTime
   });
 }
 
-export interface SaveGeneratedQuizResult {
-  saved: number;
-  problem_ids: string[];
-  batch_id: string;
-  version: number;
-  replaced: boolean;
-}
-
-export async function saveGeneratedQuiz(
-  courseId: string,
-  rawContent: string,
-  title?: string,
-  replaceBatchId?: string,
-): Promise<SaveGeneratedQuizResult> {
-  return request("/quiz/save-generated", {
-    method: "POST",
-    body: JSON.stringify({
-      course_id: courseId,
-      raw_content: rawContent,
-      title,
-      replace_batch_id: replaceBatchId,
-    }),
-  });
-}
-
 // ── Flashcards ──
 
 interface FlashcardFsrsState {

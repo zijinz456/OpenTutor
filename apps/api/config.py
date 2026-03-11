@@ -94,11 +94,7 @@ class Settings(BaseSettings):
     # SSE streaming
     sse_timeout_seconds: int = 300
 
-    # Swarm / parallel execution
-    swarm_enabled: bool = True
-    swarm_max_concurrency: int = 4
-    swarm_timeout_seconds: float = 30.0
-    swarm_token_budget: int = 50000
+    # Parallel execution
     parallel_context_loading: bool = True
     activity_engine_max_concurrency: int = 3
     activity_use_redis_notify: bool = False
@@ -112,7 +108,6 @@ class Settings(BaseSettings):
     # Code sandbox
     code_sandbox_backend: str = "auto"  # container | auto | process
     code_sandbox_runtime: str = "docker"  # docker | podman
-    code_sandbox_image: str = "python:3.11-alpine"
     code_sandbox_timeout_seconds: int = 5
     allow_insecure_process_sandbox: bool = False  # Allows raw subprocess sandbox (no container isolation)
 
@@ -160,11 +155,6 @@ class Settings(BaseSettings):
     log_file: str = ""  # Path to log file; empty = stdout only
     log_max_bytes: int = 10_485_760  # 10 MB
     log_backup_count: int = 5
-
-    # Google Calendar Integration (OAuth2)
-    google_client_id: str = ""
-    google_client_secret: str = ""
-    google_redirect_uri: str = "http://localhost:8000/api/integrations/google-calendar/callback"
 
     @staticmethod
     def _split_csv(value: str) -> list[str]:

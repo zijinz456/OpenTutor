@@ -19,11 +19,6 @@ export interface BlockRegistryEntry {
   component: LazyExoticComponent<ComponentType<BlockComponentProps>>;
 }
 
-/** Get a locale-aware label for a registry entry. */
-export function getBlockLabel(entry: BlockRegistryEntry, locale: string): string {
-  return locale === "zh" ? entry.labelZh : entry.label;
-}
-
 const entry = (
   type: BlockType,
   label: string,

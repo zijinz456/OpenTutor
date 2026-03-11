@@ -86,14 +86,6 @@ export const LAYOUT_PRESETS: Record<PresetId, WorkspaceLayout> = {
   },
 };
 
-export const PRESET_LABELS: Record<PresetId, { label: string; labelZh: string; description: string }> = {
-  focused: { label: "Focused", labelZh: "专注模式", description: "Chat + content tree" },
-  daily_study: { label: "Daily Study", labelZh: "日常学习", description: "Notes + chat focused" },
-  exam_prep: { label: "Exam Prep", labelZh: "考试复习", description: "Practice + analytics focused" },
-  assignment: { label: "Assignment", labelZh: "作业模式", description: "Plan + notes focused" },
-  minimal: { label: "Minimal", labelZh: "极简模式", description: "Chat only" },
-};
-
 export const DEFAULT_LAYOUT: WorkspaceLayout = LAYOUT_PRESETS.focused;
 
 export function getVisibleSections(layout: WorkspaceLayout): SectionId[] {
