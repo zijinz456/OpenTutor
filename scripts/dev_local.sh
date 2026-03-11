@@ -32,7 +32,7 @@ CI_API_TEST_TARGETS=(
   tests/test_cognitive_load.py
   tests/test_progress_tracker.py
   tests/test_workspace_tool_actions.py
-  tests/test_workspace_layout_actions.py
+  tests/test_builtin_ui_behaviors.py
   tests/test_bkt.py
   tests/test_lector.py
   tests/test_loom.py

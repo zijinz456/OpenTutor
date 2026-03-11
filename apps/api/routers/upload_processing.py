@@ -107,8 +107,12 @@ def _derive_filename(url: str) -> str:
     parsed = urlparse(url)
     segments = [s for s in parsed.path.split("/") if s]
     if segments:
-        return segments[-1]
-    return parsed.hostname or "webpage"
+        name = segments[-1]
+        # If no file extension, assume HTML (we're scraping a web page)
+        if "." not in name:
+            name += ".html"
+        return name
+    return (parsed.hostname or "webpage") + ".html"
 
 
 async def _fetch_canvas_with_auth(

@@ -517,19 +517,28 @@ def test_parse_question_array_handles_markdown_wrapped_json():
 # ── Embedding: registry pattern ──
 
 def test_embedding_registry_raises_without_providers():
-    """Without OpenAI key or sentence-transformers, registry should raise."""
+    """In eager mode, missing OpenAI/local providers should raise."""
     from services.embedding import registry
     from config import settings as real_settings
 
     original_key = real_settings.openai_api_key
+    original_mode = real_settings.embedding_mode
+    original_deepseek_key = real_settings.deepseek_api_key
+    original_llm_provider = real_settings.llm_provider
     try:
         real_settings.openai_api_key = ""
+        real_settings.deepseek_api_key = ""
+        real_settings.llm_provider = "ollama"
+        real_settings.embedding_mode = "eager"
         registry._provider = None
         with patch.dict("sys.modules", {"services.embedding.local": None}):
             with pytest.raises((RuntimeError, ImportError)):
                 registry.get_embedding_provider()
     finally:
         real_settings.openai_api_key = original_key
+        real_settings.embedding_mode = original_mode
+        real_settings.deepseek_api_key = original_deepseek_key
+        real_settings.llm_provider = original_llm_provider
         registry._provider = None
 
 

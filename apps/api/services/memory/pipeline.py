@@ -18,6 +18,11 @@ from services.search.compat import update_search_vector
 
 logger = logging.getLogger(__name__)
 
+try:
+    from openai import OpenAIError
+except ImportError:  # pragma: no cover - openai is a core dependency in normal runtime
+    OpenAIError = RuntimeError
+
 # ── Rule-based memory type classification ──
 
 _PROFILE_PATTERNS = re.compile(
@@ -120,7 +125,7 @@ async def generate_embedding(text_content: str) -> list[float] | None:
             return None  # Don't store useless zero vectors
         provider = get_embedding_provider()
         return await provider.embed(text_content)
-    except (ConnectionError, TimeoutError, ValueError, RuntimeError, ImportError, OSError) as exc:
+    except (ConnectionError, TimeoutError, ValueError, RuntimeError, ImportError, OSError, OpenAIError) as exc:
         logger.exception("Embedding generation failed")
         return None
 

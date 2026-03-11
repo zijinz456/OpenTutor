@@ -215,7 +215,7 @@ async def run_startup_hooks() -> None:
 
 
 async def run_shutdown_hooks() -> None:
-    from services.agent.orchestrator import wait_for_background_tasks
+    from services.agent.background_runtime import wait_for_background_tasks
 
     if _should_run_health_monitor():
         await _stop_health_monitor()

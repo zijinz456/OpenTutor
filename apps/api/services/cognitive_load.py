@@ -238,10 +238,13 @@ async def compute_cognitive_load(
     # Long gaps between messages indicate the student is struggling
     try:
         from models.chat_message import ChatMessageLog as _CML
+        from models.chat_session import ChatSession as _CS
         last_two = await db.execute(
             select(_CML.created_at)
+            .join(_CS, _CS.id == _CML.session_id)
             .where(
-                _CML.user_id == user_id,
+                _CS.user_id == user_id,
+                _CS.course_id == course_id,
                 _CML.role == "user",
             )
             .order_by(_CML.created_at.desc())
@@ -259,7 +262,7 @@ async def compute_cognitive_load(
             gap_signal = 0.0
         signals["message_gap"] = gap_signal
         load += gap_signal * settings.cognitive_load_weight_message_gap
-    except (_SQLAlchemyError, OSError):
+    except (_SQLAlchemyError, OSError, AttributeError):
         signals["message_gap"] = 0.0
 
     # ── Signal 12: Repeated errors on same problems ──

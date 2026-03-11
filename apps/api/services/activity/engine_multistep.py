@@ -139,6 +139,9 @@ async def _queue_auto_repair_follow_up(
         except (ConnectionError, TimeoutError, ValueError, RuntimeError, OSError) as exc:
             logger.warning("Auto repair follow-up planning failed for task %s: %s", task.id, exc)
             return None
+        except Exception as exc:  # noqa: BLE001 — LLM API errors (openai.APIError, httpx.*) aren't stdlib
+            logger.warning("Auto repair planning failed (API error) for task %s: %s", task.id, exc)
+            return None
         input_json.update({
             "course_id": str(task.course_id),
             "steps": steps,
