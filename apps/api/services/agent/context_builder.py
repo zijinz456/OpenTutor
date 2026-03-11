@@ -243,7 +243,7 @@ async def load_context(
             logger.exception("Error pattern load failed: %s", exc)
 
     async def _load_cross_course_patterns() -> None:
-        if ctx.intent not in (IntentType.LEARN, IntentType.GENERAL, IntentType.GENERAL, IntentType.PLAN):
+        if ctx.intent not in (IntentType.LEARN, IntentType.GENERAL, IntentType.PLAN, IntentType.LAYOUT):
             return
         try:
             from services.agent.kv_store import kv_get

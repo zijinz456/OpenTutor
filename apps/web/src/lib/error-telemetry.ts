@@ -1,6 +1,6 @@
 import { ApiError } from "@/lib/api/client";
 
-export type ApiErrorChannel = "graph" | "rating" | "download";
+export type ApiErrorChannel = "graph" | "rating" | "download" | "voice";
 
 interface ApiErrorTelemetryPayload {
   channel: ApiErrorChannel;

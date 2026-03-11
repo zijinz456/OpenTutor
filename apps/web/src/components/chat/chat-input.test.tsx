@@ -66,11 +66,6 @@ vi.mock("@/components/chat/attachment-buttons", () => ({
   AttachmentButtons: () => <div data-testid="attachment-buttons" />,
 }));
 
-vi.mock("@/components/chat/voice-button", () => ({
-  VoiceButton: () => <div data-testid="voice-button" />,
-  VoiceStatusIndicator: () => null,
-}));
-
 vi.mock("@/components/chat/send-button", () => ({
   SendButton: ({ canSend }: { canSend: boolean }) => (
     <button data-testid="send-button" disabled={!canSend}>

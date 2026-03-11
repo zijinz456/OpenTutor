@@ -30,7 +30,9 @@ import {
   persistWorkspaceLayout,
 } from "./setup-helpers";
 
-export type SetupStep = "llm" | "content" | "template" | "discovery";
+import type { RecommendedLayout } from "./habit-interview-step";
+
+export type SetupStep = "llm" | "content" | "interview" | "template" | "discovery";
 
 export function useSetup() {
   const router = useRouter();
@@ -41,7 +43,7 @@ export function useSetup() {
   // ── Step (honor ?step=content query param for returning users) ──
   const initialStep = (searchParams.get("step") as SetupStep) || "llm";
   const [step, setStep] = useState<SetupStep>(
-    ["llm", "content", "template", "discovery"].includes(initialStep) ? initialStep : "llm"
+    ["llm", "content", "interview", "template", "discovery"].includes(initialStep) ? initialStep : "llm"
   );
 
   // ── LLM state ──

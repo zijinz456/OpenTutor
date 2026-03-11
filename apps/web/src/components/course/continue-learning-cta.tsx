@@ -35,7 +35,9 @@ export function ContinueLearningCta({ courseId, nodes }: ContinueLearningCtaProp
           return { targetNode: allNodes[nextIndex], isResume: true };
         }
       }
-    } catch {}
+    } catch (e) {
+      console.warn("[ContinueLearningCta] Failed to read localStorage:", e);
+    }
 
     return { targetNode: allNodes[0], isResume: false };
   }, [nodes, courseId]);

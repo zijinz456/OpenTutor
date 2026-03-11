@@ -91,12 +91,12 @@ export async function applyBlockDecisions(
       try {
         const { showAdaptationToast } = await import("@/components/shared/adaptation-toast");
         showAdaptationToast(result.explanation, result.operations, () => ws.undoLayout());
-      } catch {
-        // Toast is best-effort
+      } catch (e) {
+        console.warn("[BlockDecisions] Toast notification failed:", e);
       }
     }
-  } catch {
-    // Best-effort
+  } catch (e) {
+    console.error("[BlockDecisions] Failed to apply block decisions:", e);
   }
 }
 

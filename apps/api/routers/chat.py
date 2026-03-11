@@ -286,12 +286,12 @@ async def get_greeting(
         from services.lector import get_review_summary
         review = await get_review_summary(db, user.id, course_id)
 
-        if review["needs_review"] and review["urgent_count"] > 0:
-            concepts = review["concepts_at_risk"][:3]
+        if review.get("needs_review") and review.get("urgent_count", 0) > 0:
+            concepts = review.get("concepts_at_risk", [])[:3]
             if concepts:
                 concept_list = ", ".join(f"**{c}**" for c in concepts)
                 greeting_parts.append(
-                    f"You have {review['urgent_count']} concept(s) that could use a review: {concept_list}."
+                    f"You have {review.get('urgent_count', 0)} concept(s) that could use a review: {concept_list}."
                 )
             greeting_parts.append("Want me to start a quick review session?")
         else:
@@ -305,7 +305,7 @@ async def get_greeting(
         graph = await get_mastery_graph(db, user.id, course_id)
 
         if graph.get("weak_concepts"):
-            weak = [c["name"] for c in graph["weak_concepts"][:2]]
+            weak = graph["weak_concepts"][:2]
             greeting_parts.append(
                 f"Areas to strengthen: {', '.join(weak)}."
             )
@@ -353,7 +353,7 @@ async def get_greeting(
         suggested_actions.append({
             "action": "agent_insight",
             "value": "review_needed",
-            "extra": f"{review['urgent_count']} concept(s) at risk",
+            "extra": f"{review.get('urgent_count', 0)} concept(s) at risk",
         })
     if upcoming and days_until is not None and days_until <= 7:
         suggested_actions.append({

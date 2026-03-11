@@ -81,8 +81,8 @@ class Settings(BaseSettings):
     app_run_scheduler: bool = False
     app_run_activity_engine: bool = False
     ambient_monitor_enabled: bool = True
-    enable_experimental_loom: bool = True
-    enable_experimental_lector: bool = True
+    enable_experimental_loom: bool = False
+    enable_experimental_lector: bool = False
     enable_experimental_notion_export: bool = False
     voice_enabled: bool = False
 
@@ -207,12 +207,17 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "jwt_secret_key must be at least 32 characters when auth is enabled"
                 )
-        elif self.environment != "development":
+        else:
+            if self.environment != "development":
+                raise ValueError(
+                    "AUTH_ENABLED must be true outside of development. "
+                    "Running without authentication exposes all user data. "
+                    "Set AUTH_ENABLED=true and JWT_SECRET_KEY (>= 32 chars)."
+                )
             _log.warning(
-                "SECURITY WARNING: auth_enabled=False in '%s' environment. "
+                "SECURITY WARNING: auth_enabled=False (development mode). "
                 "Anyone with network access can use this instance without authentication. "
-                "Set AUTH_ENABLED=true and configure JWT_SECRET_KEY for production use.",
-                self.environment,
+                "Set AUTH_ENABLED=true and configure JWT_SECRET_KEY before deploying.",
             )
 
         if self.environment in ("production", "staging"):

@@ -33,7 +33,11 @@ export default function UnitPage() {
 
   // Track last visited node for continue-learning CTA
   useEffect(() => {
-    try { localStorage.setItem(`opentutor_last_node_${courseId}`, nodeId); } catch {}
+    try {
+      localStorage.setItem(`opentutor_last_node_${courseId}`, nodeId);
+    } catch (e) {
+      console.warn("[UnitPage] Failed to persist last node:", e);
+    }
   }, [courseId, nodeId]);
 
   const {

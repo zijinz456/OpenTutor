@@ -36,7 +36,7 @@ type ChatActionType =
   | "suggest_mode";
 
 export interface ChatAction {
-  action: ChatActionType | string;  // Known actions + extensible
+  action: ChatActionType;
   value?: string;
   extra?: string;
 }

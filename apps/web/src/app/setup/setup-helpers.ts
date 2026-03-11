@@ -75,10 +75,10 @@ export function persistWorkspaceLayout(
   }
   const layout = useWorkspaceStore.getState().spaceLayout;
   if (selectedTemplate || selectedMode) {
-    localStorage.setItem(`opentutor_blocks_${createdCourseId}`, JSON.stringify(layout));
+    try { localStorage.setItem(`opentutor_blocks_${createdCourseId}`, JSON.stringify(layout)); } catch { /* quota */ }
     if (layout.mode) {
       updateUnlockContext(createdCourseId, { mode: layout.mode });
     }
   }
-  localStorage.setItem("opentutor_onboarded", "true");
+  try { localStorage.setItem("opentutor_onboarded", "true"); } catch { /* quota */ }
 }

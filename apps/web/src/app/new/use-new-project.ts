@@ -242,11 +242,11 @@ export function useNewProject() {
 
     // Prime workspace state so the first paint on /course is mode-correct.
     useWorkspaceStore.getState().loadBlocks(layout);
-    localStorage.setItem(`opentutor_blocks_${createdCourseId}`, JSON.stringify(layout));
+    try { localStorage.setItem(`opentutor_blocks_${createdCourseId}`, JSON.stringify(layout)); } catch { /* quota */ }
     updateUnlockContext(createdCourseId, { mode: learningMode });
 
     try { await updateCourse(createdCourseId, { metadata }); } catch { /* still works */ }
-    if (nlInput.trim()) localStorage.setItem(`course_init_prompt_${createdCourseId}`, nlInput.trim());
+    if (nlInput.trim()) try { localStorage.setItem(`course_init_prompt_${createdCourseId}`, nlInput.trim()); } catch { /* quota */ }
     router.push(`/course/${createdCourseId}`);
   }, [autoScrape, createdCourseId, features, learningMode, mode, nlInput, router, url]);
 

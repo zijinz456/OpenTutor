@@ -27,7 +27,14 @@ def _configure_middleware(app: FastAPI) -> None:
         allow_origins=settings.cors_origin_list,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        allow_headers=["*"],
+        allow_headers=[
+            "Content-Type",
+            "Authorization",
+            "Accept",
+            "Origin",
+            "X-Requested-With",
+            "X-CSRF-Token",
+        ],
     )
 
     # Observability middleware (innermost — runs closest to handler)

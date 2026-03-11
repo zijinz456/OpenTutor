@@ -48,11 +48,12 @@ class SceneName(str, Enum):
 
 
 class IntentType(str, Enum):
-    """Classified user intent (Phase 2: consolidated to 4 categories)."""
-    LEARN = "learn"       # teach / quiz / review / assess / curriculum
-    PLAN = "plan"         # study plan, deadlines
-    LAYOUT = "layout"     # UI layout changes
-    GENERAL = "general"   # everything else
+    """Classified user intent (Phase 2: consolidated to 4+1 categories)."""
+    LEARN = "learn"           # teach / quiz / review / assess / curriculum
+    PLAN = "plan"             # study plan, deadlines
+    LAYOUT = "layout"         # UI layout changes
+    GENERAL = "general"       # everything else
+    ONBOARDING = "onboarding" # learning habit interview (dedicated endpoint)
 
 
 @dataclass

@@ -69,7 +69,7 @@ export function useDashboardData() {
 
     // If courses exist, mark onboarded and skip setup
     if (courses.length > 0) {
-      window.localStorage.setItem("opentutor_onboarded", "true");
+      try { window.localStorage.setItem("opentutor_onboarded", "true"); } catch { /* quota */ }
       if (courses.length === 1) {
         router.replace(`/course/${courses[0].id}`);
       }

@@ -11,20 +11,23 @@ from services.agent.base import BaseAgent
 from services.agent.agents.tutor import TutorAgent
 from services.agent.agents.planner import PlanAgent
 from services.agent.agents.layout import LayoutAgent
+from services.agent.agents.onboarding import OnboardingAgent
 
 
 AGENT_REGISTRY: dict[str, BaseAgent] = {
     "tutor": TutorAgent(),
     "planner": PlanAgent(),
     "layout": LayoutAgent(),
+    "onboarding": OnboardingAgent(),
 }
 
-# Intent -> Agent mapping (Phase 2: 4 intents -> 3 agents)
+# Intent -> Agent mapping (Phase 2: 5 intents -> 4 agents)
 INTENT_AGENT_MAP: dict[IntentType, str] = {
     IntentType.LEARN: "tutor",
     IntentType.PLAN: "planner",
     IntentType.LAYOUT: "layout",
     IntentType.GENERAL: "tutor",
+    IntentType.ONBOARDING: "onboarding",
 }
 
 

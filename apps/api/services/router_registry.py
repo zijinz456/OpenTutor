@@ -20,6 +20,7 @@ from routers import (
     integrations,
     notes,
     notifications,
+    onboarding,
     preferences,
     progress,
     quiz,
@@ -59,6 +60,7 @@ CORE_ROUTERS = (
     (workflows.router, "/api/workflows", ["workflows"]),
     (system_analytics.router, "/api", ["system-analytics"]),
     (block_routes.router, "/api/blocks", ["blocks"]),
+    (onboarding.router, "/api/onboarding", ["onboarding"]),
 )
 
 

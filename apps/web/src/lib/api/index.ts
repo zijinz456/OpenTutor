@@ -225,3 +225,11 @@ export type {
   AppNotification,
   NotificationsResponse,
 } from "./notifications";
+
+export { interviewTurn } from "./onboarding";
+export type {
+  OnboardingRequest,
+  OnboardingResponse,
+  OnboardingAction,
+  SpaceLayoutResponse,
+} from "./onboarding";

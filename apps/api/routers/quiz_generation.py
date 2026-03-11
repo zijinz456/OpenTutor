@@ -270,13 +270,24 @@ async def extract_quiz(body: ExtractRequest, user: User = Depends(get_current_us
 
 # ── CAT Pre-test (Diagnostic Assessment) ──
 
+import time
+
 # In-memory session store (per-process). Keyed by (user_id, course_id).
 # For production, swap with Redis or DB-backed session store.
 _pretest_sessions: dict[tuple[str, str], dict] = {}
+_SESSION_TTL_SECONDS = 30 * 60  # 30 minutes
 
 
 def _session_key(user_id: uuid.UUID, course_id: uuid.UUID) -> tuple[str, str]:
     return (str(user_id), str(course_id))
+
+
+def _cleanup_stale_sessions() -> None:
+    """Remove sessions older than TTL to prevent memory leaks."""
+    now = time.monotonic()
+    stale = [k for k, v in _pretest_sessions.items() if now - v.get("created_at", 0) > _SESSION_TTL_SECONDS]
+    for k in stale:
+        del _pretest_sessions[k]
 
 
 @router.post("/pretest/start", summary="Start diagnostic pre-test", description="Initialize a CAT session and return the first question concept.")
@@ -306,11 +317,13 @@ async def pretest_start(
     # Fetch the associated practice problem for this concept (if any)
     question = await _get_concept_question(db, body.course_id, first_item.concept_id)
 
-    # Store session
+    # Store session (clean up stale ones first)
+    _cleanup_stale_sessions()
     key = _session_key(user.id, body.course_id)
     _pretest_sessions[key] = {
         "state": state,
         "items": items,
+        "created_at": time.monotonic(),
     }
 
     return {
@@ -422,11 +435,14 @@ async def _get_concept_question(
     )
     problems = result.scalars().all()
 
-    # Match by knowledge_points or content_node_id linkage
+    # Match by knowledge_points linkage
     concept_str = str(concept_id)
     for p in problems:
-        kp = p.knowledge_points if hasattr(p, "knowledge_points") else None
-        if kp and concept_str in (kp if isinstance(kp, list) else [str(kp)]):
+        kp = getattr(p, "knowledge_points", None)
+        if not kp:
+            continue
+        kp_list = kp if isinstance(kp, list) else [str(kp)]
+        if concept_str in kp_list:
             return {
                 "id": str(p.id),
                 "question_type": p.question_type,
@@ -434,5 +450,4 @@ async def _get_concept_question(
                 "options": p.options,
             }
 
-    # Fallback: return first available problem (frontend can generate on-the-fly)
     return None

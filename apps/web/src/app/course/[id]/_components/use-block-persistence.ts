@@ -19,7 +19,7 @@ export function useBlockPersistence(
   const flushLayout = useCallback(() => {
     if (!blocksInitialized.current) return;
     const layout = useWorkspaceStore.getState().spaceLayout;
-    localStorage.setItem(`opentutor_blocks_${courseId}`, JSON.stringify(layout));
+    try { localStorage.setItem(`opentutor_blocks_${courseId}`, JSON.stringify(layout)); } catch { /* quota */ }
     updateCourseLayout(courseId, layout).catch((e) => console.error("[Course] layout persist failed:", e));
   }, [courseId]);
 

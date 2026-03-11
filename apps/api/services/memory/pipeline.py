@@ -192,6 +192,8 @@ async def generate_teaching_state(
             )
             last_time = last_result.scalar()
             if last_time:
+                if last_time.tzinfo is None:
+                    last_time = last_time.replace(tzinfo=timezone.utc)
                 delta = datetime.now(timezone.utc) - last_time
                 days_since_last = delta.days
         except Exception:

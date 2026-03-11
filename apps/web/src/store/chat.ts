@@ -227,11 +227,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
 
     // ── Interrupt handling: if already streaming, abort current stream and
-    //    finalize the partial assistant message before starting a new one. ──
-    const wasInterrupted = get().isStreaming && get()._abortController;
+    //    finalize the partial assistant message before starting a new one.
+    //    Capture controller in a single read to avoid TOCTOU race. ──
+    const prevCtrl = get()._abortController;
+    const wasInterrupted = get().isStreaming && prevCtrl != null;
     if (wasInterrupted) {
-      const ctrl = get()._abortController;
-      if (ctrl) ctrl.abort();
+      prevCtrl.abort();
       set({ _abortController: null, isStreaming: false, toolStatus: null });
     }
 

@@ -4,10 +4,11 @@ import { request, requestBlob, ApiError, parseApiError, API_BASE } from "./clien
 // Mock fetch globally
 const mockFetch = vi.fn();
 vi.stubGlobal("fetch", mockFetch);
+const mockBuildAuthHeaders = vi.fn((headers: Headers) => headers);
 
 // Mock auth module
 vi.mock("@/lib/auth", () => ({
-  buildAuthHeaders: (headers: Record<string, string>) => headers,
+  buildAuthHeaders: (headers: Headers) => mockBuildAuthHeaders(headers),
 }));
 
 function jsonResponse(data: unknown, status = 200): Response {
@@ -123,6 +124,7 @@ describe("request", () => {
 describe("requestBlob", () => {
   beforeEach(() => {
     mockFetch.mockReset();
+    mockBuildAuthHeaders.mockClear();
     vi.useFakeTimers();
   });
 
@@ -156,5 +158,13 @@ describe("requestBlob", () => {
 
     await expect(requestBlob("/export/session")).rejects.toThrow(ApiError);
     expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("applies auth header builder for binary requests", async () => {
+    mockFetch.mockResolvedValueOnce(new Response("ok", { status: 200 }));
+
+    await requestBlob("/export/session");
+
+    expect(mockBuildAuthHeaders).toHaveBeenCalledTimes(1);
   });
 });

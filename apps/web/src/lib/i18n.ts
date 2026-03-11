@@ -12,7 +12,7 @@ let currentLocale: Locale = "en";
 export function setLocale(locale: Locale): void {
   currentLocale = locale;
   if (typeof window !== "undefined") {
-    localStorage.setItem("opentutor-locale", locale);
+    try { localStorage.setItem("opentutor-locale", locale); } catch { /* quota */ }
   }
 }
 

@@ -68,7 +68,7 @@ export function ModeSelector({ onModeChange }: ModeSelectorProps) {
       if (courseId) {
         updateUnlockContext(courseId, { mode });
         const layout = useWorkspaceStore.getState().spaceLayout;
-        localStorage.setItem(`opentutor_blocks_${courseId}`, JSON.stringify(layout));
+        try { localStorage.setItem(`opentutor_blocks_${courseId}`, JSON.stringify(layout)); } catch { /* quota */ }
         updateCourseLayout(courseId, layout).catch(() => undefined);
       }
       onModeChange?.(mode);

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useReducer, useState } from "react";
 import { MarkdownRenderer } from "@/components/shared/markdown-renderer";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -32,6 +32,55 @@ import { SelfPacedPath } from "./_components/self-paced-path";
 import { ExamCoverageChecklist } from "./_components/exam-coverage-checklist";
 import { MaintenanceQueue } from "./_components/maintenance-queue";
 import { SavedPlansList } from "./_components/saved-plans-list";
+
+// ── Goal form state ──
+
+interface GoalFormState {
+  visible: boolean;
+  editingGoalId: string | null;
+  title: string;
+  objective: string;
+  targetDate: string;
+  saving: boolean;
+}
+
+const GOAL_FORM_INITIAL: GoalFormState = {
+  visible: false,
+  editingGoalId: null,
+  title: "",
+  objective: "",
+  targetDate: "",
+  saving: false,
+};
+
+type GoalFormAction =
+  | { type: "reset" }
+  | { type: "show" }
+  | { type: "edit"; goal: StudyGoal }
+  | { type: "set_field"; field: "title" | "objective" | "targetDate"; value: string }
+  | { type: "set_saving"; saving: boolean };
+
+function goalFormReducer(state: GoalFormState, action: GoalFormAction): GoalFormState {
+  switch (action.type) {
+    case "reset":
+      return GOAL_FORM_INITIAL;
+    case "show":
+      return { ...GOAL_FORM_INITIAL, visible: true };
+    case "edit":
+      return {
+        visible: true,
+        editingGoalId: action.goal.id,
+        title: action.goal.title,
+        objective: action.goal.objective,
+        targetDate: action.goal.target_date?.split("T")[0] ?? "",
+        saving: false,
+      };
+    case "set_field":
+      return { ...state, [action.field]: action.value };
+    case "set_saving":
+      return { ...state, saving: action.saving };
+  }
+}
 
 // ── PlanView ──
 
@@ -65,59 +114,38 @@ export function PlanView({
   const [loadingContext, setLoadingContext] = useState(true);
 
   // ── Goal creation/editing ──
-  const [showGoalForm, setShowGoalForm] = useState(false);
-  const [editingGoalId, setEditingGoalId] = useState<string | null>(null);
-  const [goalTitle, setGoalTitle] = useState("");
-  const [goalObjective, setGoalObjective] = useState("");
-  const [goalTargetDate, setGoalTargetDate] = useState("");
-  const [goalSaving, setGoalSaving] = useState(false);
-
-  const resetGoalForm = () => {
-    setShowGoalForm(false);
-    setEditingGoalId(null);
-    setGoalTitle("");
-    setGoalObjective("");
-    setGoalTargetDate("");
-  };
-
-  const startEditGoal = (goal: StudyGoal) => {
-    setEditingGoalId(goal.id);
-    setGoalTitle(goal.title);
-    setGoalObjective(goal.objective);
-    setGoalTargetDate(goal.target_date?.split("T")[0] ?? "");
-    setShowGoalForm(true);
-  };
+  const [goalForm, dispatchGoalForm] = useReducer(goalFormReducer, GOAL_FORM_INITIAL);
 
   const handleSaveGoal = async () => {
-    if (!goalTitle.trim() || !goalObjective.trim()) return;
-    setGoalSaving(true);
+    if (!goalForm.title.trim() || !goalForm.objective.trim()) return;
+    dispatchGoalForm({ type: "set_saving", saving: true });
     try {
-      if (editingGoalId) {
-        const updated = await updateStudyGoal(editingGoalId, {
-          title: goalTitle.trim(),
-          objective: goalObjective.trim(),
-          target_date: goalTargetDate || null,
+      if (goalForm.editingGoalId) {
+        const updated = await updateStudyGoal(goalForm.editingGoalId, {
+          title: goalForm.title.trim(),
+          objective: goalForm.objective.trim(),
+          target_date: goalForm.targetDate || null,
         });
         setGoals((prev) => prev.map((g) => (g.id === updated.id ? updated : g)));
         toast.success(t("plan.goals.updated"));
       } else {
         const created = await createStudyGoal({
-          title: goalTitle.trim(),
-          objective: goalObjective.trim(),
+          title: goalForm.title.trim(),
+          objective: goalForm.objective.trim(),
           course_id: courseId,
-          target_date: goalTargetDate || undefined,
+          target_date: goalForm.targetDate || undefined,
         });
         setGoals((prev) => [created, ...prev]);
-        if (goalTargetDate) {
+        if (goalForm.targetDate) {
           updateUnlockContext(courseId, { hasDeadline: true });
         }
         toast.success(t("plan.goals.created"));
       }
-      resetGoalForm();
+      dispatchGoalForm({ type: "reset" });
     } catch (error) {
       toast.error((error as Error).message || t("plan.goals.saveFailed"));
     } finally {
-      setGoalSaving(false);
+      dispatchGoalForm({ type: "set_saving", saving: false });
     }
   };
 
@@ -304,11 +332,11 @@ export function PlanView({
           <p className="text-sm font-medium text-foreground">{modeLabel}</p>
           <p className="text-xs text-muted-foreground mt-0.5">{modeDesc}</p>
         </div>
-        {!showGoalForm ? (
+        {!goalForm.visible ? (
           <Button
             size="sm"
             variant="outline"
-            onClick={() => { resetGoalForm(); setShowGoalForm(true); }}
+            onClick={() => dispatchGoalForm({ type: "show" })}
           >
             {t("plan.goals.add")}
           </Button>
@@ -316,36 +344,36 @@ export function PlanView({
       </div>
 
       <div className="flex-1 overflow-y-auto scrollbar-thin p-4">
-        {showGoalForm ? (
+        {goalForm.visible ? (
           <div className="mb-4 p-3 border border-border rounded-md space-y-2 bg-muted/30">
             <Input
-              value={goalTitle}
-              onChange={(e) => setGoalTitle(e.target.value)}
+              value={goalForm.title}
+              onChange={(e) => dispatchGoalForm({ type: "set_field", field: "title", value: e.target.value })}
               placeholder={t("plan.goals.titlePlaceholder")}
               className="text-sm"
             />
             <Input
-              value={goalObjective}
-              onChange={(e) => setGoalObjective(e.target.value)}
+              value={goalForm.objective}
+              onChange={(e) => dispatchGoalForm({ type: "set_field", field: "objective", value: e.target.value })}
               placeholder={t("plan.goals.objectivePlaceholder")}
               className="text-sm"
             />
             <Input
               type="date"
-              value={goalTargetDate}
-              onChange={(e) => setGoalTargetDate(e.target.value)}
+              value={goalForm.targetDate}
+              onChange={(e) => dispatchGoalForm({ type: "set_field", field: "targetDate", value: e.target.value })}
               className="text-sm"
             />
             <div className="flex gap-2 justify-end">
-              <Button size="sm" variant="ghost" onClick={resetGoalForm} disabled={goalSaving}>
+              <Button size="sm" variant="ghost" onClick={() => dispatchGoalForm({ type: "reset" })} disabled={goalForm.saving}>
                 {t("plan.goals.cancel")}
               </Button>
               <Button
                 size="sm"
                 onClick={() => void handleSaveGoal()}
-                disabled={goalSaving || !goalTitle.trim() || !goalObjective.trim()}
+                disabled={goalForm.saving || !goalForm.title.trim() || !goalForm.objective.trim()}
               >
-                {goalSaving ? "..." : editingGoalId ? t("plan.goals.update") : t("plan.goals.create")}
+                {goalForm.saving ? "..." : goalForm.editingGoalId ? t("plan.goals.update") : t("plan.goals.create")}
               </Button>
             </div>
           </div>
@@ -370,7 +398,7 @@ export function PlanView({
                     </p>
                   ) : null}
                 </div>
-                <Button size="sm" variant="ghost" className="h-6 px-1.5 text-xs" onClick={() => startEditGoal(goal)}>
+                <Button size="sm" variant="ghost" className="h-6 px-1.5 text-xs" onClick={() => dispatchGoalForm({ type: "edit", goal })}>
                   {t("plan.goals.edit")}
                 </Button>
                 <Button size="sm" variant="ghost" className="h-6 px-1.5 text-xs" onClick={() => void handleCompleteGoal(goal.id)}>

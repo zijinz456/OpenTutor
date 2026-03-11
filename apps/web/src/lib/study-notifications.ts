@@ -16,7 +16,7 @@ export async function requestNotificationPermission(): Promise<boolean> {
 
   const result = await Notification.requestPermission();
   if (result === "granted") {
-    localStorage.setItem(NOTIF_PERM_KEY, "granted");
+    try { localStorage.setItem(NOTIF_PERM_KEY, "granted"); } catch { /* quota */ }
     return true;
   }
   return false;
@@ -56,7 +56,7 @@ export function checkAndNotifyStudyReminder(): void {
   if (Notification.permission !== "granted") return;
   if (!shouldNotify()) return;
 
-  localStorage.setItem(LAST_NOTIF_KEY, new Date().toISOString());
+  try { localStorage.setItem(LAST_NOTIF_KEY, new Date().toISOString()); } catch { /* quota */ }
 
   const windows = getOptimalStudyWindows();
   const windowLabel = windows.length > 0 ? formatStudyWindow(windows[0]) : "";

@@ -1,6 +1,7 @@
 "use client";
 
 import { lazy, useCallback, useMemo } from "react";
+import { useT } from "@/lib/i18n-context";
 import { useWorkspaceStore } from "@/store/workspace";
 import { TabbedSection, type TabDef } from "./tabbed-section";
 
@@ -24,12 +25,6 @@ interface PracticeSectionProps {
 
 type PracticeTab = "quiz" | "flashcards" | "review";
 
-const ALL_TABS: TabDef<PracticeTab>[] = [
-  { id: "quiz", label: "Quiz", testId: "right-tab-quiz" },
-  { id: "flashcards", label: "Cards", testId: "right-tab-cards" },
-  { id: "review", label: "Review", testId: "right-tab-review" },
-];
-
 export function PracticeSection({
   courseId,
   showReview = true,
@@ -38,9 +33,18 @@ export function PracticeSection({
   quizDifficultyHint,
   quizModeHint,
 }: PracticeSectionProps) {
+  const t = useT();
+  const allTabs: TabDef<PracticeTab>[] = useMemo(
+    () => [
+      { id: "quiz", label: t("course.quiz"), testId: "right-tab-quiz" },
+      { id: "flashcards", label: t("course.cards"), testId: "right-tab-cards" },
+      { id: "review", label: t("course.review"), testId: "right-tab-review" },
+    ],
+    [t],
+  );
   const tabs = useMemo(
-    () => (showReview ? ALL_TABS : ALL_TABS.filter((t) => t.id !== "review")),
-    [showReview],
+    () => (showReview ? allTabs : allTabs.filter((tab) => tab.id !== "review")),
+    [showReview, allTabs],
   );
 
   const practiceActiveTab = useWorkspaceStore((s) => s.practiceActiveTab) as PracticeTab | null;
