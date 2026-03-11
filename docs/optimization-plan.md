@@ -17,7 +17,7 @@
 ## 阶段零：紧急安全修复 (1-2 小时)
 
 ### 0.1 撤销泄露的 API 密钥
-- [ ] 登录 DeepSeek 控制台，revoke `REDACTED_KEY`
+- [ ] 登录 DeepSeek 控制台，revoke 泄露的密钥
 - [ ] 生成新密钥，仅存入本地 `.env`
 - [ ] 确认 `.env` 不在 git tracked 文件中 (`git ls-files .env` 应无输出)
 - [ ] 运行 `git log --all -p -- '*.env'` 确认历史提交中没有密钥
