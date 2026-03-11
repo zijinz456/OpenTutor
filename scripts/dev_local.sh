@@ -38,6 +38,48 @@ CI_API_TEST_TARGETS=(
   tests/test_loom.py
   tests/test_middleware_security.py
   tests/test_scheduler_engine.py
+  tests/test_agenda_ranking.py
+  tests/test_agenda_tick.py
+  tests/test_agent_state_machine.py
+  tests/test_ambient_monitor.py
+  tests/test_analytics_events.py
+  tests/test_api_integration.py
+  tests/test_auth_jwt.py
+  tests/test_block_decision_engine.py
+  tests/test_capabilities.py
+  tests/test_circuit_breaker.py
+  tests/test_clarify_parser.py
+  tests/test_code_sandbox_policy.py
+  tests/test_cognitive_load_calibrator.py
+  tests/test_compaction.py
+  tests/test_complexity_router.py
+  tests/test_diagnosis_classifier.py
+  tests/test_difficulty_selector.py
+  tests/test_encryption.py
+  tests/test_exceptions.py
+  tests/test_experiments.py
+  tests/test_forgetting_forecast.py
+  tests/test_fsrs.py
+  tests/test_fsrs_bkt_properties.py
+  tests/test_knowledge_graph_ops.py
+  tests/test_learning_pipeline_e2e.py
+  tests/test_learning_science.py
+  tests/test_loom_confusion.py
+  tests/test_metrics_middleware.py
+  tests/test_optimization_features.py
+  tests/test_rate_limiting.py
+  tests/test_reflection.py
+  tests/test_report_generator.py
+  tests/test_security_regressions_authz.py
+  tests/test_socratic_engine.py
+  tests/test_stream_events.py
+  tests/test_teaching_strategies.py
+  tests/test_text_utils.py
+  tests/test_tool_tracking.py
+  tests/test_url_validation.py
+  tests/test_usage_tracking.py
+  tests/test_utils.py
+  tests/test_wiring_snapshots.py
 )
 
 usage() {
