@@ -5,11 +5,25 @@ import { TrendingUp, BarChart3 } from "lucide-react";
 import { getForgettingForecast, getCourseProgress } from "@/lib/api";
 import type { BlockComponentProps } from "@/lib/block-system/registry";
 
+interface ForecastPrediction {
+  content_node_id: string | null;
+  title: string;
+  current_retrievability: number;
+  stability_days: number;
+  days_until_threshold: number;
+  predicted_drop_date: string;
+  urgency: "ok" | "warning" | "urgent" | "overdue";
+  last_reviewed: string | null;
+  mastery_score: number;
+}
+
 interface ForecastData {
-  readiness_score?: number;
-  concepts_mastered?: number;
-  concepts_total?: number;
-  risk_concepts?: Array<{ label: string; retrievability: number }>;
+  course_id: string;
+  generated_at: string;
+  total_items: number;
+  urgent_count: number;
+  warning_count: number;
+  predictions: ForecastPrediction[];
 }
 
 export default function ForecastBlock({ courseId }: BlockComponentProps) {
@@ -46,10 +60,16 @@ export default function ForecastBlock({ courseId }: BlockComponentProps) {
     );
   }
 
-  const masteryPct = data?.readiness_score ?? progress?.mastery_pct ?? 0;
-  const totalConcepts = data?.concepts_total ?? progress?.total_concepts ?? 0;
-  const masteredConcepts = data?.concepts_mastered ?? Math.round(totalConcepts * (masteryPct / 100));
-  const riskConcepts = data?.risk_concepts ?? [];
+  const totalItems = data?.total_items ?? 0;
+  const urgentCount = data?.urgent_count ?? 0;
+  const warningCount = data?.warning_count ?? 0;
+  const predictions = data?.predictions ?? [];
+  const okCount = totalItems - urgentCount - warningCount;
+  const masteryPct = totalItems > 0 ? Math.round((okCount / totalItems) * 100) : (progress?.mastery_pct ?? 0);
+
+  const riskPredictions = predictions.filter(
+    (p) => p.urgency === "overdue" || p.urgency === "urgent" || p.urgency === "warning",
+  );
 
   const readinessColor =
     masteryPct >= 80 ? "text-success" :
@@ -68,15 +88,36 @@ export default function ForecastBlock({ courseId }: BlockComponentProps) {
             <span className={readinessColor}>{Math.round(masteryPct)}%</span>
           </p>
           <p className="text-xs text-muted-foreground">
-            Exam Readiness · {masteredConcepts}/{totalConcepts} concepts mastered
+            Retention Health · {okCount}/{totalItems} concepts on track
           </p>
         </div>
       </div>
 
+      {/* Summary badges */}
+      {totalItems > 0 && (
+        <div className="flex gap-2 text-xs">
+          {urgentCount > 0 && (
+            <span className="rounded-full bg-destructive/10 text-destructive px-2.5 py-0.5 font-medium">
+              {urgentCount} urgent
+            </span>
+          )}
+          {warningCount > 0 && (
+            <span className="rounded-full bg-warning/10 text-warning px-2.5 py-0.5 font-medium">
+              {warningCount} warning
+            </span>
+          )}
+          {okCount > 0 && (
+            <span className="rounded-full bg-success/10 text-success px-2.5 py-0.5 font-medium">
+              {okCount} on track
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Progress bar */}
       <div
         role="progressbar"
-        aria-label={`Exam readiness: ${Math.round(masteryPct)} percent`}
+        aria-label={`Retention health: ${Math.round(masteryPct)} percent`}
         className="w-full h-2 bg-muted/40 rounded-full overflow-hidden"
       >
         <div
@@ -89,22 +130,22 @@ export default function ForecastBlock({ courseId }: BlockComponentProps) {
       </div>
 
       {/* At-risk concepts */}
-      {riskConcepts.length > 0 && (
+      {riskPredictions.length > 0 && (
         <div>
           <p className="text-xs font-medium text-muted-foreground mb-2">At-risk concepts</p>
           <div className="space-y-1.5">
-            {riskConcepts.slice(0, 5).map((c, i) => (
-              <div key={i} className="flex items-center gap-2 text-xs rounded-xl bg-muted/30 p-3.5">
-                <BarChart3 className="size-3 text-destructive shrink-0" aria-hidden="true" />
-                <span className="text-foreground flex-1 truncate">{c.label}</span>
-                <span className="text-muted-foreground tabular-nums">{Math.round(c.retrievability * 100)}%</span>
+            {riskPredictions.slice(0, 5).map((p, i) => (
+              <div key={p.content_node_id ?? i} className="flex items-center gap-2 text-xs rounded-xl bg-muted/30 p-3.5">
+                <BarChart3 className={`size-3 shrink-0 ${p.urgency === "ok" ? "text-success" : p.urgency === "warning" ? "text-warning" : "text-destructive"}`} aria-hidden="true" />
+                <span className="text-foreground flex-1 truncate">{p.title}</span>
+                <span className="text-muted-foreground tabular-nums">{Math.round(p.current_retrievability * 100)}%</span>
               </div>
             ))}
           </div>
         </div>
       )}
 
-      {totalConcepts === 0 && (
+      {totalItems === 0 && (
         <p className="text-xs text-muted-foreground text-center">
           Complete more practice to build your forecast.
         </p>

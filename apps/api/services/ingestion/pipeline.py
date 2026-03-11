@@ -238,6 +238,19 @@ async def run_ingestion_pipeline(
                             deep_result.modules_found, len(canvas_file_urls),
                             len(canvas_quiz_questions),
                         )
+                        # Auto-update course name from Canvas extraction
+                        if deep_result.title and job.course_id:
+                            try:
+                                from models.course import Course
+                                course_result = await db.execute(
+                                    sa.select(Course).where(Course.id == job.course_id)
+                                )
+                                course_obj = course_result.scalar_one_or_none()
+                                if course_obj:
+                                    course_obj.name = deep_result.title
+                                    logger.info("Auto-set course name from Canvas: %s", deep_result.title)
+                            except Exception as name_err:
+                                logger.debug("Could not auto-set course name: %s", name_err)
 
         if not extracted and pre_fetched_html:
             # Authenticated scraping: content already fetched, parse HTML to text

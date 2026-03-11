@@ -11,6 +11,7 @@ import { BlockGrid } from "@/components/blocks/block-grid";
 import { ChatFab } from "@/components/chat/chat-fab";
 import { ChatDrawer } from "@/components/chat/chat-drawer";
 import { SearchDialog } from "@/components/shared/search-dialog";
+import { NotesDrawer } from "@/components/blocks/notes-drawer";
 import { ErrorBoundary } from "@/components/shared/error-boundary";
 import { useT } from "@/lib/i18n-context";
 import { useCourseData } from "./_components/use-course-data";
@@ -27,6 +28,8 @@ export default function CoursePage() {
   const courseId = params.id as string;
   const [chatOpen, setChatOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const notesDrawerOpen = useWorkspaceStore((s) => s.notesDrawerOpen);
+  const setNotesDrawerOpen = useWorkspaceStore((s) => s.setNotesDrawerOpen);
 
   const { health, course, courses, contentTree, aiActionsEnabled } = useCourseData(courseId);
   const { blocks, blocksInitialized } = useBlockPersistence(courseId, course);
@@ -88,6 +91,14 @@ export default function CoursePage() {
       <ChatFab open={chatOpen} onToggle={() => setChatOpen((v) => !v)} />
       <ErrorBoundary section="chat">
         <ChatDrawer courseId={courseId} open={chatOpen} aiActionsEnabled={aiActionsEnabled} />
+      </ErrorBoundary>
+      <ErrorBoundary section="notes-drawer">
+        <NotesDrawer
+          courseId={courseId}
+          open={notesDrawerOpen}
+          onOpenChange={setNotesDrawerOpen}
+          aiActionsEnabled={aiActionsEnabled}
+        />
       </ErrorBoundary>
       <SearchDialog open={searchOpen} onClose={() => setSearchOpen(false)} courseId={courseId} />
     </div>

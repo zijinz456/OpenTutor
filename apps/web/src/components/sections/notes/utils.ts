@@ -18,3 +18,15 @@ export function findNodeById(nodes: ContentNode[], nodeId: string | null): Conte
   }
   return null;
 }
+
+/** Collect all leaf nodes that have content (for the node selector). */
+export function collectContentNodes(nodes: ContentNode[]): ContentNode[] {
+  const result: ContentNode[] = [];
+  for (const node of nodes) {
+    if (node.content?.trim()) result.push(node);
+    if (node.children?.length) {
+      result.push(...collectContentNodes(node.children));
+    }
+  }
+  return result;
+}

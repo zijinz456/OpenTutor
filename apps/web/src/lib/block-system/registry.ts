@@ -99,12 +99,6 @@ export const BLOCK_REGISTRY: Record<BlockType, BlockRegistryEntry> = {
     "medium", {},
     () => import("@/components/blocks/blocks/wrong-answers-block"),
   ),
-  podcast: entry(
-    "podcast", "Podcast", "播客", "Headphones",
-    "Audio study material",
-    "small", {},
-    () => import("@/components/blocks/blocks/podcast-block"),
-  ),
   forecast: entry(
     "forecast", "Forecast", "预测", "TrendingUp",
     "Learning trajectory forecast",
@@ -122,5 +116,5 @@ export const BLOCK_REGISTRY: Record<BlockType, BlockRegistryEntry> = {
 /** Block types available for user to add manually (excludes agent_insight) */
 export const USER_ADDABLE_BLOCKS: BlockType[] = [
   "notes", "quiz", "flashcards", "review", "plan",
-  "knowledge_graph", "progress", "wrong_answers", "forecast", "podcast",
+  "knowledge_graph", "progress", "wrong_answers", "forecast",
 ];

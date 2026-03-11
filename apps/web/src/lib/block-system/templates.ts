@@ -143,9 +143,8 @@ export const LEARNING_MODES: Record<LearningMode, LearningModeDefinition> = {
     blocks: [
       b("chapter_list", "full"),
       b("notes", "large"),
-      b("plan", "medium"),
       b("quiz", "medium"),
-      b("progress", "small"),
+      b("flashcards", "medium"),
     ],
   },
   self_paced: {
@@ -157,11 +156,10 @@ export const LEARNING_MODES: Record<LearningMode, LearningModeDefinition> = {
     icon: "Compass",
     columns: 2,
     blocks: [
-      b("knowledge_graph", "large"),
+      b("chapter_list", "full"),
       b("notes", "large"),
       b("quiz", "medium"),
       b("flashcards", "medium"),
-      b("progress", "small"),
     ],
   },
   exam_prep: {
@@ -174,10 +172,8 @@ export const LEARNING_MODES: Record<LearningMode, LearningModeDefinition> = {
     columns: 2,
     blocks: [
       b("quiz", "large", { difficulty: "hard" }),
-      b("wrong_answers", "large"),
       b("flashcards", "medium"),
       b("review", "medium"),
-      b("progress", "small"),
     ],
   },
   maintenance: {
@@ -190,8 +186,7 @@ export const LEARNING_MODES: Record<LearningMode, LearningModeDefinition> = {
     columns: 2,
     blocks: [
       b("review", "large"),
-      b("knowledge_graph", "medium"),
-      b("progress", "small"),
+      b("flashcards", "medium"),
     ],
   },
 };

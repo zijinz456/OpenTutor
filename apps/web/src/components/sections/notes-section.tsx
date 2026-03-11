@@ -18,7 +18,7 @@ import { useBatchManager } from "@/hooks/use-batch-manager";
 import { MarkdownRenderer } from "@/components/shared/markdown-renderer";
 import { AiFeatureBlocked } from "@/components/shared/ai-feature-blocked";
 import { ContentNodeItem } from "./notes/content-node-item";
-import { findFirstContentNode, findNodeById } from "./notes/utils";
+import { findFirstContentNode, findNodeById, collectContentNodes } from "./notes/utils";
 import { toast } from "sonner";
 
 interface NotesSectionProps {
@@ -53,11 +53,20 @@ export function NotesSection({
   const [aiNote, setAiNote] = useState<AiNoteForNode | null>(null);
   const [aiNoteLoading, setAiNoteLoading] = useState(false);
 
+  const contentNodes = useMemo(() => collectContentNodes(contentTree), [contentTree]);
+
   const selectedNode = useMemo(
     () => findNodeById(contentTree, selectedNodeId) ?? findFirstContentNode(contentTree),
     [selectedNodeId, contentTree],
   );
   const selectedNodeForFetch = selectedNode?.id;
+
+  const currentIndex = useMemo(
+    () => contentNodes.findIndex((n) => n.id === selectedNode?.id),
+    [contentNodes, selectedNode?.id],
+  );
+  const canPrev = currentIndex > 0;
+  const canNext = currentIndex >= 0 && currentIndex < contentNodes.length - 1;
 
   useEffect(() => {
     if (contentTree.length === 0) {
@@ -186,7 +195,42 @@ export function NotesSection({
           </div>
 
           <div className="ml-auto flex items-center gap-2">
-            {selectedNode ? (
+            {/* Node selector: prev / dropdown / next */}
+            {contentNodes.length > 1 && (
+              <>
+                <button
+                  type="button"
+                  className="px-1 py-0.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-30"
+                  disabled={!canPrev}
+                  onClick={() => canPrev && setSelectedNodeId(contentNodes[currentIndex - 1].id)}
+                  aria-label="Previous section"
+                >
+                  &lsaquo;
+                </button>
+                <select
+                  value={selectedNode?.id ?? ""}
+                  onChange={(e) => setSelectedNodeId(e.target.value)}
+                  className="h-6 text-xs rounded border border-border bg-background px-1 max-w-[160px] truncate"
+                  aria-label="Select section"
+                >
+                  {contentNodes.map((n, i) => (
+                    <option key={n.id} value={n.id}>
+                      {n.title || `Section ${i + 1}`}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className="px-1 py-0.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-30"
+                  disabled={!canNext}
+                  onClick={() => canNext && setSelectedNodeId(contentNodes[currentIndex + 1].id)}
+                  aria-label="Next section"
+                >
+                  &rsaquo;
+                </button>
+              </>
+            )}
+            {contentNodes.length <= 1 && selectedNode ? (
               <Badge variant="outline" className="max-w-56 truncate">
                 {selectedNode.title}
               </Badge>

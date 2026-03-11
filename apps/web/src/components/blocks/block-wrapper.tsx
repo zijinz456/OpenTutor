@@ -14,8 +14,10 @@ import { useT } from "@/lib/i18n-context";
 import { toast } from "sonner";
 import { recordBlockEvent, useBlockEngagement } from "@/hooks/use-block-engagement";
 
+/** Block types that open a right-side drawer instead of navigating. */
+const BLOCK_DRAWER_TYPES = new Set<BlockType>(["notes"]);
+
 const BLOCK_FULL_PAGE_LINKS: Partial<Record<BlockType, (courseId: string) => string>> = {
-  notes: (courseId) => `/course/${courseId}/notes`,
   quiz: (courseId) => `/course/${courseId}/practice?tab=quiz`,
   flashcards: (courseId) => `/course/${courseId}/practice?tab=flashcards`,
   knowledge_graph: (courseId) => `/course/${courseId}/graph`,
@@ -40,6 +42,8 @@ export function BlockWrapper({ block, courseId, aiActionsEnabled }: BlockWrapper
   const dismissAgentBlock = useWorkspaceStore((s) => s.dismissAgentBlock);
   const setLearningMode = useWorkspaceStore((s) => s.setLearningMode);
   const applyBlockTemplate = useWorkspaceStore((s) => s.applyBlockTemplate);
+
+  const setNotesDrawerOpen = useWorkspaceStore((s) => s.setNotesDrawerOpen);
 
   const engagementRef = useBlockEngagement(block.id, block.type, courseId);
 
@@ -135,6 +139,20 @@ export function BlockWrapper({ block, courseId, aiActionsEnabled }: BlockWrapper
         <span className="text-sm font-medium text-foreground flex-1 truncate">
           {entry.label}
         </span>
+
+        {BLOCK_DRAWER_TYPES.has(block.type) && (
+          <button
+            type="button"
+            onClick={() => {
+              if (block.type === "notes") setNotesDrawerOpen(true);
+            }}
+            className="text-muted-foreground hover:text-foreground transition-colors p-1"
+            aria-label={t("block.openFullPage")}
+            title={t("block.openFullPage")}
+          >
+            <Maximize2 className="size-3.5" />
+          </button>
+        )}
 
         {BLOCK_FULL_PAGE_LINKS[block.type] && (
           <Link

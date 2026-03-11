@@ -13,37 +13,37 @@ from __future__ import annotations
 DOC_TYPE_LAYOUT: dict[str, dict] = {
     "textbook": {
         "mode": "course_following",
-        "blocks": ["notes", "quiz", "progress", "flashcards"],
+        "blocks": ["chapter_list", "notes", "quiz", "flashcards"],
         "primary": "notes",
     },
     "lecture_slides": {
         "mode": "course_following",
-        "blocks": ["notes", "flashcards", "quiz", "progress"],
+        "blocks": ["chapter_list", "notes", "flashcards", "quiz"],
         "primary": "notes",
     },
     "assignment": {
         "mode": "exam_prep",
-        "blocks": ["notes", "quiz", "progress"],
+        "blocks": ["notes", "quiz"],
         "primary": "quiz",
     },
     "exam_schedule": {
         "mode": "exam_prep",
-        "blocks": ["quiz", "flashcards", "progress"],
+        "blocks": ["quiz", "flashcards"],
         "primary": "quiz",
     },
     "syllabus": {
         "mode": "course_following",
-        "blocks": ["notes", "progress"],
+        "blocks": ["chapter_list", "notes"],
         "primary": "notes",
     },
     "notes": {
         "mode": "self_paced",
-        "blocks": ["notes", "flashcards", "progress"],
+        "blocks": ["notes", "flashcards"],
         "primary": "notes",
     },
     "other": {
         "mode": "self_paced",
-        "blocks": ["notes", "quiz", "flashcards", "progress"],
+        "blocks": ["chapter_list", "notes", "quiz", "flashcards"],
         "primary": "notes",
     },
 }

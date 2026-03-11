@@ -61,15 +61,33 @@ async def dispatch_content(db: AsyncSession, job: IngestionJob) -> dict:
             await db.flush()
             logger.info("Dedup: removed %d existing nodes for source %s", len(old_nodes), source_label)
 
-        nodes = _markdown_to_tree(
-            markdown=job.extracted_markdown,
-            course_id=job.course_id,
-            source_file=source_label,
-        )
+        # PPT files: keep as single node (one note per file, not per slide)
+        is_pptx = source_name.endswith((".pptx", ".ppt"))
+        if is_pptx:
+            import uuid as _uuid
+            root = CourseContentTree(
+                id=_uuid.uuid4(),
+                course_id=job.course_id,
+                parent_id=None,
+                title=job.original_filename or "Presentation",
+                level=0,
+                order_index=0,
+                content=job.extracted_markdown.strip(),
+                source_file=source_label,
+                source_type=job.source_type,
+            )
+            nodes = [root]
+        else:
+            nodes = _markdown_to_tree(
+                markdown=job.extracted_markdown,
+                course_id=job.course_id,
+                source_file=source_label,
+            )
         for node in nodes:
             # Normalize source metadata to the ingestion source (file/url).
             node.source_type = job.source_type
             node.source_file = source_label
+            node.content_category = category
             db.add(node)
         await db.flush()  # Assign IDs before indexing
 

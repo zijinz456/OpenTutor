@@ -13,11 +13,25 @@ interface ChatDrawerProps {
   aiActionsEnabled?: boolean;
 }
 
+/** True when viewport is below the md breakpoint (768px). */
+function useIsMobile() {
+  const [mobile, setMobile] = useState(false);
+  useEffect(() => {
+    const mql = window.matchMedia("(max-width: 767px)");
+    setMobile(mql.matches);
+    const handler = (e: MediaQueryListEvent) => setMobile(e.matches);
+    mql.addEventListener("change", handler);
+    return () => mql.removeEventListener("change", handler);
+  }, []);
+  return mobile;
+}
+
 /**
  * On mobile (< 768px), renders as a bottom sheet with swipe-down to dismiss.
  * On desktop, renders as the original side drawer.
  */
 export function ChatDrawer({ courseId, open, onOpenChange, aiActionsEnabled = true }: ChatDrawerProps) {
+  const isMobile = useIsMobile();
   // Swipe-down gesture state for the mobile drawer fallback
   const drawerRef = useRef<HTMLDivElement>(null);
   const dragState = useRef<{ startY: number; currentY: number } | null>(null);
@@ -63,14 +77,14 @@ export function ChatDrawer({ courseId, open, onOpenChange, aiActionsEnabled = tr
 
   return (
     <>
-      {/* Mobile: bottom sheet (< md) */}
-      <div className="md:hidden">
+      {/* Mobile: bottom sheet — only mount when actually mobile to avoid Radix portal leak */}
+      {isMobile && (
         <BottomSheet open={open} onOpenChange={(v) => onOpenChange?.(v)} title="Chat">
           <div className="h-[75dvh]">
             {open && <ChatView courseId={courseId} aiActionsEnabled={aiActionsEnabled} />}
           </div>
         </BottomSheet>
-      </div>
+      )}
 
       {/* Desktop: side drawer (>= md) */}
       <div

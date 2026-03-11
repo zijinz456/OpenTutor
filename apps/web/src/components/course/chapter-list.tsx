@@ -10,11 +10,38 @@ interface ChapterListProps {
   nodes: ContentNode[];
 }
 
+/** Categories that are course info/logistics, not learning content */
+const INFO_CATEGORIES = new Set(["assignment", "exam_schedule"]);
+
+/**
+ * Recursively filter out info-type leaf nodes, keeping structural containers
+ * (which may carry a "syllabus" category) as long as they have knowledge
+ * children beneath them.
+ */
+function filterKnowledgeNodes(nodes: ContentNode[]): ContentNode[] {
+  return nodes
+    .map((n) => ({
+      ...n,
+      children: n.children ? filterKnowledgeNodes(n.children) : [],
+    }))
+    .filter((n) => {
+      const isInfoLeaf =
+        INFO_CATEGORIES.has(n.content_category ?? "") &&
+        n.children.length === 0 &&
+        n.content === null;
+      if (isInfoLeaf) return false;
+      // Keep containers that still have children, or leaves with content, or root nodes
+      return n.children.length > 0 || n.content !== null || n.level === 0;
+    });
+}
+
 export function ChapterList({ courseId, nodes }: ChapterListProps) {
   const t = useT();
   const tf = useTF();
 
-  if (nodes.length === 0) {
+  const knowledgeNodes = filterKnowledgeNodes(nodes);
+
+  if (knowledgeNodes.length === 0) {
     return (
       <div className="text-center py-12 text-muted-foreground">
         <FileText className="size-8 mx-auto mb-3 opacity-40" />
@@ -28,15 +55,15 @@ export function ChapterList({ courseId, nodes }: ChapterListProps) {
   return (
     <nav aria-label={treeLabel}>
       <div role="tree" aria-label={treeLabel} className="flex flex-col gap-2">
-        {nodes.map((node) => {
+        {knowledgeNodes.map((node) => {
           const childCount = node.children?.length ?? 0;
-          const isFolder = node.type === "week" || node.type === "module" || childCount > 0;
+          const isFolder = node.level === 0 || node.type === "week" || node.type === "module" || childCount > 0;
 
           return (
             <div
               key={node.id}
               role="treeitem"
-              aria-selected={false}
+              aria-selected="false"
               {...(isFolder ? { "aria-expanded": true } : {})}
             >
               <Link

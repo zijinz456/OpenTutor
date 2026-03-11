@@ -80,7 +80,9 @@ async def vector_search(
 ) -> list[dict]:
     """Cosine similarity search on content tree embeddings."""
     try:
-        from services.embedding.registry import get_embedding_provider
+        from services.embedding.registry import get_embedding_provider, is_noop_provider
+        if is_noop_provider():
+            return []  # Embeddings disabled; fall back to keyword search
         provider = get_embedding_provider()
         query_embedding = await provider.embed(query)
     except (ImportError, ConnectionError, TimeoutError, RuntimeError, ValueError) as e:

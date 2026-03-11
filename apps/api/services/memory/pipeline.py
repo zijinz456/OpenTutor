@@ -115,7 +115,9 @@ def _build_summary(user_message: str, assistant_response: str) -> str:
 async def generate_embedding(text_content: str) -> list[float] | None:
     """Generate embedding vector for text using the embedding service registry."""
     try:
-        from services.embedding.registry import get_embedding_provider
+        from services.embedding.registry import get_embedding_provider, is_noop_provider
+        if is_noop_provider():
+            return None  # Don't store useless zero vectors
         provider = get_embedding_provider()
         return await provider.embed(text_content)
     except (ConnectionError, TimeoutError, ValueError, RuntimeError, ImportError, OSError) as exc:

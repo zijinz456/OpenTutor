@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.content import CourseContentTree
-from services.embedding.registry import get_embedding_provider
+from services.embedding.registry import get_embedding_provider, is_noop_provider
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,15 @@ async def embed_course_content(db: AsyncSession, course_id: uuid.UUID) -> int:
     """Pre-compute embeddings for all un-embedded content tree nodes in a course.
 
     Returns the number of nodes embedded.
+    Skips immediately if the embedding provider is a no-op (embeddings disabled).
     """
+    # Fast path: if embeddings are disabled, skip entirely without querying DB
+    if is_noop_provider():
+        logger.debug(
+            "Skipping content embedding for course %s (embeddings disabled)", course_id
+        )
+        return 0
+
     result = await db.execute(
         select(CourseContentTree)
         .where(

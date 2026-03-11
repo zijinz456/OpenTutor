@@ -44,6 +44,10 @@ interface CoreWorkspaceState {
   /** Latest cognitive state from the Block Decision Engine. */
   cognitiveState: CognitiveState | null;
   setCognitiveState: (state: CognitiveState) => void;
+
+  /** Notes drawer open state (right-side panel). */
+  notesDrawerOpen: boolean;
+  setNotesDrawerOpen: (open: boolean) => void;
 }
 
 type WorkspaceState = CoreWorkspaceState & BlockSystemState;
@@ -104,6 +108,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   cognitiveState: null,
   setCognitiveState: (state) => set({ cognitiveState: state }),
+
+  notesDrawerOpen: false,
+  setNotesDrawerOpen: (open) => set({ notesDrawerOpen: open }),
 
   // Block system (extracted to workspace-blocks.ts)
   ...createBlockSlice(set, get),

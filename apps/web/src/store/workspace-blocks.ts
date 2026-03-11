@@ -215,6 +215,13 @@ export function createBlockSlice<TState extends BlockSystemState>(
       const entry = BLOCK_REGISTRY[type];
       if (!entry) return;
       const blocks = get().spaceLayout.blocks;
+
+      // Limit: at most 1 agent_insight block at a time to avoid notification spam
+      if (type === "agent_insight") {
+        const existingInsights = blocks.filter((b) => b.type === "agent_insight");
+        if (existingInsights.length >= 1) return;
+      }
+
       const position = meta.needsApproval ? 0 : blocks.length;
       const newBlock: BlockInstance = {
         id: nextBlockId(),

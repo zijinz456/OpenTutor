@@ -21,7 +21,7 @@ function checkAndSuggestUnlockedBlocks(
 ) {
   if (!aiActionsEnabled) return;
   const ctx = { ...getUnlockContext(courseId, totalCourses), mode };
-  if ((ctx.sessionCount ?? 0) < 3) return;
+  if ((ctx.sessionCount ?? 0) < 5) return;
 
   const store = useWorkspaceStore.getState();
   const currentBlocks = store.spaceLayout.blocks;
@@ -102,6 +102,9 @@ export function useReviewCheck(
 
   useEffect(() => {
     if (!course || !aiActionsEnabled) return;
+    // Skip review check on fresh installs (no learning history yet)
+    const ctx = getUnlockContext(courseId, 1);
+    if ((ctx.sessionCount ?? 0) < 3) return;
     const checkKey = `agent_review_check_${courseId}`;
     if (sessionStorage.getItem(checkKey) === "true") return;
     sessionStorage.setItem(checkKey, "true");

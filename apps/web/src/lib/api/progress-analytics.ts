@@ -360,5 +360,5 @@ export interface TransferOpportunity {
 }
 
 export async function getTransferOpportunities(): Promise<TransferOpportunity[]> {
-  return request("/transfer-opportunities");
+  return request("/progress/transfer-opportunities");
 }

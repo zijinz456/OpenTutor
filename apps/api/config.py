@@ -69,6 +69,12 @@ class Settings(BaseSettings):
     max_upload_size_mb: int = 50
     scrape_fixture_dir: str = ""
 
+    # Embedding
+    embedding_mode: str = "auto"  # auto | eager | skip
+    # auto  = use fast provider if available, skip if only slow local provider
+    # eager = always compute embeddings (blocks ingestion if slow)
+    # skip  = never compute embeddings (search uses keyword-only fallback)
+
     # Runtime bootstrap
     app_auto_create_tables: bool = True
     app_auto_seed_system: bool = True

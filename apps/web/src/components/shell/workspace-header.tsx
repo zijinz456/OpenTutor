@@ -2,7 +2,7 @@
 
 import { useState, useCallback } from "react";
 import Link from "next/link";
-import { ArrowLeft, BarChart3, RefreshCw, Search, Settings } from "lucide-react";
+import { ArrowLeft, BarChart3, BookOpen, GitBranch, RefreshCw, Search, Settings } from "lucide-react";
 import { NotificationBell } from "./notification-bell";
 import { ModeSelector } from "@/components/course/mode-selector";
 import { Button } from "@/components/ui/button";
@@ -134,14 +134,32 @@ export function WorkspaceHeader({
         <NotificationBell />
 
         {courseId && (
-          <Link
-            href={`/course/${courseId}/profile`}
-            className="p-2 rounded-xl text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-            title={t("nav.analytics")}
-            aria-label={t("nav.analytics") || "Analytics"}
-          >
-            <BarChart3 className="size-4" />
-          </Link>
+          <>
+            <Link
+              href={`/course/${courseId}/notes`}
+              className="p-2 rounded-xl text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+              title="Notes"
+              aria-label="Notes"
+            >
+              <BookOpen className="size-4" />
+            </Link>
+            <Link
+              href={`/course/${courseId}/graph`}
+              className="p-2 rounded-xl text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+              title="Knowledge Graph"
+              aria-label="Knowledge Graph"
+            >
+              <GitBranch className="size-4" />
+            </Link>
+            <Link
+              href={`/course/${courseId}/profile`}
+              className="p-2 rounded-xl text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+              title={t("nav.analytics")}
+              aria-label={t("nav.analytics") || "Analytics"}
+            >
+              <BarChart3 className="size-4" />
+            </Link>
+          </>
         )}
 
         <Button

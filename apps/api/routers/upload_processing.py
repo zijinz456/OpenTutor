@@ -232,9 +232,11 @@ async def _background_embed(course_id: uuid.UUID, job_id: uuid.UUID, user_id: uu
 
     async def _do_embed():
         from services.embedding.content import embed_course_content
+        from services.embedding.registry import is_noop_provider
         async with async_session() as db:
             job = await db.get(IngestionJob, job_id)
-            if job:
+            skipped = is_noop_provider()
+            if job and not skipped:
                 _set_job_phase(
                     job,
                     status="embedding",
@@ -249,7 +251,7 @@ async def _background_embed(course_id: uuid.UUID, job_id: uuid.UUID, user_id: uu
                     job,
                     status="completed",
                     progress_percent=100,
-                    embedding_status="completed",
+                    embedding_status="skipped" if skipped else "completed",
                     nodes_created=job.nodes_created,
                 )
             await db.commit()
