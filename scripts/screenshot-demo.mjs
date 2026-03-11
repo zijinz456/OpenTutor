@@ -113,33 +113,18 @@ async function main() {
   // 7. Chat drawer — open from workspace
   console.log("📸 chat...");
   await page.goto(`${BASE_URL}/course/${COURSE_ID}`, {
-    waitUntil: "networkidle",
+    waitUntil: "load",
     timeout: 15000,
   });
   await page.waitForTimeout(4000);
   await hideDevOverlays(page);
-  // Click the chat FAB ("Open chat" button) specifically
+  // Click the chat FAB ("Open chat" button)
   const chatFab = page.locator('button[aria-label="Open chat"]');
-  const fabCount = await chatFab.count();
-  console.log(`   chat FAB count: ${fabCount}`);
-  if (fabCount > 0) {
+  if ((await chatFab.count()) > 0) {
     await chatFab.first().click();
     await page.waitForTimeout(2500);
     await hideDevOverlays(page);
-  } else {
-    console.log("   ⚠️  No chat FAB found, trying fallback selector");
-    const anyChat = page.locator('button[aria-label*="chat" i]');
-    const anyChatCount = await anyChat.count();
-    console.log(`   fallback chat button count: ${anyChatCount}`);
-    if (anyChatCount > 0) {
-      await anyChat.first().click();
-      await page.waitForTimeout(2500);
-      await hideDevOverlays(page);
-    }
   }
-  // Debug: log page URL and body background
-  const chatUrl = page.url();
-  console.log(`   chat page URL: ${chatUrl}`);
   await page.screenshot({
     path: join(OUTPUT_DIR, "demo-chat.png"),
     fullPage: false,
