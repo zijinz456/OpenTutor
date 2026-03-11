@@ -1,7 +1,13 @@
-"""LOOM mastery — concept mastery tracking and FIRe propagation.
+"""LOOM mastery — concept mastery tracking, BKT updates, and bidirectional FIRe propagation.
 
 Handles updating mastery scores after practice/quiz attempts and
 propagating fractional implicit repetition credit to prerequisites.
+
+Academic foundations:
+- BKT (Bayesian Knowledge Tracing): question-type-aware guess/slip for mastery updates (pyBKT)
+- GKT (Graph-based Knowledge Tracing): bidirectional mastery propagation through KG edges
+- FIRe: Fractional Implicit Repetitions in Knowledge Graphs (2024)
+- LOOM: Concept consolidation when prerequisite groups reach mastery (arXiv 2511.21037)
 """
 
 import logging
@@ -17,9 +23,57 @@ from models.knowledge_graph import KnowledgeNode, KnowledgeEdge, ConceptMastery
 
 logger = logging.getLogger(__name__)
 
-# Mastery update parameters
-EMA_ALPHA = 0.3                # Exponential moving average learning rate
-FIRE_BOOST_PER_DEPTH = 0.05   # 5% mastery boost per FIRe propagation level
+# ── BKT Parameters (pyBKT paper) ──
+# Question-type-specific guess/slip parameters: (guess_probability, slip_probability)
+# guess = P(correct | not learned), slip = P(incorrect | learned)
+BKT_PARAMS: dict[str, tuple[float, float]] = {
+    "mc": (0.25, 0.10),            # MCQ: 25% chance of guessing correctly (1/4 options)
+    "tf": (0.50, 0.10),            # True/False: 50% chance of guessing
+    "short_answer": (0.05, 0.10),  # Short answer: very low guess probability
+    "free_response": (0.05, 0.10), # Free response: very low guess probability
+    "fill_blank": (0.10, 0.10),    # Fill-in-blank: low guess probability
+    "matching": (0.15, 0.10),      # Matching: moderate guess probability
+    "select_all": (0.10, 0.10),    # Select all: low guess probability
+}
+BKT_DEFAULT_PARAMS = (0.15, 0.10)  # Default: moderate guess
+BKT_P_LEARN = 0.10                 # Learning transition probability per practice
+
+# ── FIRe Parameters ──
+FIRE_BOOST_PER_DEPTH = 0.05   # 5% mastery boost per FIRe propagation level (correct)
+FIRE_DOUBT_PER_DEPTH = 0.03   # 3% mastery reduction per depth level (incorrect, GKT-inspired)
+
+# ── Consolidation Parameters (LOOM paper) ──
+CONSOLIDATION_THRESHOLD = 0.85          # All prereqs must exceed this mastery
+CONSOLIDATION_PARENT_BOOST = 0.1        # Mastery boost for parent concept
+CONSOLIDATION_STABILITY_MULTIPLIER = 1.5  # Extend review interval for mastered prereqs
+
+
+# ── BKT Mastery Update ──
+
+def _bkt_update(prior: float, correct: bool, question_type: str | None = None) -> float:
+    """Bayesian Knowledge Tracing mastery update with question-type-aware guess/slip.
+
+    Based on pyBKT (CAHLR, 242★ on GitHub):
+    P(L|correct) = P(L)·(1-slip) / [P(L)·(1-slip) + (1-P(L))·guess]
+    P(L|incorrect) = P(L)·slip / [P(L)·slip + (1-P(L))·(1-guess)]
+    P(L_next) = P(L|obs) + (1 - P(L|obs)) · p_learn
+
+    Key insight: MCQ correct barely moves mastery (could be guessing),
+    while free-response correct gives strong evidence of learning.
+    """
+    guess, slip = BKT_PARAMS.get(question_type or "", BKT_DEFAULT_PARAMS)
+    prior = max(0.001, min(0.999, prior))  # Avoid division by zero
+
+    if correct:
+        # P(Learned | Correct) = P(L)·(1-slip) / [P(L)·(1-slip) + (1-P(L))·guess]
+        posterior = prior * (1 - slip) / (prior * (1 - slip) + (1 - prior) * guess)
+    else:
+        # P(Learned | Incorrect) = P(L)·slip / [P(L)·slip + (1-P(L))·(1-guess)]
+        posterior = prior * slip / (prior * slip + (1 - prior) * (1 - guess))
+
+    # Learning transition: even after observing, there's a chance the student learned
+    updated = posterior + (1 - posterior) * BKT_P_LEARN
+    return max(0.0, min(1.0, updated))
 
 
 # ── Mastery Tracking ──
@@ -30,10 +84,15 @@ async def update_concept_mastery(
     concept_name: str,
     course_id: uuid.UUID,
     correct: bool,
+    question_type: str | None = None,
 ) -> ConceptMastery | None:
     """Update mastery score for a concept after practice/quiz.
 
-    Uses exponential moving average: new_score = alpha * result + (1 - alpha) * old_score
+    Uses BKT Bayesian update with question-type-aware guess/slip parameters
+    instead of simple EMA. This means:
+    - MCQ correct (guess=0.25) barely increases mastery for low-mastery students
+    - Free-response correct (guess=0.05) strongly increases mastery
+    - Incorrect on T/F (slip=0.10) doesn't overly punish high-mastery students
     """
     # Find the concept node
     result = await db.execute(
@@ -74,9 +133,8 @@ async def update_concept_mastery(
     else:
         mastery.wrong_count += 1
 
-    # Exponential moving average
-    result_score = 1.0 if correct else 0.0
-    mastery.mastery_score = EMA_ALPHA * result_score + (1 - EMA_ALPHA) * mastery.mastery_score
+    # BKT Bayesian mastery update (replaces EMA)
+    mastery.mastery_score = _bkt_update(mastery.mastery_score, correct, question_type)
 
     # FSRS-based stability and scheduling
     from services.spaced_repetition.fsrs import FSRSCard, review_card as fsrs_review
@@ -102,8 +160,11 @@ async def update_concept_mastery(
     mastery.last_practiced_at = now
     mastery.next_review_at = updated_card.due  # Now properly set via FSRS scheduling
 
-    # FIRe: Fractional Implicit Repetitions — propagate partial credit to prerequisites
+    # Bidirectional FIRe: propagate credit (correct) or doubt (incorrect) to prerequisites
     await _fire_propagate(db, user_id, node.id, course_id, correct)
+
+    # LOOM consolidation: check if prerequisite groups are fully mastered
+    await _consolidate_mastered_concepts(db, user_id, course_id, node.id)
 
     # Sync concept mastery → LearningProgress so forgetting_risk signals stay current
     await _sync_to_learning_progress(db, user_id, course_id, mastery)
@@ -112,7 +173,7 @@ async def update_concept_mastery(
     return mastery
 
 
-# ── FIRe: Fractional Implicit Repetitions ──
+# ── Bidirectional FIRe: Fractional Implicit Repetitions (GKT + FIRe) ──
 
 async def _fire_propagate(
     db: AsyncSession,
@@ -122,15 +183,15 @@ async def _fire_propagate(
     correct: bool,
     max_depth: int = 3,
 ) -> None:
-    """Propagate fractional review credit to prerequisite concepts.
+    """Bidirectional FIRe: propagate credit or doubt to prerequisite concepts.
 
-    When a student practices concept A, prerequisite concepts B, C, ...
-    receive implicit review credit proportional to 1/(depth+1).
-    Reference: "Fractional Implicit Repetitions in Knowledge Graphs" (2024)
+    Based on:
+    - FIRe (2024): correct → boost prerequisite mastery (fractional implicit repetition)
+    - GKT (Graph-based Knowledge Tracing): incorrect → reduce prerequisite mastery
+      (if student fails concept A, prerequisites B, C may not be as solid as assumed)
+
+    Propagation decays with depth: factor = 1/(depth+1)
     """
-    if not correct:
-        return  # Only propagate on successful recall
-
     # Get prerequisite edges from practiced node
     edges_result = await db.execute(
         select(KnowledgeEdge).where(
@@ -151,7 +212,6 @@ async def _fire_propagate(
             continue
         visited.add(prereq_id)
 
-        # Apply fractional credit
         fraction = 1.0 / (depth + 1)
 
         mastery_result = await db.execute(
@@ -162,9 +222,14 @@ async def _fire_propagate(
         )
         prereq_mastery = mastery_result.scalar_one_or_none()
         if prereq_mastery:
-            # Fractional boost: small mastery increase without full practice credit
-            boost = fraction * FIRE_BOOST_PER_DEPTH
-            prereq_mastery.mastery_score = min(1.0, prereq_mastery.mastery_score + boost)
+            if correct:
+                # Positive FIRe: boost prerequisite mastery
+                boost = fraction * FIRE_BOOST_PER_DEPTH
+                prereq_mastery.mastery_score = min(1.0, prereq_mastery.mastery_score + boost)
+            else:
+                # GKT doubt propagation: reduce prerequisite mastery
+                doubt = fraction * FIRE_DOUBT_PER_DEPTH
+                prereq_mastery.mastery_score = max(0.0, prereq_mastery.mastery_score - doubt)
 
         # Continue walking up the prerequisite chain
         deeper_edges = await db.execute(
@@ -176,6 +241,79 @@ async def _fire_propagate(
         for edge in deeper_edges.scalars().all():
             if edge.target_id not in visited:
                 queue.append((edge.target_id, depth + 1))
+
+
+# ── LOOM Concept Consolidation ──
+
+async def _consolidate_mastered_concepts(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    course_id: uuid.UUID,
+    updated_node_id: uuid.UUID,
+) -> None:
+    """Consolidate mastered prerequisite groups (LOOM paper, arXiv 2511.21037).
+
+    When ALL prerequisites of a concept reach mastery > threshold:
+    1. Boost the parent concept's mastery (foundation is solid)
+    2. Extend stability of mastered prerequisites (reduce review frequency)
+    """
+    # Find concepts where this node is a prerequisite (i.e., parent concepts)
+    parent_edges = await db.execute(
+        select(KnowledgeEdge).where(
+            KnowledgeEdge.target_id == updated_node_id,
+            KnowledgeEdge.relation_type == "prerequisite",
+        )
+    )
+    parent_ids = [e.source_id for e in parent_edges.scalars().all()]
+
+    for parent_id in parent_ids:
+        # Get all prerequisites of this parent
+        prereq_edges = await db.execute(
+            select(KnowledgeEdge).where(
+                KnowledgeEdge.source_id == parent_id,
+                KnowledgeEdge.relation_type == "prerequisite",
+            )
+        )
+        prereq_ids = [e.target_id for e in prereq_edges.scalars().all()]
+        if not prereq_ids:
+            continue
+
+        # Check if ALL prereqs are mastered
+        masteries = await db.execute(
+            select(ConceptMastery).where(
+                ConceptMastery.user_id == user_id,
+                ConceptMastery.knowledge_node_id.in_(prereq_ids),
+            )
+        )
+        mastery_list = masteries.scalars().all()
+
+        if len(mastery_list) < len(prereq_ids):
+            continue  # Some prereqs not yet practiced
+
+        all_mastered = all(m.mastery_score >= CONSOLIDATION_THRESHOLD for m in mastery_list)
+        if not all_mastered:
+            continue
+
+        # All prereqs mastered! → Consolidate
+        # 1. Boost parent mastery
+        parent_mastery_result = await db.execute(
+            select(ConceptMastery).where(
+                ConceptMastery.user_id == user_id,
+                ConceptMastery.knowledge_node_id == parent_id,
+            )
+        )
+        pm = parent_mastery_result.scalar_one_or_none()
+        if pm:
+            pm.mastery_score = min(1.0, pm.mastery_score + CONSOLIDATION_PARENT_BOOST)
+            logger.info(
+                "Consolidated: parent concept %s boosted to %.3f (all prereqs mastered)",
+                parent_id, pm.mastery_score,
+            )
+
+        # 2. Extend stability of mastered prereqs (space out reviews)
+        for m in mastery_list:
+            if m.stability_days and m.stability_days > 0:
+                m.stability_days *= CONSOLIDATION_STABILITY_MULTIPLIER
 
 
 # ── Mastery Sync: ConceptMastery → LearningProgress ──

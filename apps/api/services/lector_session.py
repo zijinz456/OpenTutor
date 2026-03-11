@@ -54,6 +54,16 @@ async def build_structured_session(
         rest.sort(key=lambda x: x.priority, reverse=True)
         peak_end = rest.pop(0)
 
+    # ── Phase 2.5: Extract prerequisite_first items (must come early) ──
+    prereq_items: list[ReviewItem] = []
+    rest_after_prereq: list[ReviewItem] = []
+    for item in rest:
+        if item.review_type == "prerequisite_first":
+            prereq_items.append(item)
+        else:
+            rest_after_prereq.append(item)
+    rest = rest_after_prereq
+
     # ── Phase 3: Group contrast pairs together ──
     contrast_items: list[ReviewItem] = []
     non_contrast: list[ReviewItem] = []
@@ -73,14 +83,15 @@ async def build_structured_session(
     # ── Phase 6: Assemble final session ──
     session: list[ReviewItem] = []
     session.extend(warm_up)
+    session.extend(prereq_items)        # Prerequisites before dependent concepts
     session.extend(contrast_pairs)
     session.extend(interleaved)
     if peak_end is not None:
         session.append(peak_end)
 
     logger.info(
-        "Built structured session: %d items (warm-up=%d, contrast=%d, interleaved=%d, peak-end=%s)",
-        len(session), len(warm_up), len(contrast_pairs),
+        "Built structured session: %d items (warm-up=%d, prereq=%d, contrast=%d, interleaved=%d, peak-end=%s)",
+        len(session), len(warm_up), len(prereq_items), len(contrast_pairs),
         len(interleaved), peak_end is not None,
     )
     return session

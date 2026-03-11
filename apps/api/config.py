@@ -81,8 +81,8 @@ class Settings(BaseSettings):
     app_run_scheduler: bool = False
     app_run_activity_engine: bool = False
     ambient_monitor_enabled: bool = True
-    enable_experimental_loom: bool = False
-    enable_experimental_lector: bool = False
+    enable_experimental_loom: bool = True
+    enable_experimental_lector: bool = True
     enable_experimental_notion_export: bool = False
     voice_enabled: bool = False
 
@@ -118,15 +118,19 @@ class Settings(BaseSettings):
     # Cognitive load signal weights (sum = 1.0)
     # Source: "Cognitive Load Theory meets Deep Knowledge Tracing" (Nature, 2025)
     # Proportionally normalized from original paper weights to sum to 1.0
-    cognitive_load_weight_fatigue: float = 0.18
-    cognitive_load_weight_session_length: float = 0.11
-    cognitive_load_weight_errors: float = 0.15
-    cognitive_load_weight_brevity: float = 0.07
-    cognitive_load_weight_help_seeking: float = 0.11
-    cognitive_load_weight_quiz_performance: float = 0.11
-    cognitive_load_weight_answer_hesitation: float = 0.07
-    cognitive_load_weight_nlp_affect: float = 0.11
-    cognitive_load_weight_relative_baseline: float = 0.09
+    cognitive_load_weight_fatigue: float = 0.16
+    cognitive_load_weight_session_length: float = 0.08
+    cognitive_load_weight_errors: float = 0.14
+    cognitive_load_weight_brevity: float = 0.04
+    cognitive_load_weight_help_seeking: float = 0.10
+    cognitive_load_weight_quiz_performance: float = 0.10
+    cognitive_load_weight_answer_hesitation: float = 0.06
+    cognitive_load_weight_nlp_affect: float = 0.10
+    cognitive_load_weight_relative_baseline: float = 0.08
+    # Clickstream-derived signals (arXiv 2512.20438)
+    cognitive_load_weight_wrong_streak: float = 0.05
+    cognitive_load_weight_message_gap: float = 0.05
+    cognitive_load_weight_repeated_errors: float = 0.04
     cognitive_load_threshold_high: float = 0.6
     cognitive_load_threshold_medium: float = 0.3
 
@@ -150,6 +154,22 @@ class Settings(BaseSettings):
     lector_mastery_threshold: float = 0.8        # Below this = needs review
     lector_prerequisite_threshold: float = 0.5   # Prereq mastery alert level
     lector_confusion_threshold: float = 0.6      # Confusion pair mastery alert
+    lector_factor_interference: float = 0.15    # Proactive interference matrix weight (LECTOR paper)
+
+    # LOOM knowledge graph parameters
+    loom_fusion_similarity_threshold: float = 0.85  # Graphusion concept dedup threshold
+    loom_interference_similarity_threshold: float = 0.6  # LECTOR interference matrix threshold
+    loom_interference_top_n: int = 20            # Max interference pairs per course
+    loom_consolidation_threshold: float = 0.85   # All prereqs must exceed this for consolidation
+    loom_consolidation_parent_boost: float = 0.1 # Mastery boost when prereq group mastered
+    loom_consolidation_stability_multiplier: float = 1.5  # Extend stability of mastered prereqs
+
+    # BKT mastery parameters (pyBKT paper)
+    bkt_default_p_learn: float = 0.10            # Learning transition probability
+    bkt_default_slip: float = 0.10               # Default slip probability
+
+    # FIRe bidirectional propagation (GKT paper)
+    fire_doubt_per_depth: float = 0.03           # Doubt propagation per depth on incorrect
 
     # Logging
     log_file: str = ""  # Path to log file; empty = stdout only

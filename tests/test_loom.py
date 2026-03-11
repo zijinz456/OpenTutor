@@ -8,6 +8,7 @@ from services.loom import (
     get_mastery_graph, check_prerequisite_gaps, generate_learning_path,
     link_cross_course_concepts, build_course_graph,
 )
+from services.loom_mastery import _bkt_update
 
 def _node(name, cid, nid=None, meta=None):
     n = MagicMock(); n.id = nid or uuid.uuid4(); n.course_id = cid; n.name = name
@@ -140,6 +141,42 @@ async def test_extract_handles_llm_connection_error():
     with patch("services.llm.router.get_llm_client", return_value=mc):
         assert await extract_course_concepts(db, cid) == []
 
+# ── _bkt_update (BKT Bayesian mastery update) ──
+
+def test_bkt_update_mcq_correct_low_mastery():
+    """MCQ correct on low mastery: high guess rate means small increase."""
+    result = _bkt_update(0.2, correct=True, question_type="mc")
+    # With guess=0.25, correct barely moves low mastery
+    assert result < 0.55  # Much less than free_response would give
+
+def test_bkt_update_free_response_correct_low_mastery():
+    """Free-response correct on low mastery: low guess rate means strong increase."""
+    result = _bkt_update(0.2, correct=True, question_type="free_response")
+    assert result > 0.5  # Strong evidence of learning
+
+def test_bkt_update_mcq_vs_free_response():
+    """MCQ correct should give less mastery than free_response correct."""
+    mc = _bkt_update(0.3, correct=True, question_type="mc")
+    fr = _bkt_update(0.3, correct=True, question_type="free_response")
+    assert fr > mc
+
+def test_bkt_update_incorrect_high_mastery():
+    """Incorrect on high mastery: slip allows some tolerance."""
+    result = _bkt_update(0.9, correct=False, question_type="mc")
+    # Should decrease significantly
+    assert result < 0.7
+
+def test_bkt_update_tf_correct():
+    """True/False: 50% guess rate means correct barely helps."""
+    result = _bkt_update(0.3, correct=True, question_type="tf")
+    assert result < 0.5  # High guess rate means weak evidence
+
+def test_bkt_update_bounds():
+    """BKT should always return values in [0, 1]."""
+    assert 0.0 <= _bkt_update(0.0, True) <= 1.0
+    assert 0.0 <= _bkt_update(1.0, False) <= 1.0
+    assert 0.0 <= _bkt_update(0.5, True, "mc") <= 1.0
+
 # ── update_concept_mastery ──
 
 @pytest.mark.asyncio
@@ -152,14 +189,18 @@ async def test_update_mastery_correct_answer():
     db = AsyncMock(); uid, cid = uuid.uuid4(), uuid.uuid4()
     n = _node("Derivative", cid)
     m = _mastery(uid, n.id, score=0.5, pc=3, cc=2, wc=1, stab=2.0)
-    # Mock results: 1) find node, 2) find mastery, 3) FIRe prereq edges, 4) sync LearningProgress
+    # Mock results: 1) find node, 2) find mastery,
+    # 3) FIRe prereq edges, 4) consolidation parent edges, 5) sync LearningProgress
     no_progress = MagicMock(); no_progress.scalar_one_or_none.return_value = None
-    db.execute = AsyncMock(side_effect=[_scalars([n]), _scalars([m]), _scalars([]), no_progress])
+    db.execute = AsyncMock(side_effect=[_scalars([n]), _scalars([m]), _scalars([]), _scalars([]), no_progress])
     db.flush = AsyncMock()
     with _fsrs_patch() as fp:
         fp.return_value = (_fsrs_card(5.0), MagicMock())
         r = await update_concept_mastery(db, uid, "Derivative", cid, correct=True)
-    assert r.mastery_score == pytest.approx(0.65, abs=0.01)
+    # BKT(0.5, correct, default guess=0.15, slip=0.10):
+    # posterior = 0.5*0.9 / (0.5*0.9 + 0.5*0.15) = 0.857
+    # updated = 0.857 + (1-0.857)*0.10 = 0.871
+    assert r.mastery_score == pytest.approx(0.87, abs=0.02)
     assert r.practice_count == 4 and r.correct_count == 3
 
 @pytest.mark.asyncio
@@ -167,14 +208,18 @@ async def test_update_mastery_incorrect_answer():
     db = AsyncMock(); uid, cid = uuid.uuid4(), uuid.uuid4()
     n = _node("Integration", cid)
     m = _mastery(uid, n.id, score=0.8, pc=5, cc=4, wc=1, stab=3.0)
-    # Mock results: 1) find node, 2) find mastery, 3) sync LearningProgress (FIRe skipped for incorrect)
+    # Mock results: 1) find node, 2) find mastery,
+    # 3) FIRe prereq edges (now runs on incorrect too!), 4) consolidation parent edges, 5) sync LearningProgress
     no_progress = MagicMock(); no_progress.scalar_one_or_none.return_value = None
-    db.execute = AsyncMock(side_effect=[_scalars([n]), _scalars([m]), no_progress])
+    db.execute = AsyncMock(side_effect=[_scalars([n]), _scalars([m]), _scalars([]), _scalars([]), no_progress])
     db.flush = AsyncMock()
     with _fsrs_patch() as fp:
         fp.return_value = (_fsrs_card(1.0), MagicMock())
         r = await update_concept_mastery(db, uid, "Integration", cid, correct=False)
-    assert r.mastery_score == pytest.approx(0.56, abs=0.01)
+    # BKT(0.8, incorrect, default guess=0.15, slip=0.10):
+    # posterior = 0.8*0.10 / (0.8*0.10 + 0.2*0.85) = 0.08/0.25 = 0.32
+    # updated = 0.32 + 0.68*0.10 = 0.388
+    assert r.mastery_score == pytest.approx(0.39, abs=0.02)
     assert r.wrong_count == 2
 
 @pytest.mark.asyncio
@@ -183,30 +228,49 @@ async def test_update_mastery_creates_new_record():
     n = _node("Limit", cid)
     no_m = MagicMock(); no_m.scalar_one_or_none.return_value = None
     s = MagicMock(); s.all.return_value = []; no_m.scalars.return_value = s
-    # Mock results: 1) find node, 2) no existing mastery, 3) FIRe prereq edges, 4) sync LearningProgress
+    # Mock results: 1) find node, 2) no existing mastery,
+    # 3) FIRe prereq edges, 4) consolidation parent edges, 5) sync LearningProgress
     no_progress = MagicMock(); no_progress.scalar_one_or_none.return_value = None
-    db.execute = AsyncMock(side_effect=[_scalars([n]), no_m, _scalars([]), no_progress])
+    db.execute = AsyncMock(side_effect=[_scalars([n]), no_m, _scalars([]), _scalars([]), no_progress])
     added = []; db.add = lambda o: added.append(o); db.flush = AsyncMock()
     with _fsrs_patch() as fp:
         fp.return_value = (_fsrs_card(1.0), MagicMock())
         r = await update_concept_mastery(db, uid, "Limit", cid, correct=True)
     assert r is not None and len(added) == 1
-    assert r.mastery_score == pytest.approx(0.3, abs=0.01)
+    # BKT(0.0→0.001, correct, default): ~0.106
+    assert r.mastery_score == pytest.approx(0.11, abs=0.02)
     assert r.practice_count == 1 and r.correct_count == 1
 
 @pytest.mark.asyncio
-async def test_update_mastery_ema_from_zero():
+async def test_update_mastery_bkt_from_zero():
     db = AsyncMock(); uid, cid = uuid.uuid4(), uuid.uuid4()
     n = _node("Topic", cid)
     m = _mastery(uid, n.id, score=0.0, pc=0, cc=0, wc=0, stab=0.0)
-    # Mock results: 1) find node, 2) find mastery, 3) FIRe prereq edges, 4) sync LearningProgress
+    # Mock results: 1) find node, 2) find mastery,
+    # 3) FIRe prereq edges, 4) consolidation parent edges, 5) sync LearningProgress
     no_progress = MagicMock(); no_progress.scalar_one_or_none.return_value = None
-    db.execute = AsyncMock(side_effect=[_scalars([n]), _scalars([m]), _scalars([]), no_progress])
+    db.execute = AsyncMock(side_effect=[_scalars([n]), _scalars([m]), _scalars([]), _scalars([]), no_progress])
     db.flush = AsyncMock()
     with _fsrs_patch() as fp:
         fp.return_value = (_fsrs_card(1.0), MagicMock())
         r = await update_concept_mastery(db, uid, "Topic", cid, correct=True)
-    assert r.mastery_score == pytest.approx(0.3, abs=0.01)
+    # BKT(0.001, correct, default): ~0.106
+    assert r.mastery_score == pytest.approx(0.11, abs=0.02)
+
+@pytest.mark.asyncio
+async def test_update_mastery_with_question_type():
+    """Passing question_type should affect mastery via BKT guess/slip."""
+    db = AsyncMock(); uid, cid = uuid.uuid4(), uuid.uuid4()
+    n = _node("Concept", cid)
+    m = _mastery(uid, n.id, score=0.3, pc=2, cc=1, wc=1, stab=1.0)
+    no_progress = MagicMock(); no_progress.scalar_one_or_none.return_value = None
+    db.execute = AsyncMock(side_effect=[_scalars([n]), _scalars([m]), _scalars([]), _scalars([]), no_progress])
+    db.flush = AsyncMock()
+    with _fsrs_patch() as fp:
+        fp.return_value = (_fsrs_card(2.0), MagicMock())
+        r = await update_concept_mastery(db, uid, "Concept", cid, correct=True, question_type="mc")
+    # MCQ correct with low prior should give less than default
+    assert r.mastery_score < 0.7  # MCQ guess=0.25 means less credit
 
 # ── get_mastery_graph ──
 
@@ -348,8 +412,9 @@ async def test_build_course_graph_success():
     cid = uuid.uuid4(); mdb = AsyncMock()
     ctx = AsyncMock(); ctx.__aenter__ = AsyncMock(return_value=mdb); ctx.__aexit__ = AsyncMock(return_value=False)
     with (patch("services.loom_extraction.extract_course_concepts", new_callable=AsyncMock) as me,
-          patch("services.loom_graph.link_cross_course_concepts", new_callable=AsyncMock) as ml):
-        me.return_value = [_node("A", cid), _node("B", cid)]; ml.return_value = 0
+          patch("services.loom_graph.link_cross_course_concepts", new_callable=AsyncMock) as ml,
+          patch("services.loom_confusion.compute_interference_matrix", new_callable=AsyncMock) as mi):
+        me.return_value = [_node("A", cid), _node("B", cid)]; ml.return_value = 0; mi.return_value = []
         assert await build_course_graph(lambda: ctx, cid) == 2
 
 @pytest.mark.asyncio

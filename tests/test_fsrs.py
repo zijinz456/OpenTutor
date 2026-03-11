@@ -19,6 +19,10 @@ from services.spaced_repetition.fsrs import (
     estimate_forgetting_cost,
     estimate_session_urgency,
     _retrievability,
+    _initial_difficulty,
+    _same_day_stability,
+    _next_difficulty,
+    DEFAULT_W,
 )
 
 
@@ -246,3 +250,70 @@ def test_session_urgency_empty_cards():
     assert result["urgency"] == "none"
     assert result["due_count"] == 0
     assert result["forgetting_cost"] == 0.0
+
+
+# ── FSRS-5/6 Upgrade Tests ──
+
+
+def test_default_w_has_21_params():
+    """FSRS-5/6 should have 21 parameters (up from 17 in 4.5)."""
+    assert len(DEFAULT_W) == 21
+
+
+def test_retrievability_with_trainable_decay():
+    """When decay=1.0 (default), formula should match FSRS-4.5."""
+    # With default w[20]=1.0, result should be same as 4.5
+    r = _retrievability(10.0, 10.0)
+    assert r == pytest.approx(0.9, abs=0.01)
+
+
+def test_retrievability_custom_decay():
+    """Custom decay parameter should change retrievability curve."""
+    w_custom = list(DEFAULT_W)
+    w_custom[20] = 0.5  # Lower decay = slower forgetting
+    r_default = _retrievability(30.0, 10.0, DEFAULT_W)
+    r_custom = _retrievability(30.0, 10.0, w_custom)
+    # Lower decay should give higher retrievability (slower forgetting)
+    assert r_custom > r_default
+
+
+def test_initial_difficulty_exponential():
+    """FSRS-5/6 uses exponential difficulty init: D0 = w4 - exp(w5*(G-1)) + 1."""
+    d1 = _initial_difficulty(1)  # Again
+    d3 = _initial_difficulty(3)  # Good
+    d4 = _initial_difficulty(4)  # Easy
+    # Higher ratings should give lower or equal difficulty (clamped to [1, 10])
+    assert d1 >= d3 >= d4
+    # All bounded
+    assert 1.0 <= d1 <= 10.0
+    assert 1.0 <= d4 <= 10.0
+
+
+def test_next_difficulty_linear_damping():
+    """FSRS-5/6 uses linear damping: delta * (10 - D) / 9."""
+    d_low = _next_difficulty(3.0, 3)  # Good on easy card
+    d_high = _next_difficulty(8.0, 3)  # Good on hard card
+    # Linear damping means difficulty change is smaller when D is high
+    assert 1.0 <= d_low <= 10.0
+    assert 1.0 <= d_high <= 10.0
+
+
+def test_same_day_stability_default_params():
+    """With default w17-19 = 0, same-day stability should return original s."""
+    s = _same_day_stability(5.0, 3)
+    assert s == 5.0  # Default params (all 0) = no change
+
+
+def test_same_day_review_in_review_card():
+    """Same-day review (elapsed < 1 day) should use _same_day_stability."""
+    now = datetime(2024, 6, 15, 10, 0, tzinfo=timezone.utc)
+    card = FSRSCard(
+        difficulty=5.0,
+        stability=5.0,
+        reps=3,
+        state="review",
+        last_review=now - timedelta(hours=2),  # Same day!
+    )
+    updated, _ = review_card(card, rating=3, now=now)
+    # With default w17-19=0, stability should be unchanged
+    assert updated.stability == pytest.approx(5.0, abs=0.01)

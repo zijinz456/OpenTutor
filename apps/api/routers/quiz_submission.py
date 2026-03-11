@@ -111,7 +111,7 @@ async def _auto_detect_confusion(course_id: uuid.UUID, user_id: uuid.UUID) -> No
     try:
         async with async_session() as db:
             from services.loom_confusion import detect_confusion_pairs
-            await detect_confusion_pairs(db, course_id, user_id, min_occurrences=2)
+            await detect_confusion_pairs(db, course_id, user_id, min_occurrences=1)
             await db.commit()
     except (SQLAlchemyError, ValueError, KeyError):
         logger.exception("Auto confusion detection failed (best-effort)")
@@ -212,7 +212,7 @@ async def submit_answer(
         from services.loom import update_concept_mastery
         for kp in kp_list:
             try:
-                await update_concept_mastery(db, user.id, str(kp), problem.course_id, correct=is_correct)
+                await update_concept_mastery(db, user.id, str(kp), problem.course_id, correct=is_correct, question_type=problem.question_type)
             except (SQLAlchemyError, ValueError, KeyError):
                 logger.exception("Concept mastery update failed for '%s'", kp)
                 warnings.append("concept_mastery_update_failed")

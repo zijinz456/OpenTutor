@@ -15,6 +15,7 @@ from services.spaced_repetition.fsrs import (
     _next_difficulty,
     _next_stability,
     _retrievability,
+    _same_day_stability,
     DEFAULT_W,
 )
 from services.learning_science.knowledge_tracer import (

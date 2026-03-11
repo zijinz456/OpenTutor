@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
 from models.knowledge_graph import KnowledgeNode, KnowledgeEdge, ConceptMastery
+from services.spaced_repetition.fsrs import _retrievability as fsrs_retrievability
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,10 @@ class ReviewItem:
     reason: str  # Why this is being reviewed
     related_concepts: list[str]  # Reviewed together for semantic reinforcement
     review_type: str = "standard"  # "standard" | "contrast" | "prerequisite_first"
+    stability_days: float = 0.0
+    retrievability: float = 1.0
+    last_practiced_at: str | None = None
+    content_node_id: str | None = None
 
 
 async def get_smart_review_session(
@@ -148,6 +153,22 @@ async def get_smart_review_session(
                 priority += settings.lector_factor_confusion
                 break
 
+        # Factor 7: Proactive interference (LECTOR semantic interference matrix)
+        # Boost priority for concepts with high-weight confused_with edges,
+        # regardless of whether the confused concept has low mastery.
+        # This catches potential confusion BEFORE the student makes a mistake.
+        max_interference = 0.0
+        for confused_id in confused_with.get(node.id, []):
+            for edge in edges:
+                if (edge.source_id == node.id and edge.target_id == confused_id
+                        and edge.relation_type == "confused_with"
+                        and edge.weight > max_interference):
+                    max_interference = edge.weight
+        if max_interference > 0.6:
+            interference_boost = max_interference * settings.lector_factor_interference
+            priority += interference_boost
+            reason_parts.append("high semantic interference")
+
         # Factor 6: FSRS due card boost
         # If this concept has low stability or is overdue per FSRS schedule, boost priority
         if mastery and mastery.next_review_at:
@@ -155,11 +176,10 @@ async def get_smart_review_session(
             if review_at.tzinfo is None:
                 review_at = review_at.replace(tzinfo=timezone.utc)
             if review_at <= now:
-                # Overdue — compute retrievability using FSRS-4.5: R(t) = (1 + t/(9*S))^-1
-                # t = days since last practice, S = stability
+                # Overdue — compute retrievability using FSRS-5/6 formula
                 days_since = (now - mastery.last_practiced_at).total_seconds() / 86400 if mastery.last_practiced_at else 0
                 stability = mastery.stability_days or 1.0
-                retrievability = (1 + days_since / (9 * stability)) ** -1
+                retrievability = fsrs_retrievability(days_since, stability)
                 fsrs_boost = (1.0 - retrievability) * settings.lector_factor_time_decay
                 priority += fsrs_boost
                 if fsrs_boost > 0.1:
@@ -194,6 +214,13 @@ async def get_smart_review_session(
                 review_type = "prerequisite_first"
                 break
 
+        # Compute retrievability for the response using FSRS-5/6
+        item_stability = mastery.stability_days if mastery and mastery.stability_days else 0.0
+        item_retrievability = 1.0
+        if mastery and mastery.last_practiced_at and item_stability > 0:
+            days_elapsed = (now - mastery.last_practiced_at).total_seconds() / 86400
+            item_retrievability = fsrs_retrievability(days_elapsed, item_stability)
+
         scored_items.append(ReviewItem(
             concept_name=node.name,
             concept_id=str(node.id),
@@ -202,6 +229,10 @@ async def get_smart_review_session(
             reason=reason,
             related_concepts=related_names,
             review_type=review_type,
+            stability_days=round(item_stability, 2),
+            retrievability=round(item_retrievability, 3),
+            last_practiced_at=mastery.last_practiced_at.isoformat() if mastery and mastery.last_practiced_at else None,
+            content_node_id=str(node.content_node_id) if getattr(node, "content_node_id", None) else None,
         ))
 
     # Sort by priority (highest first) and take top N
@@ -260,9 +291,11 @@ async def record_review_outcome(
 ) -> None:
     """Record whether a concept was recalled correctly after being reviewed.
 
-    Used to adaptively tune LECTOR priority weights per user.
-    Updates the concept mastery's metadata with review feedback.
+    Delegates to FSRS review_card() for consistent scheduling with the
+    rest of the system (quiz submissions, flashcard reviews).
     """
+    from services.spaced_repetition.fsrs import FSRSCard, review_card as fsrs_review
+
     result = await db.execute(
         select(ConceptMastery).where(
             ConceptMastery.user_id == user_id,
@@ -278,44 +311,30 @@ async def record_review_outcome(
         return
 
     now = datetime.now(timezone.utc)
-    mastery.practice_count += 1
+    fsrs_rating = 3 if recalled_correctly else 1  # Good vs Again
+
+    fsrs_card = FSRSCard(
+        difficulty=5.0,
+        stability=mastery.stability_days if mastery.stability_days > 0 else 1.0,
+        reps=mastery.practice_count,
+        lapses=mastery.wrong_count,
+        last_review=mastery.last_practiced_at,
+        state="review" if mastery.practice_count > 0 else "new",
+    )
+    updated_card, _log = fsrs_review(fsrs_card, fsrs_rating, now)
+
+    mastery.stability_days = updated_card.stability
+    mastery.next_review_at = updated_card.due
     mastery.last_practiced_at = now
+    mastery.practice_count += 1
 
     if recalled_correctly:
         mastery.correct_count += 1
-        # Increase mastery toward 1.0 with diminishing returns
         gain = 0.1 * (1.0 - mastery.mastery_score)
         mastery.mastery_score = min(1.0, mastery.mastery_score + gain)
-        # Increase stability (FSRS-style: successful recall extends interval)
-        mastery.stability_days = max(1.0, mastery.stability_days * 1.5 + 0.5)
     else:
         mastery.wrong_count += 1
-        # Decrease mastery
         mastery.mastery_score = max(0.0, mastery.mastery_score - 0.1)
-        # Reset stability on failure (FSRS lapse)
-        mastery.stability_days = max(0.5, mastery.stability_days * 0.3)
-
-    # Schedule next review based on updated stability
-    mastery.next_review_at = now + timedelta(days=mastery.stability_days)
-
-    # Store adaptive weight feedback in metadata (for future per-user tuning)
-    node_result = await db.execute(
-        select(KnowledgeNode).where(KnowledgeNode.id == concept_id)
-    )
-    node = node_result.scalar_one_or_none()
-    if node:
-        meta = dict(node.metadata_ or {})
-        review_history = meta.get("review_outcomes", [])
-        review_history.append({
-            "user_id": str(user_id),
-            "recalled": recalled_correctly,
-            "mastery_after": round(mastery.mastery_score, 3),
-            "stability_after": round(mastery.stability_days, 2),
-            "timestamp": now.isoformat(),
-        })
-        # Keep only last 50 outcomes per concept to bound storage
-        meta["review_outcomes"] = review_history[-50:]
-        node.metadata_ = meta
 
     await db.flush()
     logger.info(

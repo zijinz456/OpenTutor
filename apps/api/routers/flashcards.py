@@ -120,7 +120,7 @@ async def review_flashcard_endpoint(
             is_correct = body.rating >= 3  # Good or Easy = correct recall
             cid = uuid.UUID(course_id) if isinstance(course_id, str) else course_id
             for concept in concept_names[:5]:  # Cap to avoid excessive DB ops
-                await update_concept_mastery(db, user.id, str(concept), cid, correct=is_correct)
+                await update_concept_mastery(db, user.id, str(concept), cid, correct=is_correct, question_type="free_response")
         except ImportError:
             logger.warning("Flashcard → LOOM mastery sync failed: services.loom not found")
         except (SQLAlchemyError, ValueError, KeyError):

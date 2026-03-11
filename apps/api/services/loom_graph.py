@@ -330,13 +330,27 @@ async def generate_learning_path(
 # ── Integration: Build graph after ingestion ──
 
 async def build_course_graph(db_factory, course_id: uuid.UUID) -> int:
-    """Build the knowledge graph for a course. Called after auto_prepare."""
+    """Build the knowledge graph for a course. Called after auto_prepare.
+
+    Retries extraction once if the first attempt yields 0 nodes (transient LLM failure).
+    """
     try:
         async with db_factory() as db:
             from services.loom_extraction import extract_course_concepts
             nodes = await extract_course_concepts(db, course_id)
+            if not nodes:
+                # Single retry — transient LLM failures are common
+                import asyncio
+                await asyncio.sleep(2)
+                nodes = await extract_course_concepts(db, course_id)
             # Link same-name concepts across courses
             await link_cross_course_concepts(db, course_id)
+            # Compute proactive interference matrix (LECTOR paper, arXiv 2508.03275)
+            try:
+                from services.loom_confusion import compute_interference_matrix
+                await compute_interference_matrix(db, course_id)
+            except (ImportError, RuntimeError, OSError):
+                logger.debug("Interference matrix computation skipped (embedding unavailable)")
             return len(nodes)
     except (ConnectionError, TimeoutError, RuntimeError, ValueError, OSError) as e:
         logger.exception("LOOM graph building failed for course %s: %s", course_id, e)
