@@ -127,7 +127,8 @@ export function useUnitData(courseId: string, nodeId: string) {
   }, []);
 
   useEffect(() => {
-    useChatStore.getState().setOnAction(handleAction);
+    const unregister = useChatStore.getState().registerOnAction(handleAction);
+    return unregister;
   }, [handleAction]);
 
   const errorPatterns = useMemo(() => buildErrorPatternSummary(wrongAnswers), [wrongAnswers]);

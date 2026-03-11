@@ -9,9 +9,36 @@ import {
   markNotificationRead,
   markAllNotificationsRead,
   type AppNotification,
+  type ChatAction,
 } from "@/lib/api";
 import { useT } from "@/lib/i18n-context";
 import { useChatStore } from "@/store/chat";
+
+const CHAT_ACTION_TYPES: ChatAction["action"][] = [
+  "data_updated",
+  "focus_topic",
+  "add_block",
+  "remove_block",
+  "reorder_blocks",
+  "resize_block",
+  "apply_template",
+  "agent_insight",
+  "set_learning_mode",
+  "suggest_mode",
+];
+
+function parseNotificationAction(
+  data: AppNotification["data"],
+): ChatAction | null {
+  if (!data || typeof data.action !== "string") return null;
+  const actionType = data.action.trim() as ChatAction["action"];
+  if (!CHAT_ACTION_TYPES.includes(actionType)) return null;
+  return {
+    action: actionType,
+    value: data.value != null ? String(data.value) : undefined,
+    extra: data.extra != null ? String(data.extra) : undefined,
+  };
+}
 
 function timeAgo(iso: string | null): string {
   if (!iso) return "";
@@ -154,14 +181,8 @@ export function NotificationBell() {
                           className="mt-1 text-[10px] font-medium text-primary hover:underline"
                           onClick={(e) => {
                             e.stopPropagation();
-                            const onAction = useChatStore.getState().onAction;
-                            if (onAction && n.data) {
-                              onAction({
-                                action: String(n.data.action),
-                                value: n.data.value != null ? String(n.data.value) : undefined,
-                                extra: n.data.extra != null ? String(n.data.extra) : undefined,
-                              });
-                            }
+                            const action = parseNotificationAction(n.data);
+                            if (action) useChatStore.getState().dispatchAction(action);
                             if (!n.read) void handleMarkRead(n.id);
                             setOpen(false);
                           }}

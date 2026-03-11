@@ -25,13 +25,30 @@ export default function ReviewPage() {
   const [errorByCourse, setErrorByCourse] = useState<Record<string, string>>({});
   const [currentIndex, setCurrentIndex] = useState(0);
   const [revealed, setRevealed] = useState(false);
-  const [ratings, setRatings] = useState<Map<string, Rating>>(new Map());
+  const [ratings, setRatings] = useState<Map<string, Rating>>(() => {
+    // Restore ratings from sessionStorage for resume support
+    if (typeof window === "undefined") return new Map();
+    try {
+      const saved = sessionStorage.getItem(`review-ratings-${courseId}`);
+      return saved ? new Map(JSON.parse(saved) as [string, Rating][]) : new Map();
+    } catch { return new Map(); }
+  });
   const [submitting, setSubmitting] = useState(false);
   const [ratingError, setRatingError] = useState<string | null>(null);
 
   const session = sessionByCourse[courseId] ?? null;
   const error = errorByCourse[courseId] ?? null;
   const loading = !session && !error;
+
+  // Persist ratings to sessionStorage for resume on page close/refresh
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(
+        `review-ratings-${courseId}`,
+        JSON.stringify(Array.from(ratings.entries())),
+      );
+    } catch { /* quota exceeded — non-critical */ }
+  }, [ratings, courseId]);
 
   useEffect(() => {
     if (sessionByCourse[courseId] || errorByCourse[courseId]) return;
@@ -40,6 +57,15 @@ export default function ReviewPage() {
       .then((data) => {
         if (cancelled) return;
         setSessionByCourse((prev) => ({ ...prev, [courseId]: data }));
+        if (ratings.size > 0) {
+          let startIdx = 0;
+          while (startIdx < data.items.length && ratings.has(data.items[startIdx].concept_id)) {
+            startIdx++;
+          }
+          if (startIdx > 0 && startIdx < data.items.length) {
+            setCurrentIndex(startIdx);
+          }
+        }
         if (data.items.length === 0) {
           setErrorByCourse((prev) => ({ ...prev, [courseId]: t("review.noItems") }));
         }
@@ -51,7 +77,7 @@ export default function ReviewPage() {
     return () => {
       cancelled = true;
     };
-  }, [courseId, errorByCourse, sessionByCourse, t]);
+  }, [courseId, errorByCourse, ratings, sessionByCourse, t]);
 
   const items = session?.items ?? [];
   const current = items[currentIndex] as ReviewItem | undefined;
@@ -130,6 +156,8 @@ export default function ReviewPage() {
   }
 
   if (allDone) {
+    // Clear saved progress — session complete
+    try { sessionStorage.removeItem(`review-ratings-${courseId}`); } catch { /* */ }
     return (
       <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-6">
         <CheckCircle2 className="size-16 text-success" />

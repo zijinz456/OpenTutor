@@ -4,7 +4,8 @@ import { updateUnlockContext } from "@/lib/block-system/feature-unlock";
 import { TEMPLATES } from "@/lib/block-system/templates";
 import { isCanvasUrl, type Mode } from "../new/types";
 import { buildMetadata } from "../new/parse-actions";
-import type { LearningMode } from "@/lib/block-system/types";
+import type { LearningMode, SpaceLayout, BlockInstance } from "@/lib/block-system/types";
+import type { SpaceLayoutResponse } from "@/lib/api/onboarding";
 
 /** Pure name validation — returns error key or null. */
 export function validateNameValue(value: string, t: (k: string) => string): string | null {
@@ -61,20 +62,45 @@ export function buildCourseMetadata(
   return { metadata, sourceMode };
 }
 
+/** Convert an interview-recommended layout to a SpaceLayout. */
+function interviewLayoutToSpaceLayout(recommended: SpaceLayoutResponse): SpaceLayout {
+  const blocks: BlockInstance[] = recommended.blocks.map((b, i) => ({
+    id: `interview-${b.type}-${i}`,
+    type: b.type as BlockInstance["type"],
+    position: b.position,
+    size: b.size as BlockInstance["size"],
+    config: b.config,
+    visible: b.visible,
+    source: (b.source === "onboarding" ? "template" : b.source) as BlockInstance["source"],
+  }));
+  return {
+    templateId: recommended.templateId,
+    blocks,
+    columns: recommended.columns as SpaceLayout["columns"],
+    mode: recommended.mode as LearningMode,
+  };
+}
+
 /** Persist workspace layout to localStorage after template/mode selection. */
 export function persistWorkspaceLayout(
   createdCourseId: string,
   selectedTemplate: string | null,
   selectedMode: LearningMode | null,
+  interviewLayout?: SpaceLayoutResponse | null,
 ) {
-  if (selectedTemplate) {
-    useWorkspaceStore.getState().applyBlockTemplate(selectedTemplate);
+  const store = useWorkspaceStore.getState();
+
+  if (interviewLayout) {
+    // Apply AI-recommended layout from onboarding interview
+    store.loadBlocks(interviewLayoutToSpaceLayout(interviewLayout));
+  } else if (selectedTemplate) {
+    store.applyBlockTemplate(selectedTemplate);
   }
   if (selectedMode) {
-    useWorkspaceStore.getState().setSpaceMode(selectedMode);
+    store.setSpaceMode(selectedMode);
   }
-  const layout = useWorkspaceStore.getState().spaceLayout;
-  if (selectedTemplate || selectedMode) {
+  const layout = store.spaceLayout;
+  if (selectedTemplate || selectedMode || interviewLayout) {
     try { localStorage.setItem(`opentutor_blocks_${createdCourseId}`, JSON.stringify(layout)); } catch { /* quota */ }
     if (layout.mode) {
       updateUnlockContext(createdCourseId, { mode: layout.mode });

@@ -46,7 +46,8 @@ function resetStore() {
     _abortController: null,
     toolStatus: null,
     clarifyOptions: null,
-    onAction: null,
+    actionHandlers: {},
+    actionHandlerOrder: [],
   });
 }
 
@@ -146,6 +147,50 @@ describe("useChatStore", () => {
     it("initializes with no error", () => {
       expect(useChatStore.getState().error).toBeNull();
       expect(useChatStore.getState().errorCategory).toBeNull();
+    });
+  });
+
+  describe("action handler lifecycle", () => {
+    it("registers and unregisters handlers", () => {
+      const handlerA = vi.fn();
+      const handlerB = vi.fn();
+      const action = { action: "data_updated" as const, value: "notes" };
+
+      const unregisterA = useChatStore.getState().registerOnAction(handlerA);
+      const unregisterB = useChatStore.getState().registerOnAction(handlerB);
+      useChatStore.getState().dispatchAction(action);
+
+      expect(handlerA).toHaveBeenCalledWith(action);
+      expect(handlerB).toHaveBeenCalledWith(action);
+
+      unregisterA();
+      unregisterB();
+      useChatStore.getState().dispatchAction(action);
+
+      expect(handlerA).toHaveBeenCalledTimes(1);
+      expect(handlerB).toHaveBeenCalledTimes(1);
+      expect(useChatStore.getState().actionHandlerOrder).toHaveLength(0);
+    });
+
+    it("runs fallback handler only when no primary handlers are registered", () => {
+      const fallback = vi.fn();
+      const primary = vi.fn();
+      const action = { action: "focus_topic" as const, value: "node-1" };
+
+      const unregisterFallback = useChatStore.getState().registerFallbackOnAction(fallback);
+      useChatStore.getState().dispatchAction(action);
+      expect(fallback).toHaveBeenCalledTimes(1);
+
+      const unregisterPrimary = useChatStore.getState().registerOnAction(primary);
+      useChatStore.getState().dispatchAction(action);
+      expect(primary).toHaveBeenCalledTimes(1);
+      expect(fallback).toHaveBeenCalledTimes(1);
+
+      unregisterPrimary();
+      useChatStore.getState().dispatchAction(action);
+      expect(fallback).toHaveBeenCalledTimes(2);
+
+      unregisterFallback();
     });
   });
 });

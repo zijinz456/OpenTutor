@@ -112,6 +112,36 @@ function buildRequestHeaders(
   return buildAuthHeaders(merged);
 }
 
+export interface SecureRequestOptions extends Omit<RequestInit, "headers"> {
+  headers?: HeadersInit;
+  includeJsonContentType?: boolean;
+}
+
+export function buildSecureHeaders(
+  method: string,
+  headers?: HeadersInit,
+  includeJsonContentType: boolean = true,
+): Headers {
+  return buildRequestHeaders(method.toUpperCase(), headers, includeJsonContentType);
+}
+
+export function buildSecureRequestInit(options?: SecureRequestOptions): RequestInit {
+  const {
+    method = "GET",
+    headers,
+    includeJsonContentType = true,
+    credentials = "include",
+    ...rest
+  } = options ?? {};
+  const normalizedMethod = method.toUpperCase();
+  return {
+    ...rest,
+    method: normalizedMethod,
+    credentials,
+    headers: buildSecureHeaders(normalizedMethod, headers, includeJsonContentType),
+  };
+}
+
 function parseFilenameFromDisposition(contentDisposition: string | null): string | null {
   if (!contentDisposition) return null;
   const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
@@ -127,18 +157,17 @@ function parseFilenameFromDisposition(contentDisposition: string | null): string
 }
 
 export async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const { headers, ...restOptions } = options ?? {};
-  const method = (restOptions.method || "GET").toUpperCase();
-  const mergedHeaders = buildRequestHeaders(method, headers, true);
+  const fetchOptions = buildSecureRequestInit({
+    ...(options ?? {}),
+    includeJsonContentType: true,
+  });
 
   let lastError: Error | undefined;
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
       const res = await fetch(`${API_BASE}${path}`, {
-        ...restOptions,
-        credentials: "include",
-        headers: mergedHeaders,
+        ...fetchOptions,
       });
 
       if (!res.ok) {
@@ -184,18 +213,17 @@ export interface BinaryResponse {
 }
 
 export async function requestBlob(path: string, options?: RequestInit): Promise<BinaryResponse> {
-  const { headers, ...restOptions } = options ?? {};
-  const method = (restOptions.method || "GET").toUpperCase();
-  const mergedHeaders = buildRequestHeaders(method, headers, false);
+  const fetchOptions = buildSecureRequestInit({
+    ...(options ?? {}),
+    includeJsonContentType: false,
+  });
 
   let lastError: Error | undefined;
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
       const res = await fetch(`${API_BASE}${path}`, {
-        ...restOptions,
-        credentials: "include",
-        headers: mergedHeaders,
+        ...fetchOptions,
       });
 
       if (!res.ok) {

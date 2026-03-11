@@ -29,6 +29,19 @@ else:
     _engine_kwargs["pool_pre_ping"] = True
 
 engine = create_async_engine(settings.database_url, **_engine_kwargs)
+
+# Enable WAL mode and performance pragmas for SQLite
+if _is_sqlite:
+    @event.listens_for(engine.sync_engine, "connect")
+    def _set_sqlite_pragma(dbapi_conn, connection_record):
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.execute("PRAGMA busy_timeout=5000")
+        cursor.execute("PRAGMA cache_size=-64000")  # 64MB
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 # Slow query logging (>500ms) via sync engine events

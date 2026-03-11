@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.1-alpha] - 2026-03-12
+
+### Fixed
+- Clarify protocol now uses JSON instead of string interpolation to prevent parsing errors with special characters
+- Silent exception swallowing in memory pipeline (`except Exception: pass`) replaced with specific exception types and debug logging
+- Narrowed broad `except Exception` catches in quiz_generation, memory pipeline, and onboarding persistence
+- Fixed broken `test_lector.py` import after `lector_analytics` module removal (graceful skip)
+
+### Improved
+- SQLite WAL mode enabled with performance pragmas (busy_timeout, cache_size, synchronous=NORMAL) for better concurrent read/write performance
+- CSP `connect-src` directive now environment-aware — `localhost` only allowed in development
+- Web Dockerfile upgraded to multi-stage build (builder + runtime) for smaller production images
+- Evaluation router tagged as `internal` in OpenAPI docs
+- Added `storage.ts` utility for SSR-safe localStorage access
+
+### Added
+- Clarify message parsing on backend (orchestrator) — supports both JSON and legacy `[CLARIFY:key:value]` formats, populates `ctx.clarify_inputs`
+- 30 new backend tests: JWT auth (7), circuit breaker (9), clarify parser (8), SQLite WAL (1), plus 5 existing test fixes
+- Backend test count: 961 passing (up from ~800)
+
 ## [0.1.0-alpha] - 2026-03-08
 
 ### Added

@@ -115,7 +115,7 @@ export function FlashcardView({
     return () => {
       cancelled = true;
     };
-  }, [courseId, refreshKey, retryCount, loadFailedLabel]);
+  }, [courseId, refreshKey, retryCount, loadFailedLabel]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleGenerate = useCallback(async () => {
     setLoading(true);

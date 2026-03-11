@@ -62,6 +62,44 @@ async def record_events(
     return {"recorded": recorded}
 
 
+class InterventionFeedback(BaseModel):
+    intervention_id: str
+    feedback: str  # "helpful" | "not_helpful"
+
+
+@router.post("/intervention-feedback", summary="Record user feedback on an intervention")
+async def record_intervention_feedback(
+    body: InterventionFeedback,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Accept user feedback (thumbs up/down) on a block intervention."""
+    from sqlalchemy import select
+    from models.intervention_outcome import InterventionOutcome
+
+    if body.feedback not in ("helpful", "not_helpful"):
+        return {"error": "feedback must be 'helpful' or 'not_helpful'"}
+
+    try:
+        outcome_id = uuid.UUID(body.intervention_id)
+    except ValueError:
+        return {"error": "invalid intervention_id"}
+
+    result = await db.execute(
+        select(InterventionOutcome).where(
+            InterventionOutcome.id == outcome_id,
+            InterventionOutcome.user_id == user.id,
+        )
+    )
+    outcome = result.scalar_one_or_none()
+    if not outcome:
+        return {"error": "intervention not found"}
+
+    outcome.user_feedback = body.feedback
+    await db.commit()
+    return {"ok": True}
+
+
 @router.get("/preferences", summary="Get block preference scores")
 async def get_preferences(
     course_id: uuid.UUID = Query(...),

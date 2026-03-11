@@ -28,6 +28,12 @@ BREVITY_MODERATE_SIGNAL = 0.15      # Signal strength for moderate brevity
 UNUSUAL_HELP_RATE_THRESHOLD = 0.1   # Below this rate = student rarely seeks help
 UNUSUAL_HELP_SIGNAL = 0.2           # Signal strength for unusual help-seeking
 
+# Drift detection constants (Track 2.5)
+DRIFT_EMA_ALPHA = 0.1                # EMA smoothing factor (~last 10 messages)
+DRIFT_RATIO_THRESHOLD = 0.6          # EMA/baseline ratio below this = drift
+DRIFT_SUSTAINED_COUNT = 10           # Consecutive drift messages before flag
+DRIFT_LOAD_BOOST = 0.2               # Extra cognitive load when drift detected
+
 # Flush to DB every N updates to avoid excessive writes
 _FLUSH_INTERVAL = 5
 
@@ -53,14 +59,23 @@ class StudentBaseline:
     _help_count: int = 0
     # Dirty tracking for DB flush
     _updates_since_flush: int = 0
+    # Drift detection — EMA of recent message lengths (Track 2.5)
+    _ema_length: float = 0.0
+    _drift_counter: int = 0  # Consecutive messages where EMA < 60% of baseline
 
     @property
     def is_calibrated(self) -> bool:
         return self.message_count >= CALIBRATION_MIN_MESSAGES
 
+    @property
+    def drift_detected(self) -> bool:
+        """True if recent messages are significantly shorter than baseline (sustained)."""
+        return self._drift_counter >= DRIFT_SUSTAINED_COUNT
+
     def update(self, message: str, is_help_seeking: bool) -> None:
         self.message_count += 1
-        self._total_length += len(message)
+        msg_len = len(message)
+        self._total_length += msg_len
         self._total_words += len(message.split())
         if is_help_seeking:
             self._help_count += 1
@@ -70,6 +85,20 @@ class StudentBaseline:
         self.avg_word_count = self._total_words / self.message_count
         self.help_seeking_rate = self._help_count / self.message_count
         self._updates_since_flush += 1
+
+        # Update EMA for drift detection (alpha=0.1, responds to last ~10 msgs)
+        if self._ema_length == 0.0:
+            self._ema_length = float(msg_len)
+        else:
+            self._ema_length = DRIFT_EMA_ALPHA * msg_len + (1 - DRIFT_EMA_ALPHA) * self._ema_length
+
+        # Track drift: EMA < 60% of overall baseline for sustained count
+        if self.is_calibrated and self.avg_message_length > 0:
+            ratio = self._ema_length / self.avg_message_length
+            if ratio < DRIFT_RATIO_THRESHOLD:
+                self._drift_counter += 1
+            else:
+                self._drift_counter = max(0, self._drift_counter - 1)
 
     @property
     def needs_flush(self) -> bool:
@@ -232,6 +261,10 @@ def compute_relative_load(
         adjustments["unusual_help_seeking"] = UNUSUAL_HELP_SIGNAL
     else:
         adjustments["unusual_help_seeking"] = 0.0
+
+    # Drift detection: sustained shortening of messages
+    if baseline.drift_detected:
+        adjustments["baseline_drift"] = DRIFT_LOAD_BOOST
 
     return {
         "calibrated": True,

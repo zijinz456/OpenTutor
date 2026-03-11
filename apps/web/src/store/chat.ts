@@ -38,6 +38,11 @@ export interface SendMessageOptions {
   interrupt?: boolean;
 }
 
+interface ChatActionHandlerEntry {
+  handler: (action: ChatAction) => void;
+  isFallback: boolean;
+}
+
 interface ChatState {
   activeCourseId: string | null;
   messagesByCourse: Record<string, ChatMessage[]>;
@@ -66,9 +71,12 @@ interface ChatState {
   /** Send a clarification response by clicking an option button. */
   sendClarifyResponse: (courseId: string, key: string, value: string) => void;
 
-  /** Callback for NL actions (layout changes and preference updates). Set by CoursePage. */
-  onAction: ((action: ChatAction) => void) | null;
-  setOnAction: (cb: (action: ChatAction) => void) => void;
+  /** Registered NL action handlers from page-level hooks/components. */
+  actionHandlers: Record<string, ChatActionHandlerEntry>;
+  actionHandlerOrder: string[];
+  registerOnAction: (cb: (action: ChatAction) => void) => () => void;
+  registerFallbackOnAction: (cb: (action: ChatAction) => void) => () => void;
+  dispatchAction: (action: ChatAction) => void;
   setCourseContext: (courseId: string) => void;
   loadSessions: (courseId: string, options?: { restoreLatest?: boolean }) => Promise<void>;
   loadSessionMessages: (courseId: string, sessionId: string) => Promise<void>;
@@ -80,6 +88,7 @@ interface ChatState {
 
 let messageCounter = 0;
 const sessionPrefix = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+let actionHandlerCounter = 0;
 
 /** Compute derived `messages`/`activePlan` from per-course maps. */
 function deriveActive(
@@ -108,9 +117,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
   toolStatus: null,
   clarifyOptions: null,
   sendClarifyResponse: (courseId, key, value) => {
-    get().sendMessage(courseId, `[CLARIFY:${key}:${value}]`);
+    get().sendMessage(courseId, JSON.stringify({ type: "clarify", key, value }));
   },
-  onAction: null,
+  actionHandlers: {},
+  actionHandlerOrder: [],
   _abortController: null,
   _toolStatusTimer: null,
   abortStream: () => {
@@ -123,7 +133,66 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
-  setOnAction: (cb) => set({ onAction: cb }),
+  registerOnAction: (cb) => {
+    const handlerId = `action-${++actionHandlerCounter}`;
+    set((s) => ({
+      actionHandlers: {
+        ...s.actionHandlers,
+        [handlerId]: { handler: cb, isFallback: false },
+      },
+      actionHandlerOrder: [...s.actionHandlerOrder, handlerId],
+    }));
+    return () =>
+      set((s) => {
+        if (!s.actionHandlers[handlerId]) return {};
+        const nextHandlers = { ...s.actionHandlers };
+        delete nextHandlers[handlerId];
+        return {
+          actionHandlers: nextHandlers,
+          actionHandlerOrder: s.actionHandlerOrder.filter((id) => id !== handlerId),
+        };
+      });
+  },
+  registerFallbackOnAction: (cb) => {
+    const handlerId = `action-${++actionHandlerCounter}`;
+    set((s) => ({
+      actionHandlers: {
+        ...s.actionHandlers,
+        [handlerId]: { handler: cb, isFallback: true },
+      },
+      actionHandlerOrder: [...s.actionHandlerOrder, handlerId],
+    }));
+    return () =>
+      set((s) => {
+        if (!s.actionHandlers[handlerId]) return {};
+        const nextHandlers = { ...s.actionHandlers };
+        delete nextHandlers[handlerId];
+        return {
+          actionHandlers: nextHandlers,
+          actionHandlerOrder: s.actionHandlerOrder.filter((id) => id !== handlerId),
+        };
+      });
+  },
+  dispatchAction: (action) => {
+    const { actionHandlers, actionHandlerOrder } = get();
+    const primaryHandlers: Array<(event: ChatAction) => void> = [];
+    const fallbackHandlers: Array<(event: ChatAction) => void> = [];
+
+    for (const handlerId of actionHandlerOrder) {
+      const entry = actionHandlers[handlerId];
+      if (!entry) continue;
+      if (entry.isFallback) {
+        fallbackHandlers.push(entry.handler);
+      } else {
+        primaryHandlers.push(entry.handler);
+      }
+    }
+
+    const handlersToRun = primaryHandlers.length > 0 ? primaryHandlers : fallbackHandlers;
+    for (const handler of handlersToRun) {
+      handler(action);
+    }
+  },
   setCourseContext: (courseId) =>
     set((s) => {
       const next = { ...s, activeCourseId: courseId };
@@ -304,10 +373,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             return { messagesByCourse: nextMBC, ...deriveActive({ ...s, messagesByCourse: nextMBC }) };
           });
         } else if (event.type === "action") {
-          const { onAction } = get();
-          if (onAction) {
-            onAction(event.action);
-          }
+          get().dispatchAction(event.action);
         } else if (event.type === "plan_step") {
           set((s) => ({
             activePlan: event.task,
@@ -355,11 +421,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
           // Process any actions embedded in the envelope (e.g. from agent write tools).
           // These are not emitted as separate SSE "action" events, so handle them here.
           const doneActions = (event.metadata?.actions ?? []) as ChatAction[];
-          const { onAction: doneOnAction } = get();
-          if (doneOnAction) {
-            for (const a of doneActions) {
-              doneOnAction(a);
-            }
+          for (const action of doneActions) {
+            get().dispatchAction(action);
           }
 
           // NOTE: layout_simplification removed — block_update event now handles this

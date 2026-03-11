@@ -226,10 +226,11 @@ export type {
   NotificationsResponse,
 } from "./notifications";
 
-export { interviewTurn } from "./onboarding";
+export { interviewTurn, getDemoCourse } from "./onboarding";
 export type {
   OnboardingRequest,
   OnboardingResponse,
   OnboardingAction,
   SpaceLayoutResponse,
+  DemoCourseResponse,
 } from "./onboarding";

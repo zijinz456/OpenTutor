@@ -260,8 +260,8 @@ async def extract_quiz(body: ExtractRequest, user: User = Depends(get_current_us
                     "Consider reviewing these concepts first."
                 )
                 response["prerequisite_gaps"] = gaps[:5]
-    except Exception:
-        logger.debug("Prerequisite check skipped (knowledge graph may not exist)")
+    except (ImportError, KeyError, AttributeError, LookupError) as e:
+        logger.debug("Prerequisite check skipped: %s", type(e).__name__)
 
     if warnings:
         response["warnings"] = warnings

@@ -212,6 +212,81 @@ async def compute_cognitive_load(
             signals[adj_name] = adj_value
             load += adj_value * settings.cognitive_load_weight_relative_baseline
 
+    # ── Signal 10: Wrong answer streak ──
+    # 3+ consecutive wrong answers signals frustration/overload
+    try:
+        from models.practice import PracticeResult as _PR
+        recent_results = await db.execute(
+            select(_PR.is_correct)
+            .where(_PR.user_id == user_id)
+            .order_by(_PR.answered_at.desc())
+            .limit(10)
+        )
+        streak = 0
+        for (correct,) in recent_results.fetchall():
+            if not correct:
+                streak += 1
+            else:
+                break
+        wrong_streak_signal = min(streak / 5.0, 1.0)  # 5+ wrong = max
+        signals["wrong_streak"] = wrong_streak_signal
+        load += wrong_streak_signal * settings.cognitive_load_weight_wrong_streak
+    except (_SQLAlchemyError, OSError):
+        signals["wrong_streak"] = 0.0
+
+    # ── Signal 11: Message gap (pause hesitation) ──
+    # Long gaps between messages indicate the student is struggling
+    try:
+        from models.chat_message import ChatMessageLog as _CML
+        last_two = await db.execute(
+            select(_CML.created_at)
+            .where(
+                _CML.user_id == user_id,
+                _CML.role == "user",
+            )
+            .order_by(_CML.created_at.desc())
+            .limit(2)
+        )
+        timestamps = [r[0] for r in last_two.fetchall()]
+        if len(timestamps) == 2:
+            gap_seconds = (timestamps[0] - timestamps[1]).total_seconds()
+            # 30s-300s gap = signal range; <30s or >300s (break) = no signal
+            if 30 < gap_seconds < 300:
+                gap_signal = min((gap_seconds - 30) / 270.0, 1.0)
+            else:
+                gap_signal = 0.0
+        else:
+            gap_signal = 0.0
+        signals["message_gap"] = gap_signal
+        load += gap_signal * settings.cognitive_load_weight_message_gap
+    except (_SQLAlchemyError, OSError):
+        signals["message_gap"] = 0.0
+
+    # ── Signal 12: Repeated errors on same problems ──
+    # Multiple wrong answers on the same problem signals deep confusion
+    try:
+        from models.ingestion import WrongAnswer as _WA2
+        # Count problems with 2+ wrong attempts (still unmastered)
+        from sqlalchemy import literal_column
+        sub = (
+            select(_WA2.problem_id, func.count().label("cnt"))
+            .where(
+                _WA2.user_id == user_id,
+                _WA2.course_id == course_id,
+                _WA2.mastered == False,  # noqa: E712
+            )
+            .group_by(_WA2.problem_id)
+            .having(func.count() >= 2)
+            .subquery()
+        )
+        repeated = await db.execute(select(func.count()).select_from(sub))
+        repeated_count = repeated.scalar() or 0
+        repeated_signal = min(repeated_count / 3.0, 1.0)  # 3+ repeated = max
+        signals["repeated_errors"] = repeated_signal
+        load += repeated_signal * settings.cognitive_load_weight_repeated_errors
+    except (_SQLAlchemyError, OSError, AttributeError):
+        signals["repeated_errors"] = 0.0
+
     # Clamp
     score = max(0.0, min(load, 1.0))
 
@@ -239,6 +314,12 @@ async def compute_cognitive_load(
 
     # Generate teaching guidance
     guidance = _build_guidance(level, score, signals, consecutive)
+
+    # ── Resolve unresolved intervention outcomes (last 10 min) ──
+    try:
+        await _resolve_intervention_outcomes(db, user_id, course_id, score)
+    except Exception:
+        logger.debug("Failed to resolve intervention outcomes", exc_info=True)
 
     return {
         "score": round(score, 3),
@@ -355,3 +436,36 @@ def adjust_review_order_for_load(
         key=lambda c: c.get("fsrs", {}).get("stability", 0),
         reverse=True,
     )
+
+
+async def _resolve_intervention_outcomes(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    course_id: uuid.UUID,
+    current_score: float,
+) -> None:
+    """Resolve unresolved intervention outcomes from the last 10 minutes.
+
+    An intervention is considered effective if the cognitive load score
+    dropped by at least 0.05 since the intervention was recorded.
+    """
+    from datetime import timedelta
+    from models.intervention_outcome import InterventionOutcome
+
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=10)
+    result = await db.execute(
+        select(InterventionOutcome).where(
+            InterventionOutcome.user_id == user_id,
+            InterventionOutcome.course_id == course_id,
+            InterventionOutcome.resolved_at.is_(None),
+            InterventionOutcome.created_at >= cutoff,
+        )
+    )
+    unresolved = result.scalars().all()
+
+    now = datetime.now(timezone.utc)
+    for outcome in unresolved:
+        outcome.cognitive_load_after = current_score
+        outcome.resolved_at = now
+        if outcome.cognitive_load_before is not None:
+            outcome.was_effective = current_score < outcome.cognitive_load_before - 0.05

@@ -176,8 +176,8 @@ async def generate_teaching_state(
             from services.lector import get_review_summary
             review_summary = await get_review_summary(db, user_id, course_id)
             review_urgency = review_summary.get("urgent_count", 0)
-        except Exception:
-            pass
+        except (ImportError, KeyError, TypeError, AttributeError):
+            logger.debug("LECTOR review summary unavailable", exc_info=True)
 
         # Get last session time
         days_since_last = None
@@ -196,8 +196,8 @@ async def generate_teaching_state(
                     last_time = last_time.replace(tzinfo=timezone.utc)
                 delta = datetime.now(timezone.utc) - last_time
                 days_since_last = delta.days
-        except Exception:
-            pass
+        except (ImportError, ValueError, AttributeError):
+            logger.debug("Last session time unavailable", exc_info=True)
 
         # Top strengths
         sorted_nodes = sorted(nodes, key=lambda n: n.get("mastery", 0), reverse=True)

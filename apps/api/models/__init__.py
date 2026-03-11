@@ -23,6 +23,7 @@ from models.knowledge_graph import KnowledgeNode, KnowledgeEdge, ConceptMastery
 from models.notification import Notification
 from models.cognitive_baseline import CognitiveBaseline
 from models.usage_event import UsageEvent
+from models.intervention_outcome import InterventionOutcome
 
 __all__ = [
     "User",
@@ -57,4 +58,5 @@ __all__ = [
     "Notification",
     "CognitiveBaseline",
     "UsageEvent",
+    "InterventionOutcome",
 ]

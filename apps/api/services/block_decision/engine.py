@@ -39,24 +39,29 @@ MAX_OPS_PER_TURN = 2
 class BlockDecisionResult:
     """Container for block decision engine output."""
 
-    __slots__ = ("operations", "cognitive_state", "explanation")
+    __slots__ = ("operations", "cognitive_state", "explanation", "intervention_ids")
 
     def __init__(
         self,
         operations: list[BlockOperation],
         cognitive_state: dict,
         explanation: str,
+        intervention_ids: dict[str, str] | None = None,
     ):
         self.operations = operations
         self.cognitive_state = cognitive_state
         self.explanation = explanation
+        self.intervention_ids = intervention_ids or {}
 
     def to_dict(self) -> dict:
-        return {
+        result = {
             "operations": [asdict(op) for op in self.operations],
             "cognitive_state": self.cognitive_state,
             "explanation": self.explanation,
         }
+        if self.intervention_ids:
+            result["intervention_ids"] = self.intervention_ids
+        return result
 
 
 async def compute_block_decisions(
@@ -194,6 +199,30 @@ async def compute_block_decisions(
     candidates.sort(key=lambda c: c.urgency, reverse=True)
     selected = candidates[:MAX_OPS_PER_TURN]
 
+    # ── Record intervention outcomes for cognitive/affect-based ops ──
+    _TRACKED_SOURCES = {"cognitive_load", "cognitive_recovery", "nlp_affect", "frustration"}
+    cl_score_now = cognitive_load.get("score", 0) if cognitive_load else 0
+    intervention_ids: dict[str, str] = {}  # block_type → intervention_id
+    for op in selected:
+        if op.signal_source in _TRACKED_SOURCES:
+            try:
+                import uuid as _uuid
+                from models.intervention_outcome import InterventionOutcome
+                outcome_id = _uuid.uuid4()
+                db.add(InterventionOutcome(
+                    id=outcome_id,
+                    user_id=user_id,
+                    course_id=course_id,
+                    intervention_type=op.action,
+                    block_type=op.block_type,
+                    signal_source=op.signal_source,
+                    reason=op.reason,
+                    cognitive_load_before=cl_score_now,
+                ))
+                intervention_ids[op.block_type] = str(outcome_id)
+            except Exception:
+                logger.debug("Failed to record intervention outcome", exc_info=True)
+
     # ── Build cognitive state summary ──
     cl_score = cognitive_load.get("score", 0) if cognitive_load else 0
     cl_level = cognitive_load.get("level", "low") if cognitive_load else "low"
@@ -223,4 +252,5 @@ async def compute_block_decisions(
         operations=selected,
         cognitive_state=cognitive_state,
         explanation=explanation,
+        intervention_ids=intervention_ids,
     )

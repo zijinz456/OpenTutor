@@ -14,7 +14,7 @@ interface ClarifyCardProps {
  * Interactive option buttons rendered when an agent requests clarification
  * before executing a task (OpenClaw Inputs pattern).
  *
- * Each button sends a [CLARIFY:key:value] message back to the orchestrator.
+ * Each button sends a JSON clarify message back to the orchestrator.
  */
 export function ClarifyCard({ clarify, courseId }: ClarifyCardProps) {
   const sendClarifyResponse = useChatStore((s) => s.sendClarifyResponse);

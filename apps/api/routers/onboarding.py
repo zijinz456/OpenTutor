@@ -1,25 +1,24 @@
-"""Onboarding interview endpoint — SSE streaming + preference persistence.
+"""Onboarding interview endpoint — JSON + preference persistence.
 
 Lightweight chat for the habit interview — bypasses full orchestrator
 (no RAG, no block decisions, no course context needed).
 
-Streams responses via SSE, extracts LearnerProfile, persists preferences
+Returns JSON responses, extracts LearnerProfile, persists preferences
 and memories when onboarding completes.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sse_starlette.sse import EventSourceResponse
 
 from database import get_db
+from models.course import Course
 from models.preference import UserPreference
 from models.user import User
 from schemas.learner_profile import LearnerProfile
@@ -28,11 +27,15 @@ from services.agent.state import AgentContext, IntentType, TaskPhase
 from services.auth.dependency import get_current_user
 from services.block_decision.profile_mapper import profile_to_layout
 from services.memory.pipeline import encode_memory
+from services.templates.demo_course import DEMO_COURSE_NAME, seed_demo_course
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _onboarding_agent = OnboardingAgent()
+
+# Sentinel course_id for onboarding (no course context yet)
+_NIL_COURSE_ID = uuid.UUID(int=0)
 
 
 class OnboardingRequest(BaseModel):
@@ -51,25 +54,47 @@ class LayoutFromProfileRequest(BaseModel):
     background_level: str = "unknown"
 
 
-@router.post("/interview", summary="Onboarding interview turn (SSE streaming)")
-async def interview_stream(
+@router.get("/demo-course", summary="Get or create the demo course")
+async def get_demo_course(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Return the demo course ID, seeding it first if needed.
+
+    Used by the setup flow's "Try with sample content" fast path.
+    """
+    result = await db.execute(
+        select(Course).where(Course.name == DEMO_COURSE_NAME)
+    )
+    course = result.scalar_one_or_none()
+    if not course:
+        await seed_demo_course(db)
+        await db.commit()
+        result = await db.execute(
+            select(Course).where(Course.name == DEMO_COURSE_NAME)
+        )
+        course = result.scalar_one_or_none()
+    if not course:
+        raise HTTPException(status_code=500, detail="Failed to create demo course")
+    return {"id": str(course.id), "name": course.name}
+
+
+@router.post("/interview", summary="Onboarding interview turn")
+async def interview_turn(
     body: OnboardingRequest,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-):
-    """Stream one turn of the onboarding interview via SSE.
+) -> dict:
+    """Run one turn of the onboarding interview.
 
     The agent asks 2-3 questions about learning habits, then extracts a
     LearnerProfile and recommends a block layout. Typically 2-4 turns.
 
-    SSE events:
-    - ``message``: text chunk from the agent
-    - ``done``: final event with profile/layout data (if onboarding complete)
-    - ``error``: on failure
+    Returns: ``{response, actions, profile, complete}``
     """
     ctx = AgentContext(
         user_id=user.id,
-        course_id=uuid.UUID(int=0),
+        course_id=_NIL_COURSE_ID,
         user_message=body.message,
         conversation_history=body.history[-10:],
         intent=IntentType.ONBOARDING,
@@ -78,67 +103,53 @@ async def interview_stream(
     )
     ctx.metadata["learner_profile"] = body.partial_profile or {}
 
-    async def event_generator():
-        try:
-            async for chunk in _onboarding_agent.stream(ctx, db):
-                yield {
-                    "event": "message",
-                    "data": json.dumps({"content": chunk}),
-                }
+    try:
+        ctx = await _onboarding_agent.execute(ctx, db)
+    except (ValueError, KeyError, ConnectionError, OSError, RuntimeError) as exc:
+        logger.exception("Onboarding interview error: %s", exc)
+        raise HTTPException(status_code=502, detail="Interview agent failed") from exc
 
-            # After streaming completes, check if onboarding is done
-            if ctx.metadata.get("onboarding_complete"):
-                profile = LearnerProfile(**ctx.metadata["learner_profile"])
-                layout = ctx.metadata.get("recommended_layout") or profile_to_layout(profile)
+    complete = bool(ctx.metadata.get("onboarding_complete"))
+    actions: list[dict] = list(ctx.actions)
 
-                # ── Persist preferences ──
-                await _persist_preferences(db, user, profile)
+    if complete:
+        profile = LearnerProfile(**ctx.metadata["learner_profile"])
+        layout = ctx.metadata.get("recommended_layout") or profile_to_layout(profile)
 
-                # ── Persist memory ──
-                if profile.raw_description:
-                    await encode_memory(
-                        db,
-                        user.id,
-                        None,
-                        user_message=profile.raw_description,
-                        assistant_response=(
-                            f"Learning profile: {profile.behavior.learning_style} learner, "
-                            f"{profile.behavior.study_pattern} study pattern, "
-                            f"{profile.behavior.session_duration} sessions"
-                        ),
-                    )
-                await db.commit()
+        # Persist preferences + memory
+        await _persist_preferences(db, user, profile)
+        if profile.raw_description:
+            await encode_memory(
+                db,
+                user.id,
+                None,
+                user_message=profile.raw_description,
+                assistant_response=(
+                    f"Learning profile: {profile.behavior.learning_style} learner, "
+                    f"{profile.behavior.study_pattern} study pattern, "
+                    f"{profile.behavior.session_duration} sessions"
+                ),
+            )
+        await db.commit()
 
-                yield {
-                    "event": "done",
-                    "data": json.dumps({
-                        "onboarding_complete": True,
-                        "layout": layout,
-                        "profile_summary": {
-                            "style": profile.behavior.learning_style,
-                            "pattern": profile.behavior.study_pattern,
-                            "duration": profile.behavior.session_duration,
-                        },
-                    }),
-                }
-            else:
-                # Interview still in progress — send done with partial state
-                yield {
-                    "event": "done",
-                    "data": json.dumps({
-                        "onboarding_complete": False,
-                        "partial_profile": ctx.metadata.get("learner_profile"),
-                    }),
-                }
+        # Ensure layout is in actions for frontend
+        if not any(a.get("type") == "recommend_layout" for a in actions):
+            actions.append({
+                "type": "recommend_layout",
+                "layout": layout,
+                "profile_summary": {
+                    "style": profile.behavior.learning_style,
+                    "pattern": profile.behavior.study_pattern,
+                    "duration": profile.behavior.session_duration,
+                },
+            })
 
-        except (ValueError, KeyError, ConnectionError, OSError, RuntimeError) as exc:
-            logger.exception("Onboarding interview error: %s", exc)
-            yield {
-                "event": "error",
-                "data": json.dumps({"error": "An error occurred during the interview. Please try again."}),
-            }
-
-    return EventSourceResponse(event_generator())
+    return {
+        "response": ctx.response,
+        "actions": actions,
+        "profile": ctx.metadata.get("learner_profile"),
+        "complete": complete,
+    }
 
 
 @router.post("/layout-from-profile", summary="Compute layout from learner profile")

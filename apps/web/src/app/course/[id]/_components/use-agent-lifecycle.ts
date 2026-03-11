@@ -8,6 +8,19 @@ import type { ChatAction } from "@/lib/api";
 import { updateUnlockContext } from "@/lib/block-system/feature-unlock";
 import { useT, useTF } from "@/lib/i18n-context";
 
+const VALID_CHAT_ACTION_TYPES: ChatAction["action"][] = [
+  "data_updated",
+  "focus_topic",
+  "add_block",
+  "remove_block",
+  "reorder_blocks",
+  "resize_block",
+  "apply_template",
+  "agent_insight",
+  "set_learning_mode",
+  "suggest_mode",
+];
+
 const MODE_EVAL_TTL_MS = 10 * 60 * 1000;
 const MODE_EVAL_RETRY_MS = 5_000;
 
@@ -257,7 +270,7 @@ export function useGreeting(
     import("@/lib/api").then(({ getChatGreeting }) => {
       if (cancelled) return;
       getChatGreeting(courseId)
-        .then((result: { greeting: string; course_name: string; suggested_actions?: ChatAction[] }) => {
+        .then((result) => {
           if (cancelled) return;
           const store = useChatStore.getState();
           const msgs = store.messagesByCourse[courseId] || [];
@@ -275,7 +288,13 @@ export function useGreeting(
           }
           if (result.suggested_actions?.length) {
             for (const action of result.suggested_actions) {
-              handleAction(action);
+              if (VALID_CHAT_ACTION_TYPES.includes(action.action as ChatAction["action"])) {
+                handleAction({
+                  action: action.action as ChatAction["action"],
+                  value: action.value,
+                  extra: action.extra,
+                });
+              }
             }
           }
         })

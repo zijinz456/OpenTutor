@@ -45,7 +45,7 @@ export function UploadDialog({
         setProgress(0);
       }
     },
-    [courseId, fetchContentTree, onOpenChange],
+    [courseId, fetchContentTree, onOpenChange, t],
   );
 
   const handleFileUpload = useCallback(
@@ -75,7 +75,7 @@ export function UploadDialog({
     } finally {
       setUploading(false);
     }
-  }, [courseId, fetchContentTree, onOpenChange, url]);
+  }, [courseId, fetchContentTree, onOpenChange, t, url]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

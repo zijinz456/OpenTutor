@@ -270,14 +270,43 @@ async def get_review_session(
     db: AsyncSession = Depends(get_db),
 ):
     """Get LECTOR smart review session — semantically clustered concepts to review."""
-    from services.lector import get_smart_review_session
-    from dataclasses import asdict
+    from services.lector import get_smart_review_session, ReviewItem
 
     items = await get_smart_review_session(db, user.id, course_id, max_items=max_items)
     return {
         "course_id": str(course_id),
-        "items": [asdict(i) for i in items],
+        "items": [_format_review_item(i) for i in items],
         "count": len(items),
+    }
+
+
+def _priority_to_urgency(priority: float) -> str:
+    if priority > 0.7:
+        return "overdue"
+    if priority > 0.4:
+        return "urgent"
+    if priority > 0.2:
+        return "warning"
+    return "scheduled"
+
+
+def _format_review_item(item: "ReviewItem") -> dict:
+    """Map internal ReviewItem fields to the frontend-expected schema."""
+    return {
+        "concept_id": item.concept_id,
+        "concept_name": item.concept_name,
+        "concept_label": item.concept_name,
+        "mastery": item.mastery,
+        "priority": item.priority,
+        "urgency": _priority_to_urgency(item.priority),
+        "reason": item.reason,
+        "review_type": item.review_type,
+        "related_concepts": item.related_concepts,
+        "stability_days": item.stability_days,
+        "retrievability": item.retrievability,
+        "last_reviewed": item.last_practiced_at,
+        "content_node_id": item.content_node_id,
+        "cluster": item.related_concepts[0] if item.related_concepts else None,
     }
 
 
@@ -293,23 +322,20 @@ async def submit_review_rating(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Submit a rating for a reviewed concept (again/hard/good/easy)."""
+    """Submit a rating for a reviewed concept (again/hard/good/easy).
+
+    Uses FSRS review_card() for scheduling (consistent with LOOM mastery updates).
+    """
     from models.knowledge_graph import ConceptMastery
+    from services.spaced_repetition.fsrs import FSRSCard, review_card as fsrs_review
 
-    concept_id = str(body.concept_id)
-    rating = body.rating
+    RATING_MAP = {"again": 1, "hard": 2, "good": 3, "easy": 4}
+    if body.rating not in RATING_MAP:
+        raise HTTPException(status_code=400, detail=f"Invalid rating '{body.rating}'. Must be one of: again, hard, good, easy")
 
-    RATING_FACTORS = {
-        "again": {"mastery_delta": -0.15, "stability_mult": 0.3, "correct": False},
-        "hard":  {"mastery_delta": -0.05, "stability_mult": 0.7, "correct": True},
-        "good":  {"mastery_delta": 0.05,  "stability_mult": 1.5, "correct": True},
-        "easy":  {"mastery_delta": 0.10,  "stability_mult": 2.5, "correct": True},
-    }
-    if rating not in RATING_FACTORS:
-        raise HTTPException(status_code=400, detail=f"Invalid rating '{rating}'. Must be one of: again, hard, good, easy")
-    factors = RATING_FACTORS[rating]
-
+    fsrs_rating = RATING_MAP[body.rating]
     concept_uuid = body.concept_id
+    now = datetime.now(timezone.utc)
 
     result = await db.execute(
         select(ConceptMastery).where(
@@ -319,37 +345,48 @@ async def submit_review_rating(
     )
     mastery = result.scalar_one_or_none()
 
-    now = datetime.now(timezone.utc)
-
     if not mastery:
         mastery = ConceptMastery(
             user_id=user.id,
             knowledge_node_id=concept_uuid,
-            mastery_score=max(0.0, min(1.0, 0.3 + factors["mastery_delta"])),
-            practice_count=1,
-            correct_count=1 if factors["correct"] else 0,
-            wrong_count=0 if factors["correct"] else 1,
-            last_practiced_at=now,
-            stability_days=max(0.5, 1.0 * factors["stability_mult"]),
+            mastery_score=0.3,
+            practice_count=0,
+            correct_count=0,
+            wrong_count=0,
+            stability_days=1.0,
         )
         db.add(mastery)
-    else:
-        mastery.mastery_score = max(0.0, min(1.0, mastery.mastery_score + factors["mastery_delta"]))
-        mastery.practice_count += 1
-        if factors["correct"]:
-            mastery.correct_count += 1
-        else:
-            mastery.wrong_count += 1
-        mastery.stability_days = max(0.5, mastery.stability_days * factors["stability_mult"])
-        mastery.last_practiced_at = now
-        from datetime import timedelta
-        mastery.next_review_at = now + timedelta(days=mastery.stability_days)
+
+    # Build FSRSCard from current mastery state
+    fsrs_card = FSRSCard(
+        difficulty=5.0,
+        stability=mastery.stability_days if mastery.stability_days > 0 else 1.0,
+        reps=mastery.practice_count,
+        lapses=mastery.wrong_count,
+        last_review=mastery.last_practiced_at,
+        state="review" if mastery.practice_count > 0 else "new",
+    )
+    updated_card, _log = fsrs_review(fsrs_card, fsrs_rating, now)
+
+    # Update mastery with FSRS results
+    mastery.stability_days = updated_card.stability
+    mastery.next_review_at = updated_card.due
+    mastery.last_practiced_at = now
+    mastery.practice_count += 1
+
+    if fsrs_rating >= 2:  # hard, good, easy = correct
+        mastery.correct_count += 1
+        gain = 0.1 * (1.0 - mastery.mastery_score) * (fsrs_rating - 1) / 3
+        mastery.mastery_score = min(1.0, mastery.mastery_score + gain)
+    else:  # again = incorrect
+        mastery.wrong_count += 1
+        mastery.mastery_score = max(0.0, mastery.mastery_score - 0.1)
 
     await db.commit()
 
     return {
-        "concept_id": concept_id,
-        "rating": rating,
+        "concept_id": str(concept_uuid),
+        "rating": body.rating,
         "new_mastery": round(mastery.mastery_score, 3),
         "new_stability_days": round(mastery.stability_days, 1),
         "next_review_at": mastery.next_review_at.isoformat() if mastery.next_review_at else None,

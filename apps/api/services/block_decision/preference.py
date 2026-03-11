@@ -1,7 +1,8 @@
 """Block preference computation from user interaction events.
 
 Uses PreferenceSignal model to store block engagement events and computes
-weighted preference scores with exponential decay.
+weighted preference scores with exponential decay. Also incorporates
+onboarding interview preferences (UserPreference) as initial score boosts.
 """
 
 from __future__ import annotations
@@ -64,6 +65,49 @@ async def record_block_event(
         logger.debug("Failed to record block event: %s", e)
 
 
+# Onboarding preference dimension -> block types they boost
+_ONBOARDING_BLOCK_MAP: dict[str, list[str]] = {
+    "prefers_note_taking":      ["notes"],
+    "prefers_visual_aids":      ["knowledge_graph"],
+    "prefers_active_recall":    ["quiz", "flashcards"],
+    "prefers_mistake_analysis": ["wrong_answers"],
+    "prefers_spaced_review":    ["review", "forecast"],
+    "prefers_planning":         ["plan"],
+}
+
+# Score boost for onboarding-sourced preferences (applied once as a baseline)
+ONBOARDING_BOOST = 3.0
+
+
+async def _load_onboarding_boosts(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+) -> dict[str, float]:
+    """Load onboarding interview preferences and convert to block score boosts."""
+    try:
+        from models.preference import UserPreference
+
+        result = await db.execute(
+            select(UserPreference).where(
+                UserPreference.user_id == user_id,
+                UserPreference.source == "onboarding_interview",
+            )
+        )
+        prefs = result.scalars().all()
+    except Exception as e:
+        logger.debug("Failed to load onboarding preferences: %s", e)
+        return {}
+
+    boosts: dict[str, float] = {}
+    for pref in prefs:
+        block_types = _ONBOARDING_BLOCK_MAP.get(pref.dimension)
+        if block_types and pref.value == "true":
+            confidence = getattr(pref, "confidence", 0.7) or 0.7
+            for bt in block_types:
+                boosts[bt] = boosts.get(bt, 0.0) + ONBOARDING_BOOST * confidence
+    return boosts
+
+
 async def compute_block_preferences(
     db: AsyncSession,
     user_id: uuid.UUID,
@@ -71,8 +115,14 @@ async def compute_block_preferences(
 ) -> dict[str, dict]:
     """Compute per-block-type preference scores with exponential time decay.
 
+    Incorporates onboarding interview preferences as initial score boosts,
+    then layers behavioral signal scores on top.
+
     Returns a dict mapping block_type -> {"score": float, "dismiss_count": int}.
     """
+    # Start with onboarding boosts (global, not course-specific)
+    onboarding_boosts = await _load_onboarding_boosts(db, user_id)
+
     try:
         from models.preference import PreferenceSignal
 
@@ -89,10 +139,10 @@ async def compute_block_preferences(
         signals = result.scalars().all()
     except Exception as e:
         logger.debug("Failed to query block preferences: %s", e)
-        return {}
+        signals = []
 
     now = datetime.now(timezone.utc)
-    scores: dict[str, float] = {}
+    scores: dict[str, float] = dict(onboarding_boosts)
     dismiss_counts: dict[str, int] = {}
 
     for sig in signals:

@@ -143,7 +143,8 @@ export function useChatActions(courseId: string) {
   }, [courseId, router, t, tf]);
 
   useEffect(() => {
-    useChatStore.getState().setOnAction(handleAction);
+    const unregister = useChatStore.getState().registerOnAction(handleAction);
+    return unregister;
   }, [handleAction]);
 
   return handleAction;

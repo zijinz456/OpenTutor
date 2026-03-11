@@ -1,58 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Send, Loader2, Sparkles, ChevronRight } from "lucide-react";
 import {
-  BookOpen,
-  Brain,
-  BarChart3,
-  ListChecks,
-  HelpCircle,
-  Layers,
-  AlertTriangle,
-  Lightbulb,
-  FileText,
-  ArrowLeft,
-  ArrowRight,
-  Loader2,
+  FileText, HelpCircle, Layers, BarChart3, Brain, BookOpen,
+  ListChecks, AlertTriangle, Lightbulb,
 } from "lucide-react";
-import { API_BASE } from "@/lib/api/client";
-import { buildAuthHeaders } from "@/lib/auth";
-
-// ── Types ──
-
-export interface RecommendedLayout {
-  blocks: Array<{
-    type: string;
-    size: string;
-    config: Record<string, unknown>;
-    position: number;
-    visible: boolean;
-    source: string;
-  }>;
-  columns: number;
-  mode: string;
-  templateId: string | null;
-}
-
-export interface ProfileSummary {
-  style: string;
-  pattern: string;
-  duration: string;
-}
-
-interface HabitInterviewStepProps {
-  onComplete: (layout: RecommendedLayout) => void;
-  onSkip: () => void;
-  onBack: () => void;
-  t: (key: string) => string;
-}
-
-interface ChatMessage {
-  role: "user" | "assistant";
-  content: string;
-}
-
-// ── Block icon mapping (matches template-step.tsx) ──
+import { interviewTurn } from "@/lib/api/onboarding";
+import type { SpaceLayoutResponse, OnboardingAction } from "@/lib/api/onboarding";
 
 const BLOCK_ICONS: Record<string, typeof BookOpen> = {
   notes: FileText,
@@ -68,370 +23,241 @@ const BLOCK_ICONS: Record<string, typeof BookOpen> = {
   agent_insight: Lightbulb,
 };
 
-// ── SSE streaming helper ──
+const BLOCK_NAMES: Record<string, string> = {
+  notes: "笔记",
+  quiz: "测验",
+  flashcards: "闪卡",
+  progress: "进度",
+  knowledge_graph: "知识图谱",
+  review: "复习",
+  chapter_list: "章节",
+  plan: "计划",
+  wrong_answers: "错题本",
+  forecast: "预测",
+  agent_insight: "AI 洞察",
+};
 
-interface OnboardingStreamOptions {
-  message: string;
-  history: Array<{ role: string; content: string }>;
-  partialProfile?: Record<string, unknown> | null;
-  signal?: AbortSignal;
+interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
 }
 
-interface OnboardingEvent {
-  event: string;
-  data: Record<string, unknown>;
+interface HabitInterviewStepProps {
+  onComplete: (layout: SpaceLayoutResponse, profile: Record<string, unknown>) => void;
+  onSkip: () => void;
+  onBack: () => void;
+  t: (key: string) => string;
 }
 
-async function* streamOnboardingInterview(
-  opts: OnboardingStreamOptions,
-): AsyncGenerator<OnboardingEvent, void, unknown> {
-  const res = await fetch(`${API_BASE}/onboarding/interview`, {
-    method: "POST",
-    headers: buildAuthHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify({
-      message: opts.message,
-      history: opts.history,
-      partial_profile: opts.partialProfile ?? null,
-    }),
-    signal: opts.signal,
-  });
-
-  if (!res.ok || !res.body) {
-    throw new Error("Interview stream failed");
-  }
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-
-  while (true) {
-    const { done, value } = await reader.read();
-    buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
-
-    let idx = buffer.indexOf("\n\n");
-    while (idx !== -1) {
-      const block = buffer.slice(0, idx);
-      buffer = buffer.slice(idx + 2);
-
-      let eventName = "message";
-      const dataLines: string[] = [];
-      for (const line of block.split("\n")) {
-        if (line.startsWith("event: ")) eventName = line.slice(7).trim();
-        else if (line.startsWith("data: ")) dataLines.push(line.slice(6));
-      }
-
-      if (dataLines.length) {
-        try {
-          const data = JSON.parse(dataLines.join("\n")) as Record<string, unknown>;
-          yield { event: eventName, data };
-        } catch {
-          // skip malformed JSON
-        }
-      }
-
-      idx = buffer.indexOf("\n\n");
-    }
-
-    if (done) break;
-  }
-}
-
-// ── Component ──
-
-export function HabitInterviewStep({
-  onComplete,
-  onSkip,
-  onBack,
-  t,
-}: HabitInterviewStepProps) {
+export function HabitInterviewStep({ onComplete, onSkip, onBack, t }: HabitInterviewStepProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [input, setInput] = useState("");
-  const [isStreaming, setIsStreaming] = useState(false);
-  const [partialProfile, setPartialProfile] = useState<Record<string, unknown> | null>(null);
-  const [recommendedLayout, setRecommendedLayout] = useState<RecommendedLayout | null>(null);
-  const [profileSummary, setProfileSummary] = useState<ProfileSummary | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const abortRef = useRef<AbortController | null>(null);
-  const startedRef = useRef(false);
+  const [partialProfile, setPartialProfile] = useState<Record<string, unknown>>({});
+  const [recommendedLayout, setRecommendedLayout] = useState<SpaceLayoutResponse | null>(null);
+  const [completeProfile, setCompleteProfile] = useState<Record<string, unknown> | null>(null);
+  const [isTyping, setIsTyping] = useState(false);
+  const [inputValue, setInputValue] = useState("");
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const initRef = useRef(false);
 
-  // Auto-scroll to bottom when messages change
+  // Auto-scroll to bottom
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isStreaming]);
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+  }, [messages, isTyping]);
 
-  // Start the interview on mount by sending an empty message
+  // Send opening message on mount
   useEffect(() => {
-    if (startedRef.current) return;
-    startedRef.current = true;
-    void sendMessage("");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (initRef.current) return;
+    initRef.current = true;
+    void doSend("");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const sendMessage = useCallback(
-    async (text: string) => {
-      // Add user message to chat (skip for initial empty message)
-      const updatedMessages: ChatMessage[] =
-        text.trim()
-          ? [...messages, { role: "user" as const, content: text }]
-          : [...messages];
+  const doSend = useCallback(async (text: string) => {
+    const newMessages: ChatMessage[] = text
+      ? [...messages, { role: "user", content: text }]
+      : [...messages];
 
-      if (text.trim()) {
-        setMessages(updatedMessages);
+    if (text) setMessages(newMessages);
+    setIsTyping(true);
+    setInputValue("");
+
+    try {
+      const history = newMessages.map((m) => ({ role: m.role, content: m.content }));
+      const res = await interviewTurn({
+        message: text,
+        history,
+        partial_profile: partialProfile,
+      });
+
+      if (res.profile) setPartialProfile(res.profile);
+
+      setMessages([...newMessages, { role: "assistant", content: res.response }]);
+
+      const layoutAction = res.actions?.find((a: OnboardingAction) => a.type === "recommend_layout");
+      if (layoutAction?.layout) {
+        setRecommendedLayout(layoutAction.layout);
+        setCompleteProfile(res.profile);
       }
-      setInput("");
-      setIsStreaming(true);
+    } catch {
+      setMessages([
+        ...newMessages,
+        { role: "assistant", content: "抱歉，出了点问题。你可以跳过这一步，手动选择模板。" },
+      ]);
+    } finally {
+      setIsTyping(false);
+    }
+  }, [messages, partialProfile]);
 
-      const controller = new AbortController();
-      abortRef.current = controller;
+  const handleSubmit = useCallback((e: React.FormEvent) => {
+    e.preventDefault();
+    const text = inputValue.trim();
+    if (!text || isTyping) return;
+    void doSend(text);
+  }, [inputValue, isTyping, doSend]);
 
-      let assistantContent = "";
-
-      try {
-        const gen = streamOnboardingInterview({
-          message: text,
-          history: updatedMessages.map((m) => ({ role: m.role, content: m.content })),
-          partialProfile,
-          signal: controller.signal,
-        });
-
-        // Add an empty assistant message to stream into
-        const withAssistant: ChatMessage[] = [
-          ...updatedMessages,
-          { role: "assistant", content: "" },
-        ];
-        setMessages(withAssistant);
-
-        for await (const evt of gen) {
-          if (evt.event === "message" && typeof evt.data.content === "string") {
-            assistantContent += evt.data.content;
-            setMessages([
-              ...updatedMessages,
-              { role: "assistant", content: assistantContent },
-            ]);
-          } else if (evt.event === "replace" && typeof evt.data.content === "string") {
-            assistantContent = evt.data.content;
-            setMessages([
-              ...updatedMessages,
-              { role: "assistant", content: assistantContent },
-            ]);
-          } else if (evt.event === "profile_update" && evt.data.partial_profile) {
-            setPartialProfile(evt.data.partial_profile as Record<string, unknown>);
-          } else if (evt.event === "done") {
-            if (evt.data.partial_profile) {
-              setPartialProfile(evt.data.partial_profile as Record<string, unknown>);
-            }
-            if (evt.data.onboarding_complete && evt.data.recommended_layout) {
-              const layout = evt.data.recommended_layout as RecommendedLayout;
-              setRecommendedLayout(layout);
-              if (evt.data.profile_summary) {
-                setProfileSummary(evt.data.profile_summary as ProfileSummary);
-              }
-            }
-          }
-        }
-      } catch (err) {
-        if ((err as Error).name !== "AbortError") {
-          // Show error as assistant message
-          setMessages([
-            ...updatedMessages,
-            {
-              role: "assistant",
-              content: assistantContent || "Something went wrong. Please try again.",
-            },
-          ]);
-        }
-      } finally {
-        setIsStreaming(false);
-        abortRef.current = null;
-      }
-    },
-    [messages, partialProfile],
-  );
-
-  const handleSubmit = useCallback(
-    (e: React.FormEvent) => {
-      e.preventDefault();
-      if (!input.trim() || isStreaming) return;
-      void sendMessage(input.trim());
-    },
-    [input, isStreaming, sendMessage],
-  );
-
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
-        if (!input.trim() || isStreaming) return;
-        void sendMessage(input.trim());
-      }
-    },
-    [input, isStreaming, sendMessage],
-  );
-
-  // Clean up on unmount
-  useEffect(() => {
-    return () => {
-      abortRef.current?.abort();
-    };
-  }, []);
+  const handleAccept = useCallback(() => {
+    if (recommendedLayout && completeProfile) {
+      onComplete(recommendedLayout, completeProfile);
+    }
+  }, [recommendedLayout, completeProfile, onComplete]);
 
   return (
-    <div className="flex flex-col gap-4 animate-in fade-in slide-in-from-bottom-3 duration-300">
+    <div className="flex flex-col" style={{ minHeight: 420 }}>
       {/* Header */}
-      <div>
+      <div className="mb-4">
         <h2 className="text-lg font-semibold text-foreground">
-          {t("setup.interviewTitle")}
+          {t("setup.interviewTitle") !== "setup.interviewTitle"
+            ? t("setup.interviewTitle")
+            : "告诉我你的学习方式"}
         </h2>
         <p className="text-sm text-muted-foreground mt-1">
-          {t("setup.interviewDescription")}
+          {t("setup.interviewDescription") !== "setup.interviewDescription"
+            ? t("setup.interviewDescription")
+            : "回答几个简单问题，我会为你推荐最适合的学习空间"}
         </p>
       </div>
 
-      {/* Chat area */}
-      <div className="flex flex-col gap-3 min-h-[240px] max-h-[400px] overflow-y-auto rounded-xl border border-border bg-card p-4">
-        {messages.map((msg, i) =>
-          msg.role === "assistant" ? (
-            <div key={i} className="flex justify-start">
-              <div className="bg-muted/50 rounded-2xl rounded-tl-sm p-3 max-w-[85%] text-sm text-foreground whitespace-pre-wrap">
-                {msg.content || (
-                  <span className="text-muted-foreground italic">
-                    {t("setup.interviewSending")}
-                  </span>
-                )}
-              </div>
+      {/* Messages */}
+      <div ref={scrollRef} className="flex-1 overflow-y-auto space-y-3 mb-4 max-h-64 pr-1">
+        {messages.map((msg, i) => (
+          <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+            <div
+              className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm whitespace-pre-wrap ${
+                msg.role === "user"
+                  ? "bg-brand text-brand-foreground rounded-br-md"
+                  : "bg-muted text-foreground rounded-bl-md"
+              }`}
+            >
+              {msg.content}
             </div>
-          ) : (
-            <div key={i} className="flex justify-end">
-              <div className="bg-brand/10 rounded-2xl rounded-tr-sm p-3 max-w-[85%] text-sm text-foreground whitespace-pre-wrap ml-auto">
-                {msg.content}
-              </div>
-            </div>
-          ),
-        )}
-
-        {/* Streaming indicator */}
-        {isStreaming && messages.length > 0 && messages[messages.length - 1]?.role !== "assistant" && (
+          </div>
+        ))}
+        {isTyping && (
           <div className="flex justify-start">
-            <div className="bg-muted/50 rounded-2xl rounded-tl-sm p-3 text-sm text-muted-foreground">
-              <Loader2 className="size-4 animate-spin" />
+            <div className="bg-muted rounded-2xl rounded-bl-md px-4 py-2.5">
+              <div className="flex gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/50 animate-bounce" style={{ animationDelay: "0ms" }} />
+                <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/50 animate-bounce" style={{ animationDelay: "150ms" }} />
+                <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/50 animate-bounce" style={{ animationDelay: "300ms" }} />
+              </div>
             </div>
           </div>
         )}
-
-        <div ref={messagesEndRef} />
       </div>
 
-      {/* Recommended layout preview (shown when interview is complete) */}
+      {/* Layout Recommendation Card */}
       {recommendedLayout && (
-        <div className="rounded-xl border border-brand/30 bg-brand-muted/10 p-4 space-y-3">
-          {profileSummary && (
-            <div className="flex flex-wrap gap-2 text-xs">
-              <span className="px-2 py-0.5 rounded bg-muted text-muted-foreground">
-                {profileSummary.style}
-              </span>
-              <span className="px-2 py-0.5 rounded bg-muted text-muted-foreground">
-                {profileSummary.pattern}
-              </span>
-              <span className="px-2 py-0.5 rounded bg-muted text-muted-foreground">
-                {profileSummary.duration}
-              </span>
-            </div>
-          )}
+        <div className="border rounded-xl p-5 mb-4 bg-card border-brand/30">
+          <div className="flex items-center gap-2 mb-3">
+            <Sparkles className="size-4 text-brand" />
+            <p className="text-sm font-medium text-foreground">为你推荐的学习空间</p>
+          </div>
 
-          {/* Block grid preview */}
-          <div className="grid grid-cols-3 gap-1.5">
+          <div className={`grid gap-2 mb-4 ${recommendedLayout.columns === 3 ? "grid-cols-3" : "grid-cols-2"}`}>
             {recommendedLayout.blocks
-              .filter((b) => b.visible)
+              .filter((b) => b.type !== "chapter_list")
               .map((block, i) => {
-                const Icon = BLOCK_ICONS[block.type] ?? BookOpen;
-                const colSpan =
+                const Icon = BLOCK_ICONS[block.type] || BookOpen;
+                const name = BLOCK_NAMES[block.type] || block.type;
+                const span =
                   block.size === "large"
                     ? "col-span-2"
                     : block.size === "full"
-                      ? "col-span-3"
+                      ? `col-span-${recommendedLayout.columns}`
                       : "";
                 return (
                   <div
                     key={i}
-                    className={`flex items-center gap-1.5 rounded-lg bg-muted/60 px-2 py-1.5 ${colSpan}`}
-                    title={block.type.replace(/_/g, " ")}
+                    className={`flex items-center gap-2 p-2.5 rounded-lg bg-muted/50 border border-border/50 ${span}`}
                   >
                     <Icon className="size-3.5 text-muted-foreground shrink-0" />
-                    <span className="text-[11px] text-muted-foreground truncate">
-                      {block.type.replace(/_/g, " ")}
-                    </span>
+                    <span className="text-xs text-foreground">{name}</span>
+                    <span className="text-[10px] text-muted-foreground ml-auto">{block.size}</span>
                   </div>
                 );
               })}
           </div>
 
-          {/* Accept / Adjust buttons */}
-          <div className="flex items-center gap-3 pt-1">
+          <div className="flex gap-2">
             <button
               type="button"
-              onClick={() => onComplete(recommendedLayout)}
-              className="px-5 py-2 text-sm font-medium rounded-lg bg-brand text-brand-foreground hover:opacity-90 transition-opacity"
+              onClick={handleAccept}
+              className="flex-1 flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium rounded-lg bg-brand text-brand-foreground hover:opacity-90 transition-opacity"
             >
-              {t("setup.interviewAccept")}
+              开始学习
+              <ChevronRight className="size-4" />
             </button>
             <button
               type="button"
               onClick={onSkip}
-              className="px-4 py-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+              className="px-4 py-2 text-sm rounded-lg border border-border text-muted-foreground hover:text-foreground hover:border-foreground/20 transition-colors"
             >
-              {t("setup.interviewAdjust")}
+              手动调整
             </button>
           </div>
         </div>
       )}
 
-      {/* Input area (hidden when layout recommendation is shown) */}
+      {/* Input area */}
       {!recommendedLayout && (
-        <form onSubmit={handleSubmit} className="flex items-center gap-2">
+        <form onSubmit={handleSubmit} className="flex gap-2">
           <input
             type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            disabled={isStreaming}
-            placeholder={t("setup.interviewPlaceholder")}
-            className="flex-1 h-10 px-3 border border-border rounded-lg bg-background text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-brand/20 disabled:opacity-50"
+            value={inputValue}
+            onChange={(e) => setInputValue(e.target.value)}
+            placeholder="描述你的学习方式..."
+            disabled={isTyping}
+            className="flex-1 px-4 py-2.5 text-sm rounded-xl border border-border bg-background placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-brand/50 disabled:opacity-50"
           />
           <button
             type="submit"
-            disabled={!input.trim() || isStreaming}
-            className="h-10 w-10 flex items-center justify-center rounded-lg bg-brand text-brand-foreground hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+            disabled={!inputValue.trim() || isTyping}
+            className="p-2.5 rounded-xl bg-brand text-brand-foreground hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {isStreaming ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : (
-              <ArrowRight className="size-4" />
-            )}
+            {isTyping ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
           </button>
         </form>
       )}
 
       {/* Footer navigation */}
-      <div className="flex items-center justify-between pt-1">
-        <button
-          type="button"
-          onClick={onBack}
-          className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
-        >
-          <ArrowLeft className="size-3.5" />
-          {t("common.back")}
-        </button>
-        {!recommendedLayout && (
+      {!recommendedLayout && (
+        <div className="flex items-center justify-between mt-3">
+          <button
+            type="button"
+            onClick={onBack}
+            className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+          >
+            {t("common.back") !== "common.back" ? t("common.back") : "返回"}
+          </button>
           <button
             type="button"
             onClick={onSkip}
-            className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
+            className="text-xs text-muted-foreground hover:text-foreground transition-colors"
           >
-            {t("setup.interviewSkip")}
-            <ArrowRight className="size-3.5" />
+            {t("setup.interviewSkip") !== "setup.interviewSkip" ? t("setup.interviewSkip") : "跳过，手动选择模板"}
           </button>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

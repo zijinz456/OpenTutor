@@ -56,7 +56,7 @@ export function QuizView({
   const consecutiveWrongRef = useRef(0);
   const questionStartTimeRef = useRef(Date.now());
   const restoredRef = useRef(false);
-  const { save, load, clear } = useQuizPersistence(courseId);
+  const { save, load } = useQuizPersistence(courseId);
 
   const fetchData = useCallback(async () => {
     setLoading(true);

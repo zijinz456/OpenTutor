@@ -14,7 +14,7 @@ from services.auth.dependency import get_current_user
 from services.course_access import get_course_or_404
 from services.evaluation.benchmark_runner import run_regression_benchmark
 
-router = APIRouter()
+router = APIRouter(tags=["internal"])
 
 
 class RetrievalQueryPayload(BaseModel):

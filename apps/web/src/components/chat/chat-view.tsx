@@ -29,7 +29,7 @@ export function ChatView({
   const toolStatus = useChatStore((s) => s.toolStatus);
   const setCourseContext = useChatStore((s) => s.setCourseContext);
   const loadSessions = useChatStore((s) => s.loadSessions);
-  const setOnAction = useChatStore((s) => s.setOnAction);
+  const registerFallbackOnAction = useChatStore((s) => s.registerFallbackOnAction);
   const setActiveSection = useWorkspaceStore((s) => s.setActiveSection);
   const setSelectedNodeId = useWorkspaceStore((s) => s.setSelectedNodeId);
   const triggerRefresh = useWorkspaceStore((s) => s.triggerRefresh);
@@ -42,11 +42,6 @@ export function ChatView({
 
   // Register the onAction handler to bridge chat actions to workspace sections.
   useEffect(() => {
-    // Course pages with block-based layouts register a richer action handler.
-    // Only install this fallback when nothing else is registered.
-    const existingHandler = useChatStore.getState().onAction;
-    if (existingHandler) return;
-
     const blockTypeToSection = (blockType: string): SectionId => {
       if (blockType === "plan") return "plan";
       if (blockType === "progress" || blockType === "forecast") return "analytics";
@@ -104,13 +99,8 @@ export function ChatView({
       }
     };
 
-    setOnAction(handleAction);
-    return () => {
-      if (useChatStore.getState().onAction === handleAction) {
-        setOnAction(() => {});
-      }
-    };
-  }, [setOnAction, setActiveSection, setSelectedNodeId, triggerRefresh]);
+    return registerFallbackOnAction(handleAction);
+  }, [registerFallbackOnAction, setActiveSection, setSelectedNodeId, triggerRefresh]);
 
   return (
     <div role="region" aria-label="Chat" className="flex h-full flex-col bg-background/80">

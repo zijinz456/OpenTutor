@@ -6,7 +6,7 @@
  */
 
 import { useEffect, useRef } from "react";
-import { request, API_BASE } from "@/lib/api/client";
+import { request, API_BASE, buildSecureRequestInit } from "@/lib/api/client";
 
 interface EngagementEvent {
   block_type: string;
@@ -47,11 +47,12 @@ function flushEventsSync(): void {
     // keepalive: true allows the request to outlive the page, similar to sendBeacon
     // but with full header support for auth
     void fetch(`${API_BASE}/blocks/events`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      keepalive: true,
-      body: JSON.stringify({ events: batch }),
+      ...buildSecureRequestInit({
+        method: "POST",
+        includeJsonContentType: true,
+        keepalive: true,
+        body: JSON.stringify({ events: batch }),
+      }),
     });
   } catch {
     // Best-effort

@@ -1,5 +1,4 @@
-import { buildAuthHeaders } from "@/lib/auth";
-import { API_BASE, request, type JsonObject } from "./client";
+import { API_BASE, buildSecureRequestInit, request, type JsonObject } from "./client";
 
 // ── Chat types ──
 
@@ -170,7 +169,7 @@ type StreamEvent =
   | { type: "tool_status"; status: "running" | "complete"; tool: string; explanation?: string }
   | { type: "tool_progress"; tool: string; message: string; step: number; total: number }
   | { type: "clarify"; clarify: ClarifyOption }
-  | { type: "block_update"; operations: BlockUpdateOp[]; cognitiveState: CognitiveState; explanation: string }
+  | { type: "block_update"; operations: BlockUpdateOp[]; cognitiveState: CognitiveState; explanation: string; interventionIds?: Record<string, string> }
   | { type: "done"; sessionId?: string; agent?: string; intent?: string; tokens?: number; metadata?: ChatMessageMetadata }
   | { type: "warning"; warningType: string; message: string };
 
@@ -229,22 +228,24 @@ export async function* streamChat(
   opts: ChatStreamOptions,
 ): AsyncGenerator<StreamEvent, void, unknown> {
   const res = await fetch(`${API_BASE}/chat/`, {
-    method: "POST",
-    headers: buildAuthHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify({
-      course_id: opts.courseId,
-      message: opts.message,
-      active_tab: opts.activeTab,
-      tab_context: opts.tabContext,
-      session_id: opts.sessionId,
-      history: opts.history ?? [],
-      images: opts.images ?? [],
-      ...(opts.interrupt ? { interrupt: true } : {}),
-      ...(opts.learningMode ? { learning_mode: opts.learningMode } : {}),
-      ...(opts.blockTypes?.length ? { block_types: opts.blockTypes } : {}),
-      ...(opts.dismissedBlockTypes?.length ? { dismissed_block_types: opts.dismissedBlockTypes } : {}),
+    ...buildSecureRequestInit({
+      method: "POST",
+      includeJsonContentType: true,
+      body: JSON.stringify({
+        course_id: opts.courseId,
+        message: opts.message,
+        active_tab: opts.activeTab,
+        tab_context: opts.tabContext,
+        session_id: opts.sessionId,
+        history: opts.history ?? [],
+        images: opts.images ?? [],
+        ...(opts.interrupt ? { interrupt: true } : {}),
+        ...(opts.learningMode ? { learning_mode: opts.learningMode } : {}),
+        ...(opts.blockTypes?.length ? { block_types: opts.blockTypes } : {}),
+        ...(opts.dismissedBlockTypes?.length ? { dismissed_block_types: opts.dismissedBlockTypes } : {}),
+      }),
+      signal: opts.signal,
     }),
-    signal: opts.signal,
   });
 
   if (!res.ok || !res.body) {
@@ -349,6 +350,7 @@ export async function* streamChat(
           operations: (data.operations ?? []) as BlockUpdateOp[],
           cognitiveState: (data.cognitive_state ?? { score: 0, level: "low", top_signals: [] }) as CognitiveState,
           explanation: (data.explanation ?? "") as string,
+          interventionIds: (data.intervention_ids ?? undefined) as Record<string, string> | undefined,
         };
       } else if (resolvedEvent === "done") {
         yield {

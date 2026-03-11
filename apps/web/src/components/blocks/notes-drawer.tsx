@@ -16,10 +16,11 @@ interface NotesDrawerProps {
 
 /** True when viewport is below the md breakpoint (768px). */
 function useIsMobile() {
-  const [mobile, setMobile] = useState(false);
+  const [mobile, setMobile] = useState(() => (
+    typeof window !== "undefined" ? window.matchMedia("(max-width: 767px)").matches : false
+  ));
   useEffect(() => {
     const mql = window.matchMedia("(max-width: 767px)");
-    setMobile(mql.matches);
     const handler = (e: MediaQueryListEvent) => setMobile(e.matches);
     mql.addEventListener("change", handler);
     return () => mql.removeEventListener("change", handler);

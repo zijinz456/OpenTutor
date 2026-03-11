@@ -41,6 +41,15 @@ export interface OnboardingResponse {
   complete: boolean;
 }
 
+export interface DemoCourseResponse {
+  id: string;
+  name: string;
+}
+
+export async function getDemoCourse(): Promise<DemoCourseResponse> {
+  return request<DemoCourseResponse>("/onboarding/demo-course");
+}
+
 export async function interviewTurn(body: OnboardingRequest): Promise<OnboardingResponse> {
   return request<OnboardingResponse>("/onboarding/interview", {
     method: "POST",

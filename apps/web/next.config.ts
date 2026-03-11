@@ -17,7 +17,7 @@ const securityHeaders = [
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob:",
       "font-src 'self' data:",
-      "connect-src 'self' http://localhost:* ws://localhost:*",
+      `connect-src 'self'${process.env.NODE_ENV === "development" ? " http://localhost:* ws://localhost:*" : ""}`,
       "frame-ancestors 'none'",
     ].join("; "),
   },

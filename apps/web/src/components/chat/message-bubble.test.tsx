@@ -68,8 +68,8 @@ describe("MessageBubble", () => {
       content: "Let me help",
       metadata: {
         actions: [
-          { action: "generate_quiz", value: "Generate Quiz" },
-          { action: "create_flashcards", value: "Create Flashcards" },
+          { action: "add_block", value: "quiz" },
+          { action: "add_block", value: "flashcards" },
         ],
       },
     });

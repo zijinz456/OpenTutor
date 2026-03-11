@@ -7,6 +7,7 @@ import { LlmCheckStep } from "./llm-check-step";
 import { ContentStep } from "./content-step";
 import { DiscoveryStep } from "./discovery-step";
 import { TemplateStep } from "./template-step";
+import { HabitInterviewStep } from "./habit-interview-step";
 import { CanvasLoginModal } from "../new/canvas-login-modal";
 
 function SetupInner() {
@@ -69,6 +70,17 @@ function SetupInner() {
               onAuthCanvas={s.handleAuthCanvas}
               onStartLearning={s.startLearning}
               onSkip={s.skipContent}
+              onTryDemo={s.tryDemo}
+              demoLoading={s.demoLoading}
+              t={s.t}
+            />
+          )}
+
+          {s.step === "interview" && (
+            <HabitInterviewStep
+              onComplete={s.acceptInterviewLayout}
+              onSkip={s.skipInterview}
+              onBack={() => s.setStep("content")}
               t={s.t}
             />
           )}
@@ -80,7 +92,7 @@ function SetupInner() {
               selectedMode={s.selectedMode}
               onModeSelect={s.setSelectedMode}
               onConfirm={s.confirmTemplate}
-              onBack={() => s.setStep("content")}
+              onBack={() => s.setStep("interview")}
               t={s.t}
             />
           )}

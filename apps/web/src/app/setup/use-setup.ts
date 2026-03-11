@@ -7,6 +7,7 @@ import {
   getLlmRuntimeConfig,
   updateLlmRuntimeConfig,
   testLlmRuntimeConnection,
+  getDemoCourse,
   type HealthStatus,
   type LlmRuntimeConfig,
   type LlmConnectionTestResult,
@@ -30,7 +31,7 @@ import {
   persistWorkspaceLayout,
 } from "./setup-helpers";
 
-import type { RecommendedLayout } from "./habit-interview-step";
+import type { SpaceLayoutResponse } from "@/lib/api/onboarding";
 
 export type SetupStep = "llm" | "content" | "interview" | "template" | "discovery";
 
@@ -82,6 +83,9 @@ export function useSetup() {
   const [canvasLogging, setCanvasLogging] = useState(false);
   const [canvasLoginError, setCanvasLoginError] = useState<string | null>(null);
   const [autoScrape, setAutoScrape] = useState(true);
+
+  // ── Interview state ──
+  const [interviewLayout, setInterviewLayout] = useState<SpaceLayoutResponse | null>(null);
 
   // ── Template + Mode state ──
   const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
@@ -308,54 +312,104 @@ export function useSetup() {
     return () => controller.abort();
   }, [hasCompletedJob, createdCourseId]);
 
-  // ── Start parsing (Content → Template → Discovery) ──
+  // ── Start learning (Content → Interview) ──
   const startLearning = useCallback(async () => {
+    setStep("interview");
+  }, []);
+
+  // ── Interview complete — apply AI-recommended layout and proceed ──
+  const acceptInterviewLayout = useCallback((layout: SpaceLayoutResponse) => {
+    setInterviewLayout(layout);
+    if (layout.mode) {
+      setSelectedMode(layout.mode as LearningMode);
+    }
+    setSelectedTemplate(layout.templateId);
+    // Skip manual template selection, go directly to confirm+discovery
     setStep("template");
   }, []);
 
-  // ── Confirm template and begin ingestion (Template → Discovery) ──
+  // ── Skip interview — go to manual template selection ──
+  const skipInterview = useCallback(() => {
+    setStep("template");
+  }, []);
+
+  // ── Confirm template: create course and continue with discovery before workspace ──
   const confirmTemplate = useCallback(async () => {
-    setStep("discovery");
-    setIngestionJobs([]);
-    setParseLogs([]);
-    setIsSubmittingContent(true);
-    setNoSourcesSubmitted(false);
-    seenJobStatesRef.current = {};
-    probeSentRef.current = false;
-    setAiProbeResponse("");
-    setAiProbeDone(false);
-
-    const addLog = (text: string, color: string) => {
-      setParseLogs((prev) => [...prev, { text, color }]);
-    };
-
     try {
       const { metadata, sourceMode } = buildCourseMetadata(files, url, selectedTemplate, selectedMode);
       const course = await addCourse(projectName.trim() || t("new.untitledProject"), undefined, metadata);
-      setCreatedCourseId(course.id);
-      addLog(t("new.logProjectCreated"), "text-success");
 
-      await submitSources({
-        course, files, url, mode: sourceMode, autoScrape, canvasSessionValid, projectName,
-        addLog, setCanvasSessionValid, setShowCanvasLogin, setCanvasLogging,
-        setCanvasLoginError, setNoSourcesSubmitted, t,
-      });
+      await applyDefaultPreferences();
+      persistWorkspaceLayout(course.id, selectedTemplate, selectedMode, interviewLayout);
+
+      setCreatedCourseId(course.id);
+      setIngestionJobs([]);
+      setParseLogs([]);
+      setNoSourcesSubmitted(false);
+      setCanEnterEarly(false);
+      setAiProbeResponse("");
+      setAiProbeDone(false);
+      setAiProbeStreaming(false);
+      seenJobStatesRef.current = {};
+      probeSentRef.current = false;
+      setStep("discovery");
+      setIsSubmittingContent(true);
+
+      const addLog = (text: string, color: string) => {
+        setParseLogs((prev) => [...prev, { text, color }]);
+      };
+
+      void submitSources({
+        course,
+        files,
+        url,
+        mode: sourceMode,
+        autoScrape,
+        canvasSessionValid,
+        projectName,
+        addLog,
+        setCanvasSessionValid,
+        setShowCanvasLogin,
+        setCanvasLogging,
+        setCanvasLoginError,
+        setNoSourcesSubmitted,
+        t,
+      })
+        .catch((err) => {
+          addLog((err as Error).message, "text-destructive");
+        })
+        .finally(() => {
+          setIsSubmittingContent(false);
+        });
     } catch (err) {
-      addLog(`${t("new.logError")}: ${(err as Error).message}`, "text-destructive");
-    } finally {
-      setIsSubmittingContent(false);
+      setNameError((err as Error).message);
     }
-  }, [addCourse, autoScrape, canvasSessionValid, files, projectName, selectedMode, selectedTemplate, t, url]);
+  }, [addCourse, autoScrape, canvasSessionValid, files, interviewLayout, projectName, selectedMode, selectedTemplate, t, url]);
 
   // ── Enter workspace ──
   const enterWorkspace = useCallback(async () => {
     if (!createdCourseId) return;
     // Set default preferences silently
     try { await applyDefaultPreferences(); } catch { /* non-critical */ }
-    // Apply template/mode and persist layout
-    persistWorkspaceLayout(createdCourseId, selectedTemplate, selectedMode);
+    // Apply template/mode and persist layout (interview layout takes priority)
+    persistWorkspaceLayout(createdCourseId, selectedTemplate, selectedMode, interviewLayout);
     router.push(`/course/${createdCourseId}`);
-  }, [createdCourseId, router, selectedMode, selectedTemplate]);
+  }, [createdCourseId, interviewLayout, router, selectedMode, selectedTemplate]);
+
+  // ── Demo fast path: one click to a working workspace ──
+  const [demoLoading, setDemoLoading] = useState(false);
+  const tryDemo = useCallback(async () => {
+    setDemoLoading(true);
+    try {
+      const demo = await getDemoCourse();
+      await applyDefaultPreferences();
+      persistWorkspaceLayout(demo.id, "stem_student", null);
+      router.push(`/course/${demo.id}`);
+    } catch (err) {
+      setNameError((err as Error).message);
+      setDemoLoading(false);
+    }
+  }, [router]);
 
   // ── Skip content (empty workspace) ──
   const skipContent = useCallback(async () => {
@@ -389,10 +443,13 @@ export function useSetup() {
     hasCompletedJob, allJobsFailed, noSourcesSubmitted,
     aiProbeResponse, aiProbeStreaming, aiProbeDone, canEnterEarly,
     createdCourseId,
+    // Interview
+    interviewLayout, acceptInterviewLayout, skipInterview,
     // Template + Mode
     selectedTemplate, setSelectedTemplate,
     selectedMode, setSelectedMode,
     // Actions
     startLearning, confirmTemplate, enterWorkspace, skipContent,
+    tryDemo, demoLoading,
   };
 }

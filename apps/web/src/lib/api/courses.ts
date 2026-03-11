@@ -1,6 +1,4 @@
-import { buildAuthHeaders } from "@/lib/auth";
-
-import { API_BASE, parseApiError, request, requestBlob } from "./client";
+import { API_BASE, buildSecureHeaders, buildSecureRequestInit, parseApiError, request, requestBlob } from "./client";
 
 import type { ContentMutationResult, SavedGeneratedAsset } from "./client";
 import type { GeneratedAssetBatchSummary } from "./practice";
@@ -224,10 +222,11 @@ export async function uploadFile(
     return new Promise<ContentMutationResult>((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.open("POST", `${API_BASE}/content/upload`);
-      const headers = buildAuthHeaders();
-      Object.entries(headers).forEach(([k, v]) => {
-        if (v) xhr.setRequestHeader(k, v);
+      const headers = buildSecureHeaders("POST", undefined, false);
+      headers.forEach((value, key) => {
+        xhr.setRequestHeader(key, value);
       });
+      xhr.withCredentials = true;
       xhr.upload.onprogress = (e) => {
         if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
       };
@@ -250,9 +249,11 @@ export async function uploadFile(
   }
 
   const res = await fetch(`${API_BASE}/content/upload`, {
-    method: "POST",
-    headers: buildAuthHeaders(),
-    body: form,
+    ...buildSecureRequestInit({
+      method: "POST",
+      includeJsonContentType: false,
+      body: form,
+    }),
   });
   if (!res.ok) {
     throw await parseApiError(res);
@@ -266,9 +267,11 @@ export async function scrapeUrl(courseId: string, url: string): Promise<ContentM
   form.append("course_id", courseId);
 
   const res = await fetch(`${API_BASE}/content/url`, {
-    method: "POST",
-    headers: buildAuthHeaders(),
-    body: form,
+    ...buildSecureRequestInit({
+      method: "POST",
+      includeJsonContentType: false,
+      body: form,
+    }),
   });
   if (!res.ok) {
     throw await parseApiError(res);

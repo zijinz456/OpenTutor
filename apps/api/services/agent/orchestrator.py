@@ -36,6 +36,32 @@ from services.agent.guided_session_handler import handle_guided_session
 
 logger = logging.getLogger(__name__)
 
+_CLARIFY_RE = re.compile(r'^\[CLARIFY:([^:]+):(.+)\]$')
+
+
+def _parse_clarify_inputs(message: str) -> dict[str, str]:
+    """Parse clarify response from frontend.
+
+    Supports both legacy format [CLARIFY:key:value] and JSON format
+    {"type": "clarify", "key": "...", "value": "..."}.
+    """
+    # Try JSON format first
+    stripped = message.strip()
+    if stripped.startswith("{"):
+        try:
+            data = json.loads(stripped)
+            if data.get("type") == "clarify" and "key" in data and "value" in data:
+                return {data["key"]: data["value"]}
+        except (ValueError, KeyError):
+            pass
+
+    # Legacy bracket format
+    m = _CLARIFY_RE.match(stripped)
+    if m:
+        return {m.group(1): m.group(2)}
+
+    return {}
+
 
 async def _apply_turn_enrichment(ctx: AgentContext, db: AsyncSession) -> AgentContext:
     """Apply shared per-turn enrichment for stream/non-stream entry points."""
@@ -183,6 +209,9 @@ async def run_agent_turn(
         tab_context=tab_context,
         scene=scene,
     )
+    clarify = _parse_clarify_inputs(message)
+    if clarify:
+        ctx.clarify_inputs.update(clarify)
     ctx, agent = await prepare_agent_turn(ctx, db, db_factory=db_factory)
     ctx = await consume_agent_stream(ctx, agent, db)
     finalize_token_usage(ctx, agent)
@@ -252,6 +281,9 @@ async def orchestrate_stream(
         block_types=block_types,
         dismissed_block_types=dismissed_block_types,
     )
+    clarify = _parse_clarify_inputs(message)
+    if clarify:
+        ctx.clarify_inputs.update(clarify)
 
     # Detect mock LLM client so the frontend can warn the user
     try:

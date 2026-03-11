@@ -25,6 +25,8 @@ interface ContentStepProps {
   onAuthCanvas: () => void;
   onStartLearning: () => void;
   onSkip: () => void;
+  onTryDemo: () => void;
+  demoLoading: boolean;
   t: (key: string) => string;
 }
 
@@ -34,7 +36,7 @@ export function ContentStep({
   url, onUrlChange, urlError, onValidateUrl,
   autoScrape, onAutoScrapeChange,
   isCanvasDetected, canvasSessionValid, canvasAuthenticating,
-  onAuthCanvas, onStartLearning, onSkip, t,
+  onAuthCanvas, onStartLearning, onSkip, onTryDemo, demoLoading, t,
 }: ContentStepProps) {
   const [tab, setTab] = useState<ContentTab>("upload");
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -253,6 +255,26 @@ export function ContentStep({
           {t("setup.skipContent")}
         </button>
       </div>
+
+      {/* Demo fast path */}
+      <div className="flex items-center gap-3 pt-1">
+        <div className="h-px flex-1 bg-border" />
+        <span className="text-xs text-muted-foreground">{t("setup.orTryDemo")}</span>
+        <div className="h-px flex-1 bg-border" />
+      </div>
+      <button
+        type="button"
+        onClick={onTryDemo}
+        disabled={demoLoading}
+        data-testid="setup-try-demo"
+        className={`h-10 w-full rounded-lg text-sm font-medium border transition-colors ${
+          demoLoading
+            ? "border-border bg-muted text-muted-foreground cursor-wait"
+            : "border-brand/30 bg-brand-muted text-brand hover:bg-brand/10"
+        }`}
+      >
+        {demoLoading ? t("setup.loadingDemo") : t("setup.tryWithSample")}
+      </button>
     </div>
   );
 }
