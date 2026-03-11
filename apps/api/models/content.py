@@ -11,6 +11,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from database import Base
 
 
+# Categories that contain course metadata/logistics rather than learnable knowledge
+INFO_CATEGORIES: set[str] = {"syllabus", "assignment", "exam_schedule"}
+
+
 class CourseContentTree(Base):
     """Hierarchical content tree node.
 
@@ -35,6 +39,9 @@ class CourseContentTree(Base):
     # Source info
     source_file: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     source_type: Mapped[str] = mapped_column(String(20), default="pdf")  # pdf, url, manual
+
+    # Content classification: knowledge (lecture_slides, textbook, notes) vs info (assignment, exam_schedule, syllabus)
+    content_category: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
 
     # Block editor content (source of truth when present; legacy nodes use `content`)
     blocks_json: Mapped[Optional[dict]] = mapped_column(CompatJSONB, nullable=True)

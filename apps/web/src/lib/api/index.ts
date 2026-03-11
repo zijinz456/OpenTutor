@@ -22,8 +22,10 @@ export {
   uploadFile,
   scrapeUrl,
   getFileUrl,
+  downloadCourseFile,
   listAuthSessions,
   canvasBrowserLogin,
+  fetchCanvasCourseInfo,
   updateCourseLayout,
 } from "./courses";
 
@@ -44,6 +46,7 @@ export {
   streamChat,
   listChatSessions,
   getChatSessionMessages,
+  getChatGreeting,
 } from "./chat";
 
 export type {
@@ -69,11 +72,13 @@ export {
   listProblems,
   listGeneratedQuizBatches,
   submitAnswer,
+  saveGeneratedQuiz,
   generateFlashcards,
   saveGeneratedFlashcards,
   listGeneratedFlashcardBatches,
   reviewFlashcard,
   getDueFlashcards,
+  getLectorOrderedFlashcards,
   getWrongAnswerReview,
   getConfusionPairs,
 } from "./practice";
@@ -85,10 +90,13 @@ export type {
   QuizProblem,
   GeneratedQuizBatchSummary,
   GeneratedAssetBatchSummary,
+  SaveGeneratedQuizResult,
   AnswerResult,
   PrerequisiteGap,
   DueFlashcardsResult,
   Flashcard,
+  LectorFlashcard,
+  LectorOrderResult,
   ConfusionPair,
   ConfusionPairsResult,
 } from "./practice";
@@ -109,12 +117,15 @@ export {
   approveAgentTask,
   rejectAgentTask,
   listStudyGoals,
+  createStudyGoal,
+  updateStudyGoal,
   getNextAction,
   listTemplates,
   applyTemplate,
   getForgettingForecast,
   getMisconceptionDashboard,
   getReviewSession,
+  submitReviewRating,
   listAgendaRuns,
   logAgentDecision,
   getVelocity,
@@ -142,6 +153,8 @@ export type {
   LearningTemplate,
   NextActionResponse,
   StudyGoal,
+  CreateGoalRequest,
+  UpdateGoalRequest,
   AgendaRun,
   AgendaDecisionLogRequest,
   StudyPlanResponse,
@@ -178,7 +191,7 @@ export type {
 
 export {
   getUsageSummary,
-  getExportSessionUrl,
+  downloadExportSession,
   getAnkiExportUrl,
   getCalendarExportUrl,
 } from "./usage";
@@ -214,4 +227,3 @@ export type {
   AppNotification,
   NotificationsResponse,
 } from "./notifications";
-

@@ -13,6 +13,7 @@ from models.ingestion import StudySession
 from models.progress import LearningProgress
 from models.user import User
 from services.auth.dependency import get_current_user
+from services.course_access import get_course_or_404
 
 router = APIRouter()
 
@@ -33,6 +34,7 @@ async def get_learning_trends(
     db: AsyncSession = Depends(get_db),
 ):
     """Get daily learning trends for charts: mastery, study time, quiz accuracy."""
+    await get_course_or_404(db, course_id, user_id=user.id)
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
     session_result = await db.execute(

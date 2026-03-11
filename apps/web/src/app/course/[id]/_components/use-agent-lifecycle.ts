@@ -8,6 +8,68 @@ import type { ChatAction } from "@/lib/api";
 import { updateUnlockContext } from "@/lib/block-system/feature-unlock";
 import { useT, useTF } from "@/lib/i18n-context";
 
+const MODE_EVAL_TTL_MS = 10 * 60 * 1000;
+const MODE_EVAL_RETRY_MS = 5_000;
+
+interface ModeEvalLatchState {
+  successAt?: number;
+  retryAt?: number;
+  fingerprint?: string;
+}
+
+interface ModeEvalGoalSnapshot {
+  id: string;
+  status: string;
+  target_date: string | null;
+  next_action: string | null;
+}
+
+interface ModeEvalProgressSnapshot {
+  average_mastery: number;
+  mastered: number;
+  reviewed: number;
+  in_progress: number;
+}
+
+function readModeEvalLatch(key: string): ModeEvalLatchState {
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as ModeEvalLatchState;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeModeEvalLatch(key: string, value: ModeEvalLatchState): void {
+  try {
+    sessionStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // no-op
+  }
+}
+
+function buildModeEvalFingerprint(
+  currentMode: LearningMode,
+  goals: ModeEvalGoalSnapshot[],
+  progress: ModeEvalProgressSnapshot | null,
+): string {
+  const goalsPart = goals
+    .map((goal) => `${goal.id}:${goal.status}:${goal.target_date ?? ""}:${goal.next_action ?? ""}`)
+    .sort()
+    .join("|");
+  const progressPart = progress
+    ? [
+      progress.average_mastery.toFixed(3),
+      progress.mastered,
+      progress.reviewed,
+      progress.in_progress,
+    ].join(":")
+    : "no_progress";
+  return `${currentMode}::${goalsPart}::${progressPart}`;
+}
+
 export function useModeEvaluator(
   courseId: string,
   course: unknown | null,
@@ -26,93 +88,134 @@ export function useModeEvaluator(
   useEffect(() => {
     if (!course || !aiActionsEnabled) return;
     const evalKey = `agent_mode_eval_${courseId}`;
-    if (sessionStorage.getItem(evalKey) === "true") return;
-    sessionStorage.setItem(evalKey, "true");
+    let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
-    const currentMode = useWorkspaceStore.getState().spaceLayout.mode as LearningMode | undefined;
-    if (!currentMode) return;
-
-    import("@/lib/api/progress").then(async ({ listStudyGoals, getCourseProgress }) => {
-      const goals = await listStudyGoals(courseId, "active").catch(() => []);
+    const runEvaluation = async (isRetry = false) => {
       const now = Date.now();
-      const deadlines = goals
-        .filter((g) => g.target_date)
-        .map((g) => ({
-          goal: g,
-          daysLeft: Math.ceil((new Date(g.target_date!).getTime() - now) / (1000 * 60 * 60 * 24)),
-        }));
+      const latch = readModeEvalLatch(evalKey);
+      if (latch.retryAt && now < latch.retryAt) return;
 
-      if (deadlines.length > 0) {
-        updateUnlockContext(courseId, { hasDeadline: true });
-      }
+      try {
+        const currentMode = useWorkspaceStore.getState().spaceLayout.mode as LearningMode | undefined;
+        if (!currentMode) return;
 
-      const upcoming = deadlines
-        .filter((d) => d.daysLeft >= 0 && d.daysLeft <= 7)
-        .sort((a, b) => a.daysLeft - b.daysLeft)[0];
-      const allDeadlinesPassed = deadlines.length > 0 && deadlines.every((d) => d.daysLeft < 0);
+        const { listStudyGoals, getCourseProgress } = await import("@/lib/api");
+        const goals = await listStudyGoals(courseId, "active");
+        const progress = await getCourseProgress(courseId);
+        if (cancelled) return;
 
-      const progress = await getCourseProgress(courseId).catch(() => null);
-      const mastery = progress ? Math.round((progress.average_mastery ?? 0) * 100) : null;
-      const totalAttempts = progress ? progress.mastered + progress.reviewed + progress.in_progress : 0;
-      const errorRatePct =
-        progress && totalAttempts > 10
-          ? Math.round((progress.in_progress / totalAttempts) * 100)
-          : null;
+        const fingerprint = buildModeEvalFingerprint(
+          currentMode,
+          goals as unknown as ModeEvalGoalSnapshot[],
+          progress as unknown as ModeEvalProgressSnapshot,
+        );
+        const latestLatch = readModeEvalLatch(evalKey);
+        const shouldSkip =
+          latestLatch.successAt != null
+          && now - latestLatch.successAt < MODE_EVAL_TTL_MS
+          && latestLatch.fingerprint === fingerprint;
+        if (shouldSkip) return;
 
-      if (currentMode === "exam_prep" && allDeadlinesPassed) {
-        queueModeSuggestion({
-          suggestedMode: "maintenance",
-          reason: t("course.modeSuggestion.examPassed"),
-          approvalCta: t("course.modeSuggestion.switchMaintenance"),
-          cooldownKey: "exam_passed",
-          signals: [t("course.modeSuggestion.signal.deadlinesPassed")],
-        });
-        return;
-      }
+        const deadlines = goals
+          .filter((g) => g.target_date)
+          .map((g) => ({
+            goal: g,
+            daysLeft: Math.ceil((new Date(g.target_date!).getTime() - now) / (1000 * 60 * 60 * 24)),
+          }));
 
-      if (currentMode === "course_following" || currentMode === "self_paced") {
-        if (upcoming && errorRatePct != null && errorRatePct > 40) {
-          queueModeSuggestion({
-            suggestedMode: "exam_prep",
-            reason: tf("course.modeSuggestion.errorRateDetailed", {
-              rate: errorRatePct,
-              days: upcoming.daysLeft,
-            }),
-            approvalCta: t("course.modeSuggestion.switchExamPrep"),
-            cooldownKey: "error_rate",
-            signals: [
-              tf("course.modeSuggestion.signal.errorRate", { rate: errorRatePct }),
-              tf("course.modeSuggestion.signal.deadline", { days: upcoming.daysLeft }),
-            ],
-          });
-          return;
+        if (deadlines.length > 0) {
+          updateUnlockContext(courseId, { hasDeadline: true });
         }
 
-        if (upcoming) {
-          queueModeSuggestion({
-            suggestedMode: "exam_prep",
-            reason: tf("course.modeSuggestion.deadline", {
-              title: upcoming.goal.title,
-              days: upcoming.daysLeft,
-            }),
-            approvalCta: t("course.modeSuggestion.switchExamPrep"),
-            cooldownKey: "deadline",
-            signals: [tf("course.modeSuggestion.signal.deadline", { days: upcoming.daysLeft })],
-          });
-          return;
-        }
+        const upcoming = deadlines
+          .filter((d) => d.daysLeft >= 0 && d.daysLeft <= 7)
+          .sort((a, b) => a.daysLeft - b.daysLeft)[0];
+        const allDeadlinesPassed = deadlines.length > 0 && deadlines.every((d) => d.daysLeft < 0);
 
-        if (mastery != null && mastery >= 85) {
+        const mastery = Math.round((progress.average_mastery ?? 0) * 100);
+        const totalAttempts = progress.mastered + progress.reviewed + progress.in_progress;
+        const errorRatePct =
+          totalAttempts > 10
+            ? Math.round((progress.in_progress / totalAttempts) * 100)
+            : null;
+
+        if (currentMode === "exam_prep" && allDeadlinesPassed) {
           queueModeSuggestion({
             suggestedMode: "maintenance",
-            reason: tf("course.modeSuggestion.mastery", { mastery }),
+            reason: t("course.modeSuggestion.examPassed"),
             approvalCta: t("course.modeSuggestion.switchMaintenance"),
-            cooldownKey: "mastery",
-            signals: [tf("course.modeSuggestion.signal.mastery", { mastery })],
+            cooldownKey: "exam_passed",
+            signals: [t("course.modeSuggestion.signal.deadlinesPassed")],
           });
+          writeModeEvalLatch(evalKey, { successAt: Date.now(), fingerprint });
+          return;
+        }
+
+        if (currentMode === "course_following" || currentMode === "self_paced") {
+          if (upcoming && errorRatePct != null && errorRatePct > 40) {
+            queueModeSuggestion({
+              suggestedMode: "exam_prep",
+              reason: tf("course.modeSuggestion.errorRateDetailed", {
+                rate: errorRatePct,
+                days: upcoming.daysLeft,
+              }),
+              approvalCta: t("course.modeSuggestion.switchExamPrep"),
+              cooldownKey: "error_rate",
+              signals: [
+                tf("course.modeSuggestion.signal.errorRate", { rate: errorRatePct }),
+                tf("course.modeSuggestion.signal.deadline", { days: upcoming.daysLeft }),
+              ],
+            });
+            writeModeEvalLatch(evalKey, { successAt: Date.now(), fingerprint });
+            return;
+          }
+
+          if (upcoming) {
+            queueModeSuggestion({
+              suggestedMode: "exam_prep",
+              reason: tf("course.modeSuggestion.deadline", {
+                title: upcoming.goal.title,
+                days: upcoming.daysLeft,
+              }),
+              approvalCta: t("course.modeSuggestion.switchExamPrep"),
+              cooldownKey: "deadline",
+              signals: [tf("course.modeSuggestion.signal.deadline", { days: upcoming.daysLeft })],
+            });
+            writeModeEvalLatch(evalKey, { successAt: Date.now(), fingerprint });
+            return;
+          }
+
+          if (mastery >= 85) {
+            queueModeSuggestion({
+              suggestedMode: "maintenance",
+              reason: tf("course.modeSuggestion.mastery", { mastery }),
+              approvalCta: t("course.modeSuggestion.switchMaintenance"),
+              cooldownKey: "mastery",
+              signals: [tf("course.modeSuggestion.signal.mastery", { mastery })],
+            });
+          }
+        }
+
+        writeModeEvalLatch(evalKey, { successAt: Date.now(), fingerprint });
+      } catch (e) {
+        console.error("[Course] mode evaluator failed:", e);
+        writeModeEvalLatch(evalKey, { retryAt: Date.now() + MODE_EVAL_RETRY_MS });
+        if (!cancelled && !isRetry) {
+          retryTimer = setTimeout(() => {
+            void runEvaluation(true);
+          }, MODE_EVAL_RETRY_MS);
         }
       }
-    }).catch((e) => console.error("[Course] mode evaluator failed:", e));
+    };
+
+    void runEvaluation();
+    return () => {
+      cancelled = true;
+      if (retryTimer) {
+        clearTimeout(retryTimer);
+      }
+    };
   }, [course, courseId, aiActionsEnabled, t, tf, queueModeSuggestion]);
 }
 
@@ -149,10 +252,13 @@ export function useGreeting(
     if (existing && existing.length > 0) return;
 
     sessionStorage.setItem(greetingKey, "true");
+    let cancelled = false;
 
-    import("@/lib/api/chat").then(({ getChatGreeting }) => {
+    import("@/lib/api").then(({ getChatGreeting }) => {
+      if (cancelled) return;
       getChatGreeting(courseId)
         .then((result: { greeting: string; course_name: string; suggested_actions?: ChatAction[] }) => {
+          if (cancelled) return;
           const store = useChatStore.getState();
           const msgs = store.messagesByCourse[courseId] || [];
           if (msgs.length === 0) {
@@ -174,6 +280,7 @@ export function useGreeting(
           }
         })
         .catch(() => {
+          if (cancelled) return;
           const welcome = (course as { metadata?: Record<string, unknown> }).metadata
             ?.welcome_message as string | undefined;
           if (!welcome) return;
@@ -193,5 +300,6 @@ export function useGreeting(
           }
         });
     });
+    return () => { cancelled = true; };
   }, [course, courseId, handleAction]);
 }

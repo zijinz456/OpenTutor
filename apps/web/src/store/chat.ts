@@ -28,8 +28,6 @@ export interface ChatMessage {
   metadata?: ChatMessageMetadata | null;
   /** Images attached to user messages (base64-encoded). */
   images?: ImageAttachment[];
-  /** URL for audio playback (voice mode TTS responses). */
-  audioUrl?: string;
 }
 
 export interface SendMessageOptions {
@@ -52,8 +50,12 @@ interface ChatState {
   isLoadingSessions: boolean;
   error: string | null;
   errorCategory: "rate_limit" | "auth_error" | "timeout" | "llm_unavailable" | "generic" | null;
+  /** True when the backend is using the mock LLM fallback (no real API key configured). */
+  isMockLlm: boolean;
   /** AbortController for cancelling active stream */
   _abortController: AbortController | null;
+  /** Timer ID for the tool_status "complete" auto-clear timeout. */
+  _toolStatusTimer: ReturnType<typeof setTimeout> | null;
   abortStream: () => void;
 
   /** Active tool status from ReAct agent loop (null when no tool running). */
@@ -102,6 +104,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   isLoadingSessions: false,
   error: null,
   errorCategory: null,
+  isMockLlm: false,
   toolStatus: null,
   clarifyOptions: null,
   sendClarifyResponse: (courseId, key, value) => {
@@ -109,11 +112,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
   onAction: null,
   _abortController: null,
+  _toolStatusTimer: null,
   abortStream: () => {
     const ctrl = get()._abortController;
     if (ctrl) {
       ctrl.abort();
-      set({ _abortController: null, isStreaming: false, toolStatus: null });
+      const t = get()._toolStatusTimer;
+      if (t) clearTimeout(t);
+      set({ _abortController: null, isStreaming: false, toolStatus: null, _toolStatusTimer: null });
     }
   },
 
@@ -121,7 +127,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setCourseContext: (courseId) =>
     set((s) => {
       const next = { ...s, activeCourseId: courseId };
-      return { activeCourseId: courseId, ...deriveActive(next), error: null };
+      return { activeCourseId: courseId, ...deriveActive(next), error: null, isMockLlm: false };
     }),
   loadSessions: async (courseId, options) => {
     const cacheKey = `chat:sessions:${courseId}`;
@@ -265,6 +271,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       };
     });
 
+    // Abort any stale controller that may have been left over (defensive)
+    const prev = get()._abortController;
+    if (prev) prev.abort();
     const controller = new AbortController();
     set({ _abortController: controller });
     try {
@@ -307,9 +316,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
             },
           }));
         } else if (event.type === "tool_status") {
-          set({ toolStatus: { tool: event.tool, status: event.status, explanation: event.explanation } });
+          // Clear any pending auto-clear timer before updating tool status
+          const prevTimer = get()._toolStatusTimer;
+          if (prevTimer) clearTimeout(prevTimer);
+          set({ toolStatus: { tool: event.tool, status: event.status, explanation: event.explanation }, _toolStatusTimer: null });
           if (event.status === "complete") {
-            setTimeout(() => set({ toolStatus: null }), 1500);
+            const timer = setTimeout(() => set({ toolStatus: null, _toolStatusTimer: null }), 1500);
+            set({ _toolStatusTimer: timer });
           }
         } else if (event.type === "tool_progress") {
           // Show write-tool progress as a tool_status with the progress message
@@ -329,7 +342,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
             };
             return { messagesByCourse: nextMBC, ...deriveActive({ ...s, messagesByCourse: nextMBC }) };
           });
+        } else if (event.type === "warning") {
+          // Show SSE warnings (e.g. persistence failure) as toast
+          const { toast } = await import("sonner");
+          toast.warning(event.message);
         } else if (event.type === "done" && event.sessionId) {
+          // Detect mock LLM usage from done envelope metadata
+          const isMock = (event.metadata as Record<string, unknown> | undefined)?.is_mock === true;
+          if (isMock) set({ isMockLlm: true });
+
           // Process any actions embedded in the envelope (e.g. from agent write tools).
           // These are not emitted as separate SSE "action" events, so handle them here.
           const doneActions = (event.metadata?.actions ?? []) as ChatAction[];
@@ -380,11 +401,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
           messagesByCourse: nextMBC,
           ...deriveActive({ ...s, messagesByCourse: nextMBC }),
           error: msg,
-          errorCategory: categorizeError(msg),
+          errorCategory: categorizeError(e),
         };
       });
     } finally {
-      set({ isStreaming: false, toolStatus: null, _abortController: null });
+      const t = get()._toolStatusTimer;
+      if (t) clearTimeout(t);
+      set({ isStreaming: false, toolStatus: null, _abortController: null, _toolStatusTimer: null });
     }
   },
 

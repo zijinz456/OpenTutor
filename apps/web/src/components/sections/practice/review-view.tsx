@@ -17,6 +17,7 @@ import {
   type WrongAnswer,
 } from "@/lib/api";
 import { AiFeatureBlocked } from "@/components/shared/ai-feature-blocked";
+import { SkeletonText } from "@/components/ui/skeleton";
 import { WrongAnswerCard } from "./wrong-answer-card";
 import { ConfusionPairs } from "./confusion-pairs";
 import { toast } from "sonner";
@@ -93,9 +94,9 @@ export function ReviewView({
     try {
       await retryWrongAnswer(item.id, item.correct_answer);
       await loadWrongAnswers();
-      toast.success("Marked as mastered");
+      toast.success(t("review.markedMastered"));
     } catch (error) {
-      toast.error((error as Error).message || "Failed to mark as mastered");
+      toast.error((error as Error).message || t("review.markFailed"));
     } finally {
       setMarkingId(null);
     }
@@ -107,7 +108,7 @@ export function ReviewView({
       const result = await getWrongAnswerReview(courseId);
       setReviewMarkdown(result.review);
     } catch (error) {
-      toast.error((error as Error).message || "Failed to generate review");
+      toast.error((error as Error).message || t("review.generateFailed"));
     } finally {
       setGenerating(false);
     }
@@ -126,7 +127,7 @@ export function ReviewView({
         },
       }));
     } catch (error) {
-      toast.error((error as Error).message || "Failed to derive question");
+      toast.error((error as Error).message || t("review.deriveFailed"));
     } finally {
       setDerivingId(null);
     }
@@ -155,7 +156,7 @@ export function ReviewView({
       }));
       await loadWrongAnswers();
     } catch (error) {
-      toast.error((error as Error).message || "Failed to submit diagnostic answer");
+      toast.error((error as Error).message || t("review.diagnosticFailed"));
       setDiagnosticDrafts((prev) => ({
         ...prev,
         [wrongAnswerId]: { ...draft, pending: false },
@@ -165,8 +166,8 @@ export function ReviewView({
 
   if (loading) {
     return (
-      <div className="flex-1 flex items-center justify-center" data-testid="review-panel" role="status" aria-live="polite">
-        <span className="text-sm animate-pulse text-muted-foreground">Loading review...</span>
+      <div className="flex-1 flex items-center justify-center p-8" data-testid="review-panel" role="status" aria-live="polite">
+        <SkeletonText lines={3} className="w-full max-w-md" />
       </div>
     );
   }
@@ -177,7 +178,7 @@ export function ReviewView({
         <div>
           <h3 className="text-sm font-medium mb-1">{t("course.review")}</h3>
           <p className="text-xs text-muted-foreground max-w-xs">
-            No unmastered wrong answers
+            {t("review.noUnmastered")}
           </p>
         </div>
       </div>
@@ -185,12 +186,12 @@ export function ReviewView({
   }
 
   return (
-    <div role="region" aria-label="Wrong answer review" className="flex-1 flex flex-col overflow-hidden" data-testid="review-panel">
+    <div role="region" aria-label={t("review.ariaLabel")} className="flex-1 flex flex-col overflow-hidden" data-testid="review-panel">
       <div className="px-3 py-2 border-b border-border/60 flex items-center justify-between text-xs text-muted-foreground" aria-live="polite">
-        <span>{wrongAnswers.length} mistakes ready for review</span>
+        <span>{t("review.mistakesReady").replace("{count}", String(wrongAnswers.length))}</span>
         <Button size="sm" onClick={() => void handleGenerateReview()} disabled={!aiActionsEnabled || generating}>
           {generating ? <span className="mr-1 animate-pulse">...</span> : null}
-          Generate Review
+          {t("review.generateReview")}
         </Button>
       </div>
 
@@ -199,9 +200,9 @@ export function ReviewView({
         {stats ? (
           <div className="rounded-2xl card-shadow bg-card p-4 space-y-3" data-testid="review-stats">
             <div className="flex flex-wrap gap-2">
-              <Badge variant="outline">Total: {stats.total}</Badge>
-              <Badge variant="outline">Unmastered: {stats.unmastered}</Badge>
-              <Badge variant="outline">Mastered: {stats.mastered}</Badge>
+              <Badge variant="outline">{t("review.statsTotal").replace("{count}", String(stats.total))}</Badge>
+              <Badge variant="outline">{t("review.statsUnmastered").replace("{count}", String(stats.unmastered))}</Badge>
+              <Badge variant="outline">{t("review.statsMastered").replace("{count}", String(stats.mastered))}</Badge>
             </div>
             {diagnosisSummary.length > 0 ? (
               <div className="flex flex-wrap gap-2">

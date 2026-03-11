@@ -173,7 +173,7 @@ export interface NextActionResponse {
 
 export async function listAgentTasks(courseId?: string): Promise<AgentTask[]> {
   const query = courseId ? `?course_id=${courseId}` : "";
-  return request(`/tasks/${query}`);
+  return request(`/tasks${query}`);
 }
 
 export async function submitAgentTask(body: {
@@ -233,6 +233,45 @@ export async function listStudyGoals(courseId?: string, status?: string): Promis
 
 export async function getNextAction(courseId: string): Promise<NextActionResponse> {
   return request(`/goals/${courseId}/next-action`);
+}
+
+export interface CreateGoalRequest {
+  title: string;
+  objective: string;
+  course_id?: string;
+  success_metric?: string;
+  current_milestone?: string;
+  next_action?: string;
+  status?: string;
+  confidence?: string;
+  target_date?: string;
+  metadata_json?: JsonObject;
+}
+
+export interface UpdateGoalRequest {
+  title?: string;
+  objective?: string;
+  success_metric?: string | null;
+  current_milestone?: string | null;
+  next_action?: string | null;
+  status?: string;
+  confidence?: string | null;
+  target_date?: string | null;
+  metadata_json?: JsonObject | null;
+}
+
+export async function createStudyGoal(body: CreateGoalRequest): Promise<StudyGoal> {
+  return request("/goals/", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function updateStudyGoal(goalId: string, body: UpdateGoalRequest): Promise<StudyGoal> {
+  return request(`/goals/${goalId}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
 }
 
 // ── Agenda Runs ──

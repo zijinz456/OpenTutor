@@ -1,6 +1,6 @@
 "use client";
 
-import { GraduationCap, Compass, Clock, Shield, BookOpen, Brain, BarChart3, ListChecks, HelpCircle, Layers, AlertTriangle, Lightbulb, FileText, Mic } from "lucide-react";
+import { GraduationCap, Compass, Clock, Shield, BookOpen, Brain, BarChart3, ListChecks, HelpCircle, Layers, AlertTriangle, Lightbulb, FileText } from "lucide-react";
 import { TEMPLATE_LIST, LEARNING_MODE_LIST } from "@/lib/block-system/templates";
 import type { LearningMode } from "@/lib/block-system/types";
 import type { BlockType } from "@/lib/block-system/types";
@@ -15,7 +15,6 @@ const BLOCK_ICONS: Record<BlockType, typeof BookOpen> = {
   chapter_list: ListChecks,
   plan: ListChecks,
   wrong_answers: AlertTriangle,
-  podcast: Mic,
   forecast: BarChart3,
   agent_insight: Lightbulb,
 };
@@ -58,14 +57,10 @@ export function TemplateStep({
       {/* Learning Mode Selection */}
       <div>
         <h2 className="text-lg font-semibold text-foreground">
-          {t("setup.modeTitle") !== "setup.modeTitle"
-            ? t("setup.modeTitle")
-            : "How are you learning?"}
+          {t("setup.modeTitle")}
         </h2>
         <p className="text-sm text-muted-foreground mt-1">
-          {t("setup.modeDescription") !== "setup.modeDescription"
-            ? t("setup.modeDescription")
-            : "This determines your page layout, navigation, and how the AI tutor assists you."}
+          {t("setup.modeDescription")}
         </p>
       </div>
 
@@ -88,11 +83,11 @@ export function TemplateStep({
               <div className="flex items-center gap-2 mb-1">
                 <Icon className={`size-4 ${active ? colors.text : "text-muted-foreground"}`} />
                 <span className={`text-sm font-medium ${active ? "text-foreground" : "text-foreground"}`}>
-                  {t(`mode.${m.id}`) !== `mode.${m.id}` ? t(`mode.${m.id}`) : m.name}
+                  {t(`mode.${m.id}`)}
                 </span>
               </div>
               <p className="text-[11px] text-muted-foreground line-clamp-2">
-                {t(`mode.${m.id}.desc`) !== `mode.${m.id}.desc` ? t(`mode.${m.id}.desc`) : m.description}
+                {t(`mode.${m.id}.desc`)}
               </p>
             </button>
           );
@@ -102,14 +97,10 @@ export function TemplateStep({
       {/* Template Selection */}
       <div className="pt-2 border-t border-border">
         <h3 className="text-sm font-semibold text-foreground mb-1">
-          {t("setup.templateTitle") !== "setup.templateTitle"
-            ? t("setup.templateTitle")
-            : "Choose your layout"}
+          {t("setup.templateTitle")}
         </h3>
         <p className="text-xs text-muted-foreground mb-3">
-          {t("setup.templateDescription") !== "setup.templateDescription"
-            ? t("setup.templateDescription")
-            : "Pick a template that fits your learning style. Your AI tutor will customize it over time."}
+          {t("setup.templateDescription")}
         </p>
       </div>
 
@@ -131,14 +122,10 @@ export function TemplateStep({
               <div className="flex items-start gap-3">
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-foreground">
-                    {t(`setup.template.${tpl.id}`) !== `setup.template.${tpl.id}`
-                      ? t(`setup.template.${tpl.id}`)
-                      : tpl.name}
+                    {t(`setup.template.${tpl.id}`)}
                   </p>
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    {t(`setup.template.${tpl.id}.desc`) !== `setup.template.${tpl.id}.desc`
-                      ? t(`setup.template.${tpl.id}.desc`)
-                      : tpl.description}
+                    {t(`setup.template.${tpl.id}.desc`)}
                   </p>
                 </div>
                 {/* Visual block grid preview */}
@@ -179,7 +166,7 @@ export function TemplateStep({
           onClick={onBack}
           className="text-sm text-muted-foreground hover:text-foreground transition-colors"
         >
-          {t("common.back") !== "common.back" ? t("common.back") : "Back"}
+          {t("common.back")}
         </button>
         <button
           type="button"
@@ -187,7 +174,7 @@ export function TemplateStep({
           disabled={!selectedTemplate || !selectedMode}
           className="px-5 py-2 text-sm font-medium rounded-lg bg-brand text-brand-foreground hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          {t("setup.continue") !== "setup.continue" ? t("setup.continue") : "Continue"}
+          {t("setup.continue")}
         </button>
       </div>
     </div>

@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { RotateCcw, ArrowRight } from "lucide-react";
 import type { BlockComponentProps } from "@/lib/block-system/registry";
-import type { ReviewItem } from "@/lib/api/progress";
+import type { ReviewItem } from "@/lib/api";
 
 const URGENCY_COLORS: Record<string, string> = {
   overdue: "bg-red-100 text-red-700",
@@ -18,12 +18,15 @@ export default function ReviewBlock({ courseId }: BlockComponentProps) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    import("@/lib/api/progress").then(({ getReviewSession }) => {
+    let cancelled = false;
+    import("@/lib/api").then(({ getReviewSession }) => {
+      if (cancelled) return;
       getReviewSession(courseId, 5)
-        .then((session) => setItems(session.items ?? []))
+        .then((session) => { if (!cancelled) setItems(session.items ?? []); })
         .catch((e) => console.error("[ReviewBlock] fetch failed:", e))
-        .finally(() => setLoading(false));
+        .finally(() => { if (!cancelled) setLoading(false); });
     });
+    return () => { cancelled = true; };
   }, [courseId]);
 
   if (loading) {

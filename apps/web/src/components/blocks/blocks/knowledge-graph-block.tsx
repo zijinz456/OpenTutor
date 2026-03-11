@@ -2,6 +2,7 @@
 
 import { lazy, Suspense } from "react";
 import type { BlockComponentProps } from "@/lib/block-system/registry";
+import { BlockSkeleton } from "@/components/shared/block-skeleton";
 
 const GraphView = lazy(() =>
   import("@/components/sections/analytics/graph-view").then((m) => ({ default: m.GraphView })),
@@ -9,7 +10,7 @@ const GraphView = lazy(() =>
 
 export default function KnowledgeGraphBlock({ courseId }: BlockComponentProps) {
   return (
-    <Suspense fallback={<div className="flex items-center justify-center h-32 text-sm text-muted-foreground">Loading...</div>}>
+    <Suspense fallback={<BlockSkeleton />}>
       <GraphView courseId={courseId} />
     </Suspense>
   );

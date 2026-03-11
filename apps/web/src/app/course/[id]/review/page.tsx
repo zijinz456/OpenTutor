@@ -8,7 +8,8 @@ import {
   submitReviewRating,
   type ReviewItem,
   type ReviewSession,
-} from "@/lib/api/progress";
+} from "@/lib/api";
+import { trackApiFailure } from "@/lib/error-telemetry";
 import { useT, useTF } from "@/lib/i18n-context";
 
 type Rating = "again" | "hard" | "good" | "easy";
@@ -25,6 +26,8 @@ export default function ReviewPage() {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [revealed, setRevealed] = useState(false);
   const [ratings, setRatings] = useState<Map<string, Rating>>(new Map());
+  const [submitting, setSubmitting] = useState(false);
+  const [ratingError, setRatingError] = useState<string | null>(null);
 
   const session = sessionByCourse[courseId] ?? null;
   const error = errorByCourse[courseId] ?? null;
@@ -57,17 +60,35 @@ export default function ReviewPage() {
   const allDone = reviewed === total && total > 0;
 
   const handleRate = useCallback(
-    (rating: Rating) => {
+    async (rating: Rating) => {
       if (!current) return;
+      setSubmitting(true);
+      setRatingError(null);
+
+      try {
+        await submitReviewRating(courseId, current.concept_id, rating);
+      } catch (err) {
+        trackApiFailure("rating", err, {
+          endpoint: `/progress/courses/${courseId}/review-session/rate`,
+          courseId,
+          meta: {
+            conceptId: current.concept_id,
+            rating,
+          },
+        });
+        setRatingError(err instanceof Error ? err.message : t("review.rateFailed"));
+        setSubmitting(false);
+        return;
+      }
+
       setRatings((prev) => new Map(prev).set(current.concept_id, rating));
-      // Submit rating to backend (fire-and-forget)
-      submitReviewRating(courseId, current.concept_id, rating).catch(() => {});
+      setSubmitting(false);
       setRevealed(false);
       if (currentIndex < total - 1) {
         setCurrentIndex((i) => i + 1);
       }
     },
-    [current, currentIndex, total, courseId],
+    [courseId, current, currentIndex, t, total],
   );
 
   const goBack = () => router.push(`/course/${courseId}`);
@@ -233,7 +254,8 @@ export default function ReviewPage() {
                   <button
                     type="button"
                     key={key}
-                    onClick={() => handleRate(key)}
+                    onClick={() => void handleRate(key)}
+                    disabled={submitting}
                     className={`py-2.5 rounded-xl text-sm font-medium transition-colors ${color}`}
                   >
                     {t(labelKey)}
@@ -241,6 +263,10 @@ export default function ReviewPage() {
                 ))}
               </div>
             )}
+
+            {ratingError ? (
+              <p className="text-xs text-center text-destructive">{ratingError}</p>
+            ) : null}
 
             {/* Already rated indicator */}
             {ratings.has(current.concept_id) && (

@@ -34,7 +34,6 @@ export default function CoursePage() {
   const { health, course, courses, contentTree, aiActionsEnabled } = useCourseData(courseId);
   const { blocks, blocksInitialized } = useBlockPersistence(courseId, course);
   const applyBlockTemplate = useWorkspaceStore((s) => s.applyBlockTemplate);
-
   const handleAction = useChatActions(courseId);
   const queueModeSuggestion = useQueueModeSuggestion(courseId);
 
@@ -90,7 +89,11 @@ export default function CoursePage() {
 
       <ChatFab open={chatOpen} onToggle={() => setChatOpen((v) => !v)} />
       <ErrorBoundary section="chat">
-        <ChatDrawer courseId={courseId} open={chatOpen} aiActionsEnabled={aiActionsEnabled} />
+        <ChatDrawer
+          courseId={courseId}
+          open={chatOpen}
+          aiActionsEnabled={aiActionsEnabled}
+        />
       </ErrorBoundary>
       <ErrorBoundary section="notes-drawer">
         <NotesDrawer

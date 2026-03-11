@@ -2,34 +2,24 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { FlashcardView } from "./flashcard-view";
 
-const MOCK_CARDS = [
-  { id: "c1", front: "What is 2+2?", back: "4", interval: 1, ease_factor: 2.5, repetitions: 0 },
-  { id: "c2", front: "Capital of France?", back: "Paris", interval: 1, ease_factor: 2.5, repetitions: 0 },
-];
-
-vi.mock("@/lib/api", async () => {
-  const cards = [
+function freshCards() {
+  return [
     { id: "c1", front: "What is 2+2?", back: "4", interval: 1, ease_factor: 2.5, repetitions: 0 },
     { id: "c2", front: "Capital of France?", back: "Paris", interval: 1, ease_factor: 2.5, repetitions: 0 },
   ];
-  return {
-    getDueFlashcards: vi.fn().mockResolvedValue({ cards, due_count: 2 }),
-    generateFlashcards: vi.fn().mockResolvedValue({ cards, count: 2 }),
-    reviewFlashcard: vi.fn().mockResolvedValue({}),
-    saveGeneratedFlashcards: vi.fn().mockResolvedValue({}),
-    listGeneratedFlashcardBatches: vi.fn().mockResolvedValue([]),
-  };
-});
+}
 
-vi.mock("@/lib/api/practice", async () => {
-  const cards = [
-    { id: "c1", front: "What is 2+2?", back: "4", interval: 1, ease_factor: 2.5, repetitions: 0 },
-    { id: "c2", front: "Capital of France?", back: "Paris", interval: 1, ease_factor: 2.5, repetitions: 0 },
-  ];
-  return {
-    getLectorOrderedFlashcards: vi.fn().mockResolvedValue({ cards, count: 2 }),
-  };
-});
+vi.mock("@/lib/api", () => ({
+  getDueFlashcards: vi.fn(),
+  generateFlashcards: vi.fn(),
+  reviewFlashcard: vi.fn(),
+  saveGeneratedFlashcards: vi.fn(),
+  listGeneratedFlashcardBatches: vi.fn(),
+}));
+
+vi.mock("@/lib/api/practice", () => ({
+  getLectorOrderedFlashcards: vi.fn(),
+}));
 
 vi.mock("@/lib/i18n-context", () => ({
   useT: () => (key: string) => key,
@@ -56,9 +46,22 @@ vi.mock("@/components/shared/ai-feature-blocked", () => ({
   AiFeatureBlocked: () => <div data-testid="ai-blocked" />,
 }));
 
+vi.mock("./use-quiz-persistence", () => ({
+  useQuizPersistence: () => ({ save: vi.fn(), load: vi.fn().mockReturnValue(null), clear: vi.fn() }),
+  useFlashcardPersistence: () => ({ save: vi.fn(), load: vi.fn().mockReturnValue(null), clear: vi.fn() }),
+}));
+
 describe("FlashcardView", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
+    const api = await import("@/lib/api");
+    const practice = await import("@/lib/api/practice");
+    (api.getDueFlashcards as ReturnType<typeof vi.fn>).mockResolvedValue({ cards: freshCards(), due_count: 2 });
+    (api.generateFlashcards as ReturnType<typeof vi.fn>).mockResolvedValue({ cards: freshCards(), count: 2 });
+    (api.reviewFlashcard as ReturnType<typeof vi.fn>).mockResolvedValue({});
+    (api.saveGeneratedFlashcards as ReturnType<typeof vi.fn>).mockResolvedValue({});
+    (api.listGeneratedFlashcardBatches as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (practice.getLectorOrderedFlashcards as ReturnType<typeof vi.fn>).mockResolvedValue({ cards: freshCards(), count: 2 });
   });
 
   it("renders loading state initially", async () => {
@@ -79,7 +82,7 @@ describe("FlashcardView", () => {
   it("has accessible flashcard button", async () => {
     render(<FlashcardView courseId="test-course" />);
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /flashcard showing question/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /flashcard\.ariaQuestion/ })).toBeInTheDocument();
     });
   });
 
@@ -87,31 +90,31 @@ describe("FlashcardView", () => {
     render(<FlashcardView courseId="test-course" />);
     await waitFor(() => screen.getByText("What is 2+2?"));
 
-    const card = screen.getByRole("button", { name: /flashcard showing question/i });
+    const card = screen.getByRole("button", { name: /flashcard\.ariaQuestion/ });
     fireEvent.click(card);
 
-    expect(screen.getByRole("button", { name: /flashcard showing answer/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /flashcard\.ariaAnswer/ })).toBeInTheDocument();
   });
 
   it("flips card on Enter key", async () => {
     render(<FlashcardView courseId="test-course" />);
     await waitFor(() => screen.getByText("What is 2+2?"));
 
-    const card = screen.getByRole("button", { name: /flashcard showing question/i });
+    const card = screen.getByRole("button", { name: /flashcard\.ariaQuestion/ });
     fireEvent.keyDown(card, { key: "Enter" });
 
-    expect(screen.getByRole("button", { name: /flashcard showing answer/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /flashcard\.ariaAnswer/ })).toBeInTheDocument();
   });
 
   it("shows rating buttons after flip", async () => {
     render(<FlashcardView courseId="test-course" />);
     await waitFor(() => screen.getByText("What is 2+2?"));
 
-    fireEvent.click(screen.getByRole("button", { name: /flashcard showing question/i }));
+    fireEvent.click(screen.getByRole("button", { name: /flashcard\.ariaQuestion/ }));
 
-    expect(screen.getByRole("button", { name: /Rate: Again/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Rate: Good/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Rate: Easy/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Rate: flashcard\.again/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Rate: flashcard\.good/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Rate: flashcard\.easy/ })).toBeInTheDocument();
   });
 
   it("advances to next card after rating", async () => {
@@ -119,11 +122,13 @@ describe("FlashcardView", () => {
     render(<FlashcardView courseId="test-course" />);
     await waitFor(() => screen.getByText("What is 2+2?"));
 
-    fireEvent.click(screen.getByRole("button", { name: /flashcard showing question/i }));
-    fireEvent.click(screen.getByRole("button", { name: /Rate: Good/ }));
+    fireEvent.click(screen.getByRole("button", { name: /flashcard\.ariaQuestion/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Rate: flashcard\.good/ }));
 
     await waitFor(() => {
-      expect(reviewFlashcard).toHaveBeenCalledWith(MOCK_CARDS[0], 3);
+      expect(reviewFlashcard).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "c1", front: "What is 2+2?" }), 3
+      );
     });
 
     await waitFor(() => {
@@ -139,17 +144,17 @@ describe("FlashcardView", () => {
     await waitFor(() => screen.getByText("What is 2+2?"));
 
     // Review first card
-    fireEvent.click(screen.getByRole("button", { name: /flashcard showing question/i }));
-    fireEvent.click(screen.getByRole("button", { name: /Rate: Good/ }));
+    fireEvent.click(screen.getByRole("button", { name: /flashcard\.ariaQuestion/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Rate: flashcard\.good/ }));
 
     await waitFor(() => screen.getByText("Capital of France?"));
 
     // Review second card
-    fireEvent.click(screen.getByRole("button", { name: /flashcard showing question/i }));
-    fireEvent.click(screen.getByRole("button", { name: /Rate: Easy/ }));
+    fireEvent.click(screen.getByRole("button", { name: /flashcard\.ariaQuestion/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Rate: flashcard\.easy/ }));
 
     await waitFor(() => {
-      expect(screen.getByText(/all done/i)).toBeInTheDocument();
+      expect(screen.getByText(/flashcard\.allDone/)).toBeInTheDocument();
     });
   });
 

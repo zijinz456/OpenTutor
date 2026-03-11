@@ -192,7 +192,7 @@ async def get_course_agenda(
                 AgentTask.status.in_(status_list),
             )
         )
-        return int(r.scalar_one() or 0)
+        return int(r.scalar() or 0)
 
     queued = await _count_tasks(["queued"])
     running = await _count_tasks(["running"])

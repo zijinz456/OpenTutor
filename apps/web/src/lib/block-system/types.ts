@@ -8,7 +8,6 @@ export type BlockType =
   | "chapter_list"
   | "plan"
   | "wrong_answers"
-  | "podcast"
   | "forecast"
   | "agent_insight";
 

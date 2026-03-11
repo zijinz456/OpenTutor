@@ -226,5 +226,5 @@ async def update_goal(
     await db.refresh(goal)
 
     count_result = await db.execute(select(func.count(AgentTask.id)).where(AgentTask.goal_id == goal.id))
-    linked_task_count = int(count_result.scalar_one() or 0)
+    linked_task_count = int(count_result.scalar() or 0)
     return StudyGoalResponse(**serialize_model(goal, extra={"linked_task_count": linked_task_count}))

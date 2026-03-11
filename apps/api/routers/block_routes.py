@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
 from models.user import User
 from services.auth.dependency import get_current_user
+from services.course_access import get_course_or_404
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,7 @@ async def get_preferences(
     db: AsyncSession = Depends(get_db),
 ):
     """Return computed block preference scores for a course."""
+    await get_course_or_404(db, course_id, user_id=user.id)
     from services.block_decision.preference import compute_block_preferences
 
     scores = await compute_block_preferences(db, user.id, course_id)

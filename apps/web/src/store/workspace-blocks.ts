@@ -16,10 +16,31 @@ import type {
 } from "@/lib/block-system/types";
 import { buildLayoutFromTemplate, buildLayoutFromMode } from "@/lib/block-system/templates";
 import { BLOCK_REGISTRY } from "@/lib/block-system/registry";
+import { recordBlockEvent } from "@/hooks/use-block-engagement";
 
 let blockIdCounter = 0;
 export function nextBlockId(): string {
   return `blk-${Date.now()}-${++blockIdCounter}`;
+}
+
+/** Reorder blocks by placing one of each type in `orderedTypes` first, then the rest. */
+function reorderBlocksByType(blocks: BlockInstance[], orderedTypes: BlockType[]): BlockInstance[] {
+  const byType = new Map<BlockType, BlockInstance[]>();
+  for (const b of blocks) {
+    const list = byType.get(b.type) ?? [];
+    list.push(b);
+    byType.set(b.type, list);
+  }
+  const reordered: BlockInstance[] = [];
+  for (const type of orderedTypes) {
+    const list = byType.get(type);
+    if (list?.length) {
+      reordered.push(list.shift()!);
+      if (list.length === 0) byType.delete(type);
+    }
+  }
+  for (const remaining of byType.values()) reordered.push(...remaining);
+  return reordered;
 }
 
 export const MAX_LAYOUT_HISTORY = 10;
@@ -172,21 +193,7 @@ export function createBlockSlice<TState extends BlockSystemState>(
 
     reorderBlocks: (orderedTypes) => {
       set((s) => {
-        const byType = new Map<BlockType, BlockInstance[]>();
-        for (const b of s.spaceLayout.blocks) {
-          const list = byType.get(b.type) ?? [];
-          list.push(b);
-          byType.set(b.type, list);
-        }
-        const reordered: BlockInstance[] = [];
-        for (const type of orderedTypes) {
-          const list = byType.get(type);
-          if (list?.length) {
-            reordered.push(list.shift()!);
-            if (list.length === 0) byType.delete(type);
-          }
-        }
-        for (const remaining of byType.values()) reordered.push(...remaining);
+        const reordered = reorderBlocksByType(s.spaceLayout.blocks, orderedTypes);
         return { spaceLayout: { ...s.spaceLayout, blocks: reordered.map((b, i) => ({ ...b, position: i })) } };
       });
     },
@@ -242,6 +249,12 @@ export function createBlockSlice<TState extends BlockSystemState>(
     },
 
     approveAgentBlock: (blockId) => {
+      const block = get().spaceLayout.blocks.find((b) => b.id === blockId);
+      if (block) {
+        const match = globalThis.location?.pathname?.match(/\/course\/([^/]+)/);
+        const courseId = match?.[1] ?? "global";
+        recordBlockEvent(courseId, block.type, "approve");
+      }
       set((s) => ({
         spaceLayout: {
           ...s.spaceLayout,
@@ -311,22 +324,7 @@ export function createBlockSlice<TState extends BlockSystemState>(
           } else if (op.action === "remove") {
             blocks = blocks.filter((b) => b.id !== op.blockId);
           } else if (op.action === "reorder") {
-            const byType = new Map<BlockType, BlockInstance[]>();
-            for (const b of blocks) {
-              const list = byType.get(b.type) ?? [];
-              list.push(b);
-              byType.set(b.type, list);
-            }
-            const reordered: BlockInstance[] = [];
-            for (const type of op.orderedTypes) {
-              const list = byType.get(type);
-              if (list?.length) {
-                reordered.push(list.shift()!);
-                if (list.length === 0) byType.delete(type);
-              }
-            }
-            for (const remaining of byType.values()) reordered.push(...remaining);
-            blocks = reordered;
+            blocks = reorderBlocksByType(blocks, op.orderedTypes);
           } else if (op.action === "resize") {
             blocks = blocks.map((b) => (b.id === op.blockId ? { ...b, size: op.size } : b));
           } else if (op.action === "update_config") {

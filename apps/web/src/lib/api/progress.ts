@@ -255,6 +255,8 @@ export type {
   LearningTemplate,
   NextActionResponse,
   StudyGoal,
+  CreateGoalRequest,
+  UpdateGoalRequest,
   AgendaRun,
   AgendaDecisionLogRequest,
   VelocityResult,

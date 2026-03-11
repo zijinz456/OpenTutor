@@ -247,9 +247,21 @@ export function useSetup() {
         // ignore polling errors
       }
     };
+    let interval = 2000;
+    const maxInterval = 10000;
+    let timer: number;
+    const schedule = () => {
+      timer = window.setTimeout(async () => {
+        await pollJobs();
+        if (!cancelled) {
+          interval = Math.min(interval * 1.5, maxInterval);
+          schedule();
+        }
+      }, interval);
+    };
     void pollJobs();
-    const timer = window.setInterval(() => void pollJobs(), 2000);
-    return () => { cancelled = true; window.clearInterval(timer); };
+    schedule();
+    return () => { cancelled = true; window.clearTimeout(timer); };
   }, [createdCourseId, noSourcesSubmitted, step, t]);
 
   // ── Enable "Enter Workspace" after 5s even if ingestion is still running ──

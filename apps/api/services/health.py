@@ -148,6 +148,9 @@ async def get_health_status() -> dict[str, Any]:
         "code_sandbox_backend": settings.code_sandbox_backend,
         "code_sandbox_runtime": settings.code_sandbox_runtime,
         "code_sandbox_runtime_available": sandbox_available,
+        "features": {
+            "voice_enabled": bool(settings.voice_enabled),
+        },
         "local_beta_ready": not local_beta_blockers,
         "local_beta_blockers": local_beta_blockers,
         "local_beta_warnings": local_beta_warnings,

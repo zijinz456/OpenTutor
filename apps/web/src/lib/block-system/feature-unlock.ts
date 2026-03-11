@@ -68,9 +68,6 @@ export function isBlockUnlocked(
     case "progress":
       return { unlocked: true };
 
-    case "podcast":
-      return { unlocked: true };
-
     default:
       return { unlocked: true };
   }

@@ -1,9 +1,10 @@
 """Pydantic schemas for quiz endpoints."""
 
 import uuid
+from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from services.practice.annotation import normalize_question_options
 
@@ -18,14 +19,14 @@ class ExtractRequest(BaseModel):
 
 class SubmitAnswerRequest(BaseModel):
     problem_id: uuid.UUID
-    user_answer: str
+    user_answer: str = Field(..., max_length=5000)
     answer_time_ms: int | None = None  # Time from question display to answer submission
 
 
 class SaveGeneratedRequest(BaseModel):
     course_id: uuid.UUID
-    raw_content: str
-    title: str | None = None
+    raw_content: str = Field(..., max_length=50000)
+    title: str | None = Field(default=None, max_length=500)
     replace_batch_id: uuid.UUID | None = None
 
 
@@ -58,10 +59,23 @@ class AnswerResponse(BaseModel):
     correct_answer: str | None
     explanation: str | None
     prerequisite_gaps: list[PrerequisiteGap] | None = None
+    warnings: list[str] = Field(default_factory=list)
 
 
 class MasterySnapshotResponse(BaseModel):
     mastery_score: float
     gap_type: str | None
     content_node_id: str | None
-    recorded_at: str
+    recorded_at: datetime
+
+
+# ── CAT Pre-test ──
+
+class PretestStartRequest(BaseModel):
+    course_id: uuid.UUID
+
+
+class PretestAnswerRequest(BaseModel):
+    course_id: uuid.UUID
+    concept_id: uuid.UUID
+    correct: bool  # Frontend evaluates MC answer and sends boolean

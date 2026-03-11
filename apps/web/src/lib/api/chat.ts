@@ -141,6 +141,8 @@ export interface ChatMessageMetadata {
   verifier?: ChatVerifierResult | null;
   verifier_diagnostics?: ChatVerifierDiagnostics | null;
   task_link?: ChatTaskLink | null;
+  /** True when backend used mock LLM fallback (no real API key configured). */
+  is_mock?: boolean;
 }
 
 interface PlanStepProgress {
@@ -169,7 +171,8 @@ type StreamEvent =
   | { type: "tool_progress"; tool: string; message: string; step: number; total: number }
   | { type: "clarify"; clarify: ClarifyOption }
   | { type: "block_update"; operations: BlockUpdateOp[]; cognitiveState: CognitiveState; explanation: string }
-  | { type: "done"; sessionId?: string; agent?: string; intent?: string; tokens?: number; metadata?: ChatMessageMetadata };
+  | { type: "done"; sessionId?: string; agent?: string; intent?: string; tokens?: number; metadata?: ChatMessageMetadata }
+  | { type: "warning"; warningType: string; message: string };
 
 export interface BlockUpdateOp {
   action: "add" | "remove" | "resize" | "reorder" | "update_config";
@@ -364,7 +367,14 @@ export async function* streamChat(
             verifier_diagnostics: data.verifier_diagnostics,
             task_link: data.task_link,
             reflection: data.reflection,
+            is_mock: data.is_mock,
           },
+        };
+      } else if (resolvedEvent === "warning") {
+        yield {
+          type: "warning" as const,
+          warningType: (data.type ?? "unknown") as string,
+          message: (data.message ?? "") as string,
         };
       } else if (resolvedEvent === "error" && data.error) {
         throw new Error(data.error);
@@ -403,7 +413,12 @@ export async function* streamChat(
   }
 }
 
-export async function getChatGreeting(courseId: string): Promise<{ greeting: string; course_name: string }> {
+export async function getChatGreeting(courseId: string): Promise<{
+  greeting: string;
+  course_name: string;
+  suggested_actions?: Array<{ action: string; value: string; extra?: string }>;
+  degraded?: string[];
+}> {
   return request(`/chat/greeting/${courseId}`);
 }
 

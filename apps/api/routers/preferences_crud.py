@@ -37,8 +37,8 @@ def _serialize_signal(signal: PreferenceSignal) -> PreferenceSignalResponse:
         signal_type=signal.signal_type,
         course_id=signal.course_id,
         context=signal.context,
-        created_at=signal.created_at.isoformat() if signal.created_at else None,
-        dismissed_at=signal.dismissed_at.isoformat() if signal.dismissed_at else None,
+        created_at=signal.created_at,
+        dismissed_at=signal.dismissed_at,
         dismissal_reason=signal.dismissal_reason,
     )
 
@@ -53,9 +53,9 @@ def _serialize_memory(memory: ConversationMemory) -> MemoryProfileResponse:
         access_count=memory.access_count,
         source_message=memory.source_message,
         metadata_json=memory.metadata_json,
-        created_at=memory.created_at.isoformat() if memory.created_at else None,
-        updated_at=memory.updated_at.isoformat() if memory.updated_at else None,
-        dismissed_at=memory.dismissed_at.isoformat() if memory.dismissed_at else None,
+        created_at=memory.created_at,
+        updated_at=memory.updated_at,
+        dismissed_at=memory.dismissed_at,
         dismissal_reason=memory.dismissal_reason,
     )
 

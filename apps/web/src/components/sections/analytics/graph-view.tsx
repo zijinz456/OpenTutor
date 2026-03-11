@@ -6,6 +6,8 @@ import {
   getKnowledgeGraph,
   type KnowledgeGraphEdge,
 } from "@/lib/api";
+import { trackApiFailure } from "@/lib/error-telemetry";
+import { Button } from "@/components/ui/button";
 import {
   buildFocusedGraph,
   runSimulationStep,
@@ -28,10 +30,13 @@ export function GraphView({ courseId, focusTerms, maxNodes = 20 }: GraphViewProp
   const [selected, setSelected] = useState<SimNode | null>(null);
   const [loading, setLoading] = useState(true);
   const [empty, setEmpty] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [reloadTick, setReloadTick] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    setError(null);
     getKnowledgeGraph(courseId)
       .then((data) => {
         if (cancelled) return;
@@ -44,6 +49,7 @@ export function GraphView({ courseId, focusTerms, maxNodes = 20 }: GraphViewProp
 
         if (!focused.nodes.length) {
           setEmpty(true);
+          setError(null);
           setLoading(false);
           return;
         }
@@ -63,18 +69,24 @@ export function GraphView({ courseId, focusTerms, maxNodes = 20 }: GraphViewProp
         setEdges(focused.edges);
         setNodes(simNodes);
         setEmpty(false);
+        setError(null);
         setLoading(false);
       })
-      .catch(() => {
+      .catch((err) => {
         if (!cancelled) {
-          setEmpty(true);
+          trackApiFailure("graph", err, {
+            endpoint: `/progress/courses/${courseId}/knowledge-graph`,
+            courseId,
+          });
+          setEmpty(false);
+          setError(err instanceof Error ? err.message : t("graph.loadFailed"));
           setLoading(false);
         }
       });
     return () => {
       cancelled = true;
     };
-  }, [courseId, focusTerms, maxNodes]);
+  }, [courseId, focusTerms, maxNodes, reloadTick, t]);
 
   useEffect(() => {
     if (nodes.length === 0) return;
@@ -109,7 +121,22 @@ export function GraphView({ courseId, focusTerms, maxNodes = 20 }: GraphViewProp
         className="flex-1 flex items-center justify-center p-8"
         data-testid="graph-panel"
       >
-        <p className="text-xs text-muted-foreground">Loading graph...</p>
+        <p className="text-xs text-muted-foreground">{t("graph.loading")}</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div
+        className="flex-1 flex flex-col items-center justify-center p-8 text-center gap-3"
+        data-testid="graph-panel"
+      >
+        <h3 className="text-sm font-medium">{t("graph.loadFailed")}</h3>
+        <p className="text-xs text-muted-foreground max-w-xs">{error}</p>
+        <Button variant="outline" size="sm" onClick={() => setReloadTick((value) => value + 1)}>
+          {t("graph.retry")}
+        </Button>
       </div>
     );
   }
@@ -122,7 +149,7 @@ export function GraphView({ courseId, focusTerms, maxNodes = 20 }: GraphViewProp
       >
         <h3 className="text-sm font-medium mb-1">{t("course.graph")}</h3>
         <p className="text-xs text-muted-foreground max-w-xs">
-          Upload course materials to generate the knowledge graph
+          {t("graph.emptyHint")}
         </p>
       </div>
     );

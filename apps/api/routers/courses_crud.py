@@ -42,6 +42,7 @@ def _serialize_content_tree(nodes: list[CourseContentTree]) -> list[ContentNodeR
             level=node.level,
             order_index=node.order_index,
             source_type=node.source_type,
+            content_category=getattr(node, "content_category", None),
             children=[build(child) for child in by_parent.get(node.id, [])],
         )
 
@@ -78,6 +79,7 @@ async def list_course_overview(
             IngestionJob.course_id.label("course_id"),
             func.count(IngestionJob.id).label("file_count"),
         )
+        .where(IngestionJob.user_id == user.id)
         .group_by(IngestionJob.course_id)
         .subquery()
     )
@@ -94,7 +96,7 @@ async def list_course_overview(
             StudyGoal.course_id.label("course_id"),
             func.count(StudyGoal.id).label("active_goal_count"),
         )
-        .where(StudyGoal.status == "active")
+        .where(StudyGoal.status == "active", StudyGoal.user_id == user.id)
         .group_by(StudyGoal.course_id)
         .subquery()
     )
@@ -103,7 +105,7 @@ async def list_course_overview(
             AgentTask.course_id.label("course_id"),
             func.count(AgentTask.id).label("pending_task_count"),
         )
-        .where(AgentTask.status.in_(("queued", "running", "resuming", "cancel_requested")))
+        .where(AgentTask.status.in_(("queued", "running", "resuming", "cancel_requested")), AgentTask.user_id == user.id)
         .group_by(AgentTask.course_id)
         .subquery()
     )
@@ -112,7 +114,7 @@ async def list_course_overview(
             AgentTask.course_id.label("course_id"),
             func.count(AgentTask.id).label("pending_approval_count"),
         )
-        .where(AgentTask.status.in_(("awaiting_approval", "pending_approval")))
+        .where(AgentTask.status.in_(("awaiting_approval", "pending_approval")), AgentTask.user_id == user.id)
         .group_by(AgentTask.course_id)
         .subquery()
     )
@@ -121,6 +123,7 @@ async def list_course_overview(
             AgentTask.course_id.label("course_id"),
             func.max(AgentTask.updated_at).label("last_agent_activity_at"),
         )
+        .where(AgentTask.user_id == user.id)
         .group_by(AgentTask.course_id)
         .subquery()
     )
@@ -265,6 +268,78 @@ async def get_content_tree(course_id: uuid.UUID, user: User = Depends(get_curren
         .order_by(CourseContentTree.level, CourseContentTree.order_index, CourseContentTree.created_at)
     )
     return _serialize_content_tree(result.scalars().all())
+
+
+@router.get("/{course_id}/course-info", summary="Get course info summary", description="Return structured course info: grading scheme, assignments, deadlines, quiz details.")
+async def get_course_info(course_id: uuid.UUID, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Extract and summarize information-type content (syllabus, assignments, quizzes)."""
+    from models.ingestion import Assignment
+
+    await get_course_or_404(db, course_id, user_id=user.id)
+
+    # Get syllabus content nodes (assignments listing, quizzes, etc.)
+    syllabus_result = await db.execute(
+        select(CourseContentTree)
+        .where(
+            CourseContentTree.course_id == course_id,
+            CourseContentTree.content_category == "syllabus",
+            CourseContentTree.content.isnot(None),
+        )
+        .order_by(CourseContentTree.order_index)
+    )
+    syllabus_nodes = syllabus_result.scalars().all()
+
+    # Get assignments from dedicated table
+    assignments_result = await db.execute(
+        select(Assignment)
+        .where(Assignment.course_id == course_id)
+        .order_by(Assignment.due_date.asc().nullslast())
+    )
+    assignments = assignments_result.scalars().all()
+
+    # Build grading info from "Assignments" summary node
+    grading_items = []
+    for node in syllabus_nodes:
+        if node.title == "Assignments" and node.content:
+            import re
+            # Parse lines like: "**Short Assignment 1** (due: 2026-03-22) [12.0 pts]"
+            for match in re.finditer(
+                r"\*\*(.+?)\*\*\s*\(due:\s*([^)]+)\)\s*\[([0-9.]+)\s*pts?\]",
+                node.content,
+            ):
+                grading_items.append({
+                    "title": match.group(1).strip(),
+                    "due_date": match.group(2).strip(),
+                    "points": float(match.group(3)),
+                })
+            break
+
+    # Build quiz info
+    quizzes = []
+    for node in syllabus_nodes:
+        if "quiz" in node.title.lower() and "reference" not in node.title.lower():
+            quizzes.append({
+                "title": node.title,
+                "content": (node.content or "")[:500],
+            })
+
+    # Build assignment list from DB
+    assignment_list = [
+        {
+            "title": a.title,
+            "type": a.assignment_type,
+            "due_date": str(a.due_date) if a.due_date else None,
+            "description": (a.description or "")[:200],
+        }
+        for a in assignments
+    ]
+
+    return {
+        "grading_scheme": grading_items,
+        "quizzes": quizzes,
+        "assignments": assignment_list,
+        "syllabus_node_count": len(syllabus_nodes),
+    }
 
 
 @router.delete("/{course_id}", status_code=204, summary="Delete a course", description="Permanently delete a course and its associated data.")

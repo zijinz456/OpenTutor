@@ -8,7 +8,7 @@ import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import cast, func, select, Date
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.usage_event import UsageEvent
@@ -83,6 +83,28 @@ def estimate_cost(model_name: str, input_tokens: int, output_tokens: int) -> flo
     return round(cost, 6)
 
 
+# Local model providers that should not be tracked for usage/cost
+_LOCAL_PROVIDERS = {"lmstudio", "lm_studio", "lm-studio", "ollama", "local"}
+_CLOUD_PROVIDERS = {
+    "groq", "openai", "anthropic", "deepseek", "openrouter",
+    "gemini", "together", "fireworks", "azure", "bedrock",
+}
+_LOCAL_MODEL_PATTERNS = ("qwen", "llama", "mistral", "phi", "gemma", "yi-", "codestral")
+
+
+def _is_local_model(model_provider: str, model_name: str) -> bool:
+    """Check if a model is local (free) and should skip usage recording."""
+    provider_lower = model_provider.lower()
+    if provider_lower in _LOCAL_PROVIDERS:
+        return True
+    # Known cloud providers always incur cost, even for open-weight models
+    if provider_lower in _CLOUD_PROVIDERS:
+        return False
+    # Unknown provider: fall back to model name heuristic
+    name_lower = model_name.lower()
+    return any(p in name_lower for p in _LOCAL_MODEL_PATTERNS)
+
+
 async def record_usage(
     db: AsyncSession,
     *,
@@ -96,8 +118,12 @@ async def record_usage(
     output_tokens: int = 0,
     tool_calls: int = 0,
     metadata: dict | None = None,
-) -> UsageEvent:
-    """Record a single LLM usage event."""
+) -> UsageEvent | None:
+    """Record a single LLM usage event. Skips local models (ollama, lmstudio)."""
+    if _is_local_model(model_provider, model_name):
+        logger.debug("Skipping usage recording for local model: %s/%s", model_provider, model_name)
+        return None
+
     cost = estimate_cost(model_name, input_tokens, output_tokens)
 
     event = UsageEvent(
@@ -240,21 +266,24 @@ async def get_daily_usage(
     """Get daily usage time series for charts."""
     start = datetime.now(timezone.utc) - timedelta(days=days)
 
+    # Use cast(Date) instead of date_trunc for SQLite compatibility
+    day_col = cast(UsageEvent.created_at, Date).label("day")
+
     result = await db.execute(
         select(
-            func.date_trunc("day", UsageEvent.created_at).label("day"),
+            day_col,
             func.count(UsageEvent.id).label("calls"),
             func.coalesce(func.sum(UsageEvent.estimated_cost_usd), 0).label("cost_usd"),
             func.coalesce(func.sum(UsageEvent.input_tokens + UsageEvent.output_tokens), 0).label("total_tokens"),
         )
         .where(UsageEvent.user_id == user_id, UsageEvent.created_at >= start)
-        .group_by(func.date_trunc("day", UsageEvent.created_at))
-        .order_by(func.date_trunc("day", UsageEvent.created_at))
+        .group_by(day_col)
+        .order_by(day_col)
     )
 
     return [
         {
-            "date": row.day.isoformat() if row.day else None,
+            "date": row.day.isoformat() if hasattr(row.day, "isoformat") else str(row.day),
             "calls": row.calls,
             "cost_usd": round(float(row.cost_usd), 4),
             "total_tokens": row.total_tokens,

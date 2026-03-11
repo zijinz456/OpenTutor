@@ -8,6 +8,7 @@ import {
   updateCourse,
   listAuthSessions,
   canvasBrowserLogin,
+  fetchCanvasCourseInfo,
 } from "@/lib/api";
 import { useT } from "@/lib/i18n-context";
 import { useCourseStore } from "@/store/course";
@@ -60,9 +61,7 @@ export function useNewProject() {
 
   /* ---------- Validation ---------- */
   function validateName(value: string): void {
-    if (!value.trim()) {
-      setNameError(t("new.projectNameRequired"));
-    } else if (value.length > 100) {
+    if (value.length > 100) {
       setNameError(t("new.projectNameTooLong"));
     } else {
       setNameError(null);
@@ -120,10 +119,32 @@ export function useNewProject() {
       }
     };
 
+    let interval = 2000;
+    const maxInterval = 10000;
+    let timer: number;
+    const schedule = () => {
+      timer = window.setTimeout(async () => {
+        await pollJobs();
+        if (!cancelled) {
+          interval = Math.min(interval * 1.5, maxInterval);
+          schedule();
+        }
+      }, interval);
+    };
     void pollJobs();
-    const timer = window.setInterval(() => void pollJobs(), 2000);
-    return () => { cancelled = true; window.clearInterval(timer); };
+    schedule();
+    return () => { cancelled = true; window.clearTimeout(timer); };
   }, [createdCourseId, noSourcesSubmitted, step, t]);
+
+  /* ---------- Auto-fill project name from Canvas ---------- */
+  const autoFillCanvasName = useCallback(async (canvasUrl: string) => {
+    try {
+      const info = await fetchCanvasCourseInfo(canvasUrl);
+      if (info.name && !projectName.trim()) {
+        setProjectName(info.name);
+      }
+    } catch { /* non-critical */ }
+  }, [projectName, setProjectName]);
 
   /* ---------- Canvas URL add handler ---------- */
   const handleAddUrl = useCallback(async () => {
@@ -134,7 +155,11 @@ export function useNewProject() {
       const sessions = await listAuthSessions();
       const domain = new URL(trimmed).hostname;
       const match = sessions.find((s) => s.is_valid && domain.includes(s.domain));
-      if (match) { setCanvasSessionValid(true); return; }
+      if (match) {
+        setCanvasSessionValid(true);
+        void autoFillCanvasName(trimmed);
+        return;
+      }
     } catch { /* prompt login anyway */ }
 
     setCanvasLoginError(null);
@@ -144,12 +169,13 @@ export function useNewProject() {
       await canvasBrowserLogin(trimmed);
       setCanvasSessionValid(true);
       setShowCanvasLogin(false);
+      void autoFillCanvasName(trimmed);
     } catch (err) {
       setCanvasLoginError((err as Error).message || t("new.loginFailed"));
     } finally {
       setCanvasLogging(false);
     }
-  }, [t, url]);
+  }, [t, url, autoFillCanvasName]);
 
   /* ---------- Start parsing ---------- */
   const startParsing = useCallback(async () => {

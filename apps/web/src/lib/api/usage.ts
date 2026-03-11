@@ -1,4 +1,4 @@
-import { API_BASE, request } from "./client";
+import { API_BASE, request, requestBlob } from "./client";
 
 // ── Usage ──
 
@@ -22,9 +22,9 @@ export async function getUsageSummary(
 
 // ── Export ──
 
-export function getExportSessionUrl(courseId?: string): string {
+export async function downloadExportSession(courseId?: string) {
   const params = courseId ? `?course_id=${courseId}` : "";
-  return `${API_BASE}/export/session${params}`;
+  return requestBlob(`/export/session${params}`);
 }
 
 export function getAnkiExportUrl(courseId: string, batchId?: string): string {

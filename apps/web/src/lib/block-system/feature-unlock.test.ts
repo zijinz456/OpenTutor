@@ -59,10 +59,9 @@ describe("isBlockUnlocked", () => {
     expect(result.unlockHint).toContain("1/3");
   });
 
-  it("always unlocks progress and podcast", () => {
+  it("always unlocks progress", () => {
     const ctx = makeCtx();
     expect(isBlockUnlocked("progress", ctx).unlocked).toBe(true);
-    expect(isBlockUnlocked("podcast", ctx).unlocked).toBe(true);
   });
 });
 

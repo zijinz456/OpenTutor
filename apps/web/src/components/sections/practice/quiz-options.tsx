@@ -1,5 +1,7 @@
 "use client";
 
+import { useT } from "@/lib/i18n-context";
+
 interface QuizOptionsProps {
   optionKeys: string[];
   options: Record<string, string>;
@@ -17,6 +19,7 @@ export function QuizOptions({
   submitting,
   onOptionClick,
 }: QuizOptionsProps) {
+  const t = useT();
   const optionStyle = (key: string) => {
     if (!result) {
       return key === selectedOption
@@ -31,7 +34,7 @@ export function QuizOptions({
   };
 
   return (
-    <div className="space-y-3" role="radiogroup" aria-label="Answer options" aria-describedby="quiz-question-text">
+    <div className="space-y-3" role="radiogroup" aria-label={t("quiz.answerOptions")} aria-describedby="quiz-question-text">
       {optionKeys.map((key) => (
         <button
           key={key}

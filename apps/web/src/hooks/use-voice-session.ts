@@ -5,13 +5,14 @@
  * - WebSocket connection to /api/voice/ws/{courseId}
  * - MediaRecorder for audio capture (WebM/Opus)
  * - Audio playback queue for TTS responses
- * - State machine: idle → recording → processing → playing → idle
+ * - State machine: idle -> recording -> processing -> playing -> idle
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getStoredAccessToken } from "@/lib/auth";
 import { getSharedAudioContext } from "@/lib/audio-context";
 import { API_BASE } from "@/lib/api/client";
+import { trackApiFailure } from "@/lib/error-telemetry";
 
 const API_WS_BASE =
   API_BASE.replace(/^http/, "ws").replace(/\/api$/, "") + "/api/voice";
@@ -22,11 +23,9 @@ interface VoiceMessage {
   type: "transcript" | "message" | "audio" | "status" | "done" | "error";
   text?: string;
   content?: string;
-  data?: string; // base64 audio
-  format?: string;
+  data?: string;
   phase?: string;
   message?: string;
-  metadata?: Record<string, unknown>;
 }
 
 interface UseVoiceSessionOptions {
@@ -52,26 +51,27 @@ export function useVoiceSession(courseId: string, options?: UseVoiceSessionOptio
 
   const wsRef = useRef<WebSocket | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const audioContextRef = useRef<AudioContext | null>(null);
   const playbackQueueRef = useRef<string[]>([]);
   const isPlayingRef = useRef(false);
-  const streamRef = useRef<MediaStream | null>(null);
   const reconnectAttemptsRef = useRef(0);
   const reconnectTimerRef = useRef<number | null>(null);
   const connectRef = useRef<(() => Promise<WebSocket>) | null>(null);
   const unmountedRef = useRef(false);
 
-  /** Play audio from base64 queue */
   const playNextAudio = useCallback(async () => {
     if (unmountedRef.current) return;
     if (isPlayingRef.current || playbackQueueRef.current.length === 0) return;
 
     isPlayingRef.current = true;
-    if (!unmountedRef.current) setVoiceState("playing");
+    setVoiceState("playing");
 
     while (playbackQueueRef.current.length > 0) {
-      const b64 = playbackQueueRef.current.shift()!;
+      const b64 = playbackQueueRef.current.shift();
+      if (!b64) continue;
+
       try {
         const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
         if (!audioContextRef.current) {
@@ -83,13 +83,12 @@ export function useVoiceSession(courseId: string, options?: UseVoiceSessionOptio
         const source = audioContextRef.current.createBufferSource();
         source.buffer = audioBuffer;
         source.connect(audioContextRef.current.destination);
-
         await new Promise<void>((resolve) => {
           source.onended = () => resolve();
           source.start();
         });
-      } catch (e) {
-        console.error("Audio playback failed:", e);
+      } catch (playbackError) {
+        console.error("Audio playback failed:", playbackError);
       }
     }
 
@@ -97,40 +96,33 @@ export function useVoiceSession(courseId: string, options?: UseVoiceSessionOptio
     setVoiceState("idle");
   }, []);
 
-  /** Handle incoming server messages */
   const handleServerMessage = useCallback((msg: VoiceMessage) => {
     switch (msg.type) {
       case "transcript":
         setTranscript(msg.text ?? "");
         setVoiceState("processing");
         break;
-
       case "message":
         setAgentText((prev) => prev + (msg.content ?? ""));
         break;
-
       case "audio":
         if (msg.data) {
           playbackQueueRef.current.push(msg.data);
           void playNextAudio();
         }
         break;
-
       case "status":
         if (msg.phase === "speaking") {
           setVoiceState("playing");
         }
         break;
-
       case "done":
         if (!isPlayingRef.current) {
           setVoiceState("idle");
         }
-        // Reset text buffers for next turn
         setTranscript("");
         setAgentText("");
         break;
-
       case "error":
         setError(msg.message ?? "Voice error");
         setVoiceState("idle");
@@ -138,7 +130,6 @@ export function useVoiceSession(courseId: string, options?: UseVoiceSessionOptio
     }
   }, [playNextAudio]);
 
-  /** Connect WebSocket — returns a promise that resolves when open */
   const connect = useCallback((): Promise<WebSocket> => {
     return new Promise((resolve, reject) => {
       if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -152,11 +143,10 @@ export function useVoiceSession(courseId: string, options?: UseVoiceSessionOptio
       if (resolvedAccessToken) {
         params.set("token", resolvedAccessToken);
       }
-      const url = `${API_WS_BASE}/ws/${courseId}${params.size > 0 ? `?${params.toString()}` : ""}`;
-      const ws = new WebSocket(url);
+      const wsUrl = `${API_WS_BASE}/ws/${courseId}${params.size > 0 ? `?${params.toString()}` : ""}`;
+      const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
-      // Timeout after 5 seconds — cleared on successful open
       const connectTimeout = window.setTimeout(() => {
         if (ws.readyState !== WebSocket.OPEN) {
           ws.close();
@@ -166,11 +156,10 @@ export function useVoiceSession(courseId: string, options?: UseVoiceSessionOptio
 
       ws.onopen = () => {
         clearTimeout(connectTimeout);
-        reconnectAttemptsRef.current = 0; // Reset on successful connect
+        reconnectAttemptsRef.current = 0;
         setVoiceState("idle");
         setError(null);
         setIsConnected(true);
-        // Send config
         ws.send(JSON.stringify({
           type: "config",
           tts_voice: ttsVoice,
@@ -186,7 +175,7 @@ export function useVoiceSession(courseId: string, options?: UseVoiceSessionOptio
           const msg: VoiceMessage = JSON.parse(event.data);
           handleServerMessage(msg);
         } catch {
-          // Binary or malformed — ignore
+          // ignore malformed messages
         }
       };
 
@@ -195,6 +184,11 @@ export function useVoiceSession(courseId: string, options?: UseVoiceSessionOptio
         setError("Voice connection failed");
         setVoiceState("idle");
         setIsConnected(false);
+        trackApiFailure("voice", new Error("websocket_error"), {
+          endpoint: `/voice/ws/${courseId}`,
+          courseId,
+          meta: { phase: "connect" },
+        });
         reject(new Error("WebSocket connection failed"));
       };
 
@@ -203,14 +197,12 @@ export function useVoiceSession(courseId: string, options?: UseVoiceSessionOptio
         setVoiceState("idle");
         setIsConnected(false);
 
-        // Auto-reconnect with exponential backoff (max 3 attempts)
         if (!event.wasClean && reconnectAttemptsRef.current < 3) {
           const delay = Math.min(1000 * 2 ** reconnectAttemptsRef.current, 8000);
           reconnectAttemptsRef.current += 1;
-          console.info(`Voice WS reconnecting in ${delay}ms (attempt ${reconnectAttemptsRef.current})`);
           reconnectTimerRef.current = window.setTimeout(() => {
             void connectRef.current?.().catch(() => {
-              // Reconnect failed — will retry on next close
+              // no-op: retry handled by close lifecycle
             });
           }, delay);
         }
@@ -222,7 +214,6 @@ export function useVoiceSession(courseId: string, options?: UseVoiceSessionOptio
     connectRef.current = connect;
   }, [connect]);
 
-  /** Send recorded audio blob to WebSocket server */
   const sendAudioToServer = useCallback(async (blob: Blob) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
       setError("Voice connection lost");
@@ -232,11 +223,10 @@ export function useVoiceSession(courseId: string, options?: UseVoiceSessionOptio
 
     const buffer = await blob.arrayBuffer();
     const bytes = new Uint8Array(buffer);
-    // Efficient base64 encoding — process in chunks to avoid stack overflow
-    const CHUNK_SIZE = 8192;
+    const chunkSize = 8192;
     let binary = "";
-    for (let i = 0; i < bytes.length; i += CHUNK_SIZE) {
-      const chunk = bytes.subarray(i, i + CHUNK_SIZE);
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      const chunk = bytes.subarray(i, i + chunkSize);
       binary += String.fromCharCode(...chunk);
     }
     const base64 = btoa(binary);
@@ -248,11 +238,9 @@ export function useVoiceSession(courseId: string, options?: UseVoiceSessionOptio
     }));
   }, []);
 
-  /** Start recording audio */
   const startRecording = useCallback(async () => {
     setError(null);
 
-    // Ensure WebSocket is connected (await open event, not a fixed timeout)
     try {
       await connect();
     } catch {
@@ -276,18 +264,15 @@ export function useVoiceSession(courseId: string, options?: UseVoiceSessionOptio
           : "audio/webm",
       });
 
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) {
-          audioChunksRef.current.push(e.data);
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
         }
       };
 
       mediaRecorder.onstop = () => {
-        // Stop all tracks to release microphone
-        stream.getTracks().forEach((t) => t.stop());
+        stream.getTracks().forEach((track) => track.stop());
         streamRef.current = null;
-
-        // Combine chunks and send to server
         const blob = new Blob(audioChunksRef.current, { type: "audio/webm" });
         void sendAudioToServer(blob);
       };
@@ -301,7 +286,6 @@ export function useVoiceSession(courseId: string, options?: UseVoiceSessionOptio
     }
   }, [connect, sendAudioToServer]);
 
-  /** Stop recording and send audio */
   const stopRecording = useCallback(() => {
     if (mediaRecorderRef.current?.state === "recording") {
       mediaRecorderRef.current.stop();
@@ -309,39 +293,37 @@ export function useVoiceSession(courseId: string, options?: UseVoiceSessionOptio
     }
   }, []);
 
-  /** Disconnect WebSocket */
   const disconnect = useCallback(() => {
-    // Cancel any pending reconnect
     if (reconnectTimerRef.current !== null) {
       clearTimeout(reconnectTimerRef.current);
       reconnectTimerRef.current = null;
     }
-    reconnectAttemptsRef.current = 3; // Prevent reconnection
-    // Stop MediaRecorder and release microphone
+    reconnectAttemptsRef.current = 3;
+
     if (mediaRecorderRef.current?.state === "recording") {
       mediaRecorderRef.current.stop();
     }
     mediaRecorderRef.current = null;
+
     if (streamRef.current) {
-      streamRef.current.getTracks().forEach((t) => t.stop());
+      streamRef.current.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
     }
+
     wsRef.current?.close();
     wsRef.current = null;
     setVoiceState("idle");
     setIsConnected(false);
   }, []);
 
-  // Cleanup on unmount — set flag to prevent async callbacks from updating state
   useEffect(() => {
     return () => {
       unmountedRef.current = true;
-      // Stop MediaRecorder and release microphone
       if (mediaRecorderRef.current?.state === "recording") {
         mediaRecorderRef.current.stop();
       }
       if (streamRef.current) {
-        streamRef.current.getTracks().forEach((t) => t.stop());
+        streamRef.current.getTracks().forEach((track) => track.stop());
       }
       wsRef.current?.close();
       audioContextRef.current?.close();

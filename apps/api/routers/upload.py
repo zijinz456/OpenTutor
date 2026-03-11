@@ -100,17 +100,30 @@ async def upload_file(
     with open(save_path, "wb") as f:
         f.write(file_bytes)
 
-    job = await run_ingestion_pipeline(
-        db=db,
-        user_id=user.id,
-        file_path=save_path,
-        filename=file.filename,
-        course_id=cid,
-        file_bytes=file_bytes,
-    )
-    await db.commit()
+    try:
+        job = await run_ingestion_pipeline(
+            db=db,
+            user_id=user.id,
+            file_path=save_path,
+            filename=file.filename,
+            course_id=cid,
+            file_bytes=file_bytes,
+        )
+        await db.commit()
+    except Exception:
+        # Clean up saved file if ingestion fails, then re-raise the original error.
+        try:
+            os.remove(save_path)
+        except OSError:
+            logger.warning("Failed to clean up uploaded file: %s", save_path)
+        raise
 
     if job.status == "failed":
+        # Clean up on logical failure too
+        try:
+            os.remove(save_path)
+        except OSError:
+            pass
         raise AppError(job.error_message or "Ingestion failed")
 
     is_test_request = request is not None and hasattr(request.app.state, "test_session_factory")

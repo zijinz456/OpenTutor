@@ -163,6 +163,19 @@ async def load_context(
     except (SQLAlchemyError, ConnectionError, TimeoutError, KeyError) as exc:
         logger.exception("Tutor notes loading failed: %s", exc)
 
+    # Load teaching state for cross-session resumption
+    try:
+        from services.memory.pipeline import generate_teaching_state, format_resumption_prompt
+        teaching_state = await generate_teaching_state(db, ctx.user_id, ctx.course_id)
+        if teaching_state:
+            ctx.metadata["teaching_state"] = teaching_state
+            # Inject resumption prompt when returning after absence
+            days = teaching_state.get("days_since_last_session")
+            if days is not None and days >= 2:
+                ctx.metadata["resumption_prompt"] = format_resumption_prompt(teaching_state)
+    except (SQLAlchemyError, ConnectionError, TimeoutError, ValueError) as exc:
+        logger.debug("Teaching state loading skipped: %s", exc)
+
     # Load upcoming assignments/deadlines for planner context
     try:
         from sqlalchemy import text as sa_text

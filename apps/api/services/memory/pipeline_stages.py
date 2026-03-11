@@ -138,7 +138,9 @@ async def consolidate_memories(
 # Hybrid search weights
 VECTOR_WEIGHT = 0.7
 BM25_WEIGHT = 0.3
-MIN_SCORE = 0.35
+# RRF scores are tiny (max ~0.016 for rank-1 in both searches with K=60).
+# Use an RRF-appropriate threshold (~25% of theoretical max).
+RRF_MIN_SCORE = 0.004
 
 
 async def retrieve_memories(
@@ -154,7 +156,7 @@ async def retrieve_memories(
     - Keyword retrieval via lightweight BM25-style fallback (weight 0.3)
     - Vector cosine similarity in Python (weight 0.7)
     - RRF fusion ranking
-    - minScore filtering (0.35 threshold)
+    - minScore filtering (RRF_MIN_SCORE = 0.004, ~25% of theoretical max)
     """
     bm25_results = await _bm25_memory_search(db, user_id, query, course_id, limit * 2, memory_types)
     vector_results = await _vector_memory_search(db, user_id, query, course_id, limit * 2, memory_types)
@@ -178,7 +180,7 @@ async def retrieve_memories(
 
     results = []
     for doc_id, score in ranked[:limit]:
-        if score < MIN_SCORE / 1000:
+        if score < RRF_MIN_SCORE:
             continue
         doc = doc_map[doc_id]
         doc["hybrid_score"] = score

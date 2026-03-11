@@ -3,15 +3,7 @@
 import { useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { useSwipeGesture } from "./use-swipe-gesture";
-import type { Flashcard } from "@/lib/api";
-import type { LectorFlashcard } from "@/lib/api/practice";
-
-const RATINGS = [
-  { label: "Again", value: 1, variant: "destructive" as const },
-  { label: "Hard", value: 2, variant: "outline" as const },
-  { label: "Good", value: 3, variant: "secondary" as const },
-  { label: "Easy", value: 4, variant: "default" as const },
-];
+import type { Flashcard, LectorFlashcard } from "@/lib/api";
 
 interface FlashcardCardProps {
   card: Flashcard | LectorFlashcard;
@@ -20,6 +12,7 @@ interface FlashcardCardProps {
   reviewError: string | null;
   onFlip: () => void;
   onRate: (value: number) => void;
+  t: (key: string) => string;
 }
 
 export function FlashcardCard({
@@ -29,8 +22,16 @@ export function FlashcardCard({
   reviewError,
   onFlip,
   onRate,
+  t,
 }: FlashcardCardProps) {
   const cardRef = useRef<HTMLDivElement>(null);
+
+  const ratings = [
+    { label: t("flashcard.again"), value: 1, variant: "destructive" as const },
+    { label: t("flashcard.hard"), value: 2, variant: "outline" as const },
+    { label: t("flashcard.good"), value: 3, variant: "secondary" as const },
+    { label: t("flashcard.easy"), value: 4, variant: "default" as const },
+  ];
 
   const { swipeStyle, handlers } = useSwipeGesture({
     enabled: flipped,
@@ -48,8 +49,8 @@ export function FlashcardCard({
         tabIndex={0}
         aria-label={
           flipped
-            ? "Flashcard showing answer. Press Enter or Space to show question."
-            : "Flashcard showing question. Press Enter or Space to reveal answer."
+            ? t("flashcard.ariaAnswer")
+            : t("flashcard.ariaQuestion")
         }
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
@@ -65,12 +66,12 @@ export function FlashcardCard({
           className={`flashcard-inner relative w-full min-h-[200px] ${flipped ? "flipped" : ""}`}
         >
           <div className="flashcard-face absolute inset-0 flex flex-col items-center justify-center rounded-2xl card-shadow bg-card p-6 text-center">
-            <p className="text-xs text-muted-foreground mb-2">Question</p>
+            <p className="text-xs text-muted-foreground mb-2">{t("flashcard.questionLabel")}</p>
             <p className="text-sm font-medium whitespace-pre-wrap">{card.front}</p>
           </div>
 
           <div className="flashcard-back absolute inset-0 flex flex-col items-center justify-center rounded-2xl card-shadow bg-card p-6 text-center">
-            <p className="text-xs text-muted-foreground mb-2">Answer</p>
+            <p className="text-xs text-muted-foreground mb-2">{t("flashcard.answerLabel")}</p>
             <p className="text-sm font-medium whitespace-pre-wrap">{card.back}</p>
           </div>
         </div>
@@ -78,12 +79,12 @@ export function FlashcardCard({
 
       {!flipped ? (
         <p className="text-xs text-muted-foreground">
-          Tap card or press Space to reveal answer
+          {t("flashcard.tapToReveal")}
         </p>
       ) : (
         <div className="flex flex-col items-center gap-1.5">
           <div className="flex gap-2">
-            {RATINGS.map((rating) => (
+            {ratings.map((rating) => (
               <Button
                 key={rating.value}
                 size="sm"
@@ -100,7 +101,7 @@ export function FlashcardCard({
               </Button>
             ))}
           </div>
-          <p className="text-xs text-muted-foreground/60">Press 1-4 to rate</p>
+          <p className="text-xs text-muted-foreground/60">{t("flashcard.pressToRate")}</p>
         </div>
       )}
       {reviewError && (

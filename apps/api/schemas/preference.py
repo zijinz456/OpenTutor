@@ -3,15 +3,15 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class PreferenceCreate(BaseModel):
-    dimension: str
-    value: str
-    scope: str = "global"
+    dimension: str = Field(..., max_length=255)
+    value: str = Field(..., max_length=1000)
+    scope: str = Field(default="global", max_length=50)
     course_id: uuid.UUID | None = None
-    source: str = "onboarding"
+    source: str = Field(default="onboarding", max_length=100)
 
 
 class PreferenceResponse(BaseModel):
@@ -53,17 +53,17 @@ class LlmRuntimeConfigResponse(BaseModel):
 
 
 class LlmRuntimeConfigUpdate(BaseModel):
-    provider: str | None = None
-    model: str | None = None
+    provider: str | None = Field(default=None, max_length=100)
+    model: str | None = Field(default=None, max_length=255)
     llm_required: bool | None = None
     provider_keys: dict[str, str] | None = None
-    base_url: str | None = None
+    base_url: str | None = Field(default=None, max_length=2048)
 
 
 class LlmConnectionTestRequest(BaseModel):
-    provider: str
-    model: str | None = None
-    api_key: str | None = None
+    provider: str = Field(..., max_length=100)
+    model: str | None = Field(default=None, max_length=255)
+    api_key: str | None = Field(default=None, max_length=512)
 
 
 class LlmConnectionTestResponse(BaseModel):
@@ -84,20 +84,20 @@ class PreferenceSignalResponse(BaseModel):
     signal_type: str
     course_id: uuid.UUID | None
     context: dict | None
-    created_at: str | None
-    dismissed_at: str | None = None
+    created_at: datetime | None = None
+    dismissed_at: datetime | None = None
     dismissal_reason: str | None = None
 
 
 class PreferenceUpdateRequest(BaseModel):
-    value: str | None = None
-    scope: str | None = None
-    source: str | None = None
-    scene_type: str | None = None
+    value: str | None = Field(default=None, max_length=1000)
+    scope: str | None = Field(default=None, max_length=50)
+    source: str | None = Field(default=None, max_length=100)
+    scene_type: str | None = Field(default=None, max_length=100)
 
 
 class DismissRequest(BaseModel):
-    reason: str | None = None
+    reason: str | None = Field(default=None, max_length=500)
 
 
 class MemoryProfileResponse(BaseModel):
@@ -109,9 +109,9 @@ class MemoryProfileResponse(BaseModel):
     access_count: int
     source_message: str | None
     metadata_json: dict | None
-    created_at: str | None
-    updated_at: str | None
-    dismissed_at: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    dismissed_at: datetime | None = None
     dismissal_reason: str | None = None
 
 
@@ -133,8 +133,8 @@ class LearningProfileResponse(BaseModel):
 
 
 class MemoryUpdateRequest(BaseModel):
-    summary: str | None = None
-    category: str | None = None
+    summary: str | None = Field(default=None, max_length=5000)
+    category: str | None = Field(default=None, max_length=100)
 
 
 class OllamaModelEntry(BaseModel):
@@ -144,7 +144,7 @@ class OllamaModelEntry(BaseModel):
 
 
 class NLPreferenceRequest(BaseModel):
-    text: str
+    text: str = Field(..., max_length=2000)
 
 
 class NLPreferenceResult(BaseModel):

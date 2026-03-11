@@ -11,14 +11,11 @@ import {
 import { useChatStore } from "@/store/chat";
 import { useWorkspaceStore } from "@/store/workspace";
 import { useCourseStore } from "@/store/course";
-import { getStoredAccessToken } from "@/lib/auth";
-import { useVoiceSession } from "@/hooks/use-voice-session";
 import { cn } from "@/lib/utils";
 import { useT } from "@/lib/i18n-context";
 import { useImageAttachments } from "@/components/chat/use-image-attachments";
 import { ImagePreviewStrip } from "@/components/chat/image-preview-strip";
 import { AttachmentButtons } from "@/components/chat/attachment-buttons";
-import { VoiceButton, VoiceStatusIndicator } from "@/components/chat/voice-button";
 import { SendButton } from "@/components/chat/send-button";
 
 interface ChatInputProps {
@@ -38,7 +35,6 @@ export function ChatInput({ courseId, disabled }: ChatInputProps) {
   const t = useT();
   const [input, setInput] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const [accessToken, setAccessToken] = useState<string | undefined>(undefined);
 
   // Image attachments (add, remove, drag-drop, paste)
   const {
@@ -55,9 +51,6 @@ export function ChatInput({ courseId, disabled }: ChatInputProps) {
     removeImage,
   } = useImageAttachments();
 
-  // Voice recording
-  const voice = useVoiceSession(courseId, { accessToken });
-
   const isStreaming = useChatStore((s) => s.isStreaming);
   const sendMessage = useChatStore((s) => s.sendMessage);
   const abortStream = useChatStore((s) => s.abortStream);
@@ -73,29 +66,25 @@ export function ChatInput({ courseId, disabled }: ChatInputProps) {
     const vv = window.visualViewport;
     if (!vv) return;
 
+    let rafId: number | null = null;
     const onResize = () => {
       const el = textareaRef.current;
       if (!el) return;
       // When viewport height shrinks (keyboard opens), scroll input into view
       if (vv.height < window.innerHeight * 0.85) {
-        requestAnimationFrame(() => {
+        if (rafId != null) cancelAnimationFrame(rafId);
+        rafId = requestAnimationFrame(() => {
+          rafId = null;
           el.scrollIntoView({ block: "end", behavior: "smooth" });
         });
       }
     };
 
     vv.addEventListener("resize", onResize);
-    return () => vv.removeEventListener("resize", onResize);
-  }, []);
-
-  useEffect(() => {
-    const syncAccessToken = () => {
-      setAccessToken(getStoredAccessToken() ?? undefined);
+    return () => {
+      vv.removeEventListener("resize", onResize);
+      if (rafId != null) cancelAnimationFrame(rafId);
     };
-
-    syncAccessToken();
-    window.addEventListener("storage", syncAccessToken);
-    return () => window.removeEventListener("storage", syncAccessToken);
   }, []);
 
   /* ── Send message ── */
@@ -208,8 +197,6 @@ export function ChatInput({ courseId, disabled }: ChatInputProps) {
           )}
         />
 
-        <VoiceButton voice={voice} disabled={isDisabled || isStreaming} />
-
         <SendButton
           isStreaming={isStreaming}
           canSend={canSend}
@@ -218,7 +205,6 @@ export function ChatInput({ courseId, disabled }: ChatInputProps) {
         />
       </div>
 
-      <VoiceStatusIndicator voice={voice} />
     </div>
   );
 }

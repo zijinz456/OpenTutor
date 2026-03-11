@@ -129,7 +129,10 @@ export function ContentUploadStep({
 
       {/* Project Name */}
       <div className="flex flex-col gap-2">
-        <label className="font-semibold text-sm text-foreground">{t("new.projectName")}</label>
+        <label className="font-semibold text-sm text-foreground">
+          {t("new.projectName")}
+          <span className="text-muted-foreground font-normal text-xs ml-1.5">{t("new.projectNameHint")}</span>
+        </label>
         <input
           data-testid="project-name-input"
           className={`w-full h-11 px-4 border rounded-lg bg-background text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-brand/20 focus:border-brand ${nameError ? "border-destructive" : "border-border"}`}

@@ -1,6 +1,8 @@
 import asyncio
+import re
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -9,8 +11,9 @@ from fastapi import HTTPException
 import sqlalchemy as sa
 from sqlalchemy.exc import ProgrammingError
 
-from libs.exceptions import NotFoundError, ValidationError
-from routers.chat import _build_session_title, _resolve_chat_session
+from libs.exceptions import KnowledgeGraphUnavailableError, NotFoundError, ValidationError
+from routers.chat import _resolve_chat_session
+from routers.chat_helpers import build_session_title as _build_session_title
 from routers.goals import get_next_action, queue_next_action
 from routers.preferences_crud import _normalize_preference_value
 from routers.upload import _validate_url
@@ -22,6 +25,94 @@ from services.llm.local_config import get_llm_runtime_config, update_llm_runtime
 from services.llm import router as llm_router
 from services.health import _local_beta_readiness
 from services.migrations import bootstrap_alembic_version_table, summarize_migration_state
+
+
+def _frontend_api_client_dir() -> Path:
+    return Path(__file__).resolve().parents[1] / "apps" / "web" / "src" / "lib" / "api"
+
+
+def _extract_frontend_api_paths() -> list[tuple[str, str]]:
+    call_pattern = re.compile(r'request(?:Blob)?\(\s*(`[^`\n]*`|"[^"]+"|\'[^\']+\')')
+    api_base_pattern = re.compile(r"\$\{API_BASE\}(/[^`\"']+)")
+
+    extracted: set[tuple[str, str]] = set()
+    for ts_file in _frontend_api_client_dir().glob("*.ts"):
+        if ts_file.name.endswith(".test.ts"):
+            continue
+        text = ts_file.read_text(encoding="utf-8")
+
+        for match in call_pattern.finditer(text):
+            literal = match.group(1)[1:-1]
+            if literal.startswith("/"):
+                if literal.count("${") != literal.count("}"):
+                    # Nested template literals (query ternaries) are skipped; they are
+                    # covered by the anti-pattern guard below.
+                    continue
+                extracted.add((ts_file.name, literal))
+
+        for match in api_base_pattern.finditer(text):
+            literal = match.group(1)
+            if literal.startswith("/"):
+                extracted.add((ts_file.name, literal))
+
+    return sorted(extracted)
+
+
+def _to_backend_route_regex(frontend_path: str) -> re.Pattern[str]:
+    path = frontend_path
+    path = path.split("?", 1)[0]
+
+    def _replace_placeholder(match: re.Match[str]) -> str:
+        start = match.start()
+        end = match.end()
+        prev_char = path[start - 1] if start > 0 else ""
+        next_char = path[end] if end < len(path) else ""
+        token = match.group(0)
+        if token in {"${query}", "${qs}", "${suffix}", "${params}", "${searchParams}"}:
+            return ""
+        if prev_char == "/" and next_char in {"/", "", "$", "?"}:
+            return "__SEG__"
+        return ""
+
+    path = re.sub(r"\$\{[^}]+\}", _replace_placeholder, path)
+    path = re.sub(r"/{2,}", "/", path)
+    path = path.rstrip("/") or "/"
+
+    if not path.startswith("/api"):
+        path = f"/api{path}"
+
+    escaped = re.escape(path).replace("__SEG__", "[^/]+")
+    return re.compile(rf"^{escaped}/?$")
+
+
+def test_frontend_api_paths_match_registered_backend_routes():
+    from main import app
+
+    backend_paths = {
+        route.path.rstrip("/") or "/"
+        for route in app.routes
+        if isinstance(getattr(route, "path", None), str) and route.path.startswith("/api")
+    }
+
+    missing: list[str] = []
+    for file_name, frontend_path in _extract_frontend_api_paths():
+        route_pattern = _to_backend_route_regex(frontend_path)
+        if not any(route_pattern.match(path) for path in backend_paths):
+            missing.append(f"{file_name}:{frontend_path}")
+
+    assert missing == [], f"Frontend API paths missing backend routes: {missing}"
+
+
+def test_frontend_api_paths_do_not_use_slash_query_antipattern():
+    anti_pattern = re.compile(r"request(?:Blob)?\(\s*`[^`]*\/\$\{(?:query|params|searchParams)\}`")
+    offenders: list[str] = []
+
+    for ts_file in _frontend_api_client_dir().glob("*.ts"):
+        text = ts_file.read_text(encoding="utf-8")
+        if anti_pattern.search(text):
+            offenders.append(ts_file.name)
+
+    assert offenders == [], f"Use /path${{query}} instead of /path/${{query}} in: {offenders}"
 
 
 def test_normalize_preference_value_basic_mappings():
@@ -267,6 +358,59 @@ async def test_get_next_action_prefers_active_goal_next_action(monkeypatch):
     assert result.source == "recent_goal"
     assert result.goal_id == str(goal_id)
     assert "Review chapter 3 weak points tonight." in result.recommended_action
+
+
+@pytest.mark.asyncio
+async def test_progress_knowledge_graph_raises_unavailable_error_on_builder_failure(monkeypatch):
+    from routers import progress_knowledge as progress_knowledge_router
+
+    monkeypatch.setattr(
+        progress_knowledge_router,
+        "build_knowledge_graph",
+        AsyncMock(side_effect=RuntimeError("boom")),
+    )
+
+    with pytest.raises(KnowledgeGraphUnavailableError) as exc:
+        await progress_knowledge_router.get_knowledge_graph(
+            course_id=uuid.uuid4(),
+            user=SimpleNamespace(id=uuid.uuid4()),
+            db=MagicMock(),
+        )
+
+    assert exc.value.code == "knowledge_graph_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_build_knowledge_graph_maps_mastery_payload(monkeypatch):
+    from services.knowledge import graph as graph_service
+
+    async def _fake_mastery_graph(_db, _user_id, _course_id):
+        return {
+            "nodes": [
+                {"id": "n-mastered", "name": "Mastered Concept", "mastery": 0.9, "bloom_level": 3},
+                {"id": "n-review", "name": "Review Concept", "mastery": 0.65, "bloom_level": 2},
+            ],
+            "edges": [
+                {"source": "n-mastered", "target": "n-review", "type": "prerequisite"},
+                {"source": None, "target": "n-review", "type": "invalid"},
+            ],
+        }
+
+    monkeypatch.setattr(graph_service, "get_mastery_graph", _fake_mastery_graph)
+    result = await graph_service.build_knowledge_graph(
+        db=MagicMock(),
+        course_id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+    )
+
+    assert len(result["nodes"]) == 2
+    assert result["nodes"][0]["status"] == "mastered"
+    assert result["nodes"][0]["color"] == "#22C55E"
+    assert result["nodes"][1]["status"] == "reviewed"
+    assert result["nodes"][1]["color"] == "#3B82F6"
+    assert result["edges"] == [
+        {"source": "n-mastered", "target": "n-review", "type": "prerequisite"}
+    ]
 
 
 @pytest.mark.asyncio

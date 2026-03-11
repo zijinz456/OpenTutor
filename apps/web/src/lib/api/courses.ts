@@ -1,6 +1,6 @@
 import { buildAuthHeaders } from "@/lib/auth";
 
-import { API_BASE, parseApiError, request } from "./client";
+import { API_BASE, parseApiError, request, requestBlob } from "./client";
 
 import type { ContentMutationResult, SavedGeneratedAsset } from "./client";
 import type { GeneratedAssetBatchSummary } from "./practice";
@@ -79,6 +79,7 @@ export interface HealthStatus {
   code_sandbox_backend: string;
   code_sandbox_runtime: string;
   code_sandbox_runtime_available: boolean;
+  features?: Record<string, boolean>;
   local_beta_ready?: boolean;
   local_beta_blockers?: string[];
   local_beta_warnings?: string[];
@@ -141,6 +142,7 @@ export interface ContentNode {
   level: number;
   order_index: number;
   source_type: string;
+  content_category?: "lecture_slides" | "textbook" | "notes" | "syllabus" | "assignment" | "exam_schedule" | "other" | null;
   children: ContentNode[];
   file_type?: string;
   file_id?: string;
@@ -278,6 +280,10 @@ export function getFileUrl(jobId: string): string {
   return `${API_BASE}/content/files/${jobId}`;
 }
 
+export async function downloadCourseFile(jobId: string) {
+  return requestBlob(`/content/files/${jobId}`);
+}
+
 // ── Canvas / Auth Sessions ──
 
 export interface AuthSessionSummary {
@@ -299,5 +305,14 @@ export async function canvasBrowserLogin(
   return request("/canvas/browser-login", {
     method: "POST",
     body: JSON.stringify({ canvas_url: canvasUrl, timeout_seconds: 300 }),
+  });
+}
+
+export async function fetchCanvasCourseInfo(
+  canvasUrl: string,
+): Promise<{ name: string | null; course_code?: string }> {
+  return request("/canvas/course-info", {
+    method: "POST",
+    body: JSON.stringify({ canvas_url: canvasUrl }),
   });
 }

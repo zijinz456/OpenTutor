@@ -6,7 +6,8 @@ import { MessageBubble } from "@/components/chat/message-bubble";
 import { ClarifyCard } from "@/components/chat/clarify-card";
 import { StreamingIndicator } from "@/components/chat/streaming-indicator";
 import { useChatStore, type ChatMessage } from "@/store/chat";
-import { MessageSquare, AlertCircle, RotateCcw } from "lucide-react";
+import { useT } from "@/lib/i18n-context";
+import { MessageSquare, AlertCircle, AlertTriangle, RotateCcw } from "lucide-react";
 
 interface MessageListProps {
   messages: ChatMessage[];
@@ -16,21 +17,23 @@ interface MessageListProps {
  * Virtualized scrollable message list with auto-scroll-to-bottom.
  * Uses @tanstack/react-virtual for efficient rendering of long conversations.
  */
-const ERROR_LABELS: Record<string, string> = {
-  rate_limit: "Rate limit reached. Please wait a moment and try again.",
-  auth_error: "Authentication error. Check your API key configuration.",
-  timeout: "Request timed out. The LLM may be overloaded.",
-  llm_unavailable: "LLM provider is unavailable. Check your connection or configuration.",
-  generic: "Something went wrong. Please try again.",
-};
-
 export function MessageList({ messages }: MessageListProps) {
+  const t = useT();
   const parentRef = useRef<HTMLDivElement>(null);
   const isStreaming = useChatStore((s) => s.isStreaming);
   const clarifyOptions = useChatStore((s) => s.clarifyOptions);
   const activeCourseId = useChatStore((s) => s.activeCourseId);
   const error = useChatStore((s) => s.error);
   const errorCategory = useChatStore((s) => s.errorCategory);
+  const isMockLlm = useChatStore((s) => s.isMockLlm);
+
+  const errorLabels: Record<string, string> = {
+    rate_limit: t("chat.error.rateLimit"),
+    auth_error: t("chat.error.authError"),
+    timeout: t("chat.error.timeout"),
+    llm_unavailable: t("chat.error.llmUnavailable"),
+    generic: t("chat.error.generic"),
+  };
 
   // Extra items: clarify card + streaming indicator + bottom spacer
   const extraCount =
@@ -63,10 +66,10 @@ export function MessageList({ messages }: MessageListProps) {
         <div className="text-center">
           <MessageSquare className="mx-auto mb-3 size-8 text-muted-foreground/30" />
           <p className="text-sm text-muted-foreground">
-            No messages yet
+            {t("chat.noMessages")}
           </p>
           <p className="mt-1 text-xs text-muted-foreground/70">
-            AI will reference your uploaded materials while answering
+            {t("chat.aiReference")}
           </p>
         </div>
       </div>
@@ -75,6 +78,12 @@ export function MessageList({ messages }: MessageListProps) {
 
   return (
     <div ref={parentRef} className="flex-1 overflow-auto scrollbar-thin" role="log" aria-live="polite" aria-relevant="additions" aria-label="Chat messages">
+      {isMockLlm && (
+        <div role="status" className="sticky top-0 z-10 flex items-center gap-2 bg-warning/10 border-b border-warning/30 px-3 py-1.5 text-xs text-warning">
+          <AlertTriangle className="size-3.5 shrink-0" />
+          <span>{t("chat.mockWarning")}</span>
+        </div>
+      )}
       <div
         className="relative w-full p-3"
         style={{ height: `${virtualizer.getTotalSize()}px` }}
@@ -124,8 +133,8 @@ export function MessageList({ messages }: MessageListProps) {
         <div role="alert" className="sticky bottom-0 mx-3 mb-2 flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive animate-fade-in">
           <AlertCircle className="size-4 shrink-0 mt-0.5" />
           <div className="flex-1">
-            <p className="font-medium">{ERROR_LABELS[errorCategory ?? "generic"]}</p>
-            {errorCategory === "generic" && error !== ERROR_LABELS.generic && (
+            <p className="font-medium">{errorLabels[errorCategory ?? "generic"]}</p>
+            {errorCategory === "generic" && error !== errorLabels.generic && (
               <p className="mt-0.5 opacity-70 truncate">{error}</p>
             )}
           </div>
@@ -141,10 +150,10 @@ export function MessageList({ messages }: MessageListProps) {
                 }
               }}
               className="flex items-center gap-1 rounded-md border border-destructive/30 px-2 py-1 text-xs font-medium hover:bg-destructive/10 transition-colors shrink-0"
-              aria-label="Retry last message"
+              aria-label={t("chat.retryLabel")}
             >
               <RotateCcw className="size-3" />
-              Retry
+              {t("common.retry")}
             </button>
           )}
         </div>

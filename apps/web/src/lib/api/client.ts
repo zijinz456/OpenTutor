@@ -86,21 +86,50 @@ function getCsrfToken(): string | undefined {
   return match?.[1];
 }
 
-export async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const { headers, ...restOptions } = options ?? {};
+function buildRequestHeaders(
+  method: string,
+  headers?: HeadersInit,
+  includeJsonContentType: boolean = true,
+): Headers {
   const csrfHeaders: Record<string, string> = {};
-  const method = (restOptions.method || "GET").toUpperCase();
   if (["POST", "PUT", "PATCH", "DELETE"].includes(method)) {
     const csrfToken = getCsrfToken();
     if (csrfToken) {
       csrfHeaders["X-CSRF-Token"] = csrfToken;
     }
   }
-  const mergedHeaders = buildAuthHeaders({
-    "Content-Type": "application/json",
-    ...csrfHeaders,
-    ...headers,
-  });
+  const merged = new Headers();
+  if (includeJsonContentType) {
+    merged.set("Content-Type", "application/json");
+  }
+  for (const [key, value] of Object.entries(csrfHeaders)) {
+    merged.set(key, value);
+  }
+  if (headers) {
+    const incoming = new Headers(headers);
+    incoming.forEach((value, key) => merged.set(key, value));
+  }
+  return buildAuthHeaders(merged);
+}
+
+function parseFilenameFromDisposition(contentDisposition: string | null): string | null {
+  if (!contentDisposition) return null;
+  const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1]);
+    } catch {
+      return utf8Match[1];
+    }
+  }
+  const simpleMatch = contentDisposition.match(/filename="?([^"]+)"?/i);
+  return simpleMatch?.[1] ?? null;
+}
+
+export async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const { headers, ...restOptions } = options ?? {};
+  const method = (restOptions.method || "GET").toUpperCase();
+  const mergedHeaders = buildRequestHeaders(method, headers, true);
 
   let lastError: Error | undefined;
 
@@ -130,7 +159,64 @@ export async function request<T>(path: string, options?: RequestInit): Promise<T
       const text = await res.text();
       return text ? (JSON.parse(text) as T) : (undefined as T);
     } catch (err) {
-      // Network errors (fetch throws TypeError for network failures)
+      // Network errors (fetch throws TypeError for network failures).
+      // Only retry genuine network errors, not JSON.parse or other TypeErrors.
+      if (
+        err instanceof TypeError &&
+        attempt < MAX_RETRIES &&
+        (err.message.includes("fetch") || err.message.includes("network") || err.message === "Failed to fetch" || err.message.includes("NetworkError"))
+      ) {
+        lastError = err;
+        await new Promise((r) => setTimeout(r, RETRY_BASE_MS * 2 ** attempt));
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  throw lastError!;
+}
+
+export interface BinaryResponse {
+  blob: Blob;
+  fileName: string | null;
+  contentType: string;
+}
+
+export async function requestBlob(path: string, options?: RequestInit): Promise<BinaryResponse> {
+  const { headers, ...restOptions } = options ?? {};
+  const method = (restOptions.method || "GET").toUpperCase();
+  const mergedHeaders = buildRequestHeaders(method, headers, false);
+
+  let lastError: Error | undefined;
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const res = await fetch(`${API_BASE}${path}`, {
+        ...restOptions,
+        credentials: "include",
+        headers: mergedHeaders,
+      });
+
+      if (!res.ok) {
+        const err = await parseApiError(res);
+        if (attempt < MAX_RETRIES && isRetryable(res.status)) {
+          lastError = err;
+          await new Promise((r) => setTimeout(r, RETRY_BASE_MS * 2 ** attempt));
+          continue;
+        }
+        showApiErrorToast(err);
+        throw err;
+      }
+
+      const blob = await res.blob();
+      const fileName = parseFilenameFromDisposition(res.headers.get("Content-Disposition"));
+      return {
+        blob,
+        fileName,
+        contentType: res.headers.get("Content-Type") || "application/octet-stream",
+      };
+    } catch (err) {
       if (err instanceof TypeError && attempt < MAX_RETRIES) {
         lastError = err;
         await new Promise((r) => setTimeout(r, RETRY_BASE_MS * 2 ** attempt));

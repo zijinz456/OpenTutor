@@ -8,8 +8,7 @@ import {
   ArrowRight,
   Sun,
 } from "lucide-react";
-import type { Course, AppNotification } from "@/lib/api";
-import type { StudyGoal } from "@/lib/api/progress";
+import type { Course, AppNotification, StudyGoal } from "@/lib/api";
 import { ModeBadge } from "@/components/course/mode-selector";
 import { Button } from "@/components/ui/button";
 import { DashSection } from "./dash-section";

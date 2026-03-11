@@ -66,6 +66,14 @@ class LLMUnavailableError(AppError):
         super().__init__(message)
 
 
+class KnowledgeGraphUnavailableError(AppError):
+    code = "knowledge_graph_unavailable"
+    status = 500
+
+    def __init__(self, message: str = "Knowledge graph service is unavailable"):
+        super().__init__(message)
+
+
 _LLM_UNAVAILABLE_PATTERNS = (
     "All LLM providers are unhealthy",
     "No LLM provider is configured",
@@ -85,6 +93,15 @@ def reraise_as_app_error(exc: Exception, message: str) -> None:
     if is_llm_unavailable_error(exc):
         raise LLMUnavailableError(str(exc)) from exc
     raise AppError(message) from exc
+
+
+class AuthenticationError(AppError):
+    """Raised when authentication fails (missing/invalid/expired token)."""
+    code = "authentication_error"
+    status = 401
+
+    def __init__(self, message: str = "Authentication required"):
+        super().__init__(message)
 
 
 class PermissionDeniedError(AppError):

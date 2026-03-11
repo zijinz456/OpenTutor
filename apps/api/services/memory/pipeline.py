@@ -132,8 +132,121 @@ from .pipeline_stages import (  # noqa: E402
     DECAY_HALF_LIFE_DAYS,
     VECTOR_WEIGHT,
     BM25_WEIGHT,
-    MIN_SCORE,
+    RRF_MIN_SCORE,
 )
+
+MIN_SCORE = RRF_MIN_SCORE  # backward compat alias
+
+
+# ── Teaching State Summary ──
+
+
+async def generate_teaching_state(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    course_id: uuid.UUID,
+) -> dict | None:
+    """Generate a structured teaching state for cross-session continuity.
+
+    Returns a dict with strengths, weaknesses, active topic, next topic,
+    days since last session, mastery summary, and review urgency.
+    Returns None if the course has no knowledge graph yet.
+    """
+    from datetime import datetime, timezone
+
+    try:
+        from services.loom_graph import get_mastery_graph
+        graph = await get_mastery_graph(db, user_id, course_id)
+        if not graph or not graph.get("nodes"):
+            return None
+
+        nodes = graph["nodes"]
+        weak = graph.get("weak_concepts", [])
+        next_topic = graph.get("next_to_study")
+
+        # Compute mastery summary
+        masteries = [n.get("mastery", 0.0) for n in nodes]
+        avg_mastery = sum(masteries) / len(masteries) if masteries else 0.0
+        mastered_count = sum(1 for m in masteries if m >= 0.8)
+        total_count = len(masteries)
+
+        # Get LECTOR review urgency
+        review_urgency = 0
+        try:
+            from services.lector import get_review_summary
+            review_summary = await get_review_summary(db, user_id, course_id)
+            review_urgency = review_summary.get("urgent_count", 0)
+        except Exception:
+            pass
+
+        # Get last session time
+        days_since_last = None
+        try:
+            from sqlalchemy import select as sa_select, func as sa_func
+            from models.chat_session import ChatSession
+            last_result = await db.execute(
+                sa_select(sa_func.max(ChatSession.updated_at)).where(
+                    ChatSession.user_id == user_id,
+                    ChatSession.course_id == course_id,
+                )
+            )
+            last_time = last_result.scalar()
+            if last_time:
+                delta = datetime.now(timezone.utc) - last_time
+                days_since_last = delta.days
+        except Exception:
+            pass
+
+        # Top strengths
+        sorted_nodes = sorted(nodes, key=lambda n: n.get("mastery", 0), reverse=True)
+        strengths = [n["name"] for n in sorted_nodes[:3] if n.get("mastery", 0) >= 0.6]
+
+        return {
+            "strengths": strengths,
+            "weaknesses": weak[:5],
+            "next_topic": next_topic,
+            "days_since_last_session": days_since_last,
+            "avg_mastery": round(avg_mastery, 3),
+            "mastered_count": mastered_count,
+            "total_concepts": total_count,
+            "review_urgency": review_urgency,
+        }
+    except Exception:
+        logger.debug("Teaching state generation failed", exc_info=True)
+        return None
+
+
+def format_resumption_prompt(state: dict) -> str:
+    """Format teaching state into a natural resumption prompt for the agent."""
+    parts = []
+    days = state.get("days_since_last_session")
+    if days is not None and days >= 1:
+        parts.append(f"The student last studied {days} day(s) ago.")
+
+    avg = state.get("avg_mastery", 0)
+    mastered = state.get("mastered_count", 0)
+    total = state.get("total_concepts", 0)
+    if total > 0:
+        parts.append(f"Overall mastery: {avg:.0%} ({mastered}/{total} concepts mastered).")
+
+    strengths = state.get("strengths", [])
+    if strengths:
+        parts.append(f"Strengths: {', '.join(strengths)}.")
+
+    weaknesses = state.get("weaknesses", [])
+    if weaknesses:
+        parts.append(f"Areas needing work: {', '.join(weaknesses)}.")
+
+    urgency = state.get("review_urgency", 0)
+    if urgency >= 3:
+        parts.append(f"{urgency} concepts at risk of being forgotten — prioritize review.")
+
+    next_topic = state.get("next_topic")
+    if next_topic:
+        parts.append(f"Recommended next topic: {next_topic}.")
+
+    return " ".join(parts)
+
 
 __all__ = [
     "classify_memory_type",
@@ -142,6 +255,8 @@ __all__ = [
     "generate_embedding",
     "consolidate_memories",
     "retrieve_memories",
+    "generate_teaching_state",
+    "format_resumption_prompt",
     "DECAY_HALF_LIFE_DAYS",
     "VECTOR_WEIGHT",
     "BM25_WEIGHT",

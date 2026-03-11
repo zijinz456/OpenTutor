@@ -84,11 +84,15 @@ class Settings(BaseSettings):
     enable_experimental_loom: bool = True
     enable_experimental_lector: bool = True
     enable_experimental_notion_export: bool = False
+    voice_enabled: bool = False
 
     # Rate limiting
     rate_limit_mode: str = "simple"  # "simple" | "cost_aware"
     rate_limit_cost_budget: int = 500  # cost units per minute per IP (cost_aware mode)
     trust_proxy_headers: bool = False  # Trust X-Forwarded-For header (only enable behind a reverse proxy)
+
+    # SSE streaming
+    sse_timeout_seconds: int = 300
 
     # Swarm / parallel execution
     swarm_enabled: bool = True

@@ -35,11 +35,11 @@ export function UploadDialog({
       setProgress(0);
       try {
         const result = await uploadFile(courseId, file, (pct) => setProgress(pct));
-        toast.success(`Uploaded ${file.name}: ${result.nodes_created} sections created`);
+        toast.success(t("upload.uploadSuccess").replace("{name}", file.name).replace("{count}", String(result.nodes_created)));
         await fetchContentTree(courseId);
         onOpenChange(false);
       } catch (error) {
-        toast.error(`Upload failed: ${(error as Error).message}`);
+        toast.error(t("upload.uploadFailed").replace("{message}", (error as Error).message));
       } finally {
         setUploading(false);
         setProgress(0);
@@ -64,14 +64,14 @@ export function UploadDialog({
     setUrlError("");
     try {
       const result = await scrapeUrl(courseId, url.trim());
-      toast.success(`Scraped URL: ${result.nodes_created} sections created`);
+      toast.success(t("upload.scrapeSuccess").replace("{count}", String(result.nodes_created)));
       setUrl("");
       await fetchContentTree(courseId);
       onOpenChange(false);
     } catch (error) {
       const message = (error as Error).message;
       setUrlError(message);
-      toast.error(`Scrape failed: ${message}`);
+      toast.error(t("upload.scrapeFailed").replace("{message}", message));
     } finally {
       setUploading(false);
     }
@@ -87,14 +87,14 @@ export function UploadDialog({
         <Tabs defaultValue="file" className="mt-2">
           <TabsList className="w-full">
             <TabsTrigger value="file" className="flex-1">
-              Upload File
+              {t("upload.uploadFile")}
             </TabsTrigger>
             <TabsTrigger
               value="url"
               className="flex-1"
               data-testid="workspace-upload-url-tab"
             >
-              Paste URL
+              {t("upload.pasteUrl")}
             </TabsTrigger>
           </TabsList>
 
@@ -138,7 +138,7 @@ export function UploadDialog({
                   dragging ? "font-medium text-primary" : "text-muted-foreground"
                 }`}
               >
-                {dragging ? "Drop file here" : t("upload.drag")}
+                {dragging ? t("upload.dropHere") : t("upload.drag")}
               </p>
               <label>
                 <input
@@ -157,7 +157,7 @@ export function UploadDialog({
                         {t("upload.uploading")}
                       </>
                     ) : (
-                      "Choose File"
+                      t("upload.chooseFile")
                     )}
                   </span>
                 </Button>
@@ -175,7 +175,7 @@ export function UploadDialog({
                     />
                   </div>
                   <p className="mt-1 text-center text-xs text-muted-foreground">
-                    {progress < 100 ? `Uploading... ${progress}%` : "Processing..."}
+                    {progress < 100 ? t("upload.uploadingProgress").replace("{pct}", String(progress)) : t("upload.processing")}
                   </p>
                 </div>
               )}
@@ -213,10 +213,10 @@ export function UploadDialog({
               {uploading ? (
                 <>
                   <span className="mr-1 animate-pulse">...</span>
-                  Scraping...
+                  {t("upload.scraping")}
                 </>
               ) : (
-                "Scrape & Import"
+                t("upload.scrapeAndImport")
               )}
             </Button>
           </TabsContent>

@@ -21,7 +21,6 @@ from services.agent.background_runtime import (
     post_process,
     run_post_process_bundle,
     track_background_task,
-    wait_for_background_tasks,
 )
 from services.agent.turn_pipeline import (
     apply_reflection,
@@ -44,6 +43,8 @@ async def _apply_turn_enrichment(ctx: AgentContext, db: AsyncSession) -> AgentCo
     ctx.metadata["fatigue_score"] = fatigue
 
     try:
+        if db is None:
+            raise ValueError("db session unavailable for cognitive load")
         from services.cognitive_load import compute_cognitive_load
 
         cl = await compute_cognitive_load(
@@ -69,7 +70,7 @@ async def _apply_turn_enrichment(ctx: AgentContext, db: AsyncSession) -> AgentCo
                 )
             except (SQLAlchemyError, ConnectionError, TimeoutError):
                 logger.debug("Failed to persist cognitive load counter")
-    except (SQLAlchemyError, ImportError, ConnectionError, TimeoutError, ValueError, AttributeError) as e:
+    except (SQLAlchemyError, ImportError, ConnectionError, TimeoutError, ValueError) as e:
         logger.debug("Cognitive load detection skipped: %s", e)
 
     # Block Decision Engine — always run so cognitive badge state is updated.
@@ -92,7 +93,7 @@ async def _apply_turn_enrichment(ctx: AgentContext, db: AsyncSession) -> AgentCo
                 for s in raw_signals
             ]
         except (SQLAlchemyError, ImportError, ValueError, RuntimeError) as sig_err:
-            logger.debug("Signal collection for block decisions skipped: %s", sig_err)
+            logger.warning("Signal collection for block decisions skipped: %s", sig_err)
 
         block_prefs = None
         try:
@@ -100,9 +101,13 @@ async def _apply_turn_enrichment(ctx: AgentContext, db: AsyncSession) -> AgentCo
 
             raw_prefs = await compute_block_preferences(db, ctx.user_id, ctx.course_id)
             if raw_prefs:
-                block_prefs = {"block_scores": raw_prefs}
+                blocked = [
+                    bt for bt, data in raw_prefs.items()
+                    if data.get("dismiss_count", 0) >= 5 or data.get("score", 0) < -5
+                ]
+                block_prefs = {"block_scores": raw_prefs, "blocked": blocked}
         except (ImportError, SQLAlchemyError, ValueError) as pref_err:
-            logger.debug("Block preference loading skipped: %s", pref_err)
+            logger.warning("Block preference loading skipped: %s", pref_err)
 
         decisions = await compute_block_decisions(
             db,
@@ -247,6 +252,16 @@ async def orchestrate_stream(
         block_types=block_types,
         dismissed_block_types=dismissed_block_types,
     )
+
+    # Detect mock LLM client so the frontend can warn the user
+    try:
+        from services.llm.providers.mock_client import MockLLMClient
+        from services.llm.router import get_llm_client
+        primary_client = get_llm_client()
+        if isinstance(primary_client, MockLLMClient):
+            ctx.metadata["is_mock"] = True
+    except (ImportError, RuntimeError, ConnectionError, ValueError):
+        pass
 
     # Guided session detection (bypass normal routing)
     _gs_match = re.match(

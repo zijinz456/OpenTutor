@@ -31,9 +31,6 @@ function VoiceIcon({ state }: { state: VoiceState }) {
   return <Mic className="size-4" />;
 }
 
-/**
- * Voice recording toggle button with a status indicator strip below.
- */
 export function VoiceButton({ voice, disabled }: VoiceButtonProps) {
   const isClickDisabled =
     disabled ||
@@ -70,39 +67,36 @@ export function VoiceButton({ voice, disabled }: VoiceButtonProps) {
   );
 }
 
-/**
- * Displays the current voice session status: recording, processing, or playing.
- */
 export function VoiceStatusIndicator({ voice }: { voice: VoiceSession }) {
   if (voice.voiceState === "idle") return null;
 
   return (
-    <div role="status" aria-live="polite" className="mt-1.5 flex items-center gap-2 rounded-xl bg-muted/20 px-2 py-1 text-xs text-muted-foreground animate-fade-in">
-      {voice.voiceState === "recording" && (
+    <div
+      role="status"
+      aria-live="polite"
+      className="mt-1.5 flex items-center gap-2 rounded-xl bg-muted/20 px-2 py-1 text-xs text-muted-foreground animate-fade-in"
+    >
+      {voice.voiceState === "recording" ? (
         <>
           <span className="inline-block size-2 rounded-full bg-red-500 animate-pulse" />
           <span>Recording... click mic to stop</span>
         </>
-      )}
-      {voice.voiceState === "processing" && (
+      ) : null}
+      {voice.voiceState === "processing" ? (
         <>
           <Loader2 className="size-3 animate-spin" />
-          <span>
-            {voice.transcript
-              ? `"${voice.transcript}"`
-              : "Processing audio..."}
-          </span>
+          <span>{voice.transcript ? `"${voice.transcript}"` : "Processing audio..."}</span>
         </>
-      )}
-      {voice.voiceState === "playing" && (
+      ) : null}
+      {voice.voiceState === "playing" ? (
         <>
           <AudioLines className="size-3 text-green-500" />
           <span>Playing response...</span>
         </>
-      )}
-      {voice.error && (
+      ) : null}
+      {voice.error ? (
         <span className="text-destructive">{voice.error}</span>
-      )}
+      ) : null}
     </div>
   );
 }

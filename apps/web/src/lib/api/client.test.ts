@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { request, ApiError, parseApiError, API_BASE } from "./client";
+import { request, requestBlob, ApiError, parseApiError, API_BASE } from "./client";
 
 // Mock fetch globally
 const mockFetch = vi.fn();
@@ -117,5 +117,44 @@ describe("request", () => {
     } finally {
       globalThis.setTimeout = origSetTimeout;
     }
+  });
+});
+
+describe("requestBlob", () => {
+  beforeEach(() => {
+    mockFetch.mockReset();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("returns blob payload and filename from content-disposition", async () => {
+    mockFetch.mockResolvedValueOnce(new Response("file-content", {
+      status: 200,
+      headers: {
+        "Content-Type": "text/plain",
+        "Content-Disposition": "attachment; filename=test-export.csv",
+      },
+    }));
+
+    const result = await requestBlob("/export/session");
+    expect(await result.blob.text()).toBe("file-content");
+    expect(result.fileName).toBe("test-export.csv");
+    expect(result.contentType).toBe("text/plain");
+    expect(mockFetch).toHaveBeenCalledWith(
+      `${API_BASE}/export/session`,
+      expect.objectContaining({ credentials: "include" }),
+    );
+  });
+
+  it("throws ApiError on non-2xx response", async () => {
+    mockFetch.mockResolvedValue(
+      jsonResponse({ detail: "Unauthorized", code: "unauthorized" }, 401),
+    );
+
+    await expect(requestBlob("/export/session")).rejects.toThrow(ApiError);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 });

@@ -23,11 +23,15 @@ interface RetryWrongAnswerResult {
 
 export interface DerivedQuestionResult {
   problem_id: string;
+  original_problem_id?: string;
   question: string;
   question_type: string;
   options: Record<string, string> | null;
   correct_answer: string | null;
   explanation: string | null;
+  is_diagnostic?: boolean;
+  simplifications_made?: string[];
+  core_concept_preserved?: string;
 }
 
 interface WrongAnswerDiagnosisResult {
@@ -138,6 +142,7 @@ export interface AnswerResult {
   correct_answer: string | null;
   explanation: string | null;
   prerequisite_gaps?: PrerequisiteGap[] | null;
+  warnings?: string[];
 }
 
 export async function extractQuiz(
@@ -145,7 +150,7 @@ export async function extractQuiz(
   contentNodeId?: string,
   mode?: string,
   difficulty?: "easy" | "medium" | "hard",
-): Promise<{ problems_created: number }> {
+): Promise<{ problems_created: number; warnings?: string[] }> {
   return request("/quiz/extract", {
     method: "POST",
     body: JSON.stringify({
@@ -169,6 +174,31 @@ export async function submitAnswer(problemId: string, answer: string, answerTime
   return request("/quiz/submit", {
     method: "POST",
     body: JSON.stringify({ problem_id: problemId, user_answer: answer, answer_time_ms: answerTimeMs }),
+  });
+}
+
+export interface SaveGeneratedQuizResult {
+  saved: number;
+  problem_ids: string[];
+  batch_id: string;
+  version: number;
+  replaced: boolean;
+}
+
+export async function saveGeneratedQuiz(
+  courseId: string,
+  rawContent: string,
+  title?: string,
+  replaceBatchId?: string,
+): Promise<SaveGeneratedQuizResult> {
+  return request("/quiz/save-generated", {
+    method: "POST",
+    body: JSON.stringify({
+      course_id: courseId,
+      raw_content: rawContent,
+      title,
+      replace_batch_id: replaceBatchId,
+    }),
   });
 }
 

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { useBatchManager } from "./use-batch-manager";
+import type { GeneratedAssetBatchSummary } from "@/lib/api";
 
 // Mock workspace store
 const mockRefreshKey: Record<string, number> = { notes: 0 };
@@ -17,18 +18,21 @@ vi.mock("sonner", () => ({
 import { toast as mockToast } from "sonner";
 const typedToast = mockToast as unknown as { success: ReturnType<typeof vi.fn>; error: ReturnType<typeof vi.fn> };
 
-const makeBatch = (id: string, active = false) => ({
-  id,
+const makeBatch = (batchId: string, active = false): GeneratedAssetBatchSummary => ({
+  batch_id: batchId,
+  title: `batch-${batchId}`,
+  current_version: 1,
   is_active: active,
-  created_at: new Date().toISOString(),
-  label: `batch-${id}`,
+  updated_at: new Date().toISOString(),
+  asset_count: 0,
+  preview: {},
 });
 
 describe("useBatchManager", () => {
-  let listFn: ReturnType<typeof vi.fn>;
+  let listFn: ReturnType<typeof vi.fn<(courseId: string) => Promise<GeneratedAssetBatchSummary[]>>>;
 
   beforeEach(() => {
-    listFn = vi.fn().mockResolvedValue([makeBatch("1"), makeBatch("2", true)]);
+    listFn = vi.fn<(courseId: string) => Promise<GeneratedAssetBatchSummary[]>>().mockResolvedValue([makeBatch("1"), makeBatch("2", true)]);
     mockRefreshKey.notes = 0;
     typedToast.success.mockClear();
     typedToast.error.mockClear();
@@ -53,7 +57,7 @@ describe("useBatchManager", () => {
     );
 
     await waitFor(() => {
-      expect(result.current.latestBatch?.id).toBe("2");
+      expect(result.current.latestBatch?.batch_id).toBe("2");
       expect(result.current.latestBatch?.is_active).toBe(true);
     });
   });

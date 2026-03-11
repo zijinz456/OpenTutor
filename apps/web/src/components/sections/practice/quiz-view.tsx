@@ -13,10 +13,13 @@ import { useWorkspaceStore } from "@/store/workspace";
 import type { BlockType } from "@/lib/block-system/types";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { toast } from "sonner";
 import { AiFeatureBlocked } from "@/components/shared/ai-feature-blocked";
+import { SkeletonCard } from "@/components/ui/skeleton";
 import { updateUnlockContext, getUnlockContext } from "@/lib/block-system/feature-unlock";
 import { QuizOptions } from "./quiz-options";
 import { QuizResult } from "./quiz-result";
+import { useQuizPersistence } from "./use-quiz-persistence";
 
 interface QuizViewProps {
   courseId: string;
@@ -49,30 +52,48 @@ export function QuizView({
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [result, setResult] = useState<AnswerResult | null>(null);
   const [score, setScore] = useState({ correct: 0, total: 0 });
+  const [answeredMap, setAnsweredMap] = useState<Record<string, string>>({});
   const consecutiveWrongRef = useRef(0);
   const questionStartTimeRef = useRef(Date.now());
+  const restoredRef = useRef(false);
+  const { save, load, clear } = useQuizPersistence(courseId);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
       const items = await listProblems(courseId);
       setProblems(items);
+
+      // Restore session from localStorage (only once per mount)
+      if (!restoredRef.current) {
+        restoredRef.current = true;
+        const saved = load();
+        if (saved && saved.currentIdx < items.length) {
+          setCurrentIdx(saved.currentIdx);
+          setScore(saved.score);
+          setAnsweredMap(saved.answeredMap);
+          consecutiveWrongRef.current = saved.consecutiveWrong;
+        }
+      }
     } catch {
       setProblems([]);
     } finally {
       setLoading(false);
     }
-  }, [courseId]);
+  }, [courseId, load]);
 
   useEffect(() => {
     void fetchData();
   }, [fetchData, refreshKey]);
 
   useEffect(() => {
-    setSelectedOption(null);
     setResult(null);
     questionStartTimeRef.current = Date.now();
-  }, [currentIdx]);
+    // Show previously-selected option for already-answered questions
+    const pid = problems[currentIdx]?.id;
+    setSelectedOption(pid && answeredMap[pid] ? answeredMap[pid] : null);
+    // Note: persistence is handled in handleOptionClick with fresh values
+  }, [currentIdx]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleExtract = async () => {
     setExtracting(true);
@@ -81,7 +102,11 @@ export function QuizView({
       const layoutMode = useWorkspaceStore.getState().spaceLayout.mode ?? undefined;
       const mode = modeHint ?? layoutMode;
       const res = await extractQuiz(courseId, undefined, mode, difficultyHint);
-      setExtractStatus(t("quiz.extract.success").replace("{count}", String(res.problems_created)));
+      let status = t("quiz.extract.success").replace("{count}", String(res.problems_created));
+      if (res.warnings?.length) {
+        status += ` (${res.warnings[0]})`;
+      }
+      setExtractStatus(status);
       await fetchData();
     } catch (error) {
       const message = (error as Error).message;
@@ -93,17 +118,34 @@ export function QuizView({
 
   const handleOptionClick = async (option: string) => {
     if (result || submitting) return;
+
+    const problemId = problems[currentIdx].id;
+
+    // Idempotency: if already answered (e.g. after refresh), don't re-submit
+    if (answeredMap[problemId]) return;
+
     setSubmitError(null);
     setSelectedOption(option);
     setSubmitting(true);
     try {
       const answerTimeMs = Date.now() - questionStartTimeRef.current;
-      const res = await submitAnswer(problems[currentIdx].id, option, answerTimeMs);
+      const res = await submitAnswer(problemId, option, answerTimeMs);
       setResult(res);
-      setScore((prev) => ({
-        correct: prev.correct + (res.is_correct ? 1 : 0),
-        total: prev.total + 1,
-      }));
+      // Show toast if backend reported warnings (e.g. progress tracking failed)
+      if (res.warnings && res.warnings.length > 0) {
+        toast.warning(t("quiz.progressWarning"));
+      }
+      const newScore = {
+        correct: score.correct + (res.is_correct ? 1 : 0),
+        total: score.total + 1,
+      };
+      setScore(newScore);
+      const newAnswered = { ...answeredMap, [problemId]: option };
+      setAnsweredMap(newAnswered);
+
+      // Persist immediately after answer
+      save({ currentIdx, score: newScore, answeredMap: newAnswered, consecutiveWrong: consecutiveWrongRef.current });
+
       // Track feature-unlock context
       const ctx = getUnlockContext(courseId, 0);
       updateUnlockContext(courseId, {
@@ -120,7 +162,6 @@ export function QuizView({
           if (!hasWrongAnswersBlock) {
             store.addBlock("wrong_answers", {}, "agent");
           } else {
-            // Move wrong_answers to front by reordering
             const wrongFirst = ["wrong_answers", ...blocks.filter(b => b.type !== "wrong_answers").map(b => b.type)];
             store.reorderBlocks(wrongFirst as BlockType[]);
           }
@@ -140,7 +181,7 @@ export function QuizView({
   if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center p-8" data-testid="quiz-panel" role="status" aria-live="polite">
-        <div className="h-4 w-32 bg-muted animate-pulse rounded" aria-label="Loading quiz" />
+        <SkeletonCard className="w-full max-w-md" />
       </div>
     );
   }
@@ -172,12 +213,29 @@ export function QuizView({
   const bloomLevel = typeof metadata.bloom_level === "string" ? metadata.bloom_level : null;
 
   return (
-    <div role="form" aria-label="Quiz question" className="flex-1 flex flex-col overflow-hidden" data-testid="quiz-panel">
+    <div role="form" aria-label={t("quiz.ariaLabel")} className="flex-1 flex flex-col overflow-hidden" data-testid="quiz-panel">
       <div className="flex items-center gap-2 px-3 py-2 border-b border-border/60 shrink-0">
         {accuracy !== null ? <Badge variant="outline">{accuracy}%</Badge> : null}
+        {Object.keys(answeredMap).length > 0 ? (
+          <Badge variant="outline" className="text-muted-foreground">
+            {score.total}/{Object.keys(answeredMap).length}
+          </Badge>
+        ) : null}
         <span className="ml-auto text-xs text-muted-foreground">
           {t("quiz.question")} {currentIdx + 1} {t("quiz.of")} {problems.length}
         </span>
+        {aiActionsEnabled ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="text-xs h-6 px-2"
+            disabled={extracting}
+            onClick={() => void handleExtract()}
+          >
+            {extracting ? "..." : "+"}
+          </Button>
+        ) : null}
       </div>
 
       <div className="flex-1 overflow-y-auto scrollbar-thin p-4 space-y-4">

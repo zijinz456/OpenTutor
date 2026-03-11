@@ -7,14 +7,17 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
+from libs.exceptions import KnowledgeGraphUnavailableError
 from models.ingestion import WrongAnswer
 from models.progress import LearningProgress
 from models.practice import PracticeProblem
 from models.user import User
 from services.auth.dependency import get_current_user
+from services.knowledge.graph import build_knowledge_graph
 
 logger = logging.getLogger(__name__)
 
@@ -47,10 +50,12 @@ async def get_knowledge_graph(
 ):
     """Get knowledge graph for a course (D3-compatible format)."""
     try:
-        from services.knowledge.graph import build_knowledge_graph
         return await build_knowledge_graph(db, course_id, user.id)
-    except ImportError:
-        return {"nodes": [], "edges": [], "course_id": str(course_id)}
+    except KnowledgeGraphUnavailableError:
+        raise
+    except (SQLAlchemyError, KeyError, ValueError, TypeError, RuntimeError) as exc:
+        logger.exception("Knowledge graph build failed for course %s user %s", course_id, user.id)
+        raise KnowledgeGraphUnavailableError() from exc
 
 
 @router.get("/courses/{course_id}/knowledge-graph-mastery", summary="Get mastery-colored graph", description="Return knowledge graph nodes colored by mastery status.")
@@ -94,8 +99,6 @@ async def get_misconception_dashboard(
     db: AsyncSession = Depends(get_db),
 ):
     """Get misconception dashboard: things you think you understand but don't."""
-    from models.practice import PracticeResult
-
     wrong_result = await db.execute(
         select(WrongAnswer, PracticeProblem)
         .join(PracticeProblem, WrongAnswer.problem_id == PracticeProblem.id)

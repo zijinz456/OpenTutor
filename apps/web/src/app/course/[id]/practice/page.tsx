@@ -42,7 +42,7 @@ export default function PracticePage() {
   const aiActionsEnabled =
     health?.llm_status !== "mock_fallback" &&
     health?.llm_status !== "configuration_required";
-  const tab = (searchParams.get("tab") ?? "quiz") as "quiz" | "flashcards" | "review" | "podcast";
+  const tab = (searchParams.get("tab") ?? "quiz") as "quiz" | "flashcards" | "review";
   const difficultyParam = searchParams.get("difficulty");
   const modeParam = searchParams.get("mode");
   const quizDifficultyHint =

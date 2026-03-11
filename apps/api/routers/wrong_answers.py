@@ -6,7 +6,7 @@ Endpoints for listing wrong answers, retrying, and generating derived questions.
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,8 +14,16 @@ from database import get_db
 from models.ingestion import WrongAnswer
 from models.practice import PracticeProblem
 from models.user import User
-from schemas.wrong_answer import RetryRequest, RetryResponse, WrongAnswerResponse
+from schemas.wrong_answer import (
+    DeriveResponse,
+    DiagnoseResponse,
+    RetryRequest,
+    RetryResponse,
+    WrongAnswerResponse,
+    WrongAnswerStatsResponse,
+)
 from services.auth.dependency import get_current_user
+from services.course_access import get_course_or_404
 from services.diagnosis.derive import derive_diagnostic
 from libs.exceptions import NotFoundError
 
@@ -31,10 +39,13 @@ async def list_wrong_answers(
     course_id: uuid.UUID,
     mastered: bool | None = None,
     error_category: str | None = None,
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """List wrong answers for a course, optionally filtered."""
+    await get_course_or_404(db, course_id, user_id=user.id)
     query = (
         select(WrongAnswer, PracticeProblem)
         .join(PracticeProblem, WrongAnswer.problem_id == PracticeProblem.id)
@@ -50,6 +61,7 @@ async def list_wrong_answers(
     if error_category:
         query = query.where(WrongAnswer.error_category == error_category)
 
+    query = query.limit(limit).offset(offset)
     result = await db.execute(query)
     rows = result.all()
 
@@ -110,7 +122,7 @@ async def retry_wrong_answer(
     )
 
 
-@router.post("/{wrong_answer_id}/derive")
+@router.post("/{wrong_answer_id}/derive", response_model=DeriveResponse)
 async def derive_question(
     wrong_answer_id: uuid.UUID,
     user: User = Depends(get_current_user),
@@ -172,7 +184,7 @@ async def derive_question(
     }
 
 
-@router.post("/{wrong_answer_id}/diagnose")
+@router.post("/{wrong_answer_id}/diagnose", response_model=DiagnoseResponse)
 async def diagnose_from_pair(
     wrong_answer_id: uuid.UUID,
     user: User = Depends(get_current_user),
@@ -266,13 +278,14 @@ async def diagnose_from_pair(
     }
 
 
-@router.get("/{course_id}/stats")
+@router.get("/{course_id}/stats", response_model=WrongAnswerStatsResponse)
 async def wrong_answer_stats(
     course_id: uuid.UUID,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Get wrong answer statistics for a course."""
+    await get_course_or_404(db, course_id, user_id=user.id)
     total_result = await db.execute(
         select(func.count(WrongAnswer.id)).where(
             WrongAnswer.course_id == course_id,

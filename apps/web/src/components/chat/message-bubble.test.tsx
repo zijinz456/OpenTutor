@@ -108,14 +108,4 @@ describe("MessageBubble", () => {
     expect(screen.queryByText("(image)")).not.toBeInTheDocument();
   });
 
-  it("renders audio player for assistant voice responses", () => {
-    const msg = makeMessage({
-      role: "assistant",
-      content: "Voice reply",
-      audioUrl: "blob:http://localhost/audio-123",
-    });
-    render(<MessageBubble message={msg} />);
-    expect(screen.getByLabelText("Play audio")).toBeInTheDocument();
-    expect(screen.getByText("Voice response")).toBeInTheDocument();
-  });
 });

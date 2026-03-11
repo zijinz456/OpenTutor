@@ -231,6 +231,56 @@ async def canvas_browser_login(
     return {"status": "ok", "message": "Canvas session saved via browser login"}
 
 
+class CanvasCourseInfoRequest(BaseModel):
+    canvas_url: AnyHttpUrl
+
+
+@router.post("/course-info", summary="Fetch Canvas course name")
+async def canvas_course_info(
+    body: CanvasCourseInfoRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Fetch course name from Canvas API using saved session cookies."""
+    from services.scraper.canvas_detector import detect_canvas_url
+    from services.browser.session_manager import SessionManager
+    from routers.scrape import _default_session_name
+
+    canvas_url = str(body.canvas_url).rstrip("/")
+    info = detect_canvas_url(canvas_url)
+    if not info.is_canvas or not info.course_id:
+        return {"name": None}
+
+    domain = urlparse(canvas_url).netloc
+    session_name = _default_session_name(user.id, domain)
+
+    # Try Canvas REST API via authenticated session
+    api_url = f"{info.api_base}/courses/{info.course_id}"
+    try:
+        from services.browser.automation import fetch_with_browser
+        import json
+
+        html = await fetch_with_browser(api_url, session_name=session_name)
+        if html:
+            # Canvas API returns JSON; the browser may wrap it in HTML
+            # Try parsing as JSON directly first
+            text = html.strip()
+            # Strip HTML wrapper if present
+            if text.startswith("<"):
+                import re
+                json_match = re.search(r"\{.*\}", text, re.DOTALL)
+                if json_match:
+                    text = json_match.group(0)
+            data = json.loads(text)
+            name = data.get("name") or data.get("course_code")
+            if name:
+                return {"name": name, "course_code": data.get("course_code", "")}
+    except (json.JSONDecodeError, KeyError, OSError, RuntimeError):
+        logger.debug("Failed to fetch Canvas course info via API", exc_info=True)
+
+    return {"name": info.friendly_name}
+
+
 @router.post("/sync", summary="Sync content from Canvas")
 async def canvas_sync(
     body: CanvasSyncRequest,

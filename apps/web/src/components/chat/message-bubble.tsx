@@ -1,11 +1,10 @@
 "use client";
 
 import Image from "next/image";
-import { useState, useEffect, useRef } from "react";
+import { useState } from "react";
 import { cn } from "@/lib/utils";
 import type { ChatMessage } from "@/store/chat";
 import { ActionCard } from "@/components/chat/action-card";
-import { Play, Pause, Volume2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 
 interface MessageBubbleProps {
@@ -88,11 +87,6 @@ export function MessageBubble({ message }: MessageBubbleProps) {
           ) : !images?.length ? (
             <span className="text-xs italic opacity-60">...</span>
           ) : null}
-
-          {/* Audio playback for voice responses */}
-          {!isUser && message.audioUrl && (
-            <AudioPlayer src={message.audioUrl} />
-          )}
 
           {/* Action cards from metadata */}
           {!isUser && actions && actions.length > 0 && (
@@ -224,49 +218,3 @@ export function MessageBubble({ message }: MessageBubbleProps) {
   );
 }
 
-/** Inline audio player for TTS voice responses. */
-function AudioPlayer({ src }: { src: string }) {
-  const [isPlaying, setIsPlaying] = useState(false);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const a = new Audio(src);
-    const onEnded = () => setIsPlaying(false);
-    a.addEventListener("ended", onEnded);
-    audioRef.current = a;
-    return () => {
-      a.pause();
-      a.removeEventListener("ended", onEnded);
-      a.removeAttribute("src");
-      audioRef.current = null;
-    };
-  }, [src]);
-
-  const toggle = () => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    if (isPlaying) {
-      audio.pause();
-      setIsPlaying(false);
-    } else {
-      audio.play().then(
-        () => setIsPlaying(true),
-        () => setIsPlaying(false), // Autoplay blocked or load error
-      );
-    }
-  };
-
-  return (
-    <button
-      type="button"
-      onClick={toggle}
-      className="mt-1.5 flex items-center gap-1.5 rounded-md bg-black/10 px-2 py-1 text-xs hover:bg-black/15 transition-colors"
-      aria-label={isPlaying ? "Pause audio" : "Play audio"}
-    >
-      {isPlaying ? <Pause className="size-3" /> : <Play className="size-3" />}
-      <Volume2 className="size-3 opacity-60" />
-      <span>Voice response</span>
-    </button>
-  );
-}

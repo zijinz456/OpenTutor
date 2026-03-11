@@ -18,6 +18,7 @@ from .rules import (
     BlockOperation,
     rule_cognitive_adapt,
     rule_cognitive_overload,
+    rule_cognitive_recovery,
     rule_confusion_pairs,
     rule_deadline_approaching,
     rule_forgetting_risk,
@@ -25,6 +26,7 @@ from .rules import (
     rule_inactivity,
     rule_lector_review,
     rule_mastery_complete,
+    rule_mastery_gate,
     rule_prerequisite_gap,
     rule_weak_areas,
 )
@@ -67,6 +69,7 @@ async def compute_block_decisions(
     dismissed_types: list[str],
     signals: list[dict] | None = None,
     preferences: dict | None = None,
+    removed_for_load: list[str] | None = None,
 ) -> BlockDecisionResult:
     """Evaluate all rules against current state and return block operations.
 
@@ -88,7 +91,14 @@ async def compute_block_decisions(
     candidates: list[BlockOperation] = []
 
     # Rule: cognitive overload
-    candidates.extend(rule_cognitive_overload(cognitive_load, current_blocks))
+    overload_ops = rule_cognitive_overload(cognitive_load, current_blocks)
+    candidates.extend(overload_ops)
+
+    # Rule: cognitive recovery (restore blocks removed during overload)
+    if not overload_ops:
+        candidates.extend(rule_cognitive_recovery(
+            cognitive_load, current_blocks, removed_for_load,
+        ))
 
     # Rule: cognitive adaptation (quiz difficulty, mode suggestion)
     candidates.extend(rule_cognitive_adapt(cognitive_load, current_blocks, current_mode))
@@ -108,6 +118,11 @@ async def compute_block_decisions(
 
     # Rule: prerequisite gaps
     op = rule_prerequisite_gap(signals, current_blocks)
+    if op:
+        candidates.append(op)
+
+    # Rule: mastery gate (stronger prerequisite warning)
+    op = rule_mastery_gate(signals, current_blocks)
     if op:
         candidates.append(op)
 

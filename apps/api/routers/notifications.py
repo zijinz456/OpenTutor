@@ -9,12 +9,28 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
 from models.notification import Notification
 from models.user import User
+from schemas.notification import NotificationResponse, NotificationsListResponse
 from services.auth.dependency import get_current_user
 
 router = APIRouter()
 
 
-@router.get("/notifications")
+def _serialize_notification(n: Notification) -> NotificationResponse:
+    return NotificationResponse(
+        id=str(n.id),
+        title=n.title,
+        body=n.body,
+        category=n.category,
+        read=n.read,
+        course_id=str(n.course_id) if n.course_id else None,
+        action_url=n.action_url,
+        action_label=n.action_label,
+        data=n.metadata_json,
+        created_at=n.created_at.isoformat() if n.created_at else None,
+    )
+
+
+@router.get("/notifications", response_model=NotificationsListResponse)
 async def list_notifications(
     unread_only: bool = Query(False),
     limit: int = Query(20, ge=1, le=100),
@@ -39,24 +55,10 @@ async def list_notifications(
     )
     unread_count = count_result.scalar() or 0
 
-    return {
-        "unread_count": unread_count,
-        "notifications": [
-            {
-                "id": str(n.id),
-                "title": n.title,
-                "body": n.body,
-                "category": n.category,
-                "read": n.read,
-                "course_id": str(n.course_id) if n.course_id else None,
-                "action_url": n.action_url,
-                "action_label": n.action_label,
-                "data": n.metadata_json,
-                "created_at": n.created_at.isoformat() if n.created_at else None,
-            }
-            for n in notifications
-        ],
-    }
+    return NotificationsListResponse(
+        unread_count=unread_count,
+        notifications=[_serialize_notification(n) for n in notifications],
+    )
 
 
 @router.post("/notifications/{notification_id}/read")

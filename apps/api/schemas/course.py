@@ -33,14 +33,14 @@ class CourseMetadata(BaseModel):
 
 
 class CourseCreate(BaseModel):
-    name: str
-    description: str | None = None
+    name: str = Field(..., min_length=1, max_length=255)
+    description: str | None = Field(default=None, max_length=2000)
     metadata: CourseMetadata | None = None
 
 
 class CourseUpdate(BaseModel):
-    name: str | None = None
-    description: str | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    description: str | None = Field(default=None, max_length=2000)
     metadata: CourseMetadata | None = None
 
 
@@ -82,6 +82,7 @@ class ContentNodeResponse(BaseModel):
     level: int
     order_index: int
     source_type: str
+    content_category: str | None = None
     children: list["ContentNodeResponse"] = []
 
     model_config = {"from_attributes": True}

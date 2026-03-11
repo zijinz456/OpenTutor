@@ -13,10 +13,6 @@ const FlashcardView = lazy(() =>
 const ReviewView = lazy(() =>
   import("./practice/review-view").then((m) => ({ default: m.ReviewView })),
 );
-const PodcastView = lazy(() =>
-  import("./practice/podcast-view").then((m) => ({ default: m.PodcastView })),
-);
-
 interface PracticeSectionProps {
   courseId: string;
   showReview?: boolean;
@@ -26,13 +22,12 @@ interface PracticeSectionProps {
   quizModeHint?: "course_following" | "self_paced" | "exam_prep" | "maintenance";
 }
 
-type PracticeTab = "quiz" | "flashcards" | "review" | "podcast";
+type PracticeTab = "quiz" | "flashcards" | "review";
 
 const ALL_TABS: TabDef<PracticeTab>[] = [
   { id: "quiz", label: "Quiz", testId: "right-tab-quiz" },
   { id: "flashcards", label: "Cards", testId: "right-tab-cards" },
   { id: "review", label: "Review", testId: "right-tab-review" },
-  { id: "podcast", label: "Podcast", testId: "right-tab-podcast" },
 ];
 
 export function PracticeSection({
@@ -74,7 +69,6 @@ export function PracticeSection({
           ) : null}
           {activeTab === "flashcards" ? <FlashcardView courseId={courseId} aiActionsEnabled={aiActionsEnabled} /> : null}
           {activeTab === "review" && showReview ? <ReviewView courseId={courseId} aiActionsEnabled={aiActionsEnabled} /> : null}
-          {activeTab === "podcast" ? <PodcastView courseId={courseId} aiActionsEnabled={aiActionsEnabled} /> : null}
         </>
       )}
     </TabbedSection>

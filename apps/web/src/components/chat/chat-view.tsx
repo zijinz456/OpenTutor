@@ -21,7 +21,10 @@ interface ChatViewProps {
  * Sits at the bottom of the workspace (full width, like a VS Code terminal
  * panel). Layout: header + message list + tool-status bar + input bar.
  */
-export function ChatView({ courseId, aiActionsEnabled = true }: ChatViewProps) {
+export function ChatView({
+  courseId,
+  aiActionsEnabled = true,
+}: ChatViewProps) {
   const messages = useChatStore((s) => s.messages);
   const toolStatus = useChatStore((s) => s.toolStatus);
   const setCourseContext = useChatStore((s) => s.setCourseContext);

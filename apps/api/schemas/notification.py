@@ -2,11 +2,50 @@
 
 import uuid
 from datetime import datetime
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+# Canonical notification categories — add new values here when introducing new
+# notification types so the frontend can provide matching locale keys.
+NotificationCategory = Literal[
+    "scrape_alert",
+    "scrape_auth_expired",
+    "daily_brief",
+    "weekly_report",
+    "review_reminder",
+    "weekly_prep",
+    "task_completed",
+    "task_failed",
+    "system",
+]
+
 ALLOWED_NOTIFICATION_CHANNELS = {"sse"}
+
+
+# ---------- Notification Item Response ----------
+
+
+class NotificationResponse(BaseModel):
+    """Single notification item returned by the list endpoint."""
+
+    id: str
+    title: str
+    body: str
+    category: str
+    read: bool
+    course_id: str | None = None
+    action_url: str | None = None
+    action_label: str | None = None
+    data: dict | None = None
+    created_at: str | None = None
+
+
+class NotificationsListResponse(BaseModel):
+    """Envelope for paginated notification list."""
+
+    unread_count: int
+    notifications: list[NotificationResponse]
 
 
 # ---------- Notification Settings ----------
@@ -85,13 +124,13 @@ class NotificationSettingsUpdate(BaseModel):
 class PushSubscriptionCreate(BaseModel):
     """Register a Web Push subscription."""
 
-    endpoint: str
-    p256dh_key: str
-    auth_key: str
-    user_agent: str | None = None
+    endpoint: str = Field(..., max_length=2048)
+    p256dh_key: str = Field(..., max_length=512)
+    auth_key: str = Field(..., max_length=512)
+    user_agent: str | None = Field(default=None, max_length=512)
 
 
 class PushSubscriptionDelete(BaseModel):
     """Remove a Web Push subscription by endpoint."""
 
-    endpoint: str
+    endpoint: str = Field(..., max_length=2048)

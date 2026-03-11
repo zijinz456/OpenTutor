@@ -38,15 +38,6 @@ vi.mock("@/lib/auth", () => ({
   getStoredAccessToken: () => undefined,
 }));
 
-vi.mock("@/hooks/use-voice-session", () => ({
-  useVoiceSession: () => ({
-    isRecording: false,
-    startRecording: vi.fn(),
-    stopRecording: vi.fn(),
-    status: "idle",
-  }),
-}));
-
 vi.mock("@/lib/i18n-context", () => ({
   useT: () => (key: string) => key,
 }));
@@ -133,4 +124,5 @@ describe("ChatInput", () => {
     const textarea = screen.getByPlaceholderText("chat.disabledNeedLlm");
     expect(textarea).toBeInTheDocument();
   });
+
 });

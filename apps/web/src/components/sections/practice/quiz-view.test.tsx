@@ -59,6 +59,10 @@ vi.mock("@/components/shared/ai-feature-blocked", () => ({
   AiFeatureBlocked: () => <div data-testid="ai-blocked" />,
 }));
 
+vi.mock("./use-quiz-persistence", () => ({
+  useQuizPersistence: () => ({ save: vi.fn(), load: vi.fn().mockReturnValue(null), clear: vi.fn() }),
+}));
+
 describe("QuizView", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -82,13 +86,13 @@ describe("QuizView", () => {
   it("has role=form with aria-label", async () => {
     render(<QuizView courseId="test" />);
     await waitFor(() => screen.getByText("What color is the sky?"));
-    expect(screen.getByRole("form", { name: "Quiz question" })).toBeInTheDocument();
+    expect(screen.getByRole("form", { name: "quiz.ariaLabel" })).toBeInTheDocument();
   });
 
   it("has role=radiogroup for answer options", async () => {
     render(<QuizView courseId="test" />);
     await waitFor(() => screen.getByText("What color is the sky?"));
-    expect(screen.getByRole("radiogroup", { name: "Answer options" })).toBeInTheDocument();
+    expect(screen.getByRole("radiogroup", { name: "quiz.answerOptions" })).toBeInTheDocument();
   });
 
   it("renders answer options as radio buttons", async () => {

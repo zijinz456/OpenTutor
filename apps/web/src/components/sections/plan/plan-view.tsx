@@ -9,6 +9,8 @@ import {
   getReviewSession,
   getStudyPlans,
   listStudyGoals,
+  createStudyGoal,
+  updateStudyGoal,
   listStudyPlanBatches,
   saveStudyPlan,
   submitAgentTask,
@@ -17,6 +19,7 @@ import {
   type StudyPlanResponse,
 } from "@/lib/api";
 import { AiFeatureBlocked } from "@/components/shared/ai-feature-blocked";
+import { SkeletonText } from "@/components/ui/skeleton";
 import { useBatchManager } from "@/hooks/use-batch-manager";
 import { toast } from "sonner";
 import { updateUnlockContext } from "@/lib/block-system/feature-unlock";
@@ -60,6 +63,73 @@ export function PlanView({
   const [reviewItems, setReviewItems] = useState<ReviewItem[]>([]);
   const [savedPlans, setSavedPlans] = useState<StudyPlanResponse[]>([]);
   const [loadingContext, setLoadingContext] = useState(true);
+
+  // ── Goal creation/editing ──
+  const [showGoalForm, setShowGoalForm] = useState(false);
+  const [editingGoalId, setEditingGoalId] = useState<string | null>(null);
+  const [goalTitle, setGoalTitle] = useState("");
+  const [goalObjective, setGoalObjective] = useState("");
+  const [goalTargetDate, setGoalTargetDate] = useState("");
+  const [goalSaving, setGoalSaving] = useState(false);
+
+  const resetGoalForm = () => {
+    setShowGoalForm(false);
+    setEditingGoalId(null);
+    setGoalTitle("");
+    setGoalObjective("");
+    setGoalTargetDate("");
+  };
+
+  const startEditGoal = (goal: StudyGoal) => {
+    setEditingGoalId(goal.id);
+    setGoalTitle(goal.title);
+    setGoalObjective(goal.objective);
+    setGoalTargetDate(goal.target_date?.split("T")[0] ?? "");
+    setShowGoalForm(true);
+  };
+
+  const handleSaveGoal = async () => {
+    if (!goalTitle.trim() || !goalObjective.trim()) return;
+    setGoalSaving(true);
+    try {
+      if (editingGoalId) {
+        const updated = await updateStudyGoal(editingGoalId, {
+          title: goalTitle.trim(),
+          objective: goalObjective.trim(),
+          target_date: goalTargetDate || null,
+        });
+        setGoals((prev) => prev.map((g) => (g.id === updated.id ? updated : g)));
+        toast.success(t("plan.goals.updated"));
+      } else {
+        const created = await createStudyGoal({
+          title: goalTitle.trim(),
+          objective: goalObjective.trim(),
+          course_id: courseId,
+          target_date: goalTargetDate || undefined,
+        });
+        setGoals((prev) => [created, ...prev]);
+        if (goalTargetDate) {
+          updateUnlockContext(courseId, { hasDeadline: true });
+        }
+        toast.success(t("plan.goals.created"));
+      }
+      resetGoalForm();
+    } catch (error) {
+      toast.error((error as Error).message || t("plan.goals.saveFailed"));
+    } finally {
+      setGoalSaving(false);
+    }
+  };
+
+  const handleCompleteGoal = async (goalId: string) => {
+    try {
+      const updated = await updateStudyGoal(goalId, { status: "completed" });
+      setGoals((prev) => prev.map((g) => (g.id === updated.id ? updated : g)));
+      toast.success(t("plan.goals.completed"));
+    } catch (error) {
+      toast.error((error as Error).message);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -136,7 +206,7 @@ export function PlanView({
 
   if (mode === "exam_prep") {
     return (
-      <div role="region" aria-label="Study plan" className="flex-1 flex flex-col overflow-hidden" data-testid="study-plan-panel">
+      <div role="region" aria-label={t("plan.ariaLabel")} className="flex-1 flex flex-col overflow-hidden" data-testid="study-plan-panel">
         <ExamCountdown courseId={courseId} t={t} tf={tf} />
         <div className="px-3 py-2 border-b border-border/60 flex items-center gap-2 text-xs text-muted-foreground">
           <div>
@@ -228,18 +298,86 @@ export function PlanView({
   }
 
   return (
-    <div role="region" aria-label="Study plan" className="flex-1 flex flex-col overflow-hidden" data-testid="study-plan-panel">
-      <div className="px-3 py-2 border-b border-border/60">
-        <p className="text-sm font-medium text-foreground">{modeLabel}</p>
-        <p className="text-xs text-muted-foreground mt-0.5">{modeDesc}</p>
+    <div role="region" aria-label={t("plan.ariaLabel")} className="flex-1 flex flex-col overflow-hidden" data-testid="study-plan-panel">
+      <div className="px-3 py-2 border-b border-border/60 flex items-center justify-between">
+        <div>
+          <p className="text-sm font-medium text-foreground">{modeLabel}</p>
+          <p className="text-xs text-muted-foreground mt-0.5">{modeDesc}</p>
+        </div>
+        {!showGoalForm ? (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => { resetGoalForm(); setShowGoalForm(true); }}
+          >
+            {t("plan.goals.add")}
+          </Button>
+        ) : null}
       </div>
 
       <div className="flex-1 overflow-y-auto scrollbar-thin p-4">
+        {showGoalForm ? (
+          <div className="mb-4 p-3 border border-border rounded-md space-y-2 bg-muted/30">
+            <Input
+              value={goalTitle}
+              onChange={(e) => setGoalTitle(e.target.value)}
+              placeholder={t("plan.goals.titlePlaceholder")}
+              className="text-sm"
+            />
+            <Input
+              value={goalObjective}
+              onChange={(e) => setGoalObjective(e.target.value)}
+              placeholder={t("plan.goals.objectivePlaceholder")}
+              className="text-sm"
+            />
+            <Input
+              type="date"
+              value={goalTargetDate}
+              onChange={(e) => setGoalTargetDate(e.target.value)}
+              className="text-sm"
+            />
+            <div className="flex gap-2 justify-end">
+              <Button size="sm" variant="ghost" onClick={resetGoalForm} disabled={goalSaving}>
+                {t("plan.goals.cancel")}
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => void handleSaveGoal()}
+                disabled={goalSaving || !goalTitle.trim() || !goalObjective.trim()}
+              >
+                {goalSaving ? "..." : editingGoalId ? t("plan.goals.update") : t("plan.goals.create")}
+              </Button>
+            </div>
+          </div>
+        ) : null}
+
         {loadingContext ? (
-          <div className="space-y-2">
-            <div className="h-8 rounded bg-muted animate-pulse" />
-            <div className="h-8 rounded bg-muted animate-pulse" />
-            <div className="h-8 rounded bg-muted animate-pulse" />
+          <div role="status" aria-label={t("plan.loadingLabel")}>
+            <SkeletonText lines={3} />
+          </div>
+        ) : null}
+
+        {!loadingContext && goals.length > 0 ? (
+          <div className="mb-4 space-y-2">
+            {goals.filter((g) => g.status === "active").map((goal) => (
+              <div key={goal.id} className="flex items-start gap-2 p-2 rounded border border-border/60 text-sm">
+                <div className="flex-1 min-w-0">
+                  <p className="font-medium truncate">{goal.title}</p>
+                  <p className="text-xs text-muted-foreground truncate">{goal.objective}</p>
+                  {goal.target_date ? (
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {new Date(goal.target_date).toLocaleDateString()}
+                    </p>
+                  ) : null}
+                </div>
+                <Button size="sm" variant="ghost" className="h-6 px-1.5 text-xs" onClick={() => startEditGoal(goal)}>
+                  {t("plan.goals.edit")}
+                </Button>
+                <Button size="sm" variant="ghost" className="h-6 px-1.5 text-xs" onClick={() => void handleCompleteGoal(goal.id)}>
+                  {t("plan.goals.done")}
+                </Button>
+              </div>
+            ))}
           </div>
         ) : null}
 

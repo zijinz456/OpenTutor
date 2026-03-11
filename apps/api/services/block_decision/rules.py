@@ -17,7 +17,7 @@ PROTECTED_BLOCKS = frozenset({"notes", "quiz", "chapter_list"})
 
 # Priority order for hiding blocks under cognitive overload
 HIDE_PRIORITY = [
-    "agent_insight", "forecast", "knowledge_graph", "podcast",
+    "agent_insight", "forecast", "knowledge_graph",
     "progress", "plan", "wrong_answers", "flashcards", "review",
 ]
 
@@ -56,6 +56,31 @@ def rule_cognitive_overload(
     return ops
 
 
+def rule_cognitive_recovery(
+    cognitive_load: dict | None,
+    current_blocks: list[str],
+    removed_for_load: list[str] | None = None,
+) -> list[BlockOperation]:
+    """Cognitive load dropped → restore blocks that were removed during overload."""
+    if not cognitive_load or not removed_for_load:
+        return []
+    score = cognitive_load.get("score", 0)
+    consecutive = cognitive_load.get("consecutive_high", 0)
+    # Only recover when load is clearly low and sustained
+    if score >= 0.4 or consecutive > 0:
+        return []
+
+    ops = []
+    for bt in removed_for_load:
+        if bt not in current_blocks and bt not in PROTECTED_BLOCKS:
+            ops.append(BlockOperation(
+                action="add", block_type=bt,
+                reason="Cognitive load has eased. Restoring workspace.",
+                signal_source="cognitive_recovery", urgency=30, size="medium",
+            ))
+    return ops
+
+
 def rule_cognitive_adapt(
     cognitive_load: dict | None,
     current_blocks: list[str],
@@ -85,7 +110,8 @@ def rule_cognitive_adapt(
             ))
 
     # High load in exam_prep mode: suggest switching to self_paced
-    if score >= 0.65 and consecutive >= 2 and current_mode == "exam_prep":
+    # Only fire at very high thresholds to avoid over-notification
+    if score >= 0.8 and consecutive >= 4 and current_mode == "exam_prep":
         if "agent_insight" not in current_blocks:
             ops.append(BlockOperation(
                 action="add", block_type="agent_insight",
@@ -165,6 +191,26 @@ def rule_prerequisite_gap(
             action="add", block_type="knowledge_graph",
             reason="Found prerequisite gaps. Adding knowledge graph to visualize dependencies.",
             signal_source="prerequisite_gap", urgency=75, size="medium",
+        )
+    return None
+
+
+def rule_mastery_gate(
+    signals: list[dict],
+    current_blocks: list[str],
+) -> BlockOperation | None:
+    """Multiple prerequisite gaps → show insight suggesting prerequisite review."""
+    gaps = [s for s in signals if s.get("signal_type") == "prerequisite_gap"]
+    if len(gaps) >= 2 and "agent_insight" not in current_blocks:
+        gap_concepts = [s.get("concept", "unknown") for s in gaps[:3]]
+        return BlockOperation(
+            action="add", block_type="agent_insight",
+            reason=(
+                f"Prerequisites not yet mastered: {', '.join(gap_concepts)}. "
+                "Recommend reviewing these before advancing."
+            ),
+            signal_source="prerequisite_gap", urgency=80, size="small",
+            config={"insightType": "mastery_gate", "concepts": gap_concepts},
         )
     return None
 
@@ -267,6 +313,20 @@ def rule_lector_review(
             action="add", block_type="review",
             reason=f"{urgent_count} concepts need semantic review: {', '.join(concepts[:3])}.",
             signal_source="lector_review", urgency=82, size="medium",
+        ))
+
+    # Proactive review session CTA when many concepts are at risk
+    if urgent_count >= 3 and "agent_insight" not in current_blocks:
+        concepts = detail.get("concepts", [])
+        ops.append(BlockOperation(
+            action="add", block_type="agent_insight",
+            reason=f"{urgent_count} concepts at risk of being forgotten. Start a review session?",
+            signal_source="lector_review_cta", urgency=85, size="small",
+            config={
+                "insightType": "review_session_cta",
+                "urgent_count": urgent_count,
+                "concepts": concepts[:5],
+            },
         ))
 
     return ops

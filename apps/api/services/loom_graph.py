@@ -210,6 +210,27 @@ async def check_prerequisite_gaps(
     return sorted(gaps.values(), key=lambda g: g["gap_severity"], reverse=True)
 
 
+async def check_prerequisites_satisfied(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    course_id: uuid.UUID,
+    concept_names: list[str],
+    threshold: float = 0.4,
+) -> tuple[bool, list[dict]]:
+    """Check whether prerequisites for the given concepts are satisfied.
+
+    Returns ``(all_satisfied, gaps)`` where *gaps* is a list of
+    ``{"concept", "concept_id", "mastery", "gap_severity", "blocks"}``
+    — *blocks* lists the downstream concepts that are gated by this gap.
+    """
+    gaps = await check_prerequisite_gaps(
+        db, user_id, course_id,
+        failed_concept_names=concept_names,
+        mastery_threshold=threshold,
+    )
+    return (len(gaps) == 0, gaps)
+
+
 # ── Learning Path Generation ──
 
 async def generate_learning_path(

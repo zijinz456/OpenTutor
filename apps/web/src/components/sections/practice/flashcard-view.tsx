@@ -1,22 +1,25 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useT } from "@/lib/i18n-context";
 import {
   generateFlashcards,
   getDueFlashcards,
+  getLectorOrderedFlashcards,
   listGeneratedFlashcardBatches,
   reviewFlashcard,
   saveGeneratedFlashcards,
   type Flashcard,
+  type LectorFlashcard,
 } from "@/lib/api";
-import { getLectorOrderedFlashcards, type LectorFlashcard } from "@/lib/api/practice";
 import { useBatchManager } from "@/hooks/use-batch-manager";
 import { useWorkspaceStore } from "@/store/workspace";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { AiFeatureBlocked } from "@/components/shared/ai-feature-blocked";
+import { SkeletonCard } from "@/components/ui/skeleton";
 import { FlashcardCard } from "./flashcard-card";
+import { useFlashcardPersistence } from "./use-quiz-persistence";
 import { toast } from "sonner";
 
 interface FlashcardViewProps {
@@ -48,39 +51,53 @@ export function FlashcardView({
   const [dueCount, setDueCount] = useState(0);
   const [useLector, setUseLector] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
+  const restoredRef = useRef(false);
+  const { save, load, clear } = useFlashcardPersistence(courseId);
 
   useEffect(() => {
     let cancelled = false;
 
     (async () => {
+      // Helper to apply loaded cards + session restore in one place
+      const applyCards = (cards: (Flashcard | LectorFlashcard)[], dueCount: number, isLector: boolean) => {
+        if (cancelled) return;
+        setCards(cards);
+        setDueCount(dueCount);
+        setUseLector(isLector);
+        // Restore session from localStorage (only once per mount)
+        if (!restoredRef.current) {
+          restoredRef.current = true;
+          const saved = load();
+          if (saved && saved.index < cards.length) {
+            setIndex(saved.index);
+            setReviewed(saved.reviewedCount);
+          } else {
+            setIndex(0);
+            setReviewed(0);
+          }
+        } else {
+          setIndex(0);
+          setReviewed(0);
+        }
+        setFlipped(false);
+      };
+
       try {
         // Try LECTOR-ordered cards first for semantically-aware review
         const lector = await getLectorOrderedFlashcards(courseId);
         if (cancelled) return;
         if (lector.cards.length > 0) {
-          setCards(lector.cards);
-          setDueCount(lector.count);
-          setUseLector(true);
+          applyCards(lector.cards, lector.count, true);
         } else {
           // Fall back to regular FSRS due cards
           const due = await getDueFlashcards(courseId);
-          if (cancelled) return;
-          setCards(due.cards);
-          setDueCount(due.due_count);
-          setUseLector(false);
+          applyCards(due.cards, due.due_count, false);
         }
-        setIndex(0);
-        setFlipped(false);
-        setReviewed(0);
       } catch {
         // Fall back to regular due cards on any error
         try {
           const due = await getDueFlashcards(courseId);
-          if (!cancelled) {
-            setCards(due.cards);
-            setDueCount(due.due_count);
-            setUseLector(false);
-          }
+          applyCards(due.cards, due.due_count, false);
         } catch {
           if (!cancelled) {
             setCards([]);
@@ -109,13 +126,13 @@ export function FlashcardView({
       setIndex(0);
       setFlipped(false);
       setReviewed(0);
-      toast.success(`Generated ${data.count} flashcards`);
+      toast.success(t("flashcard.generateSuccess").replace("{count}", String(data.count)));
     } catch (error) {
-      toast.error((error as Error).message || "Failed to generate flashcards");
+      toast.error((error as Error).message || t("flashcard.generateFailed"));
     } finally {
       setLoading(false);
     }
-  }, [courseId]);
+  }, [courseId, t]);
 
   const handleSave = useCallback(
     async (replaceBatchId?: string) => {
@@ -144,13 +161,21 @@ export function FlashcardView({
       }
       setSubmitting(false);
       setFlipped(false);
-      setReviewed((count) => count + 1);
-      setIndex((current) => current + 1);
+      const newReviewed = reviewed + 1;
+      const newIndex = index + 1;
+      setReviewed(newReviewed);
+      setIndex(newIndex);
+      // Persist progress; clear if done
+      if (newIndex >= cards.length) {
+        clear();
+      } else {
+        save({ index: newIndex, reviewedCount: newReviewed });
+      }
     },
-    [cards, index, submitting, reviewFailedLabel],
+    [cards, index, reviewed, submitting, reviewFailedLabel, save, clear],
   );
 
-  // Keyboard shortcuts: 1-4 for ratings when card is flipped
+  // Keyboard shortcuts: 1-4 for ratings, arrow keys for quick rate when card is flipped
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
@@ -160,6 +185,12 @@ export function FlashcardView({
         if (key >= 1 && key <= 4) {
           e.preventDefault();
           void handleRate(key);
+        } else if (e.key === "ArrowLeft") {
+          e.preventDefault();
+          void handleRate(1); // Again
+        } else if (e.key === "ArrowRight") {
+          e.preventDefault();
+          void handleRate(3); // Good
         }
       }
     };
@@ -170,7 +201,7 @@ export function FlashcardView({
   if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center p-8" role="status" aria-live="polite">
-        <p className="text-xs text-muted-foreground">{t("flashcard.title")}...</p>
+        <SkeletonCard className="w-full max-w-md" />
       </div>
     );
   }
@@ -180,7 +211,7 @@ export function FlashcardView({
       <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
         {dueCount > 0 ? (
           <Badge variant="destructive" className="mb-3">
-            {dueCount} cards due today
+            {t("flashcard.cardsDueToday").replace("{count}", String(dueCount))}
           </Badge>
         ) : null}
         <h3 className="text-sm font-medium mb-1">{t("flashcard.title")}</h3>
@@ -212,7 +243,7 @@ export function FlashcardView({
       <div className="flex-1 flex flex-col items-center justify-center p-8 text-center gap-2">
         <h3 className="text-sm font-medium">{t("flashcard.title")}</h3>
         <p className="text-xs text-muted-foreground">
-          All done! {reviewed}/{cards.length} reviewed.
+          {t("flashcard.allDone").replace("{reviewed}", String(reviewed)).replace("{total}", String(cards.length))}
         </p>
       </div>
     );
@@ -225,7 +256,7 @@ export function FlashcardView({
       <div className="flex w-full max-w-md items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <Badge variant="outline">
-            {reviewed}/{cards.length} reviewed
+            {t("flashcard.reviewedCount").replace("{reviewed}", String(reviewed)).replace("{total}", String(cards.length))}
           </Badge>
           {useLector && (card as LectorFlashcard).lector_reason && (card as LectorFlashcard).lector_reason !== "due" ? (
             <Badge variant="secondary" className="text-[10px]">
@@ -241,7 +272,7 @@ export function FlashcardView({
               onClick={() => void handleSave(latestBatch.batch_id)}
               disabled={saving || submitting}
             >
-              Replace Latest
+              {t("flashcard.replaceLatest")}
             </Button>
           ) : null}
           <Button
@@ -250,7 +281,7 @@ export function FlashcardView({
             onClick={() => void handleSave()}
             disabled={saving || submitting}
           >
-            Save New
+            {t("flashcard.saveNew")}
           </Button>
         </div>
       </div>
@@ -262,6 +293,7 @@ export function FlashcardView({
         reviewError={reviewError}
         onFlip={handleFlip}
         onRate={handleRate}
+        t={t}
       />
     </div>
   );

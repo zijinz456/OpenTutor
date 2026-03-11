@@ -30,7 +30,6 @@ and reordering content blocks, applying templates, and switching learning modes.
 - chapter_list: Course content outline (default: full)
 - plan: Goals, tasks, and deadlines (default: medium)
 - wrong_answers: Error patterns and misconceptions (default: medium)
-- podcast: Audio study material (default: small)
 - forecast: Learning trajectory forecast (default: small)
 
 ## Available Templates
@@ -68,7 +67,6 @@ and reordering content blocks, applying templates, and switching learning modes.
 ## Examples
 - "add flashcards" → [ACTION:add_block:flashcards]
 - "I want to prepare for my exam" → [ACTION:set_learning_mode:exam_prep]
-- "remove the podcast block" → [ACTION:remove_block:podcast]
 - "make the quiz bigger" → [ACTION:resize_block:quiz:large]
 - "put quiz first, then notes" → [ACTION:reorder_blocks:quiz,notes,flashcards,progress]
 - "use the quick reviewer template" → [ACTION:apply_template:quick_reviewer]

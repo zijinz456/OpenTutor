@@ -69,7 +69,7 @@ async def auto_generate_quiz(
 
     Dedup guard: skips if the course already has >=3 active quiz questions.
     """
-    from models.content import CourseContentTree
+    from models.content import CourseContentTree, INFO_CATEGORIES
     from models.practice import PracticeProblem
 
     async with db_factory() as db:
@@ -88,6 +88,7 @@ async def auto_generate_quiz(
         try:
             from services.parser.quiz import extract_questions
 
+            # Only use knowledge content for quiz generation, skip syllabus/info
             result = await db.execute(
                 select(CourseContentTree).where(
                     CourseContentTree.course_id == course_id,
@@ -98,7 +99,8 @@ async def auto_generate_quiz(
 
             problems: list[PracticeProblem] = []
             for node in nodes[:3]:
-                if node.content and len(node.content) > 100:
+                if (node.content and len(node.content) > 100
+                        and node.content_category not in INFO_CATEGORIES):
                     node_problems = await extract_questions(
                         node.content, node.title, course_id, node.id,
                     )
@@ -140,9 +142,6 @@ async def _auto_generate_learning_content(
 
     for node in eligible[:20]:  # Cap to avoid excessive processing
         try:
-            # block_utils module removed -- skip block conversion
-            pass
-
             # Generate 2-3 practice problems per node
             content_preview = (node.content or "")[:3000]
             if content_preview:

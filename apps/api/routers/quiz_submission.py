@@ -83,6 +83,29 @@ async def _auto_derive_diagnostic(wrong_answer_id: uuid.UUID, user_id: uuid.UUID
         logger.exception("Auto-derive diagnostic failed (best-effort)")
 
 
+async def _check_effective_review(
+    problem_id: uuid.UUID, course_id: uuid.UUID, user_id: uuid.UUID
+) -> None:
+    """Background: if user previously got this problem wrong, record effective_review signal."""
+    try:
+        async with async_session() as db:
+            prev_wrong = await db.execute(
+                select(PracticeResult.id).where(
+                    PracticeResult.problem_id == problem_id,
+                    PracticeResult.user_id == user_id,
+                    PracticeResult.is_correct == False,  # noqa: E712
+                ).limit(1)
+            )
+            if prev_wrong.scalar_one_or_none() is None:
+                return  # No prior wrong answer — not an improvement
+            from services.block_decision.preference import record_block_event
+            await record_block_event(db, user_id, course_id, "review", "effective_review")
+            await db.commit()
+            logger.info("Recorded effective_review signal for problem %s", problem_id)
+    except (SQLAlchemyError, ValueError, ImportError):
+        logger.exception("Effective review check failed (best-effort)")
+
+
 async def _auto_detect_confusion(course_id: uuid.UUID, user_id: uuid.UUID) -> None:
     """Background task: detect confusion pairs from accumulated wrong answers."""
     try:
@@ -114,6 +137,8 @@ async def submit_answer(
     if not problem:
         raise NotFoundError("Problem", body.problem_id)
 
+    warnings: list[str] = []
+
     is_correct = False
     if problem.correct_answer:
         is_correct = body.user_answer.strip().lower() == problem.correct_answer.strip().lower()
@@ -143,6 +168,7 @@ async def submit_answer(
             pr.error_category = error_category
         except (ValueError, KeyError, TypeError, OSError):
             logger.exception("Error classification failed (best-effort)")
+            warnings.append("error_classification_failed")
 
     db.add(pr)
 
@@ -171,19 +197,27 @@ async def submit_answer(
         )
     except (SQLAlchemyError, ValueError, TypeError):
         logger.exception("Progress update failed (best-effort)")
+        warnings.append("progress_update_failed")
+
+    # Normalize knowledge_points to list[str] for consistent handling
+    _kp = problem.knowledge_points
+    kp_list: list[str] = (
+        [str(x) for x in _kp] if isinstance(_kp, list)
+        else [_kp] if isinstance(_kp, str)
+        else []
+    )
 
     # Update LOOM concept mastery for each knowledge point
-    if problem.knowledge_points:
+    if kp_list:
         from services.loom import update_concept_mastery
-        kps = problem.knowledge_points if isinstance(problem.knowledge_points, list) else [problem.knowledge_points]
-        for kp in kps:
+        for kp in kp_list:
             try:
                 await update_concept_mastery(db, user.id, str(kp), problem.course_id, correct=is_correct)
             except (SQLAlchemyError, ValueError, KeyError):
                 logger.exception("Concept mastery update failed for '%s'", kp)
+                warnings.append("concept_mastery_update_failed")
 
-    await db.commit()
-
+    # Emit analytics event before committing — single transaction for atomicity
     try:
         from services.analytics.events import emit_quiz_answered
         await emit_quiz_answered(
@@ -196,37 +230,44 @@ async def submit_answer(
             agent_name="quiz_router",
             answers={"user_answer": body.user_answer, "error_category": error_category},
         )
-        await db.commit()
     except (SQLAlchemyError, ValueError, TypeError):
         logger.exception("Learning event emission failed (best-effort)")
+        warnings.append("analytics_event_failed")
+
+    await db.commit()
 
     if not is_correct and wa:
         background_tasks.add_task(_auto_derive_diagnostic, wa.id, user.id)
         # Auto-detect confusion pairs from accumulated wrong answers
         background_tasks.add_task(_auto_detect_confusion, problem.course_id, user.id)
 
+    # Detect improvement: correct answer on a previously-wrong problem → effective_review signal
+    if is_correct:
+        background_tasks.add_task(
+            _check_effective_review, problem.id, problem.course_id, user.id
+        )
+
     # Check prerequisite gaps on wrong answers
     prerequisite_gaps = None
-    if not is_correct and problem.knowledge_points:
+    if not is_correct and kp_list:
         try:
             from services.loom import check_prerequisite_gaps
-            kp = problem.knowledge_points
-            concept_names = kp if isinstance(kp, list) else [kp] if isinstance(kp, str) else []
-            if concept_names:
-                gaps = await check_prerequisite_gaps(
-                    db, user.id, problem.course_id,
-                    failed_concept_names=concept_names,
-                )
-                if gaps:
-                    prerequisite_gaps = gaps[:3]
+            gaps = await check_prerequisite_gaps(
+                db, user.id, problem.course_id,
+                failed_concept_names=kp_list,
+            )
+            if gaps:
+                prerequisite_gaps = gaps[:3]
         except (SQLAlchemyError, ValueError, KeyError):
             logger.exception("Prerequisite gap check failed (best-effort)")
+            warnings.append("prerequisite_gap_check_failed")
 
     return AnswerResponse(
         is_correct=is_correct,
         correct_answer=problem.correct_answer,
         explanation=problem.explanation,
         prerequisite_gaps=prerequisite_gaps,
+        warnings=warnings,
     )
 
 
@@ -266,7 +307,7 @@ async def mastery_history(
             mastery_score=s.mastery_score,
             gap_type=s.gap_type,
             content_node_id=str(s.content_node_id) if s.content_node_id else None,
-            recorded_at=s.recorded_at.isoformat(),
+            recorded_at=s.recorded_at,
         )
         for s in reversed(snapshots)
     ]

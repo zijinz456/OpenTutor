@@ -24,7 +24,8 @@ from sse_starlette.sse import EventSourceResponse
 from database import get_db, async_session
 from sqlalchemy.exc import SQLAlchemyError
 
-from libs.exceptions import AppError, NotFoundError, reraise_as_app_error
+from libs.exceptions import AppError, NotFoundError
+from middleware.sse_limiter import StreamSlot, StreamLimitExceeded
 from models.chat_message import ChatMessageLog
 from models.chat_session import ChatSession
 from models.user import User
@@ -33,11 +34,10 @@ from services.agent.orchestrator import orchestrate_stream
 from services.auth.dependency import get_current_user
 from services.course_access import get_course_or_404
 from services.llm.readiness import ensure_llm_ready
+from config import settings
 from utils.serializers import serialize_model
 
-# Helpers extracted to chat_helpers — re-export for backward compatibility
 from .chat_helpers import (
-    build_session_title as _build_session_title,
     resolve_chat_session as _resolve_chat_session,
     persist_chat_turn as _persist_chat_turn,
     serialize_session as _serialize_session,
@@ -161,89 +161,102 @@ async def chat_stream(
     )
     await db.commit()
 
-    # SSE stream timeout: 5 minutes max to prevent resource exhaustion from dangling connections
-    _SSE_TIMEOUT_SECONDS = 300
+    _SSE_TIMEOUT_SECONDS = settings.sse_timeout_seconds
 
     async def event_generator():
         import asyncio
 
-        assistant_chunks: list[str] = []
-        assistant_content = ""
-        assistant_metadata: dict | None = None
         try:
-            async with asyncio.timeout(_SSE_TIMEOUT_SECONDS):
-                async for event in orchestrate_stream(
-                    user_id=user.id,
-                    course_id=body.course_id,
-                    message=body.message,
-                    db=db,
-                    db_factory=session_factory,
-                    conversation_id=body.conversation_id,
-                    session_id=session.id,
-                    history=[m.model_dump() for m in body.history],
-                    active_tab=body.active_tab or "",
-                    tab_context=body.tab_context,
-                    scene=resolved_scene,
-                    images=[img.model_dump() for img in body.images] if body.images else None,
-                    learning_mode=body.learning_mode,
-                    block_types=body.block_types or None,
-                    dismissed_block_types=body.dismissed_block_types or None,
-                ):
-                    # Stop streaming if client disconnected (saves LLM cost)
-                    if await request.is_disconnected():
-                        logger.info("Client disconnected during SSE stream for session %s", session.id)
-                        break
-                    if event.get("event") == "message":
-                        try:
-                            payload = json.loads(event["data"])
-                        except (KeyError, json.JSONDecodeError, TypeError):
-                            payload = {}
-                        if payload.get("content"):
-                            assistant_chunks.append(payload["content"])
-                            assistant_content = "".join(assistant_chunks)
-                    elif event.get("event") == "done":
-                        try:
-                            payload = json.loads(event["data"])
-                        except (KeyError, json.JSONDecodeError, TypeError):
-                            payload = {}
-                        assistant_metadata = {
-                            "agent": payload.get("agent"),
-                            "intent": payload.get("intent"),
-                            "tokens": payload.get("tokens"),
-                            "provenance": payload.get("provenance"),
-                            "actions": payload.get("actions", []),
-                            "verifier": payload.get("verifier"),
-                            "verifier_diagnostics": payload.get("verifier_diagnostics"),
-                            "task_link": payload.get("task_link"),
-                            "reflection": payload.get("reflection"),
+            async with StreamSlot(user.id):
+                assistant_chunks: list[str] = []
+                assistant_content = ""
+                assistant_metadata: dict | None = None
+                try:
+                    async with asyncio.timeout(_SSE_TIMEOUT_SECONDS):
+                        async for event in orchestrate_stream(
+                            user_id=user.id,
+                            course_id=body.course_id,
+                            message=body.message,
+                            db=db,
+                            db_factory=session_factory,
+                            conversation_id=body.conversation_id,
+                            session_id=session.id,
+                            history=[m.model_dump() for m in body.history],
+                            active_tab=body.active_tab or "",
+                            tab_context=body.tab_context,
+                            scene=resolved_scene,
+                            images=[img.model_dump() for img in body.images] if body.images else None,
+                            learning_mode=body.learning_mode,
+                            block_types=body.block_types or None,
+                            dismissed_block_types=body.dismissed_block_types or None,
+                        ):
+                            # Stop streaming if client disconnected (saves LLM cost)
+                            if await request.is_disconnected():
+                                logger.info("Client disconnected during SSE stream for session %s", session.id)
+                                break
+                            if event.get("event") == "message":
+                                try:
+                                    payload = json.loads(event["data"])
+                                except (KeyError, json.JSONDecodeError, TypeError):
+                                    payload = {}
+                                if payload.get("content"):
+                                    assistant_chunks.append(payload["content"])
+                                    assistant_content = "".join(assistant_chunks)
+                            elif event.get("event") == "done":
+                                try:
+                                    payload = json.loads(event["data"])
+                                except (KeyError, json.JSONDecodeError, TypeError):
+                                    payload = {}
+                                assistant_metadata = {
+                                    "agent": payload.get("agent"),
+                                    "intent": payload.get("intent"),
+                                    "tokens": payload.get("tokens"),
+                                    "provenance": payload.get("provenance"),
+                                    "actions": payload.get("actions", []),
+                                    "verifier": payload.get("verifier"),
+                                    "verifier_diagnostics": payload.get("verifier_diagnostics"),
+                                    "task_link": payload.get("task_link"),
+                                    "reflection": payload.get("reflection"),
+                                }
+                            elif event.get("event") == "replace":
+                                try:
+                                    payload = json.loads(event["data"])
+                                except (KeyError, json.JSONDecodeError, TypeError):
+                                    payload = {}
+                                assistant_content = payload.get("content", assistant_content)
+                            yield event
+                    # Use a fresh DB session for persistence to avoid stale state after SSE streaming
+                    try:
+                        async with session_factory() as persist_db:
+                            await _persist_chat_turn(persist_db, session.id, body.message, assistant_content, assistant_metadata)
+                    except SQLAlchemyError as persist_err:
+                        logger.exception("Failed to persist chat turn: %s", persist_err)
+                        yield {
+                            "event": "warning",
+                            "data": json.dumps({
+                                "type": "persistence_failed",
+                                "message": "Your conversation was not saved. You may need to resend your message.",
+                            }),
                         }
-                    elif event.get("event") == "replace":
-                        try:
-                            payload = json.loads(event["data"])
-                        except (KeyError, json.JSONDecodeError, TypeError):
-                            payload = {}
-                        assistant_content = payload.get("content", assistant_content)
-                    yield event
-            # Use a fresh DB session for persistence to avoid stale state after SSE streaming
-            try:
-                async with session_factory() as persist_db:
-                    await _persist_chat_turn(persist_db, session.id, body.message, assistant_content, assistant_metadata)
-            except SQLAlchemyError as persist_err:
-                logger.exception("Failed to persist chat turn: %s", persist_err)
-        except TimeoutError:
-            logger.warning("SSE stream timed out after %ds for session %s", _SSE_TIMEOUT_SECONDS, session.id)
-            yield {"event": "error", "data": json.dumps({"error": "Response timed out. Please try again with a simpler question."})}
-        except AppError as e:
-            logger.exception("Orchestrator AppError: %s", e)
-            yield {"event": "error", "data": json.dumps({"error": e.message})}
-        except (ValueError, KeyError, SQLAlchemyError, ConnectionError, OSError, RuntimeError) as e:
-            from libs.exceptions import is_llm_unavailable_error
-            if is_llm_unavailable_error(e):
-                error_msg = "The AI service is temporarily unavailable. Please try again shortly."
-            else:
-                error_msg = "An internal error occurred. Please try again."
-            logger.exception("Orchestrator error: %s", e)
-            yield {"event": "error", "data": json.dumps({"error": error_msg})}
+                except TimeoutError:
+                    logger.warning("SSE stream timed out after %ds for session %s", _SSE_TIMEOUT_SECONDS, session.id)
+                    yield {"event": "error", "data": json.dumps({"error": "Response timed out. Please try again with a simpler question."})}
+                except AppError as e:
+                    logger.exception("Orchestrator AppError: %s", e)
+                    yield {"event": "error", "data": json.dumps({"error": e.message})}
+                except (ValueError, KeyError, SQLAlchemyError, ConnectionError, OSError, RuntimeError) as e:
+                    from libs.exceptions import is_llm_unavailable_error
+                    if is_llm_unavailable_error(e):
+                        error_msg = "The AI service is temporarily unavailable. Please try again shortly."
+                    else:
+                        error_msg = "An internal error occurred. Please try again."
+                    logger.exception("Orchestrator error: %s", e)
+                    yield {"event": "error", "data": json.dumps({"error": error_msg})}
+        except StreamLimitExceeded:
+            yield {
+                "event": "error",
+                "data": json.dumps({"error": "Too many active conversations. Please close one before starting another."}),
+            }
 
     return EventSourceResponse(event_generator())
 
@@ -259,12 +272,15 @@ async def get_greeting(
     Uses LOOM mastery graph and LECTOR review state to craft a context-aware
     greeting that tells the student what to focus on.
     """
-    from models.course import Course
-
     course = await get_course_or_404(db, course_id, user_id=user.id)
 
     # Gather learning state
     greeting_parts = [f"Welcome back to **{course.name}**!"]
+
+    review: dict | None = None
+    upcoming = None
+    days_until: int | None = None
+    degraded_features: list[str] = []
 
     try:
         from services.lector import get_review_summary
@@ -280,8 +296,9 @@ async def get_greeting(
             greeting_parts.append("Want me to start a quick review session?")
         else:
             greeting_parts.append("You're all caught up on reviews!")
-    except Exception as exc:
-        logger.exception("Failed to fetch review summary for greeting")
+    except (ImportError, SQLAlchemyError, KeyError, ValueError, TypeError) as exc:
+        logger.warning("Greeting: review summary unavailable: %s", exc)
+        degraded_features.append("review_summary")
 
     try:
         from services.loom import get_mastery_graph
@@ -299,8 +316,9 @@ async def get_greeting(
                 greeting_parts.append(
                     f"You've mastered {mastered}/{total} concepts so far."
                 )
-    except Exception as exc:
-        logger.exception("Failed to fetch mastery graph for greeting")
+    except (ImportError, SQLAlchemyError, KeyError, ValueError, TypeError) as exc:
+        logger.warning("Greeting: mastery graph unavailable: %s", exc)
+        degraded_features.append("mastery_graph")
 
     # Check for upcoming deadlines
     try:
@@ -323,34 +341,56 @@ async def get_greeting(
                 greeting_parts.append(
                     f"Heads up: **{upcoming.title}** is due in {days_until} day(s)!"
                 )
-    except Exception as exc:
-        logger.exception("Failed to fetch upcoming deadlines for greeting")
+    except (ImportError, SQLAlchemyError, KeyError, ValueError, TypeError) as exc:
+        logger.warning("Greeting: deadlines unavailable: %s", exc)
+        degraded_features.append("deadlines")
 
     greeting_parts.append("What would you like to work on?")
 
     # Build suggested actions based on greeting context
     suggested_actions: list[dict[str, str]] = []
-    try:
-        if review.get("needs_review") and review.get("urgent_count", 0) > 0:
-            suggested_actions.append({
-                "action": "agent_insight",
-                "value": "review_needed",
-                "extra": f"{review['urgent_count']} concept(s) at risk",
-            })
-    except NameError:
-        logger.debug("review variable not available for suggested actions")
-    try:
-        if upcoming and days_until <= 7:
-            suggested_actions.append({
-                "action": "suggest_mode",
-                "value": "exam_prep",
-                "extra": f"{upcoming.title} due in {days_until} day(s)",
-            })
-    except NameError:
-        logger.debug("upcoming variable not available for suggested actions")
+    if review and review.get("needs_review") and review.get("urgent_count", 0) > 0:
+        suggested_actions.append({
+            "action": "agent_insight",
+            "value": "review_needed",
+            "extra": f"{review['urgent_count']} concept(s) at risk",
+        })
+    if upcoming and days_until is not None and days_until <= 7:
+        suggested_actions.append({
+            "action": "suggest_mode",
+            "value": "exam_prep",
+            "extra": f"{upcoming.title} due in {days_until} day(s)",
+        })
 
-    return {
+    # Evaluate proactive session offer (Bloom 2σ — system-initiated learning)
+    proactive_session = None
+    try:
+        from services.agent.proactive_session_planner import evaluate_proactive_session
+        offer = await evaluate_proactive_session(db, user.id, course_id)
+        if offer.should_initiate:
+            proactive_session = {
+                "should_initiate": True,
+                "reason": offer.reason,
+                "session_type": offer.session_type,
+                "topic": offer.topic,
+                "concepts_at_risk": offer.concepts_at_risk,
+                "resumption_prompt": offer.resumption_prompt,
+            }
+            suggested_actions.insert(0, {
+                "action": "start_guided_session",
+                "value": offer.session_type,
+                "extra": offer.reason,
+            })
+    except (ImportError, Exception) as exc:
+        logger.debug("Proactive session evaluation skipped: %s", exc)
+
+    response = {
         "greeting": " ".join(greeting_parts),
         "course_name": course.name,
         "suggested_actions": suggested_actions,
     }
+    if proactive_session:
+        response["proactive_session"] = proactive_session
+    if degraded_features:
+        response["degraded"] = degraded_features
+    return response

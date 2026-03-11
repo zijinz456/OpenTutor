@@ -12,6 +12,34 @@ import {
 } from "@/lib/block-system/feature-unlock";
 import { useT, useTF } from "@/lib/i18n-context";
 
+const REVIEW_CHECK_TTL_MS = 10 * 60 * 1000;
+const REVIEW_CHECK_RETRY_MS = 5_000;
+
+interface ReviewCheckLatchState {
+  successAt?: number;
+  retryAt?: number;
+  fingerprint?: string;
+}
+
+function readReviewCheckLatch(key: string): ReviewCheckLatchState {
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as ReviewCheckLatchState;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeReviewCheckLatch(key: string, value: ReviewCheckLatchState): void {
+  try {
+    sessionStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // no-op
+  }
+}
+
 function checkAndSuggestUnlockedBlocks(
   courseId: string,
   totalCourses: number,
@@ -106,33 +134,71 @@ export function useReviewCheck(
     const ctx = getUnlockContext(courseId, 1);
     if ((ctx.sessionCount ?? 0) < 3) return;
     const checkKey = `agent_review_check_${courseId}`;
-    if (sessionStorage.getItem(checkKey) === "true") return;
-    sessionStorage.setItem(checkKey, "true");
+    let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
-    import("@/lib/api/progress").then(({ getReviewSession }) => {
-      getReviewSession(courseId)
-        .then((result) => {
-          const urgentItems = result?.items?.filter(
-            (item) => item.urgency === "urgent" || item.urgency === "overdue",
-          ) ?? [];
-          if (urgentItems.length > 0) {
-            const store = useWorkspaceStore.getState();
-            const hasInsight = store.spaceLayout.blocks.some(
-              (b) => b.type === "agent_insight" && b.config.insightType === "review_needed",
+    const runReviewCheck = async (isRetry = false) => {
+      const now = Date.now();
+      const latch = readReviewCheckLatch(checkKey);
+      if (latch.retryAt && now < latch.retryAt) return;
+
+      try {
+        const { getReviewSession } = await import("@/lib/api");
+        const result = await getReviewSession(courseId);
+        if (cancelled) return;
+
+        const urgentItems = result?.items?.filter(
+          (item) => item.urgency === "urgent" || item.urgency === "overdue",
+        ) ?? [];
+        const fingerprint = urgentItems
+          .map((item) => `${item.concept_id}:${item.urgency}`)
+          .sort()
+          .join("|");
+
+        const latestLatch = readReviewCheckLatch(checkKey);
+        const shouldSkip =
+          latestLatch.successAt != null
+          && now - latestLatch.successAt < REVIEW_CHECK_TTL_MS
+          && latestLatch.fingerprint === fingerprint;
+
+        if (!shouldSkip && urgentItems.length > 0) {
+          const store = useWorkspaceStore.getState();
+          const hasInsight = store.spaceLayout.blocks.some(
+            (b) => b.type === "agent_insight" && b.config.insightType === "review_needed",
+          );
+          if (!hasInsight) {
+            store.agentAddBlock(
+              "agent_insight",
+              { insightType: "review_needed" },
+              {
+                reason: tf("course.reviewNeeded", { count: urgentItems.length }),
+                dismissible: true,
+              },
             );
-            if (!hasInsight) {
-              store.agentAddBlock(
-                "agent_insight",
-                { insightType: "review_needed" },
-                {
-                  reason: tf("course.reviewNeeded", { count: urgentItems.length }),
-                  dismissible: true,
-                },
-              );
-            }
           }
-        })
-        .catch((e) => console.error("[Course] LECTOR review check failed:", e));
-    });
+        }
+
+        writeReviewCheckLatch(checkKey, {
+          successAt: Date.now(),
+          fingerprint,
+        });
+      } catch (e) {
+        console.error("[Course] LECTOR review check failed:", e);
+        writeReviewCheckLatch(checkKey, { retryAt: Date.now() + REVIEW_CHECK_RETRY_MS });
+        if (!cancelled && !isRetry) {
+          retryTimer = setTimeout(() => {
+            void runReviewCheck(true);
+          }, REVIEW_CHECK_RETRY_MS);
+        }
+      }
+    };
+
+    void runReviewCheck();
+    return () => {
+      cancelled = true;
+      if (retryTimer) {
+        clearTimeout(retryTimer);
+      }
+    };
   }, [course, courseId, aiActionsEnabled, tf]);
 }

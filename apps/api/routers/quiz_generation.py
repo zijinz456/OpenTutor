@@ -5,16 +5,18 @@ import uuid
 
 logger = logging.getLogger(__name__)
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
-from models.content import CourseContentTree
+from models.content import CourseContentTree, INFO_CATEGORIES
 from models.practice import PracticeProblem
 from models.user import User
 from schemas.quiz import (
     ExtractRequest,
+    PretestAnswerRequest,
+    PretestStartRequest,
     SaveGeneratedRequest,
 )
 from services.auth.dependency import get_current_user
@@ -174,13 +176,18 @@ async def extract_quiz(body: ExtractRequest, user: User = Depends(get_current_us
             # Process a reasonable number of nodes -- ~2 questions per node
             max_nodes = min(max(target_count // 2, 3), 15)
 
+            # Only generate quizzes from knowledge content, not syllabus/info
             result = await db.execute(
                 select(CourseContentTree)
                 .where(CourseContentTree.course_id == body.course_id)
                 .where(CourseContentTree.content.isnot(None))
             )
             nodes = result.scalars().all()
-            eligible = [n for n in nodes if n.content and len(n.content) > 100][:max_nodes]
+            eligible = [
+                n for n in nodes
+                if n.content and len(n.content) > 100
+                and n.content_category not in INFO_CATEGORIES
+            ][:max_nodes]
 
             sem = asyncio.Semaphore(3)
 
@@ -227,4 +234,205 @@ async def extract_quiz(body: ExtractRequest, user: User = Depends(get_current_us
         db.add(p)
     await db.commit()
 
-    return {"status": "ok", "problems_created": len(problems)}
+    response: dict = {"status": "ok", "problems_created": len(problems)}
+    warnings: list[str] = []
+    if failures:
+        warnings.append(
+            f"Skipped {len(failures)}/{len(results)} content node(s) due to extraction errors."
+        )
+
+    # Check prerequisite gaps for the generated problems' knowledge points
+    try:
+        kp_names: list[str] = []
+        for p in problems:
+            kp_list = p.knowledge_points if hasattr(p, "knowledge_points") else None
+            if kp_list:
+                kp_names.extend(kp_list if isinstance(kp_list, list) else [kp_list])
+        if kp_names:
+            from services.loom_graph import check_prerequisites_satisfied
+            satisfied, gaps = await check_prerequisites_satisfied(
+                db, user.id, body.course_id, list(set(kp_names)),
+            )
+            if not satisfied:
+                gap_names = [g["concept"] for g in gaps[:3]]
+                warnings.append(
+                    f"Prerequisite gaps detected: {', '.join(gap_names)}. "
+                    "Consider reviewing these concepts first."
+                )
+                response["prerequisite_gaps"] = gaps[:5]
+    except Exception:
+        logger.debug("Prerequisite check skipped (knowledge graph may not exist)")
+
+    if warnings:
+        response["warnings"] = warnings
+    return response
+
+
+# ── CAT Pre-test (Diagnostic Assessment) ──
+
+# In-memory session store (per-process). Keyed by (user_id, course_id).
+# For production, swap with Redis or DB-backed session store.
+_pretest_sessions: dict[tuple[str, str], dict] = {}
+
+
+def _session_key(user_id: uuid.UUID, course_id: uuid.UUID) -> tuple[str, str]:
+    return (str(user_id), str(course_id))
+
+
+@router.post("/pretest/start", summary="Start diagnostic pre-test", description="Initialize a CAT session and return the first question concept.")
+async def pretest_start(
+    body: PretestStartRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Start a computerized adaptive pre-test for cold-start diagnosis."""
+    course = await get_course_or_404(db, body.course_id, user_id=user.id)
+
+    from services.diagnosis.cat_pretest import (
+        CATState,
+        load_testable_concepts,
+        select_next_item,
+    )
+
+    items = await load_testable_concepts(db, body.course_id)
+    if len(items) < 3:
+        raise ValidationError("Not enough concepts for diagnostic assessment (need at least 3)")
+
+    state = CATState()
+    first_item = select_next_item(state, items)
+    if not first_item:
+        raise ValidationError("No testable concepts available")
+
+    # Fetch the associated practice problem for this concept (if any)
+    question = await _get_concept_question(db, body.course_id, first_item.concept_id)
+
+    # Store session
+    key = _session_key(user.id, body.course_id)
+    _pretest_sessions[key] = {
+        "state": state,
+        "items": items,
+    }
+
+    return {
+        "status": "started",
+        "total_concepts": len(items),
+        "current_item": {
+            "concept_id": str(first_item.concept_id),
+            "concept_name": first_item.concept_name,
+            "difficulty": first_item.difficulty,
+            "bloom_level": first_item.bloom_level,
+            "question": question,
+        },
+        "progress": {
+            "answered": 0,
+            "estimated_total": min(len(items), 20),
+            "ability": state.theta,
+        },
+    }
+
+
+@router.post("/pretest/answer", summary="Submit pre-test answer", description="Submit answer for current CAT item, get next question or finalization.")
+async def pretest_answer(
+    body: PretestAnswerRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Process a pre-test answer and return next item or final results."""
+    await get_course_or_404(db, body.course_id, user_id=user.id)
+
+    from services.diagnosis.cat_pretest import (
+        finalize_pretest,
+        select_next_item,
+        update_ability,
+    )
+
+    key = _session_key(user.id, body.course_id)
+    session = _pretest_sessions.get(key)
+    if not session:
+        raise NotFoundError("No active pre-test session. Call /pretest/start first.")
+
+    state = session["state"]
+    items = session["items"]
+
+    # Find the item that was answered
+    current_item = None
+    for item in items:
+        if item.concept_id == body.concept_id:
+            current_item = item
+            break
+    if not current_item:
+        raise ValidationError("Invalid concept_id for this pre-test session")
+
+    # Update ability estimate
+    update_ability(state, current_item, body.correct)
+
+    # Check if we should stop
+    if state.should_stop:
+        # Finalize and write mastery scores
+        result = await finalize_pretest(db, user.id, body.course_id, state, items)
+        del _pretest_sessions[key]
+        return {
+            "status": "completed",
+            "result": result,
+        }
+
+    # Select next item
+    next_item = select_next_item(state, items)
+    if not next_item:
+        # All items tested
+        result = await finalize_pretest(db, user.id, body.course_id, state, items)
+        del _pretest_sessions[key]
+        return {
+            "status": "completed",
+            "result": result,
+        }
+
+    question = await _get_concept_question(db, body.course_id, next_item.concept_id)
+
+    return {
+        "status": "in_progress",
+        "current_item": {
+            "concept_id": str(next_item.concept_id),
+            "concept_name": next_item.concept_name,
+            "difficulty": next_item.difficulty,
+            "bloom_level": next_item.bloom_level,
+            "question": question,
+        },
+        "progress": {
+            "answered": state.total_count,
+            "correct": state.correct_count,
+            "estimated_total": min(len(items), 20),
+            "ability": round(state.theta, 3),
+            "standard_error": round(state.standard_error, 3),
+        },
+    }
+
+
+async def _get_concept_question(
+    db: AsyncSession,
+    course_id: uuid.UUID,
+    concept_id: uuid.UUID,
+) -> dict | None:
+    """Try to find an existing practice problem for a concept, or return None."""
+    result = await db.execute(
+        select(PracticeProblem).where(
+            PracticeProblem.course_id == course_id,
+            PracticeProblem.is_archived == False,  # noqa: E712
+        ).limit(50)
+    )
+    problems = result.scalars().all()
+
+    # Match by knowledge_points or content_node_id linkage
+    concept_str = str(concept_id)
+    for p in problems:
+        kp = p.knowledge_points if hasattr(p, "knowledge_points") else None
+        if kp and concept_str in (kp if isinstance(kp, list) else [str(kp)]):
+            return {
+                "id": str(p.id),
+                "question_type": p.question_type,
+                "question": p.question,
+                "options": p.options,
+            }
+
+    # Fallback: return first available problem (frontend can generate on-the-fly)
+    return None

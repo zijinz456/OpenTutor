@@ -92,6 +92,8 @@ async def test_health_endpoint(client):
     assert isinstance(data["local_beta_ready"], bool)
     assert isinstance(data["local_beta_blockers"], list)
     assert isinstance(data["local_beta_warnings"], list)
+    assert isinstance(data["features"], dict)
+    assert data["features"]["voice_enabled"] is False
 
 
 # ── Course CRUD ──
@@ -749,6 +751,25 @@ async def test_progress_trend_endpoints_handle_practice_results_with_answered_at
     weekly_report = await client.get("/api/progress/weekly-report")
     assert weekly_report.status_code == 200
     assert weekly_report.json()["this_week"]["quiz_total"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_knowledge_graph_failure_returns_structured_500(client, monkeypatch):
+    create_resp = await client.post("/api/courses/", json={"name": "Graph Failure", "description": "graph"})
+    assert create_resp.status_code == 201
+    course_id = create_resp.json()["id"]
+
+    async def _raise_graph_error(*_args, **_kwargs):
+        raise RuntimeError("graph backend down")
+
+    monkeypatch.setattr("routers.progress_knowledge.build_knowledge_graph", _raise_graph_error)
+
+    resp = await client.get(f"/api/progress/courses/{course_id}/knowledge-graph")
+    assert resp.status_code == 500
+    payload = resp.json()
+    assert payload["code"] == "knowledge_graph_unavailable"
+    assert payload["status"] == 500
+    assert "Knowledge graph service is unavailable" in payload["message"]
 
 
 @pytest.mark.asyncio

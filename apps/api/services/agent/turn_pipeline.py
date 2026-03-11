@@ -219,6 +219,7 @@ def envelope_payload(ctx: AgentContext) -> dict:
         "task_link": envelope.task_link,
         "reflection": ctx.metadata.get("reflection"),
         "layout_simplification": ctx.metadata.get("layout_simplification"),
+        "is_mock": ctx.metadata.get("is_mock", False),
     }
 
 

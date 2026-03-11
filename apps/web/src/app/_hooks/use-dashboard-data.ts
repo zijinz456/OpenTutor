@@ -17,8 +17,9 @@ import {
   listNotifications,
   type HealthStatus,
   type AppNotification,
+  listStudyGoals,
+  type StudyGoal,
 } from "@/lib/api";
-import { listStudyGoals, type StudyGoal } from "@/lib/api/progress";
 import { ttlCache } from "@/lib/cache";
 import { useT, useTF } from "@/lib/i18n-context";
 import { buildLayoutFromMode } from "@/lib/block-system/templates";
@@ -98,6 +99,7 @@ export function useDashboardData() {
   // Fetch cross-course review summaries
   useEffect(() => {
     if (courses.length === 0) return;
+    let cancelled = false;
     const fetchReviews = async () => {
       const results = await Promise.allSettled(
         courses.map(async (course) => {
@@ -111,6 +113,7 @@ export function useDashboardData() {
           return null;
         }),
       );
+      if (cancelled) return;
       const summaries = results
         .filter((r): r is PromiseFulfilledResult<ReviewSummary | null> => r.status === "fulfilled")
         .map((r) => r.value)
@@ -119,6 +122,7 @@ export function useDashboardData() {
       setReviewSummaries(summaries);
     };
     fetchReviews();
+    return () => { cancelled = true; };
   }, [courses]);
 
   // Fetch notifications (agent insights) + daily digest
@@ -146,7 +150,7 @@ export function useDashboardData() {
             tasks
               .filter((task) => task.status === "pending_approval")
               .forEach((task) => pending.push({ ...task, courseName: course.name }));
-          } catch { /* ignore per-course task failures */ }
+          } catch (e) { console.warn("[Dashboard] tasks fetch failed for course %s:", course.id, e); }
         }),
       );
       pending.sort((a, b) => new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime());
@@ -174,7 +178,7 @@ export function useDashboardData() {
               }
             }
           }
-        } catch { /* ignore */ }
+        } catch (e) { console.warn("[Dashboard] goals fetch failed for course %s:", course.id, e); }
       }
       deadlines.sort((a, b) => new Date(a.target_date!).getTime() - new Date(b.target_date!).getTime());
       setUpcomingDeadlines(deadlines.slice(0, 10));
@@ -199,7 +203,7 @@ export function useDashboardData() {
             const prev = conceptFreq.get(normalized);
             conceptFreq.set(normalized, { count: (prev?.count ?? 0) + 1, display: prev?.display ?? node.label });
           }
-        } catch { /* ignore per-course graph failures */ }
+        } catch (e) { console.warn("[Dashboard] knowledge graph failed for course %s:", course.id, e); }
       }
       const allConcepts = [...conceptFreq.values()];
       const shared = allConcepts.filter((v) => v.count >= 2);
@@ -280,7 +284,7 @@ export function useDashboardData() {
       await markTaskNotificationsRead(taskId).catch(() => undefined);
       setPendingTasks((prev) => prev.filter((task) => task.id !== taskId));
       setNotifications((prev) => prev.filter((notification) => !notificationMatchesTask(notification, taskId)));
-    } catch { /* keep current state; user can retry */ } finally {
+    } catch (e) { console.warn("[Dashboard] task action failed:", e); } finally {
       setActingTasks((prev) => { const next = new Set(prev); next.delete(taskId); return next; });
     }
   };
@@ -299,7 +303,7 @@ export function useDashboardData() {
         metadata_json: { recommendation_key: item.recommendationKey, current_mode: item.currentMode, suggested_mode: item.suggestedMode, signals: item.signals },
       }).catch(() => undefined);
       setModeRecommendations((prev) => prev.filter((rec) => rec.courseId !== item.courseId));
-    } catch { /* ignore; user can retry */ } finally {
+    } catch (e) { console.warn("[Dashboard] mode recommendation apply failed:", e); } finally {
       setActingModeCourses((prev) => { const next = new Set(prev); next.delete(item.courseId); return next; });
     }
   };

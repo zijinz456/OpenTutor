@@ -5,10 +5,13 @@ import {
   getLearningProfile,
   dismissPreference,
   restorePreference,
+  dismissSignal,
+  restoreSignal,
   dismissMemory,
   restoreMemory,
   type LearningProfile,
   type Preference,
+  type PreferenceSignal,
   type MemoryProfileItem,
 } from "@/lib/api";
 import { useT } from "@/lib/i18n-context";
@@ -68,6 +71,32 @@ export function ProfileView({ courseId }: ProfileViewProps) {
     [fetchProfile],
   );
 
+  const handleDismissSignal = useCallback(
+    async (signal: PreferenceSignal) => {
+      try {
+        await dismissSignal(signal.id);
+        toast.success(`Dismissed signal: ${signal.dimension}`);
+        await fetchProfile();
+      } catch {
+        toast.error("Failed to dismiss signal");
+      }
+    },
+    [fetchProfile],
+  );
+
+  const handleRestoreSignal = useCallback(
+    async (signal: PreferenceSignal) => {
+      try {
+        await restoreSignal(signal.id);
+        toast.success(`Restored signal: ${signal.dimension}`);
+        await fetchProfile();
+      } catch {
+        toast.error("Failed to restore signal");
+      }
+    },
+    [fetchProfile],
+  );
+
   const handleDismissMemory = useCallback(
     async (mem: MemoryProfileItem) => {
       try {
@@ -114,7 +143,7 @@ export function ProfileView({ courseId }: ProfileViewProps) {
   }
 
   const hasDismissed =
-    profile.dismissed_preferences.length > 0 || profile.dismissed_memories.length > 0;
+    profile.dismissed_preferences.length > 0 || profile.dismissed_signals.length > 0 || profile.dismissed_memories.length > 0;
 
   const persona = getPersona();
   const studyWindows = getOptimalStudyWindows();
@@ -202,6 +231,36 @@ export function ProfileView({ courseId }: ProfileViewProps) {
         </div>
       </div>
 
+      {/* Active signals */}
+      {profile.signals.length > 0 && (
+        <div>
+          <h4 className="mb-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">
+            Signals
+          </h4>
+          <div className="flex flex-wrap gap-2">
+            {profile.signals.map((signal) => (
+              <Badge
+                key={signal.id}
+                variant="outline"
+                className="group max-w-full gap-1 pr-1"
+              >
+                <span className="truncate">
+                  {signal.dimension}: {String(signal.value)}
+                </span>
+                <button
+                  type="button"
+                  className="ml-1 hidden rounded-full p-0.5 text-muted-foreground hover:bg-destructive/20 hover:text-destructive group-hover:inline-flex"
+                  onClick={() => void handleDismissSignal(signal)}
+                  title="Dismiss this signal"
+                >
+                  ✕
+                </button>
+              </Badge>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Active memories */}
       {profile.memories.length > 0 && (
         <div>
@@ -272,7 +331,7 @@ export function ProfileView({ courseId }: ProfileViewProps) {
             className="text-xs text-muted-foreground"
             onClick={() => setShowDismissed((v) => !v)}
           >
-            {showDismissed ? "Hide" : "Show"} dismissed ({profile.dismissed_preferences.length + profile.dismissed_memories.length})
+            {showDismissed ? "Hide" : "Show"} dismissed ({profile.dismissed_preferences.length + profile.dismissed_signals.length + profile.dismissed_memories.length})
           </Button>
           {showDismissed && (
             <div className="mt-2 space-y-2 rounded-xl border border-dashed border-border/60 p-3.5">
@@ -289,6 +348,24 @@ export function ProfileView({ courseId }: ProfileViewProps) {
                     size="sm"
                     className="h-auto p-1 text-xs"
                     onClick={() => void handleRestorePreference(pref)}
+                  >
+                    Restore
+                  </Button>
+                </div>
+              ))}
+              {profile.dismissed_signals.map((signal) => (
+                <div
+                  key={signal.id}
+                  className="flex items-center gap-2 text-xs text-muted-foreground"
+                >
+                  <span className="flex-1 line-through">
+                    {signal.dimension}: {String(signal.value)}
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-auto p-1 text-xs"
+                    onClick={() => void handleRestoreSignal(signal)}
                   >
                     Restore
                   </Button>

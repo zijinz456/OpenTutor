@@ -15,10 +15,12 @@ interface ChatDrawerProps {
 
 /** True when viewport is below the md breakpoint (768px). */
 function useIsMobile() {
-  const [mobile, setMobile] = useState(false);
+  const [mobile, setMobile] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.matchMedia("(max-width: 767px)").matches;
+  });
   useEffect(() => {
     const mql = window.matchMedia("(max-width: 767px)");
-    setMobile(mql.matches);
     const handler = (e: MediaQueryListEvent) => setMobile(e.matches);
     mql.addEventListener("change", handler);
     return () => mql.removeEventListener("change", handler);
@@ -30,7 +32,12 @@ function useIsMobile() {
  * On mobile (< 768px), renders as a bottom sheet with swipe-down to dismiss.
  * On desktop, renders as the original side drawer.
  */
-export function ChatDrawer({ courseId, open, onOpenChange, aiActionsEnabled = true }: ChatDrawerProps) {
+export function ChatDrawer({
+  courseId,
+  open,
+  onOpenChange,
+  aiActionsEnabled = true,
+}: ChatDrawerProps) {
   const isMobile = useIsMobile();
   // Swipe-down gesture state for the mobile drawer fallback
   const drawerRef = useRef<HTMLDivElement>(null);
@@ -81,7 +88,7 @@ export function ChatDrawer({ courseId, open, onOpenChange, aiActionsEnabled = tr
       {isMobile && (
         <BottomSheet open={open} onOpenChange={(v) => onOpenChange?.(v)} title="Chat">
           <div className="h-[75dvh]">
-            {open && <ChatView courseId={courseId} aiActionsEnabled={aiActionsEnabled} />}
+            {open && <ChatView courseId={courseId} aiActionsEnabled={aiActionsEnabled}  />}
           </div>
         </BottomSheet>
       )}
@@ -104,7 +111,7 @@ export function ChatDrawer({ courseId, open, onOpenChange, aiActionsEnabled = tr
         style={dragOffset ? { transform: `translateY(${dragOffset}px)`, transition: "none" } : undefined}
       >
         {open && (
-          <ChatView courseId={courseId} aiActionsEnabled={aiActionsEnabled} />
+          <ChatView courseId={courseId} aiActionsEnabled={aiActionsEnabled}  />
         )}
       </div>
     </>
