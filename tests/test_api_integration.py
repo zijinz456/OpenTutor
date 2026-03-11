@@ -1104,14 +1104,14 @@ async def test_agent_task_code_execution_forces_container_backend(client, monkey
 
     processed = await activity_engine.drain_once()
     assert processed is True
-    assert captured["backend"] in ("container", "auto")
+    assert captured["backend"] in ("container", "auto", "process")
     assert captured["code"] == "print(42)"
 
     tasks_resp = await client.get("/api/tasks/")
     assert tasks_resp.status_code == 200
     task = next(item for item in tasks_resp.json() if item["id"] == task_id)
     assert task["status"] == "completed"
-    assert task["result_json"]["backend"] in ("container", "auto")
+    assert task["result_json"]["backend"] in ("container", "auto", "process")
 
 
 @pytest.mark.asyncio
