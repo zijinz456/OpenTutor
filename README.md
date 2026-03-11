@@ -4,85 +4,46 @@
 
 # OpenTutor
 
-**Your self-hosted AI learning platform.**<br/>
-Upload any material — get notes, quizzes, flashcards, and an AI tutor that adapts to you.
+**The first block-based adaptive learning workspace that runs locally.**
+
+Drop in a PDF. Get an AI tutor that actually adapts to how *you* learn.
 
 [![License](https://img.shields.io/github/license/zijinz456/OpenTutor?style=flat-square&labelColor=black)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white&labelColor=black)](https://www.python.org/)
 [![Next.js](https://img.shields.io/badge/Next.js-16-000000?style=flat-square&logo=nextdotjs&logoColor=white&labelColor=black)](https://nextjs.org/)
 [![Docker](https://img.shields.io/badge/docker-ready-2496ED?style=flat-square&logo=docker&logoColor=white&labelColor=black)](https://www.docker.com/)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square&labelColor=black)](CONTRIBUTING.md)
 
 **English** | [中文](./README.zh-CN.md)
 
 </div>
 
-<p align="center"><img src="docs/assets/screenshot-workspace.png" alt="OpenTutor — AI-generated notes with LaTeX, block-based workspace" width="800" /></p>
+<!-- TODO: Replace with demo GIF once recorded -->
+<!-- <p align="center"><img src="docs/assets/demo.gif" alt="OpenTutor demo — upload PDF, get adaptive workspace" width="800" /></p> -->
 
-## What is OpenTutor?
+<p align="center"><img src="docs/assets/demo-workspace-full.png" alt="OpenTutor — block-based adaptive workspace with chapters, notes, quiz, knowledge graph, and progress tracking" width="800" /></p>
 
-Drop in a PDF, and within 30 seconds you have structured notes, flashcards, quizzes, and an AI tutor that adapts to you. It builds a personal knowledge graph of what you know, tracks what you're forgetting, and proactively reminds you to review — all running locally, completely free.
+## The Problem
+
+Every AI learning tool we tried had the same issue: they treat every student the same way. Same explanations. Same pace. Same questions. And they all require sending your data to the cloud.
+
+## The Solution
+
+OpenTutor is a **self-hosted, local-first** AI learning platform. Upload your course material, and within 30 seconds you get structured notes, flashcards, quizzes, and an AI tutor — all running on your machine, completely free.
+
+What makes it different:
+
+- **Block-based workspace** that reshapes itself based on how you learn
+- **Runs locally** with open-source LLMs — no API keys required, no data leaves your machine
+- **Grounded in learning science** — FSRS spaced repetition, knowledge graphs, cognitive load detection
 
 ```
 Upload → AI Teaches → You Practice → AI Remembers → AI Reminds → Repeat
 ```
 
-## Features
-
-- **30-Second Ingestion** — Upload PDF, DOCX, PPTX, or paste a URL. Get structured notes, AI-generated flashcards, and quiz questions.
-
-- **AI Tutor with Source Citations** — Every answer cites the original material. Adapts depth based on behavioral signals (fatigue, error patterns, message brevity).
-
-- **Block-Based Adaptive Workspace** — 12 composable learning blocks (notes, quiz, flashcards, knowledge graph, study plan, analytics, etc). The system progressively unlocks features based on your learning behavior and suggests layout changes via AI.
-
-- **Knowledge Graph (LOOM)** `[Experimental]` — Tracks concept mastery, prerequisite relationships, and weak areas. Based on [LOOM](https://arxiv.org/abs/2511.21037). ~40% complete — decay modeling and cross-course linking are in progress.
-
-- **Spaced Repetition (FSRS 4.5 + LECTOR)** — FSRS scheduling for flashcards. LECTOR `[Experimental]` adds semantic review prioritization based on knowledge graph relationships. ~30% complete — confusion pairs and adaptive weights are in progress.
-
-- **Proactive Review Reminders** — Checks for concepts at risk of being forgotten and sends in-app notifications.
-
-- **Quiz System** — 7 question types: MCQ, short answer, fill-in-blank, true/false, matching, ordering, coding. Wrong-answer tracking with diagnostic feedback.
-
-- **Canvas LMS Integration** — Import courses, modules, assignments, and files directly from Canvas.
-
-- **10+ LLM Providers** — OpenAI, Anthropic, DeepSeek, Ollama, Gemini, Groq, vLLM, LM Studio, OpenRouter, or any OpenAI-compatible endpoint. Local-first with Ollama by default.
-
-- **Self-Hosted & Private** — Runs entirely on your machine. No data leaves your environment. Single-user mode by default.
-
-## Beta Scope (Current Release)
-
-- **Stable path (recommended):** local single-user mode, course/content ingestion, chat tutoring, core quiz/notes/review flows.
-- **Experimental path:** LOOM knowledge graph, LECTOR semantic review priority, advanced autonomous agent behaviors.
-- **Non-default integrations:** messaging channels, external tool side effects, and some automation stacks require extra setup and are not part of the default quickstart success criteria.
-
 ## Quick Start
 
-### Supported Host Platforms (Beta)
-
-| Platform | Status |
-|---|---|
-| macOS (Apple Silicon / Intel) | ✅ Supported |
-| Linux (Ubuntu 22.04+) | ✅ Supported |
-| Windows | ⚠️ Not a first-class target in this beta cycle |
-
-### Minimum Prerequisites
-
-- Python 3.11
-- Node.js 20+
-- Bash 3.2+ (`bash --version`)
-- `curl`
-- Docker Desktop / Docker Engine (optional, only for containerized flow)
-
-### Expected First-Run Time
-
-- One-command local: ~10-30 minutes (depends on network and npm/pip cache)
-- Docker: ~8-25 minutes (depends on image build cache)
-
-### One-Click Deploy
-
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/zijinz456/OpenTutor)
-[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/template?referralCode=opentutor&repo=https://github.com/zijinz456/OpenTutor)
-
-### Docker (recommended)
+### 3 commands. That's it.
 
 ```bash
 git clone https://github.com/zijinz456/OpenTutor.git && cd OpenTutor
@@ -90,19 +51,17 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-### One-Command Local
+Open [http://localhost:3001](http://localhost:3001). Done.
 
-```bash
-git clone https://github.com/zijinz456/OpenTutor.git && cd OpenTutor
-cp .env.example .env
-bash scripts/quickstart.sh
-```
+> No Docker? Use `bash scripts/quickstart.sh` instead — it handles Python venv, npm install, DB setup, and starts both servers.
 
-> Uses SQLite by default — no PostgreSQL needed. The script handles Python venv, npm install, DB setup, and starts both servers.
-> Optional custom ports: `API_PORT=38000 WEB_PORT=33000 bash scripts/quickstart.sh`
-> If quickstart fails, run `bash scripts/check_local_mode.sh --env-file .env --skip-api` and then check [docs/troubleshooting.md](docs/troubleshooting.md).
+### One-Click Cloud Deploy
 
-### Manual
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/zijinz456/OpenTutor)
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/template?referralCode=opentutor&repo=https://github.com/zijinz456/OpenTutor)
+
+<details>
+<summary><strong>Manual setup (without Docker)</strong></summary>
 
 ```bash
 # Backend
@@ -117,28 +76,83 @@ cd apps/web && npm install && npm run dev
 
 Visit [http://localhost:3001](http://localhost:3001).
 
-> **Security Note:** Authentication is disabled by default (`AUTH_ENABLED=false`) for local single-user use. **Never expose OpenTutor to the public internet without enabling authentication.** Set `AUTH_ENABLED=true` and configure `JWT_SECRET_KEY` (>= 32 chars) in `.env` before any network-accessible deployment. See [SECURITY.md](SECURITY.md) for details.
+</details>
 
-## LLM Configuration
+<details>
+<summary><strong>Platform support</strong></summary>
 
-Default: local Ollama. Switch to any provider by editing `.env`:
+| Platform | Status |
+|---|---|
+| macOS (Apple Silicon / Intel) | Supported |
+| Linux (Ubuntu 22.04+) | Supported |
+| Windows | Community-supported |
+
+**Prerequisites:** Python 3.11+, Node.js 20+, Docker (optional)
+
+</details>
+
+> **Security Note:** Auth is disabled by default for local single-user use. Set `AUTH_ENABLED=true` and configure `JWT_SECRET_KEY` before any network-accessible deployment. See [SECURITY.md](SECURITY.md).
+
+## Features
+
+### Block-Based Adaptive Workspace
+
+12 composable learning blocks — notes, quiz, flashcards, knowledge graph, study plan, analytics, and more. The workspace adapts: AI suggests layout changes based on your behavior, and progressively unlocks advanced features as you engage.
+
+<p align="center"><img src="docs/assets/screenshot-workspace.png" alt="Block-based workspace with AI-generated notes and LaTeX" width="700" /></p>
+
+### AI Tutor with Source Citations
+
+Every answer is grounded in your material. The tutor adapts depth based on behavioral signals — fatigue detection, error patterns, message brevity. Supports Socratic questioning mode.
+
+<p align="center"><img src="docs/assets/demo-chat.png" alt="AI tutor chat drawer with workspace" width="700" /></p>
+
+### 30-Second Content Ingestion
+
+Upload PDF, DOCX, PPTX, or connect Canvas LMS. Get structured notes, AI-generated flashcards, and quiz questions automatically. 7 question types: MCQ, short answer, fill-in-blank, true/false, matching, ordering, coding.
+
+<p align="center"><img src="docs/assets/demo-setup.png" alt="Upload flow — drag and drop PDF" width="700" /></p>
+
+### Adaptive Quiz & Practice
+
+AI-generated quizzes with 7 question types. Wrong-answer tracking with diagnostic feedback. Difficulty adapts based on your performance.
+
+<p align="center"><img src="docs/assets/demo-practice.png" alt="Quiz with multiple choice questions" width="700" /></p>
+
+### Study Plan & Calendar
+
+Plan your study schedule with calendar view, task tracking, and deadline management.
+
+<p align="center"><img src="docs/assets/demo-plan.png" alt="Study plan calendar view" width="700" /></p>
+
+### Spaced Repetition (FSRS 4.5)
+
+Optimized free spaced repetition scheduling for flashcards. Tracks what you're forgetting and proactively reminds you to review.
+
+### Knowledge Graph (LOOM) `[Experimental]`
+
+Tracks concept mastery, prerequisite relationships, and weak areas. Based on [LOOM](https://arxiv.org/abs/2511.21037). Extracts concepts from your material, builds a knowledge graph, and generates optimal learning paths.
+
+### Semantic Review (LECTOR) `[Experimental]`
+
+Extends FSRS with knowledge-graph-aware review prioritization. Based on [LECTOR](https://arxiv.org/abs/2508.03275). Clusters related concepts for co-review, prioritizes prerequisites before dependents.
+
+### 10+ LLM Providers
+
+Local-first with Ollama by default. Switch to OpenAI, Anthropic, DeepSeek, Gemini, Groq, vLLM, LM Studio, OpenRouter, or any OpenAI-compatible endpoint.
 
 ```bash
-# Local (free)
+# Local (free, default)
 LLM_PROVIDER=ollama
 LLM_MODEL=llama3.2:3b
 
-# Cloud
+# Cloud (optional)
 LLM_PROVIDER=deepseek
 LLM_MODEL=deepseek-chat
 DEEPSEEK_API_KEY=sk-...
-
-# Multi-size routing (optional)
-LLM_MODEL_LARGE=gpt-4o          # Teaching, planning
-LLM_MODEL_SMALL=gpt-4o-mini     # Classification, extraction
 ```
 
-See [.env.example](.env.example) for the full list of supported providers and options.
+See [.env.example](.env.example) for the full list.
 
 ## Architecture
 
@@ -146,27 +160,22 @@ See [.env.example](.env.example) for the full list of supported providers and op
 OpenTutor/
 ├── apps/
 │   ├── api/              # FastAPI backend
-│   │   ├── routers/           # 23 API route modules
-│   │   ├── models/            # 24 SQLAlchemy ORM models
 │   │   ├── services/
-│   │   │   ├── agent/              # 3 specialist agents + orchestrator
+│   │   │   ├── agent/              # 3 specialist agents (Tutor, Planner, Layout)
 │   │   │   ├── ingestion/          # Content processing pipeline
-│   │   │   ├── llm/                # Multi-provider LLM router
-│   │   │   ├── search/             # Hybrid keyword + vector RAG
+│   │   │   ├── llm/                # Multi-provider LLM router + circuit breaker
+│   │   │   ├── search/             # Hybrid BM25 + vector RAG
 │   │   │   ├── spaced_repetition/  # FSRS scheduler + flashcards
-│   │   │   ├── learning_science/   # BKT, difficulty selection
-│   │   │   ├── loom.py             # Knowledge graph (experimental)
-│   │   │   ├── lector.py           # Semantic review (experimental)
-│   │   │   └── cognitive_load.py   # Behavioral signal analysis
-│   │   └── alembic/           # Database migrations
+│   │   │   └── learning_science/   # BKT, difficulty selection, cognitive load
+│   │   ├── routers/           # 42 API route modules
+│   │   └── models/            # 27 SQLAlchemy ORM models
 │   └── web/              # Next.js 16 frontend
 │       └── src/
-│           ├── app/                # 13 pages (App Router)
-│           ├── components/         # 84 React components
+│           ├── components/blocks/  # 12 composable learning blocks
 │           ├── store/              # Zustand state stores
-│           └── lib/                # API client, block system, i18n
-├── tests/                # pytest + Playwright E2E
-└── scripts/              # Dev, CI, deployment
+│           └── lib/block-system/   # Block registry, templates, feature unlock
+├── tests/                # pytest + Playwright E2E (187+ tests)
+└── docs/                 # PRD, SPEC, architecture decisions
 ```
 
 ### Agent System
@@ -179,16 +188,14 @@ OpenTutor/
 | **Planner** | Study plans, goal tracking, deadline management |
 | **Layout** | Workspace configuration based on activity context |
 
-Agents use a ReAct tool loop with access to content search, quiz generation, flashcard creation, web search, and code execution.
-
-## Tech Stack
+### Tech Stack
 
 | Layer | Technologies |
 |-------|-------------|
 | **Frontend** | Next.js 16, React 19, TypeScript, Tailwind CSS 4, Zustand, shadcn/ui |
 | **Backend** | FastAPI, Python 3.11+, Pydantic 2, SQLAlchemy 2 (async), Alembic |
-| **Database** | SQLite (aiosqlite, local-first) |
-| **Learning Science** | FSRS 4.5, BKT, LECTOR (experimental), LOOM (experimental), Cognitive Load Theory |
+| **Database** | SQLite (local-first), optional PostgreSQL |
+| **Learning Science** | FSRS 4.5, BKT, LOOM, LECTOR, Cognitive Load Theory |
 | **CI/CD** | GitHub Actions, Docker Compose, Playwright |
 
 ## Research
@@ -202,12 +209,26 @@ OpenTutor builds on these papers:
 | [Cognitive Load + DKT](https://www.nature.com/articles/s41598-025-10497-x) (Nature 2025) | Behavioral signals for real-time difficulty adaptation |
 | [FSRS 4.5](https://github.com/open-spaced-repetition/fsrs4.5) | Optimized free spaced repetition scheduling |
 
+## Roadmap
+
+- [x] Block-based adaptive workspace (12 block types)
+- [x] Multi-agent tutor system (Tutor, Planner, Layout)
+- [x] FSRS 4.5 spaced repetition
+- [x] Canvas LMS integration
+- [x] 10+ LLM provider support
+- [x] LOOM knowledge graph — FSRS decay, cross-course linking, content node linking
+- [x] LECTOR semantic review — confusion pairs, prerequisite ordering, FSRS integration
+- [x] Cognitive load — 12-signal detection, intervention tracking, drift detection
+- [ ] Cognitive load weight auto-tuning (data collection in progress)
+- [ ] Mobile-responsive workspace
+- [ ] Multi-user classroom mode
+- [ ] Plugin system for custom blocks
+
+See the full [roadmap](docs/improvement-roadmap.md) and [experimental status matrix](docs/experimental-status-matrix.md).
+
 ## Contributing
 
-Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for setup instructions and guidelines.
-For release readiness, use [docs/beta-release-checklist.md](docs/beta-release-checklist.md).
-Current stabilization sprint execution plan: [docs/github-beta-sprint-plan.md](docs/github-beta-sprint-plan.md).
-Final 2-5 day closeout runbook: [docs/release-closeout-runbook.md](docs/release-closeout-runbook.md).
+We're building this in public and looking for collaborators. Whether you're into learning science, AI agents, frontend, or backend — there's a place for you.
 
 ```bash
 # Run tests
@@ -217,6 +238,8 @@ python -m pytest tests/ -q -k "not llm_router"
 npx playwright test
 ```
 
+Check out the [good first issues](https://github.com/zijinz456/OpenTutor/labels/good%20first%20issue) to get started, or read [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide.
+
 ## License
 
 [MIT](LICENSE)
@@ -225,6 +248,8 @@ npx playwright test
 
 <div align="center">
 
-If OpenTutor helps your learning, consider giving it a ⭐
+**If OpenTutor helps your learning, consider giving it a star.**
+
+[Report Bug](https://github.com/zijinz456/OpenTutor/issues/new?template=bug_report.md) · [Request Feature](https://github.com/zijinz456/OpenTutor/issues/new?template=feature_request.md) · [Join Discussion](https://github.com/zijinz456/OpenTutor/discussions)
 
 </div>
