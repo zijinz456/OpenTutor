@@ -234,6 +234,8 @@ export {
   approveAgentTask,
   rejectAgentTask,
   listStudyGoals,
+  createStudyGoal,
+  updateStudyGoal,
   getNextAction,
   listAgendaRuns,
   logAgentDecision,

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useWorkspaceStore } from "@/store/workspace";
 import { extractQuiz } from "@/lib/api";
@@ -30,6 +30,11 @@ export default function UnitPage() {
   const triggerRefresh = useWorkspaceStore((s) => s.triggerRefresh);
   const [chatOpen, setChatOpen] = useState(false);
   const [generatingFocusedQuiz, setGeneratingFocusedQuiz] = useState(false);
+
+  // Track last visited node for continue-learning CTA
+  useEffect(() => {
+    try { localStorage.setItem(`opentutor_last_node_${courseId}`, nodeId); } catch {}
+  }, [courseId, nodeId]);
 
   const {
     course, node, nodePath, parentNode, siblingNodes, focusTerms,
