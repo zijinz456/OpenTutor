@@ -142,6 +142,7 @@ async def auto_generate_notes(db_factory, course_id: uuid.UUID, user_id: uuid.UU
                 logger.warning("Auto-generate gather returned exception: %s", res)
                 continue
             if res:
+                node, ai_content = res
                 await save_generated_asset(
                     db, user_id=user_id, course_id=course_id,
                     asset_type="notes", title=node.title,
