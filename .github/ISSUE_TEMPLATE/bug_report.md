@@ -2,12 +2,18 @@
 name: Bug Report
 about: Report a bug or unexpected behavior
 title: "[Bug] "
-labels: bug
+labels: bug, needs-triage
 assignees: ''
 ---
 
 ## Description
 A clear description of the bug.
+
+## Severity
+- [ ] P0 (core flow blocked, data/security risk)
+- [ ] P1 (major feature broken, no workaround)
+- [ ] P2 (partial degradation, workaround exists)
+- [ ] P3 (minor bug / polish)
 
 ## Steps to Reproduce
 1. Go to '...'
@@ -19,6 +25,11 @@ What you expected to happen.
 
 ## Actual Behavior
 What actually happened.
+
+## Impact
+- Affected flow: [e.g., startup, upload, chat, review]
+- Reproducibility: [always / intermittent / unknown]
+- Workaround available: [yes/no]
 
 ## Environment
 - OS: [e.g., macOS 15, Ubuntu 24.04]

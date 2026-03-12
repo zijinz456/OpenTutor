@@ -155,6 +155,7 @@ npx playwright test
 ### PR Review Checklist
 
 - [ ] Tests pass
+- [ ] PR includes either regression tests or a clear API/contract update note
 - [ ] No new `any` types in TypeScript
 - [ ] No bare `except Exception: pass` in Python
 - [ ] i18n keys added for any new user-facing strings (both `en.json` and `zh.json`)

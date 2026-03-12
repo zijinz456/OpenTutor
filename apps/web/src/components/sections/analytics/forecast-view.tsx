@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getForgettingForecast, type ForgettingForecast, type ForgettingPrediction } from "@/lib/api";
+import { getForgettingForecast, getFeatureFlags, type ForgettingForecast, type ForgettingPrediction } from "@/lib/api";
 
 interface ForecastViewProps {
   courseId: string;
@@ -66,14 +66,31 @@ function PredictionRow({ prediction }: { prediction: ForgettingPrediction }) {
 export function ForecastView({ courseId }: ForecastViewProps) {
   const [data, setData] = useState<ForgettingForecast | null>(null);
   const [error, setError] = useState(false);
+  const [featureEnabled, setFeatureEnabled] = useState<boolean | null>(null);
 
   useEffect(() => {
+    getFeatureFlags()
+      .then((flags) => setFeatureEnabled(flags.loom))
+      .catch(() => setFeatureEnabled(false));
+  }, []);
+
+  useEffect(() => {
+    if (featureEnabled === false) return;
     let cancelled = false;
     getForgettingForecast(courseId)
       .then((d) => { if (!cancelled) setData(d); })
       .catch(() => { if (!cancelled) setError(true); });
     return () => { cancelled = true; };
-  }, [courseId]);
+  }, [courseId, featureEnabled]);
+
+  if (featureEnabled === false) {
+    return (
+      <div className="p-6 text-center text-muted-foreground">
+        <p className="text-sm">Forgetting Forecast requires LOOM (experimental).</p>
+        <p className="text-xs mt-1">Set <code className="bg-muted px-1 rounded">ENABLE_EXPERIMENTAL_LOOM=true</code> to enable.</p>
+      </div>
+    );
+  }
 
   if (error) {
     return (

@@ -59,6 +59,7 @@ async def get_user_weights(
         row = result.scalar_one_or_none()
         return row if isinstance(row, dict) else None
     except Exception:
+        logger.warning("Failed to load user cognitive load weights for %s", user_id, exc_info=True)
         return None
 
 
@@ -171,6 +172,6 @@ async def adjust_signal_weights(
         await db.flush()
         logger.info("Adjusted cognitive load weights for user %s: %s", user_id, current)
     except Exception:
-        logger.debug("Failed to persist adjusted weights", exc_info=True)
+        logger.warning("Failed to persist adjusted weights", exc_info=True)
 
     return current

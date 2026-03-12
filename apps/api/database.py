@@ -76,6 +76,20 @@ class Base(DeclarativeBase):
     pass
 
 
+# Ensure naive datetimes from SQLite are treated as UTC when loaded.
+# This prevents ISO 8601 date-time schema violations in API responses.
+@event.listens_for(Base, "load", propagate=True)
+def _attach_utc_to_naive_datetimes(target, context):
+    """Attach UTC timezone to any naive datetime attributes after ORM load."""
+    from datetime import datetime as _dt, timezone as _tz
+
+    for attr in type(target).__table__.columns:
+        if str(attr.type) in ("DATETIME", "TIMESTAMP"):
+            val = getattr(target, attr.key, None)
+            if isinstance(val, _dt) and val.tzinfo is None:
+                object.__setattr__(target, attr.key, val.replace(tzinfo=_tz.utc))
+
+
 async def get_db() -> AsyncSession:
     async with async_session() as session:
         yield session

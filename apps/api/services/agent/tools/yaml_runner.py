@@ -39,10 +39,20 @@ logger = logging.getLogger(__name__)
 _TOOLS_DIR = Path(__file__).parents[3] / "config" / "tools"
 
 
+_BLOCKED_ENV_VARS = {
+    "JWT_SECRET_KEY", "DATABASE_URL", "SECRET_KEY", "AWS_SECRET_ACCESS_KEY",
+    "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY",
+    "LLM_API_KEY", "DB_PASSWORD", "POSTGRES_PASSWORD",
+}
+
+
 def _resolve_env_vars(text: str) -> str:
     """Replace ${VAR_NAME} with environment variable values."""
     def replacer(match):
         var_name = match.group(1)
+        if var_name in _BLOCKED_ENV_VARS:
+            logger.warning("SECURITY | Blocked env var reference in YAML tool: %s", var_name)
+            return ""
         return os.getenv(var_name, "")
     return re.sub(r"\$\{(\w+)\}", replacer, text)
 

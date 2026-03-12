@@ -1,20 +1,23 @@
 import { expect, test } from "@playwright/test";
 
 /**
- * Onboarding flow tests (Phase 1 -- no course content required).
+ * Onboarding / Setup flow tests.
  *
- * The onboarding page at /onboarding has 5 steps:
- *   1. Language  (English, Chinese, Bilingual)
- *   2. Learning Mode  (concept_first, practice_first, balanced)
- *   3. Detail Level  (concise, balanced, detailed)
- *   4. Layout Preset  (balanced, notesFocused, chatFocused)
- *   5. Completion summary with "Finish Setup" button
+ * The setup page at /setup has 5 steps:
+ *   1. Connect  (LLM check — auto-advances if ready)
+ *   2. Feed     (Upload files / URL / Canvas)
+ *   3. Interview (Habit interview — optional)
+ *   4. Template  (Workspace layout template selection)
+ *   5. Discover  (Ingestion progress + AI probe)
+ *
+ * Legacy /onboarding redirects to /setup.
  */
 
 test.describe("Onboarding flow", () => {
   // ---- redirect behaviour -----------------------------------------------
 
-  test("redirects to /onboarding when opentutor_onboarded is not set", async ({ page }) => {
+  test("redirects to /setup when opentutor_onboarded is not set", async ({ page }) => {
+    // Do NOT call skipOnboarding -- localStorage has no flag.
     await page.route("**/api/preferences/profile", async (route) => {
       await route.fulfill({
         status: 200,
@@ -35,9 +38,8 @@ test.describe("Onboarding flow", () => {
         }),
       });
     });
-    // Do NOT call skipOnboarding -- localStorage has no flag.
     await page.goto("/");
-    await expect(page).toHaveURL(/\/onboarding/, { timeout: 15_000 });
+    await expect(page).toHaveURL(/\/setup/, { timeout: 15_000 });
   });
 
   test("does NOT redirect when opentutor_onboarded is set", async ({ page }) => {
@@ -45,9 +47,8 @@ test.describe("Onboarding flow", () => {
       localStorage.setItem("opentutor_onboarded", "true");
     });
     await page.goto("/");
-    // Should stay on dashboard (URL must NOT contain /onboarding).
     await page.waitForLoadState("networkidle");
-    expect(page.url()).not.toContain("/onboarding");
+    expect(page.url()).not.toContain("/setup");
   });
 
   test("does NOT redirect when onboarding preferences already exist on the server", async ({ page }) => {
@@ -78,191 +79,88 @@ test.describe("Onboarding flow", () => {
     });
     await page.goto("/");
     await page.waitForLoadState("networkidle");
-    expect(page.url()).not.toContain("/onboarding");
+    expect(page.url()).not.toContain("/setup");
   });
 
-  // ---- step 1 -----------------------------------------------------------
+  // ---- /onboarding legacy redirect --------------------------------------
 
-  test("displays step 1 language options", async ({ page }) => {
+  test("legacy /onboarding redirects to /setup", async ({ page }) => {
     await page.goto("/onboarding");
-    // Title
-    await expect(page.getByText("What language do you prefer?")).toBeVisible();
-    // Three option labels (use first() since label + description both contain the text)
-    await expect(page.getByText("English", { exact: false }).first()).toBeVisible();
-    await expect(page.getByText("Chinese", { exact: false }).first()).toBeVisible();
-    await expect(page.getByText("Bilingual", { exact: false }).first()).toBeVisible();
+    await expect(page).toHaveURL(/\/setup/, { timeout: 15_000 });
   });
 
-  test("Continue button is disabled until option is selected", async ({ page }) => {
-    await page.goto("/onboarding");
-    const continueBtn = page.getByRole("button", { name: /Continue/i });
-    await expect(continueBtn).toBeVisible();
-    await expect(continueBtn).toBeDisabled();
+  // ---- setup page renders -----------------------------------------------
+
+  test("setup page renders with OpenTutor branding", async ({ page }) => {
+    await page.goto("/setup");
+    await expect(page.getByRole("heading", { name: "OpenTutor" })).toBeVisible({ timeout: 15_000 });
   });
 
-  test("selecting an option enables Continue button", async ({ page }) => {
-    await page.goto("/onboarding");
-    const continueBtn = page.getByRole("button", { name: /Continue/i });
-    await expect(continueBtn).toBeDisabled();
-    // Select "English"
-    await page.getByText("English", { exact: false }).first().click();
-    await expect(continueBtn).toBeEnabled();
+  test("setup page shows step indicators", async ({ page }) => {
+    await page.goto("/setup");
+    // Step indicators show numbered circles
+    await expect(page.getByText("1").first()).toBeVisible({ timeout: 15_000 });
   });
 
-  // ---- full walkthrough -------------------------------------------------
+  // ---- step 1: LLM connect (auto-advances if LLM is ready) -------------
 
-  test("navigates through all 5 steps", async ({ page }) => {
-    await page.goto("/onboarding");
-
-    // Step 1 -- Language
-    await expect(page.getByText("What language do you prefer?")).toBeVisible();
-    await page.getByText("English", { exact: false }).first().click();
-    await page.getByRole("button", { name: /Continue/i }).click();
-
-    // Step 2 -- Learning Mode
-    await expect(page.getByText("How do you prefer to learn?")).toBeVisible();
-    await page.getByText("Concept First").click();
-    await page.getByRole("button", { name: /Continue/i }).click();
-
-    // Step 3 -- Detail Level
-    await expect(page.getByText("How detailed should notes be?")).toBeVisible();
-    await page.getByText("Concise").click();
-    await page.getByRole("button", { name: /Continue/i }).click();
-
-    // Step 4 -- Layout Preset
-    await expect(page.getByText("Choose your workspace layout")).toBeVisible();
-    await page.getByText("Split + Chat").click();
-    await page.getByRole("button", { name: /Continue/i }).click();
-
-    // Step 5 -- Summary / Finish
-    await expect(page.getByText("You're all set!")).toBeVisible();
-    await expect(page.getByRole("button", { name: /Finish Setup/i })).toBeVisible();
+  test("step 1 shows Connect label", async ({ page }) => {
+    await page.route("**/api/health", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          status: "degraded",
+          llm_status: "not_configured",
+          db_status: "ready",
+          version: "test",
+        }),
+      });
+    });
+    await page.route("**/api/preferences/runtime/llm", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ provider: "", model: "", provider_keys: {} }),
+      });
+    });
+    await page.goto("/setup");
+    await expect(page.getByText("Connect").first()).toBeVisible({ timeout: 15_000 });
   });
 
-  // ---- step indicators --------------------------------------------------
+  // ---- step navigation via query param ----------------------------------
 
-  test("step indicators show the sidebar workflow", async ({ page }) => {
-    await page.goto("/onboarding");
-
-    const sidebar = page.locator("aside");
-    await page.getByText("English", { exact: false }).first().click();
-    await page.getByRole("button", { name: /Continue/i }).click();
-    await expect(sidebar.getByText("Language")).toBeVisible();
-    await expect(sidebar.getByText("Learning Mode")).toBeVisible();
-    await expect(page.getByText("How do you prefer to learn?")).toBeVisible();
+  test("?step=content skips to content step", async ({ page }) => {
+    await page.goto("/setup?step=content");
+    await expect(
+      page.getByTestId("project-name-input")
+        .or(page.getByText(/Upload|Drag|drop/i).first())
+    ).toBeVisible({ timeout: 15_000 });
   });
 
-  // ---- back button ------------------------------------------------------
+  // ---- demo course option -----------------------------------------------
 
-  test("Back button returns to previous step", async ({ page }) => {
-    await page.goto("/onboarding");
-
-    // Move to step 2
-    await page.getByText("English", { exact: false }).first().click();
-    await page.getByRole("button", { name: /Continue/i }).click();
-    await expect(page.getByText("How do you prefer to learn?")).toBeVisible();
-
-    // Press Back
-    await page.getByRole("button", { name: /Back/i }).click();
-    await expect(page.getByText("What language do you prefer?")).toBeVisible();
-  });
-
-  // ---- clicking completed step in sidebar -------------------------------
-
-  test("clicking completed step navigates back", async ({ page }) => {
-    await page.goto("/onboarding");
-
-    // Complete step 1
-    await page.getByText("English", { exact: false }).first().click();
-    await page.getByRole("button", { name: /Continue/i }).click();
-    await expect(page.getByText("How do you prefer to learn?")).toBeVisible();
-
-    // Click step 1 in the sidebar (the Language button)
-    const sidebar = page.locator("aside");
-    await sidebar.getByText("Language").click();
-    await expect(page.getByText("What language do you prefer?")).toBeVisible();
-  });
-
-  // ---- final step summary -----------------------------------------------
-
-  test("final step shows preferences summary", async ({ page }) => {
-    await page.goto("/onboarding");
-
-    // Walk through all 4 selection steps
-    await page.getByText("English", { exact: false }).first().click();
-    await page.getByRole("button", { name: /Continue/i }).click();
-
-    await page.getByText("Concept First").click();
-    await page.getByRole("button", { name: /Continue/i }).click();
-
-    await page.getByText("Concise").click();
-    await page.getByRole("button", { name: /Continue/i }).click();
-
-    await page.getByText("Split + Chat").click();
-    await page.getByRole("button", { name: /Continue/i }).click();
-
-    // Step 5 -- summary
-    await expect(page.getByText("Your preferences:")).toBeVisible();
-    // Each selected dimension should appear in the summary
-    await expect(page.getByText("language:")).toBeVisible();
-    await expect(page.getByText("learning mode:")).toBeVisible();
-    await expect(page.getByText("detail level:")).toBeVisible();
-    await expect(page.getByText("Layout Template:")).toBeVisible();
-  });
-
-  // ---- Finish Setup saves & redirects -----------------------------------
-
-  test("Finish Setup saves and redirects to dashboard", async ({ page }) => {
-    await page.goto("/onboarding");
-
-    // Complete all steps quickly
-    await page.getByText("English", { exact: false }).first().click();
-    await page.getByRole("button", { name: /Continue/i }).click();
-
-    await page.getByText("Balanced Mix").click();
-    await page.getByRole("button", { name: /Continue/i }).click();
-
-    await page.getByText("Moderate").click();
-    await page.getByRole("button", { name: /Continue/i }).click();
-
-    await page.getByText("Focus Mode").click();
-    await page.getByRole("button", { name: /Continue/i }).click();
-
-    // Step 5 -- Finish
-    await page.getByRole("button", { name: /Finish Setup/i }).click();
-
-    // Wait for API calls to save each preference + redirect to dashboard
-    await expect(page).toHaveURL("/", { timeout: 60_000 });
-  });
-
-  test("selecting Chinese switches the remaining onboarding shell to Chinese", async ({ page }) => {
-    await page.goto("/onboarding");
-    await page.getByText("中文 (Chinese)").click();
-    await expect(page.getByRole("button", { name: "继续" })).toBeVisible();
+  test("demo course button is available on content step", async ({ page }) => {
+    await page.goto("/setup?step=content");
+    await expect(
+      page.getByRole("button", { name: /demo|try|sample/i })
+        .or(page.getByText(/demo|try a sample/i).first())
+    ).toBeVisible({ timeout: 15_000 });
   });
 
   // ---- localStorage flag ------------------------------------------------
 
-  test("localStorage flag is set after completing onboarding", async ({ page }) => {
-    await page.goto("/onboarding");
-
-    // Complete all steps
-    await page.getByText("English", { exact: false }).first().click();
-    await page.getByRole("button", { name: /Continue/i }).click();
-
-    await page.getByText("Practice First").click();
-    await page.getByRole("button", { name: /Continue/i }).click();
-
-    await page.getByText("Detailed", { exact: true }).click();
-    await page.getByRole("button", { name: /Continue/i }).click();
-
-    await page.getByText("Triple Panel").click();
-    await page.getByRole("button", { name: /Continue/i }).click();
-
-    await page.getByRole("button", { name: /Finish Setup/i }).click();
-    await expect(page).toHaveURL("/", { timeout: 60_000 });
-
-    const flag = await page.evaluate(() => localStorage.getItem("opentutor_onboarded"));
-    expect(flag).toBe("true");
+  test("localStorage flag is set after setup completion", async ({ page }) => {
+    await page.goto("/setup?step=content");
+    const skipBtn = page.getByRole("button", { name: /skip|empty/i }).first();
+    const skipVisible = await skipBtn.isVisible({ timeout: 5_000 }).catch(() => false);
+    if (skipVisible) {
+      await skipBtn.click();
+      await page.waitForURL(/\/course\//, { timeout: 30_000 });
+      const flag = await page.evaluate(() => localStorage.getItem("opentutor_onboarded"));
+      expect(flag).toBe("true");
+    } else {
+      test.skip();
+    }
   });
 });

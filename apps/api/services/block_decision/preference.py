@@ -62,7 +62,7 @@ async def record_block_event(
         db.add(signal)
         await db.flush()
     except Exception as e:
-        logger.debug("Failed to record block event: %s", e)
+        logger.warning("Failed to record block event: %s", e)
 
 
 # Onboarding preference dimension -> block types they boost
@@ -95,7 +95,7 @@ async def _load_onboarding_boosts(
         )
         prefs = result.scalars().all()
     except Exception as e:
-        logger.debug("Failed to load onboarding preferences: %s", e)
+        logger.warning("Failed to load onboarding preferences: %s", e)
         return {}
 
     boosts: dict[str, float] = {}
@@ -138,7 +138,7 @@ async def compute_block_preferences(
         )
         signals = result.scalars().all()
     except Exception as e:
-        logger.debug("Failed to query block preferences: %s", e)
+        logger.warning("Failed to query block preferences: %s", e)
         signals = []
 
     now = datetime.now(timezone.utc)

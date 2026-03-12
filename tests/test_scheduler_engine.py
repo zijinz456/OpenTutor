@@ -366,7 +366,7 @@ async def test_push_notification_handles_error():
     user_id = uuid.uuid4()
 
     mock_session = AsyncMock()
-    mock_session.add.side_effect = Exception("DB write failed")
+    mock_session.add.side_effect = RuntimeError("DB write failed")
 
     mock_ctx = AsyncMock()
     mock_ctx.__aenter__.return_value = mock_session

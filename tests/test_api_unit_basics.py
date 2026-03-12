@@ -364,6 +364,9 @@ async def test_get_next_action_prefers_active_goal_next_action(monkeypatch):
 async def test_progress_knowledge_graph_raises_unavailable_error_on_builder_failure(monkeypatch):
     from routers import progress_knowledge as progress_knowledge_router
 
+    # LOOM must be enabled for this endpoint to be reachable
+    monkeypatch.setattr(progress_knowledge_router.settings, "enable_experimental_loom", True)
+
     monkeypatch.setattr(
         progress_knowledge_router,
         "build_knowledge_graph",

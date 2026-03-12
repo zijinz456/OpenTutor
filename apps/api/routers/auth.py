@@ -66,7 +66,9 @@ async def refresh(body: RefreshRequest, db: AsyncSession = Depends(get_db)):
     except (JWTError, ValueError, KeyError) as exc:
         raise HTTPException(status_code=401, detail="Invalid or expired refresh token") from exc
 
-    user_id = payload["sub"]
+    user_id = payload.get("sub")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid token: missing subject")
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if not user or not user.is_active:

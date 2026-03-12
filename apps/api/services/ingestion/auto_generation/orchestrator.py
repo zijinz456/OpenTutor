@@ -31,27 +31,31 @@ async def auto_prepare(
     async def _safe_notes():
         try:
             return await auto_generate_notes(db_factory, course_id, user_id)
-        except (ConnectionError, TimeoutError, ValueError, RuntimeError, sa.exc.SQLAlchemyError, OSError) as e:
+        except Exception as e:
             logger.exception("auto_prepare: notes step failed")
             return 0
 
     async def _safe_flashcards():
         try:
             return await auto_generate_flashcards(db_factory, course_id, user_id)
-        except (ConnectionError, TimeoutError, ValueError, RuntimeError, sa.exc.SQLAlchemyError, OSError) as e:
+        except Exception as e:
             logger.exception("auto_prepare: flashcards step failed")
             return 0
 
     async def _safe_quiz():
         try:
             return await auto_generate_quiz(db_factory, course_id)
-        except (ConnectionError, TimeoutError, ValueError, RuntimeError, sa.exc.SQLAlchemyError, OSError) as e:
+        except Exception as e:
             logger.exception("auto_prepare: quiz step failed")
             return 0
 
-    notes_count, flashcards_count, quiz_count = await _asyncio.gather(
+    results = await _asyncio.gather(
         _safe_notes(), _safe_flashcards(), _safe_quiz(),
+        return_exceptions=True,
     )
+    notes_count = results[0] if not isinstance(results[0], BaseException) else 0
+    flashcards_count = results[1] if not isinstance(results[1], BaseException) else 0
+    quiz_count = results[2] if not isinstance(results[2], BaseException) else 0
     summary: dict[str, int] = {
         "notes": notes_count,
         "flashcards": flashcards_count,

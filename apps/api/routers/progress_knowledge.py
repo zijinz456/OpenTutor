@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config import settings
 from database import get_db
 from libs.exceptions import KnowledgeGraphUnavailableError
 from models.ingestion import WrongAnswer
@@ -49,6 +50,8 @@ async def get_knowledge_graph(
     db: AsyncSession = Depends(get_db),
 ):
     """Get knowledge graph for a course (D3-compatible format)."""
+    if not settings.enable_experimental_loom:
+        raise HTTPException(404, "LOOM knowledge graph is experimental. Set ENABLE_EXPERIMENTAL_LOOM=true to enable.")
     try:
         return await build_knowledge_graph(db, course_id, user.id)
     except KnowledgeGraphUnavailableError:
@@ -65,6 +68,8 @@ async def get_knowledge_graph_mastery(
     db: AsyncSession = Depends(get_db),
 ):
     """Get knowledge graph nodes coloured by mastery status."""
+    if not settings.enable_experimental_loom:
+        raise HTTPException(404, "LOOM knowledge graph is experimental. Set ENABLE_EXPERIMENTAL_LOOM=true to enable.")
     from services.knowledge.graph_memory import get_mastery_colored_graph
 
     nodes = await get_mastery_colored_graph(db, user.id, course_id)
@@ -81,6 +86,8 @@ async def get_learning_path(
     db: AsyncSession = Depends(get_db),
 ):
     """Get prerequisite-respecting study order for unmastered concepts (Kahn's algorithm)."""
+    if not settings.enable_experimental_loom:
+        raise HTTPException(404, "LOOM knowledge graph is experimental. Set ENABLE_EXPERIMENTAL_LOOM=true to enable.")
     from services.loom import generate_learning_path
 
     path = await generate_learning_path(db, course_id, user.id)
@@ -270,6 +277,8 @@ async def get_review_session(
     db: AsyncSession = Depends(get_db),
 ):
     """Get LECTOR smart review session — semantically clustered concepts to review."""
+    if not settings.enable_experimental_lector:
+        raise HTTPException(404, "LECTOR semantic review is experimental. Set ENABLE_EXPERIMENTAL_LECTOR=true to enable.")
     from services.lector import get_smart_review_session, ReviewItem
 
     items = await get_smart_review_session(db, user.id, course_id, max_items=max_items)
@@ -326,6 +335,8 @@ async def submit_review_rating(
 
     Uses FSRS review_card() for scheduling (consistent with LOOM mastery updates).
     """
+    if not settings.enable_experimental_lector:
+        raise HTTPException(404, "LECTOR semantic review is experimental. Set ENABLE_EXPERIMENTAL_LECTOR=true to enable.")
     from models.knowledge_graph import ConceptMastery
     from services.spaced_repetition.fsrs import FSRSCard, review_card as fsrs_review
 
@@ -403,6 +414,8 @@ async def get_loom_graph(
     db: AsyncSession = Depends(get_db),
 ):
     """Get LOOM concept mastery graph with nodes, edges, and recommendations."""
+    if not settings.enable_experimental_loom:
+        raise HTTPException(404, "LOOM knowledge graph is experimental. Set ENABLE_EXPERIMENTAL_LOOM=true to enable.")
     from services.loom import get_mastery_graph
 
     graph = await get_mastery_graph(db, user.id, course_id)

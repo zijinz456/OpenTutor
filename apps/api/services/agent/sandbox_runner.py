@@ -23,6 +23,10 @@ BLOCKED_BUILTINS = {
     "open", "exec", "eval", "__import__", "compile",
     "globals", "locals", "breakpoint", "exit", "quit",
     "input", "help",
+    # Introspection primitives — block sandbox escape via
+    # getattr(().__class__, '__bases__')[0].__subclasses__() etc.
+    "getattr", "setattr", "delattr", "vars", "dir",
+    "type", "memoryview",
 }
 
 

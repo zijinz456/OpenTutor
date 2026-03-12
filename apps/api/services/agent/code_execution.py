@@ -98,7 +98,7 @@ class _ASTSafetyVisitor(ast.NodeVisitor):
         "code", "codeop", "compileall", "dis", "inspect", "pdb",
         "runpy", "traceback", "webbrowser", "xmlrpc", "ftplib", "smtplib",
     }
-    BLOCKED_CALLS = {"eval", "exec", "compile", "open", "__import__", "breakpoint", "globals", "locals"}
+    BLOCKED_CALLS = {"eval", "exec", "compile", "open", "__import__", "breakpoint", "globals", "locals", "getattr", "setattr", "delattr", "vars", "dir"}
     BLOCKED_ATTRS = {"__subclasses__", "__bases__", "__mro__", "__builtins__", "__globals__", "__code__"}
 
     def __init__(self):

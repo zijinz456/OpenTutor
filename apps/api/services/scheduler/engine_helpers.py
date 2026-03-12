@@ -8,6 +8,7 @@ import logging
 import uuid
 
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 
 from database import async_session
 from models.user import User
@@ -121,6 +122,6 @@ async def _push_notification(
             await db.commit()
             logger.debug("Notification stored: [%s] %s for user %s", category, title, user_id)
             return True
-    except Exception as e:
+    except (SQLAlchemyError, ValueError, TypeError, RuntimeError, OSError):
         logger.exception("Failed to store notification for user %s", user_id)
         return False

@@ -209,7 +209,7 @@ async def execute_plan_step(
 
     Returns a result dict with structured execution metadata for persistence.
     """
-    step_type = step["step_type"]
+    step_type = step.get("step_type", "unknown")
 
     # Build a context for the sub-agent
     context_message = _build_step_message(step, previous_results)

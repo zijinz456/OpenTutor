@@ -257,30 +257,11 @@ async def test_extract_quiz_rejects_content_node_not_in_course(authz_client, mon
 
 @pytest.mark.asyncio
 async def test_system_analytics_enforces_user_scope(authz_client):
+    # system_analytics router unregistered in feature-pruning sprint (2026-03-12)
     client = authz_client["client"]
-    session_factory = authz_client["session_factory"]
-    users = authz_client["users"]
 
-    async with session_factory() as db:
-        owner_course = Course(user_id=users["user_b"], name="Owner Analytics Course")
-        db.add(owner_course)
-        await db.commit()
-        await db.refresh(owner_course)
-
-    forbidden = await client.get(
-        f"/api/analytics/system?user_id={users['user_b']}",
-        headers={"x-test-user": "user_a"},
-    )
-    assert forbidden.status_code == 403
-
-    hidden_course = await client.get(
-        f"/api/analytics/system?course_id={owner_course.id}",
-        headers={"x-test-user": "user_a"},
-    )
-    assert hidden_course.status_code == 404
-
-    own_scope = await client.get(
+    resp = await client.get(
         "/api/analytics/system",
         headers={"x-test-user": "user_a"},
     )
-    assert own_scope.status_code == 200
+    assert resp.status_code == 404

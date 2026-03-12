@@ -19,7 +19,12 @@ async function uploadFixture(page: import("@playwright/test").Page, courseId: st
   await seedCourseFixture(courseId, fixturePath);
   await page.reload();
   await expect(page).toHaveURL(new RegExp(`/course/${courseId}`), { timeout: 30_000 });
-  await expect(page.getByTestId("workspace-upload-trigger")).toBeVisible({ timeout: 30_000 });
+  // Wait for the workspace to load (template picker, block grid, or sync button)
+  await expect(
+    page.getByRole("button", { name: "Sync course content" })
+      .or(page.getByRole("heading", { name: "Choose a template" }))
+      .or(page.getByRole("button", { name: "Open chat" }))
+  ).toBeVisible({ timeout: 30_000 });
 }
 
 async function createCourseViaApi(
@@ -167,7 +172,7 @@ test.describe("OpenTutor e2e flows", () => {
   test("scrape URL into content tree from upload dialog", async ({ page }) => {
     await createCourse(page, "E2E Scrape Flow");
 
-    // Mock the scrape API — frontend calls /api/content/url, not /content/scrape
+    // Mock the scrape API
     await page.route("**/api/content/url", async (route) => {
       await route.fulfill({
         status: 200,
@@ -176,7 +181,11 @@ test.describe("OpenTutor e2e flows", () => {
       });
     });
 
-    await page.getByTestId("workspace-upload-trigger").click();
+    // Open the upload dialog via the sync button in header
+    const syncBtn = page.getByRole("button", { name: "Sync course content" });
+    await expect(syncBtn).toBeVisible({ timeout: 15_000 });
+    await syncBtn.click();
+
     await page.getByTestId("workspace-upload-url-tab").click();
     await page.getByTestId("workspace-upload-url-input").fill("https://example.com/binary-search");
     await page.getByTestId("workspace-upload-url-submit").click();
@@ -189,7 +198,11 @@ test.describe("OpenTutor e2e flows", () => {
   test("rejected internal URL shows SSRF error", async ({ page }) => {
     await createCourse(page, "E2E Scrape Reject");
 
-    await page.getByTestId("workspace-upload-trigger").click();
+    // Open the upload dialog via the sync button in header
+    const syncBtn = page.getByRole("button", { name: "Sync course content" });
+    await expect(syncBtn).toBeVisible({ timeout: 15_000 });
+    await syncBtn.click();
+
     await page.getByTestId("workspace-upload-url-tab").click();
     await page.getByTestId("workspace-upload-url-input").fill("http://127.0.0.1/private");
     await page.getByTestId("workspace-upload-url-submit").click();

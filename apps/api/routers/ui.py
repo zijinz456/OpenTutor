@@ -173,7 +173,10 @@ function md(text){
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
     .replace(/```(\w*)\n([\s\S]*?)```/g,(_,lang,code)=>`<pre><code>${code.trim()}</code></pre>`)
     .replace(/`([^`]+)`/g,'<code>$1</code>')
-    .replace(/\!\[([^\]]*)\]\(([^)]+)\)/g,'<img src="$2" alt="$1" style="max-width:100%;border-radius:8px">')
+    .replace(/\!\[([^\]]*)\]\(([^)]+)\)/g,(_,alt,url)=>{
+      const src=safeLink(url);
+      return src?`<img src="${src}" alt="${alt}" style="max-width:100%;border-radius:8px">`:`<span>[${alt}]</span>`;
+    })
     .replace(/\[([^\]]+)\]\(([^)]+)\)/g,(_,label,url)=>{
       const href=safeLink(url);
       return href?`<a href="${href}" target="_blank" rel="noopener">${label}</a>`:`<span>${label}</span>`;

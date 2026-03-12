@@ -67,8 +67,10 @@ async def list_ollama_models(
     _ = user
     try:
         return await get_ollama_models(base_url)
-    except (ConnectionError, OSError, TimeoutError) as exc:
+    except (ConnectionError, OSError, TimeoutError, ValueError) as exc:
         raise ExternalServiceError(service="Ollama", message=f"Cannot reach Ollama: {exc}") from exc
+    except Exception as exc:
+        raise ExternalServiceError(service="Ollama", message=f"Ollama request failed: {exc}") from exc
 
 
 # ── NL Preference Parsing ──

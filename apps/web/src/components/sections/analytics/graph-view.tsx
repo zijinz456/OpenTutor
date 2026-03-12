@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useT } from "@/lib/i18n-context";
 import {
   getKnowledgeGraph,
+  getFeatureFlags,
   type KnowledgeGraphEdge,
 } from "@/lib/api";
 import { trackApiFailure } from "@/lib/error-telemetry";
@@ -28,6 +29,23 @@ export function GraphView({ courseId, focusTerms, maxNodes = 20 }: GraphViewProp
   const [nodes, setNodes] = useState<SimNode[]>([]);
   const [edges, setEdges] = useState<KnowledgeGraphEdge[]>([]);
   const [selected, setSelected] = useState<SimNode | null>(null);
+  const [featureEnabled, setFeatureEnabled] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    getFeatureFlags()
+      .then((flags) => setFeatureEnabled(flags.loom))
+      .catch(() => setFeatureEnabled(false));
+  }, []);
+
+  if (featureEnabled === null) return <div className="p-4 text-muted-foreground text-sm">Loading...</div>;
+  if (!featureEnabled) {
+    return (
+      <div className="p-8 text-center text-muted-foreground">
+        <p className="text-sm">Knowledge Graph (LOOM) is an experimental feature.</p>
+        <p className="text-xs mt-1">Enable it by setting <code className="bg-muted px-1 rounded">ENABLE_EXPERIMENTAL_LOOM=true</code> in your .env file.</p>
+      </div>
+    );
+  }
   const [loading, setLoading] = useState(true);
   const [empty, setEmpty] = useState(false);
   const [error, setError] = useState<string | null>(null);

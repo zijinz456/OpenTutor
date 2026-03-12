@@ -1,17 +1,22 @@
 import { expect, test } from "@playwright/test";
 import {
   createCourseWithContent,
-  ensureRightPanelVisible,
   getRealLlmTimeoutMs,
   hasRealLlmEnv,
-  openRightTab,
   seedFlashcardsViaApi,
   skipOnboarding,
 } from "./helpers/test-utils";
 
-async function openFlashcards(page: import("@playwright/test").Page) {
-  await ensureRightPanelVisible(page);
-  await openRightTab(page, "flashcards");
+/**
+ * Navigate to the practice page and open the flashcards tab.
+ */
+async function openFlashcards(page: import("@playwright/test").Page, courseId: string) {
+  await page.goto(`/course/${courseId}/practice`);
+  await page.waitForLoadState("networkidle");
+  // Click the Cards/Flashcards tab
+  const tab = page.getByRole("button", { name: /Cards|Flashcards|闪卡/i }).first();
+  await expect(tab).toBeVisible({ timeout: 15_000 });
+  await tab.click();
 }
 
 test.describe.serial("Flashcard Panel", () => {
@@ -20,15 +25,15 @@ test.describe.serial("Flashcard Panel", () => {
   });
 
   test("flashcards tab is accessible from practice workspace", async ({ page }) => {
-    await createCourseWithContent(page);
-    await openFlashcards(page);
+    const courseId = await createCourseWithContent(page);
+    await openFlashcards(page, courseId);
     await expect(page.getByRole("heading", { name: /Flashcards|闪卡/i })).toBeVisible({ timeout: 15_000 });
   });
 
   test("shows empty state when no flashcards exist", async ({ page }) => {
-    await createCourseWithContent(page);
-    await openFlashcards(page);
-    await expect(page.getByText("No flashcards yet")).toBeVisible({ timeout: 15_000 });
+    const courseId = await createCourseWithContent(page);
+    await openFlashcards(page, courseId);
+    await expect(page.getByText(/No flashcards yet|没有闪卡/i)).toBeVisible({ timeout: 15_000 });
   });
 });
 
@@ -43,7 +48,7 @@ test.describe.serial("Flashcard Panel — LLM-dependent", () => {
     const courseId = await createCourseWithContent(page);
     await seedFlashcardsViaApi(courseId, 3);
     await page.reload();
-    await openFlashcards(page);
+    await openFlashcards(page, courseId);
     await expect(page.getByText(/0\/3 reviewed/)).toBeVisible({ timeout: 30_000 });
   });
 
@@ -52,7 +57,7 @@ test.describe.serial("Flashcard Panel — LLM-dependent", () => {
     const courseId = await createCourseWithContent(page);
     await seedFlashcardsViaApi(courseId, 3);
     await page.reload();
-    await openFlashcards(page);
+    await openFlashcards(page, courseId);
     await expect(page.getByText("Question")).toBeVisible({ timeout: 30_000 });
     await expect(page.locator(".flashcard-face").first()).toBeVisible({ timeout: 30_000 });
   });
@@ -62,7 +67,7 @@ test.describe.serial("Flashcard Panel — LLM-dependent", () => {
     const courseId = await createCourseWithContent(page);
     await seedFlashcardsViaApi(courseId, 3);
     await page.reload();
-    await openFlashcards(page);
+    await openFlashcards(page, courseId);
     const cardArea = page.getByRole("button").filter({ has: page.locator(".flashcard-inner") }).first();
     await expect(cardArea).toBeVisible({ timeout: 30_000 });
     await cardArea.click();
@@ -74,7 +79,7 @@ test.describe.serial("Flashcard Panel — LLM-dependent", () => {
     const courseId = await createCourseWithContent(page);
     await seedFlashcardsViaApi(courseId, 3);
     await page.reload();
-    await openFlashcards(page);
+    await openFlashcards(page, courseId);
     const cardArea = page.getByRole("button").filter({ has: page.locator(".flashcard-inner") }).first();
     await cardArea.click();
     await expect(page.getByRole("button", { name: "Again" })).toBeVisible({ timeout: 30_000 });
@@ -88,7 +93,7 @@ test.describe.serial("Flashcard Panel — LLM-dependent", () => {
     const courseId = await createCourseWithContent(page);
     await seedFlashcardsViaApi(courseId, 3);
     await page.reload();
-    await openFlashcards(page);
+    await openFlashcards(page, courseId);
     const cardArea = page.getByRole("button").filter({ has: page.locator(".flashcard-inner") }).first();
     await cardArea.click();
     await page.getByRole("button", { name: "Good" }).click();

@@ -759,6 +759,9 @@ async def test_knowledge_graph_failure_returns_structured_500(client, monkeypatc
     assert create_resp.status_code == 201
     course_id = create_resp.json()["id"]
 
+    # LOOM must be enabled for this endpoint to be reachable
+    monkeypatch.setattr("routers.progress_knowledge.settings.enable_experimental_loom", True)
+
     async def _raise_graph_error(*_args, **_kwargs):
         raise RuntimeError("graph backend down")
 
@@ -1328,24 +1331,16 @@ async def test_scene_recommendation_endpoint_is_not_exposed(client):
 
 @pytest.mark.asyncio
 async def test_regression_benchmark_endpoint_runs_offline_suites(client):
+    # evaluation router unregistered in feature-pruning sprint (2026-03-12)
     resp = await client.post("/api/eval/regression", json={})
-    assert resp.status_code == 200
-    payload = resp.json()
-    assert "suites" in payload
-    suite_names = {suite["name"] for suite in payload["suites"]}
-    assert {"routing", "retrieval", "response_quality", "recovery"} <= suite_names
-    response_suite = next(suite for suite in payload["suites"] if suite["name"] == "response_quality")
-    assert response_suite["skipped"] is False
+    assert resp.status_code == 404
 
 
 @pytest.mark.asyncio
 async def test_regression_benchmark_endpoint_strict_mode_requires_retrieval_and_recovery_inputs(client):
+    # evaluation router unregistered in feature-pruning sprint (2026-03-12)
     resp = await client.post("/api/eval/regression", json={"strict": True})
-    assert resp.status_code == 200
-    payload = resp.json()
-    assert payload["strict"] is True
-    assert payload["passed"] is False
-    assert "retrieval" in set(payload["failed_suites"])
+    assert resp.status_code == 404
 
 
 # ── Cleanup ──

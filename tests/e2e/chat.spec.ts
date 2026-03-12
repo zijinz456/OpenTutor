@@ -6,6 +6,7 @@ import {
   sendChatMessage,
   expectAssistantMessage,
   hasRealLlmEnv,
+  openChatDrawer,
 } from "./helpers/test-utils";
 
 // ---------------------------------------------------------------------------
@@ -21,12 +22,12 @@ test.describe("Basic chat", () => {
   test.beforeEach(async ({ page }) => {
     await skipOnboarding(page);
     await page.goto(`/course/${courseId}`);
-    await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 15_000 });
+    await openChatDrawer(page);
   });
 
   test("shows empty state with placeholder text", async ({ page }) => {
     // When no messages exist, the chat panel shows placeholder text
-    await expect(page.getByText(/AI will reference your uploaded materials/i)).toBeVisible();
+    await expect(page.getByText(/No messages yet|AI will reference/i)).toBeVisible();
   });
 
   test("chat input accepts text", async ({ page }) => {
@@ -106,7 +107,7 @@ test.describe.serial("Session management", () => {
   test.beforeEach(async ({ page }) => {
     await skipOnboarding(page);
     await page.goto(`/course/${courseId}`);
-    await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 15_000 });
+    await openChatDrawer(page);
   });
 
   test("session dropdown is visible", async ({ page }) => {
@@ -159,7 +160,7 @@ test.describe.serial("Chat with content", () => {
   test.beforeEach(async ({ page }) => {
     await skipOnboarding(page);
     await page.goto(`/course/${courseId}`);
-    await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 15_000 });
+    await openChatDrawer(page);
   });
 
   test("chat after file upload gets contextual response", async ({ page }) => {
@@ -204,7 +205,7 @@ test.describe("Edge cases", () => {
   test.beforeEach(async ({ page }) => {
     await skipOnboarding(page);
     await page.goto(`/course/${courseId}`);
-    await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 15_000 });
+    await openChatDrawer(page);
   });
 
   test("empty message cannot be sent", async ({ page }) => {
@@ -220,7 +221,7 @@ test.describe("Edge cases", () => {
     await page.getByTestId("chat-input").press("Enter");
 
     // The empty state should still be present (no message bubbles)
-    await expect(page.getByText(/AI will reference your uploaded materials/i)).toBeVisible();
+    await expect(page.getByText(/No messages yet|AI will reference/i)).toBeVisible();
   });
 
   test("very long message can be sent", async ({ page }) => {

@@ -57,10 +57,10 @@ docker compose build --no-cache
 
 ## Database Issues (SQLite local mode)
 
-### API health says schema is missing
+### API health reports database not ready
 
-For local mode, schema is created automatically at startup. If `GET /api/health` returns
-`"schema": "missing"`:
+For local mode, migration state is treated as ready by design. If `GET /api/health` still
+shows database problems (for example `database: unreachable`):
 
 ```bash
 # 1) Ensure local mode flags are correct

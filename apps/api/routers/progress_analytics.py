@@ -257,7 +257,7 @@ async def get_memory_stats_endpoint(
     db: AsyncSession = Depends(get_db),
 ):
     """Get memory consolidation statistics."""
-    from services.memory.pipeline import get_memory_stats
+    from services.agent.memory_agent import get_memory_stats
 
     return await get_memory_stats(db, user.id)
 

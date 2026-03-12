@@ -99,6 +99,7 @@ async def persist_onboarding_profile(
         logger.info("Onboarding profile memory stored for user %s", user_id)
     except Exception:
         logger.warning("Failed to store onboarding memory", exc_info=True)
+        await db.rollback()
 
     await db.commit()
 

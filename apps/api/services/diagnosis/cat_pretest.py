@@ -170,9 +170,12 @@ async def finalize_pretest(
     # Build mastery estimates for tested concepts
     tested_mastery: dict[uuid.UUID, float] = {}
     for resp in state.responses:
-        cid = uuid.UUID(resp["concept_id"])
+        concept_id_str = resp.get("concept_id")
+        if not concept_id_str:
+            continue
+        cid = uuid.UUID(concept_id_str)
         # Binary mastery from single question (refined with theta)
-        if resp["correct"]:
+        if resp.get("correct"):
             tested_mastery[cid] = min(0.4 + state.theta * 0.4, 0.85)
         else:
             tested_mastery[cid] = max(state.theta * 0.3, 0.05)

@@ -12,6 +12,7 @@ import {
   createCourseWithContent,
   dispatchShortcut,
   expectAssistantMessage,
+  openChatDrawer,
   skipOnboarding,
   switchScene,
 } from "./helpers/test-utils";
@@ -40,9 +41,9 @@ test.describe.serial("Golden tasks — core learning journey", () => {
     test.setTimeout(120_000);
     const courseId = await createCourseWithContent(page, "Golden Chat");
 
-    // Find the chat input and type a message
+    // Open the chat drawer first
+    await openChatDrawer(page);
     const chatInput = page.getByTestId("chat-input");
-    await expect(chatInput).toBeVisible({ timeout: 30_000 });
     await chatInput.fill("What is this course about?");
     await chatInput.press("Enter");
 

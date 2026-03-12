@@ -16,6 +16,12 @@ logger = logging.getLogger(__name__)
 async def fetch_with_httpx(url: str, cookies: dict | None = None) -> str | None:
     """Layer 1: Simple HTTP fetch with httpx."""
     try:
+        from libs.url_validation import validate_url
+        validate_url(url)
+    except Exception as e:
+        logger.warning("URL validation failed for %s: %s", url, e)
+        return None
+    try:
         import httpx
 
         async with httpx.AsyncClient(follow_redirects=True, timeout=15) as client:
@@ -65,6 +71,12 @@ async def fetch_with_browser(
     - JavaScript rendering
     """
     try:
+        from libs.url_validation import validate_url
+        validate_url(url)
+    except Exception as e:
+        logger.warning("URL validation failed for %s: %s", url, e)
+        return None
+    try:
         from playwright.async_api import async_playwright
         from services.browser.session_manager import SessionManager
 
@@ -102,6 +114,9 @@ async def fetch_with_browser(
         logger.warning("Playwright not installed. Run: pip install playwright && playwright install")
         return None
     except (OSError, RuntimeError, ConnectionError, TimeoutError) as e:
+        logger.exception("Browser automation failed for %s", url)
+        return None
+    except Exception as e:
         logger.exception("Browser automation failed for %s", url)
         return None
 

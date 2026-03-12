@@ -46,6 +46,7 @@ def anyio_backend():
 @pytest.fixture(scope="module")
 async def app():
     """Create the FastAPI app with SQLite backend."""
+    import shutil
     from main import create_app
     from services.app_lifecycle import run_startup_hooks, run_shutdown_hooks
 
@@ -53,6 +54,14 @@ async def app():
     await run_startup_hooks()
     yield application
     await run_shutdown_hooks()
+    # Clean up temp database and directory
+    try:
+        if os.path.exists(_db_path):
+            os.unlink(_db_path)
+        if os.path.exists(_tmp_dir):
+            shutil.rmtree(_tmp_dir, ignore_errors=True)
+    except OSError:
+        pass
 
 
 @pytest.fixture(scope="module")

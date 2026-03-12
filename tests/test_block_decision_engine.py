@@ -193,6 +193,7 @@ class TestComputeBlockDecisions:
     async def test_caps_at_max_ops(self):
         """Even with many rules firing, result is capped at MAX_OPS_PER_TURN."""
         db = AsyncMock()
+        db.add = MagicMock()  # AsyncSession.add() is synchronous
         result = await compute_block_decisions(
             db, uuid.uuid4(), uuid.uuid4(),
             current_blocks=["notes", "quiz", "forecast", "knowledge_graph", "progress"],

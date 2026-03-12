@@ -12,12 +12,10 @@ from routers import (
     canvas,
     chat,
     courses,
-    evaluation,
     export,
     flashcards,
     goals,
     health,
-    integrations,
     notes,
     notifications,
     onboarding,
@@ -25,15 +23,20 @@ from routers import (
     progress,
     quiz,
     scrape,
-    system_analytics,
     tasks,
     upload,
     usage,
     workflows,
-    workspace,
     wrong_answers,
 )
 
+
+# Pruned routers — unregistered 2026-03-12 (feature-pruning sprint).
+# Re-enable by uncommenting the import + tuple entry.
+# - evaluation: internal regression benchmark, no frontend consumer (1 endpoint)
+# - integrations: OAuth stub, IntegrationCredential never populated (1 endpoint)
+# - system_analytics: admin LOOM/LECTOR dashboard, no frontend consumer (1 endpoint)
+# - workspace: file list/download/delete, agent uses ctx.actions instead (3 endpoints)
 
 CORE_ROUTERS = (
     (health.router, "/api", ["health"]),
@@ -53,12 +56,8 @@ CORE_ROUTERS = (
     (agenda.router, "/api/agent", ["agenda"]),
     (usage.router, None, None),
     (export.router, "/api", ["export"]),
-    (workspace.router, "/api", ["workspace"]),
-    (integrations.router, "/api", ["integrations"]),
     (notifications.router, "/api", ["notifications"]),
-    (evaluation.router, "/api/eval", ["evaluation"]),
     (workflows.router, "/api/workflows", ["workflows"]),
-    (system_analytics.router, "/api", ["system-analytics"]),
     (block_routes.router, "/api/blocks", ["blocks"]),
     (onboarding.router, "/api/onboarding", ["onboarding"]),
 )
@@ -84,7 +83,7 @@ def register_routers(app: FastAPI) -> None:
     # Disabled when the full Next.js frontend handles the UI.
     import os
 
-    if os.environ.get("SERVE_BUILTIN_UI", "true") != "false":
+    if os.environ.get("SERVE_BUILTIN_UI", "false") != "false":
         from routers.ui import router as ui_router
 
         _include_router(app, ui_router, tags=["ui"])

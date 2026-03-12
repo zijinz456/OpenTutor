@@ -102,7 +102,18 @@ async def load_context(
 
         pref_result, mem_result, content_result = await asyncio.gather(
             _load_preferences(), _load_memories(), _load_content(),
+            return_exceptions=True,
         )
+
+        if isinstance(pref_result, BaseException):
+            logger.warning("Preferences load failed: %s", pref_result)
+            pref_result = None
+        if isinstance(mem_result, BaseException):
+            logger.warning("Memories load failed: %s", mem_result)
+            mem_result = None
+        if isinstance(content_result, BaseException):
+            logger.warning("Content load failed: %s", content_result)
+            content_result = None
 
         if pref_result is not None:
             ctx.preferences = pref_result.preferences

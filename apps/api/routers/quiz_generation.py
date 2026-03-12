@@ -5,10 +5,11 @@ import uuid
 
 logger = logging.getLogger(__name__)
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config import settings
 from database import get_db
 from models.content import CourseContentTree, INFO_CATEGORIES
 from models.practice import PracticeProblem
@@ -297,6 +298,8 @@ async def pretest_start(
     db: AsyncSession = Depends(get_db),
 ):
     """Start a computerized adaptive pre-test for cold-start diagnosis."""
+    if not settings.enable_experimental_cat:
+        raise HTTPException(404, "CAT diagnostic pretest is experimental. Set ENABLE_EXPERIMENTAL_CAT=true to enable.")
     course = await get_course_or_404(db, body.course_id, user_id=user.id)
 
     from services.diagnosis.cat_pretest import (
@@ -351,6 +354,8 @@ async def pretest_answer(
     db: AsyncSession = Depends(get_db),
 ):
     """Process a pre-test answer and return next item or final results."""
+    if not settings.enable_experimental_cat:
+        raise HTTPException(404, "CAT diagnostic pretest is experimental. Set ENABLE_EXPERIMENTAL_CAT=true to enable.")
     await get_course_or_404(db, body.course_id, user_id=user.id)
 
     from services.diagnosis.cat_pretest import (

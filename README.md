@@ -93,13 +93,42 @@ Visit [http://localhost:3001](http://localhost:3001).
 
 > **Security Note:** Auth is disabled by default for local single-user use. Set `AUTH_ENABLED=true` and configure `JWT_SECRET_KEY` before any network-accessible deployment. See [SECURITY.md](SECURITY.md).
 
+## Public Beta Notes (Local Single-User)
+
+This repository currently targets a **local single-user public beta**.
+
+- Supported first-class platforms: **macOS** and **Linux**
+- Windows is community-supported
+- Multi-user SaaS/classroom mode is out of scope for this beta
+
+Known limitations for this beta:
+
+- Mobile layout is not fully optimized across all workspace views
+- Some advanced autonomous and graph-driven flows are still experimental
+- LLM quality/latency depends on your local runtime and hardware
+
+Before opening an issue, check:
+
+- [Troubleshooting Guide](docs/troubleshooting.md)
+- [Public Beta Release Notes](docs/public-beta-release-notes.md)
+- [Bug Triage & SLA](docs/bug-triage-sla.md)
+
+### Minimal Demo Flow (2-3 minutes)
+
+1. Create/open a course
+2. Upload a PDF/DOCX/PPTX file
+3. Ask a grounded tutor question in chat
+4. Complete one quiz or flashcard review
+5. Check plan/review suggestions in workspace
+6. Export at least one artifact (session or review content)
+
 ## Features
 
 ### Block-Based Adaptive Workspace
 
 12 composable learning blocks — notes, quiz, flashcards, knowledge graph, study plan, analytics, and more. The workspace adapts: AI suggests layout changes based on your behavior, and progressively unlocks advanced features as you engage.
 
-<p align="center"><img src="docs/assets/screenshot-workspace.png" alt="Block-based workspace with AI-generated notes and LaTeX" width="700" /></p>
+<p align="center"><img src="docs/assets/demo-workspace.png" alt="Block-based workspace with AI-generated notes and LaTeX" width="700" /></p>
 
 ### AI Tutor with Source Citations
 
@@ -224,7 +253,7 @@ OpenTutor builds on these papers:
 - [ ] Multi-user classroom mode
 - [ ] Plugin system for custom blocks
 
-See the full [roadmap](docs/improvement-roadmap.md) and [experimental status matrix](docs/experimental-status-matrix.md).
+See the [experimental status matrix](docs/experimental-status-matrix.md) for feature flags and module status.
 
 ## Contributing
 

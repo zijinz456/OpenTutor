@@ -278,7 +278,8 @@ async def classify_response_quality(
                 student_message=student_message[:500],
             ),
         )
-        quality = result.strip().lower().split()[0] if result else "partial"
+        words = result.strip().lower().split() if result else []
+        quality = words[0] if words else "partial"
         valid = {"correct", "partial", "wrong", "confused", "no_response"}
         return quality if quality in valid else "partial"
     except (ConnectionError, TimeoutError, ValueError, RuntimeError):

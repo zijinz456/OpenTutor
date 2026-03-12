@@ -17,8 +17,8 @@ test.describe("Navigation", () => {
 
   test("dashboard -> new project -> workspace round-trip", async ({ page }) => {
     await page.goto("/");
-    // Dashboard -> /new
-    await page.getByText("Create Course").click();
+    // Dashboard -> /new via "New Space" button
+    await page.getByRole("button", { name: /New Space/i }).first().click();
     await expect(page).toHaveURL(/\/new/, { timeout: 15_000 });
 
     // /new -> create course -> workspace
@@ -68,8 +68,8 @@ test.describe("Navigation", () => {
   test("new project back button navigates to dashboard", async ({ page }) => {
     await page.goto("/new");
     await expect(page).toHaveURL(/\/new/, { timeout: 15_000 });
-    // The "Back to Projects" button on the mode selection step
-    await page.getByRole("button", { name: /Back to Projects/i }).click();
+    // The back button may say "Back to Projects", "← Back", or just "Back"
+    await page.getByRole("button", { name: /Back/i }).first().click();
     await expect(page).toHaveURL("/", { timeout: 15_000 });
   });
 
@@ -116,10 +116,7 @@ test.describe("Navigation", () => {
   // ---- non-existent course ----------------------------------------------
 
   test("navigating to non-existent course shows error or loads workspace", async ({ page }) => {
-    // Use a valid UUID format that won't match any real course
     await page.goto("/course/00000000-0000-0000-0000-000000000000");
-    // The app should either: show an error, redirect away, or render an empty workspace.
-    // We wait a moment for routing to complete, then verify the page is in some valid state.
     await page.waitForLoadState("networkidle");
     const hasError = await page
       .getByText(/error|not found|something went wrong/i)
@@ -131,7 +128,6 @@ test.describe("Navigation", () => {
       .getByTestId("chat-input")
       .isVisible({ timeout: 5_000 })
       .catch(() => false);
-    // Any of these outcomes is acceptable
     expect(hasError || redirectedAway || hasWorkspace).toBeTruthy();
   });
 
@@ -154,8 +150,8 @@ test.describe("Navigation", () => {
     await page.goto("/new");
     expect(page.url()).toContain("/new");
 
-    // Onboarding (accessible even with flag set; page itself renders)
-    await page.goto("/onboarding");
-    expect(page.url()).toContain("/onboarding");
+    // Setup (was /onboarding)
+    await page.goto("/setup");
+    expect(page.url()).toContain("/setup");
   });
 });

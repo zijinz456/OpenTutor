@@ -20,6 +20,22 @@ export async function skipOnboarding(page: Page): Promise<void> {
   });
 }
 
+/**
+ * Open the chat drawer by clicking the floating action button.
+ * The chat UI is behind a FAB — call this after navigating to a workspace page.
+ */
+export async function openChatDrawer(page: Page): Promise<void> {
+  const chatInput = page.getByTestId("chat-input");
+  const alreadyVisible = await chatInput.isVisible({ timeout: 2_000 }).catch(() => false);
+  if (alreadyVisible) return;
+
+  // Click the FAB to open the chat drawer
+  const fab = page.getByRole("button", { name: "Open chat" });
+  await expect(fab).toBeVisible({ timeout: 15_000 });
+  await fab.click();
+  await expect(chatInput).toBeVisible({ timeout: 15_000 });
+}
+
 export async function createCourseViaApi(
   name: string,
   description?: string,
@@ -207,6 +223,8 @@ export async function createCourseWithContent(page: Page, name = "Test Course"):
             page.getByTestId("workspace-upload-trigger").isVisible().catch(() => false),
             page.getByTestId("chat-input").isVisible().catch(() => false),
             page.getByRole("textbox", { name: /Ask anything/i }).isVisible().catch(() => false),
+            page.getByRole("heading", { name: "Choose a template" }).isVisible().catch(() => false),
+            page.getByRole("button", { name: "Open chat" }).isVisible().catch(() => false),
           ])
         ).some(Boolean),
       { timeout: 30_000 },

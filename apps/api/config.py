@@ -81,9 +81,12 @@ class Settings(BaseSettings):
     app_run_scheduler: bool = False
     app_run_activity_engine: bool = False
     ambient_monitor_enabled: bool = True
-    enable_experimental_loom: bool = True
-    enable_experimental_lector: bool = True
+    enable_experimental_loom: bool = False
+    enable_experimental_lector: bool = False
     enable_experimental_notion_export: bool = False
+    enable_experimental_cat: bool = False              # CAT adaptive diagnostic pretest
+    enable_experimental_browser: bool = False          # Browser automation (web_search agent tool)
+    enable_experimental_vision: bool = False            # Vision/LaTeX OCR service
     voice_enabled: bool = False
 
     # Rate limiting

@@ -46,5 +46,20 @@ def get_integration_status_matrix() -> dict[str, IntegrationState]:
             owner="data_portability",
             notes="No active route/tool entrypoint; retained for migration window.",
         ),
+        "cat_pretest": IntegrationState(
+            status="active" if settings.enable_experimental_cat else "dormant",
+            owner="diagnosis",
+            notes="CAT adaptive diagnostic pretest. Gated behind ENABLE_EXPERIMENTAL_CAT.",
+        ),
+        "browser": IntegrationState(
+            status="active" if settings.enable_experimental_browser else "dormant",
+            owner="agent_tools",
+            notes="Browser automation for web search agent tool. Gated behind ENABLE_EXPERIMENTAL_BROWSER.",
+        ),
+        "vision": IntegrationState(
+            status="active" if settings.enable_experimental_vision else "dormant",
+            owner="agent_tools",
+            notes="Vision/LaTeX OCR service. Gated behind ENABLE_EXPERIMENTAL_VISION.",
+        ),
     }
 

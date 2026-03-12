@@ -12,6 +12,7 @@ import uuid
 from dataclasses import asdict
 from datetime import datetime, timezone
 
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .rules import (
@@ -220,8 +221,8 @@ async def compute_block_decisions(
                     cognitive_load_before=cl_score_now,
                 ))
                 intervention_ids[op.block_type] = str(outcome_id)
-            except Exception:
-                logger.debug("Failed to record intervention outcome", exc_info=True)
+            except (SQLAlchemyError, ValueError, TypeError, RuntimeError):
+                logger.warning("Failed to record intervention outcome", exc_info=True)
 
     # ── Build cognitive state summary ──
     cl_score = cognitive_load.get("score", 0) if cognitive_load else 0

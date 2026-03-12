@@ -56,10 +56,15 @@ async def auto_generate_notes(
                 logger.warning("Auto-generate notes network error for '%s': %s", node.title, e)
             except (ValueError, RuntimeError) as e:
                 logger.exception("Auto-generate notes unexpected error for '%s'", node.title)
+            except Exception as e:
+                logger.exception("Auto-generate notes failed for '%s'", node.title)
             return None
 
-        results = await _asyncio.gather(*[_gen_one(n) for n in eligible[:5]])
+        results = await _asyncio.gather(*[_gen_one(n) for n in eligible[:5]], return_exceptions=True)
         for res in results:
+            if isinstance(res, BaseException):
+                logger.warning("Auto-generate gather returned exception: %s", res)
+                continue
             if res:
                 node, ai_content = res
                 await save_generated_asset(

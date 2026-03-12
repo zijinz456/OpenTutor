@@ -285,7 +285,7 @@ async def mastery_history(
     """Return mastery score time-series for analytics charts."""
     from models.mastery_snapshot import MasterySnapshot
 
-    await get_course_or_404(db, course_id, user.id)
+    await get_course_or_404(db, course_id, user_id=user.id)
 
     query = (
         select(MasterySnapshot)

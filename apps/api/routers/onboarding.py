@@ -108,6 +108,13 @@ async def interview_turn(
     except (ValueError, KeyError, ConnectionError, OSError, RuntimeError) as exc:
         logger.exception("Onboarding interview error: %s", exc)
         raise HTTPException(status_code=502, detail="Interview agent failed") from exc
+    except Exception as exc:
+        # Catch LLM provider errors (openai.APIConnectionError, etc.)
+        exc_module = getattr(type(exc), "__module__", "")
+        if "openai" in exc_module or "anthropic" in exc_module or "httpx" in exc_module:
+            logger.exception("Onboarding LLM connection error: %s", exc)
+            raise HTTPException(status_code=503, detail="LLM service unavailable") from exc
+        raise
 
     complete = bool(ctx.metadata.get("onboarding_complete"))
     actions: list[dict] = list(ctx.actions)

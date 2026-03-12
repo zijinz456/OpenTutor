@@ -9,6 +9,8 @@ import logging
 import threading
 from typing import Any
 
+from config import settings
+
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -179,6 +181,9 @@ def _register_builtin_tools(registry: ToolRegistry) -> None:
 
 def _register_web_tools(registry: ToolRegistry) -> None:
     """Register web-domain tools (search, etc.)."""
+    if not settings.enable_experimental_browser:
+        logger.info("Experimental browser/web-search tool is dormant (ENABLE_EXPERIMENTAL_BROWSER=false)")
+        return
     try:
         from services.agent.tools.web_search import WebSearchTool
 
@@ -190,8 +195,6 @@ def _register_web_tools(registry: ToolRegistry) -> None:
 
 def _register_export_tools(registry: ToolRegistry) -> None:
     """Register export tools (Anki, calendar)."""
-    from config import settings
-
     try:
         from services.agent.tools.anki import ExportAnkiTool
 

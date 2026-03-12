@@ -46,6 +46,7 @@ test.describe("Settings", () => {
 
   test("back button returns to dashboard", async ({ page }) => {
     await page.goto("/settings");
+    await expect(page).toHaveURL(/\/settings/, { timeout: 15_000 });
     await page.locator("header").getByRole("button").first().click();
     await expect(page).not.toHaveURL(/\/settings/, { timeout: 15_000 });
   });
@@ -89,18 +90,36 @@ test.describe("Settings", () => {
   test("clicking Dark toggles dark theme", async ({ page }) => {
     await page.goto("/settings");
     await page.getByTestId("settings-theme-dark").click();
-    // next-themes adds "dark" class to <html>
-    await expect(page.locator("html")).toHaveAttribute("class", /dark/, { timeout: 5_000 });
+    // next-themes updates the class on <html> — it may contain a font variable prefix
+    await expect.poll(
+      async () => {
+        const cls = await page.locator("html").getAttribute("class");
+        return cls?.includes("dark") ?? false;
+      },
+      { timeout: 5_000 },
+    ).toBe(true);
   });
 
   test("clicking Light toggles light theme", async ({ page }) => {
     await page.goto("/settings");
-    // First set dark to ensure we can toggle back
+    // First set dark
     await page.getByTestId("settings-theme-dark").click();
-    await expect(page.locator("html")).toHaveAttribute("class", /dark/, { timeout: 5_000 });
+    await expect.poll(
+      async () => {
+        const cls = await page.locator("html").getAttribute("class");
+        return cls?.includes("dark") ?? false;
+      },
+      { timeout: 5_000 },
+    ).toBe(true);
     // Now switch to light
     await page.getByTestId("settings-theme-light").click();
-    await expect(page.locator("html")).toHaveAttribute("class", /light/, { timeout: 5_000 });
+    await expect.poll(
+      async () => {
+        const cls = await page.locator("html").getAttribute("class");
+        return cls?.includes("light") ?? false;
+      },
+      { timeout: 5_000 },
+    ).toBe(true);
   });
 
   // ---- templates section ------------------------------------------------
@@ -114,7 +133,6 @@ test.describe("Settings", () => {
   test("Apply button triggers template application", async ({ page }) => {
     await page.goto("/settings");
 
-    // Wait for templates to potentially load
     const applyBtn = page.getByRole("button", { name: /Apply|应用/ }).first();
     const templateVisible = await applyBtn
       .isVisible({ timeout: 10_000 })
@@ -122,12 +140,10 @@ test.describe("Settings", () => {
 
     if (templateVisible) {
       await applyBtn.click();
-      // Should show a success toast with "Applied" or a failure toast
       await expect(
         page.getByText(/Applied|Failed|成功|失败/i)
       ).toBeVisible({ timeout: 15_000 });
     } else {
-      // No templates seeded -- skip gracefully
       test.skip();
     }
   });

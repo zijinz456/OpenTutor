@@ -226,6 +226,9 @@ export type {
   NotificationsResponse,
 } from "./notifications";
 
+export { getFeatureFlags } from "./features";
+export type { FeatureFlags } from "./features";
+
 export { interviewTurn, getDemoCourse } from "./onboarding";
 export type {
   OnboardingRequest,

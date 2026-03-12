@@ -249,7 +249,12 @@ async def run_ingestion_pipeline(
                                 if course_obj:
                                     course_obj.name = deep_result.title
                                     logger.info("Auto-set course name from Canvas: %s", deep_result.title)
-                            except Exception as name_err:
+                            except (
+                                sa.exc.SQLAlchemyError,
+                                ValueError,
+                                AttributeError,
+                                TypeError,
+                            ) as name_err:
                                 logger.debug("Could not auto-set course name: %s", name_err)
 
         if not extracted and pre_fetched_html:
@@ -322,7 +327,8 @@ async def run_ingestion_pipeline(
         await db.commit()
 
     except Exception as e:
-        # Top-level pipeline handler: catch all to mark job as failed
+        # Intentional catch-all: never let unexpected errors bypass job state
+        # persistence; all failures must resolve to a terminal "failed" job.
         try:
             await db.rollback()
         except (sa.exc.SQLAlchemyError, OSError):
@@ -341,7 +347,7 @@ async def run_ingestion_pipeline(
         try:
             db.add(job)
             await db.commit()
-        except (sa.exc.SQLAlchemyError, OSError) as commit_err:
+        except (sa.exc.SQLAlchemyError, OSError):
             logger.exception("Failed to persist ingestion failure")
 
     await db.flush()

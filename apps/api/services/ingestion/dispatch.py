@@ -99,12 +99,32 @@ async def dispatch_content(db: AsyncSession, job: IngestionJob) -> dict:
         result["content_tree"] = len(nodes)
 
         # Queue auto-generation of learning content (notes, practice, flashcards)
+        # Uses its own DB session to avoid sharing the caller's session across tasks.
         if nodes and job.course_id:
             from services.ingestion.auto_generation import _auto_generate_learning_content
+            from database import async_session as async_session_factory
             import asyncio as _asyncio_dispatch
-            _asyncio_dispatch.create_task(
-                _auto_generate_learning_content(db, job.course_id, job.user_id, nodes)
-            )
+
+            async def _safe_auto_generate(course_id, user_id, node_data):
+                """Run auto-generation with an independent DB session."""
+                try:
+                    async with async_session_factory() as bg_db:
+                        await _auto_generate_learning_content(bg_db, course_id, user_id, node_data)
+                        await bg_db.commit()
+                except (
+                    sa.exc.SQLAlchemyError,
+                    ConnectionError,
+                    TimeoutError,
+                    RuntimeError,
+                    ValueError,
+                    OSError,
+                ):
+                    logger.exception("Background auto-generation failed")
+
+            from services.agent.background_runtime import track_background_task
+            track_background_task(_asyncio_dispatch.create_task(
+                _safe_auto_generate(job.course_id, job.user_id, nodes)
+            ))
 
     elif category == "assignment":
         # Extract assignment info

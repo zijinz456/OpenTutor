@@ -219,7 +219,7 @@ async def generate_teaching_state(
             "review_urgency": review_urgency,
         }
     except Exception:
-        logger.debug("Teaching state generation failed", exc_info=True)
+        logger.warning("Teaching state generation failed", exc_info=True)
         return None
 
 
@@ -255,12 +255,22 @@ def format_resumption_prompt(state: dict) -> str:
     return " ".join(parts)
 
 
+# Re-export from pipeline_stages (extracted for single-concern files)
+from services.memory.pipeline_stages import (  # noqa: E402
+    consolidate_memories,
+    retrieve_memories,
+)
+
+# Alias for the typo in progress_analytics (consolidate_memory → consolidate_memories)
+consolidate_memory = consolidate_memories
+
 __all__ = [
     "classify_memory_type",
     "encode_memory",
     "encode_memories",
     "generate_embedding",
     "consolidate_memories",
+    "consolidate_memory",
     "retrieve_memories",
     "generate_teaching_state",
     "format_resumption_prompt",

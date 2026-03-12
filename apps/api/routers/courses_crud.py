@@ -243,7 +243,10 @@ async def update_layout(
     db: AsyncSession = Depends(get_db),
 ):
     """Update the workspace layout configuration stored in course metadata."""
-    body = await request.json()
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
     if not isinstance(body, dict):
         body = {}
     course = await get_course_or_404(db, course_id, user_id=user.id)

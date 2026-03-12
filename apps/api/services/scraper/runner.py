@@ -251,7 +251,8 @@ def _fire_background_embed(course_id: uuid.UUID):
 def _notify_scrape_disabled(source: ScrapeSource):
     from services.scheduler.engine import _push_notification
     try:
-        asyncio.get_event_loop().create_task(_push_notification(
+        loop = asyncio.get_running_loop()
+        loop.create_task(_push_notification(
             source.user_id,
             "Auto-Scrape Disabled",
             f"Scraping for '{source.label or source.url}' was disabled after "
@@ -260,13 +261,14 @@ def _notify_scrape_disabled(source: ScrapeSource):
             category="scrape_alert",
         ))
     except RuntimeError:
-        pass
+        logger.debug("No running event loop — scrape-disabled notification skipped")
 
 
 def _notify_auth_expired(source: ScrapeSource):
     from services.scheduler.engine import _push_notification
     try:
-        asyncio.get_event_loop().create_task(_push_notification(
+        loop = asyncio.get_running_loop()
+        loop.create_task(_push_notification(
             source.user_id,
             "Authentication Expired",
             f"Session expired for '{source.auth_domain or source.url}'. "
@@ -274,4 +276,4 @@ def _notify_auth_expired(source: ScrapeSource):
             category="scrape_auth_expired",
         ))
     except RuntimeError:
-        pass
+        logger.debug("No running event loop — auth-expired notification skipped")

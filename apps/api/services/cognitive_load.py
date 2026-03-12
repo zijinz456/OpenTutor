@@ -321,8 +321,8 @@ async def compute_cognitive_load(
     # ── Resolve unresolved intervention outcomes (last 10 min) ──
     try:
         await _resolve_intervention_outcomes(db, user_id, course_id, score)
-    except Exception:
-        logger.debug("Failed to resolve intervention outcomes", exc_info=True)
+    except (_SQLAlchemyError, OSError, RuntimeError, ValueError, AttributeError):
+        logger.warning("Failed to resolve intervention outcomes", exc_info=True)
 
     return {
         "score": round(score, 3),

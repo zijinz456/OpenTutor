@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends
-from libs.exceptions import PermissionDeniedError, ValidationError
+from libs.exceptions import ExternalServiceError, PermissionDeniedError, ValidationError
 from pydantic import BaseModel, AnyHttpUrl
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -61,7 +61,10 @@ async def canvas_login(
     For compatibility and security, this endpoint does not persist plaintext
     credentials in AuthSession.login_actions.
     """
-    from playwright.async_api import async_playwright
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError as exc:
+        raise ExternalServiceError(service="Canvas", message="Playwright is required for Canvas login but is not installed. Install with: pip install playwright && playwright install chromium") from exc
     from routers.scrape import _default_session_name
     from services.browser.session_manager import SessionManager
 
@@ -70,15 +73,29 @@ async def canvas_login(
     domain = urlparse(canvas_url).netloc
     session_name = _default_session_name(user.id, domain)
 
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        success = await SessionManager.re_authenticate(
-            browser,
-            session_name,
-            login_url,
-            _canvas_actions(body.username, body.password),
-        )
-        await browser.close()
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            success = await SessionManager.re_authenticate(
+                browser,
+                session_name,
+                login_url,
+                _canvas_actions(body.username, body.password),
+            )
+            await browser.close()
+    except (OSError, RuntimeError, ConnectionError, TimeoutError) as exc:
+        raise ExternalServiceError(
+            service="Canvas",
+            message=f"Browser automation failed: {exc}",
+        ) from exc
+    except Exception as exc:
+        # Catch Playwright-specific errors (TimeoutError, Error, etc.)
+        if "playwright" in type(exc).__module__:
+            raise ExternalServiceError(
+                service="Canvas",
+                message=f"Browser automation failed: {exc}",
+            ) from exc
+        raise
 
     if not success:
         raise PermissionDeniedError("Canvas login failed")
@@ -130,7 +147,10 @@ async def canvas_browser_login(
     """
     import asyncio
 
-    from playwright.async_api import async_playwright
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError as exc:
+        raise ExternalServiceError(service="Canvas", message="Playwright is required for browser login but is not installed. Install with: pip install playwright && playwright install chromium") from exc
     from routers.scrape import _default_session_name
     from services.browser.session_manager import SessionManager
 
@@ -144,7 +164,15 @@ async def canvas_browser_login(
         context = await browser.new_context()
         page = await context.new_page()
 
-        await page.goto(canvas_url, wait_until="domcontentloaded", timeout=30000)
+        try:
+            await page.goto(canvas_url, wait_until="domcontentloaded", timeout=30000)
+        except Exception as nav_exc:
+            await context.close()
+            await browser.close()
+            raise ExternalServiceError(
+                service="Canvas",
+                message=f"Failed to navigate to Canvas URL: {nav_exc}",
+            ) from nav_exc
 
         # Poll until the user completes login or timeout expires.
         # Success signals: URL returns to Canvas domain AND is no longer

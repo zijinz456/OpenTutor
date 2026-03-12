@@ -9,6 +9,7 @@ Three tiers:
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
+from config import settings
 from services.health import get_health_status, get_liveness, get_readiness
 
 router = APIRouter()
@@ -31,3 +32,15 @@ async def readiness():
 @router.get("/health", summary="Full health check", description="Return full diagnostic status including DB, LLM, and system info.")
 async def health():
     return await get_health_status()
+
+
+@router.get("/features", summary="Feature flags", description="Active experimental feature flags for frontend conditional rendering.")
+async def feature_flags():
+    return {
+        "loom": settings.enable_experimental_loom,
+        "lector": settings.enable_experimental_lector,
+        "cat_pretest": settings.enable_experimental_cat,
+        "browser": settings.enable_experimental_browser,
+        "vision": settings.enable_experimental_vision,
+        "notion_export": settings.enable_experimental_notion_export,
+    }

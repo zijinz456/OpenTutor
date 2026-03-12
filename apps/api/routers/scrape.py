@@ -217,16 +217,26 @@ async def auth_login(
 ):
     """Login to an auth domain and save the session via Playwright."""
     from services.browser.session_manager import SessionManager
-    from playwright.async_api import async_playwright
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError as exc:
+        raise HTTPException(status_code=503, detail="Playwright is required for browser login but is not installed") from exc
 
     session_name = _default_session_name(user.id, body.domain)
 
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        success = await SessionManager.re_authenticate(
-            browser, session_name, str(body.login_url), body.actions,
-        )
-        await browser.close()
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            success = await SessionManager.re_authenticate(
+                browser, session_name, str(body.login_url), body.actions,
+            )
+            await browser.close()
+    except (OSError, RuntimeError, ConnectionError, TimeoutError) as exc:
+        raise HTTPException(status_code=502, detail=f"Browser automation failed: {exc}") from exc
+    except Exception as exc:
+        if "playwright" in type(exc).__module__:
+            raise HTTPException(status_code=502, detail=f"Browser automation failed: {exc}") from exc
+        raise
 
     if not success:
         raise HTTPException(status_code=401, detail="Authentication failed")
@@ -292,20 +302,30 @@ async def validate_auth_session(
     if not auth_session:
         raise NotFoundError("Auth session")
 
-    from playwright.async_api import async_playwright
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError as exc:
+        raise HTTPException(status_code=503, detail="Playwright is required but not installed") from exc
 
     check_url = auth_session.check_url or f"https://{auth_session.domain}"
 
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        is_valid = await SessionManager.validate_session(
-            browser,
-            normalized_session_name,
-            check_url,
-            success_selector=auth_session.success_selector,
-            failure_selector=auth_session.failure_selector,
-        )
-        await browser.close()
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            is_valid = await SessionManager.validate_session(
+                browser,
+                normalized_session_name,
+                check_url,
+                success_selector=auth_session.success_selector,
+                failure_selector=auth_session.failure_selector,
+            )
+            await browser.close()
+    except (OSError, RuntimeError, ConnectionError, TimeoutError) as exc:
+        raise HTTPException(status_code=502, detail=f"Session validation failed: {exc}") from exc
+    except Exception as exc:
+        if "playwright" in type(exc).__module__:
+            raise HTTPException(status_code=502, detail=f"Session validation failed: {exc}") from exc
+        raise
 
     auth_session.is_valid = is_valid
     auth_session.last_validated_at = datetime.now(timezone.utc)

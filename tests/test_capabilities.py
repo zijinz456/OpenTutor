@@ -175,11 +175,21 @@ async def test_registry_execute_no_agent_name_skips_check():
 def test_all_capability_tools_exist_in_builtin():
     """Every tool in AGENT_CAPABILITIES should be registered in the global tool registry."""
     from services.agent.tools.base import get_tool_registry
+    from config import settings
 
     builtin_names = set(get_tool_registry().tool_names)
 
+    # Tools gated behind experimental flags may not be registered
+    experimental_tools: set[str] = set()
+    if not settings.enable_experimental_browser:
+        experimental_tools.add("web_search")
+    if not settings.enable_experimental_notion_export:
+        experimental_tools.add("export_notion")
+
     for agent, tools in AGENT_CAPABILITIES.items():
         for tool_name in tools:
+            if tool_name in experimental_tools:
+                continue
             assert tool_name in builtin_names, (
                 f"Agent '{agent}' declares tool '{tool_name}' which is not a builtin tool. "
                 f"Available: {builtin_names}"
