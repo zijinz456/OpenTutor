@@ -14,7 +14,7 @@ async function openFlashcards(page: import("@playwright/test").Page, courseId: s
   await page.goto(`/course/${courseId}/practice`);
   await page.waitForLoadState("networkidle");
   // Click the Cards/Flashcards tab
-  const tab = page.getByRole("button", { name: /Cards|Flashcards|闪卡/i }).first();
+  const tab = page.getByRole("tab", { name: /Cards|Flashcards|闪卡/i }).first();
   await expect(tab).toBeVisible({ timeout: 15_000 });
   await tab.click();
 }

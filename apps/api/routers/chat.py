@@ -328,7 +328,6 @@ async def get_greeting(
             select(Assignment)
             .where(
                 Assignment.course_id == course_id,
-                Assignment.user_id == user.id,
                 Assignment.due_date >= now,
             )
             .order_by(Assignment.due_date.asc())

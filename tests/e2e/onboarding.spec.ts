@@ -18,6 +18,7 @@ test.describe("Onboarding flow", () => {
 
   test("redirects to /setup when opentutor_onboarded is not set", async ({ page }) => {
     // Do NOT call skipOnboarding -- localStorage has no flag.
+    // Mock preferences to return empty profile
     await page.route("**/api/preferences/profile", async (route) => {
       await route.fulfill({
         status: 200,
@@ -38,6 +39,14 @@ test.describe("Onboarding flow", () => {
         }),
       });
     });
+    // Mock courses to return empty — ensures no courses trigger the "onboarded" flag
+    await page.route("**/api/courses/overview", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([]),
+      });
+    });
     await page.goto("/");
     await expect(page).toHaveURL(/\/setup/, { timeout: 15_000 });
   });
@@ -47,7 +56,10 @@ test.describe("Onboarding flow", () => {
       localStorage.setItem("opentutor_onboarded", "true");
     });
     await page.goto("/");
-    await page.waitForLoadState("networkidle");
+    // Wait for dashboard to render (heading or create button), then verify URL
+    await expect(
+      page.getByRole("heading", { name: /Your Learning Spaces/i })
+    ).toBeVisible({ timeout: 15_000 });
     expect(page.url()).not.toContain("/setup");
   });
 
@@ -151,12 +163,36 @@ test.describe("Onboarding flow", () => {
   // ---- localStorage flag ------------------------------------------------
 
   test("localStorage flag is set after setup completion", async ({ page }) => {
+    const fakeCourseId = "test-setup-completion";
+    // Mock course creation so skip works without a real backend
+    await page.route("**/api/courses/", async (route) => {
+      if (route.request().method() === "POST") {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ id: fakeCourseId, name: "Test", description: "", sources: [], metadata: {} }),
+        });
+      } else {
+        await route.continue();
+      }
+    });
+    // Mock preferences endpoints (POST/PUT for applyDefaultPreferences)
+    await page.route("**/api/preferences/**", async (route) => {
+      if (route.request().method() !== "GET") {
+        await route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
+      } else {
+        await route.continue();
+      }
+    });
     await page.goto("/setup?step=content");
-    const skipBtn = page.getByRole("button", { name: /skip|empty/i }).first();
+    // Look for a skip/demo/empty button to bypass setup
+    const skipBtn = page.getByRole("button", { name: /skip|demo|try|empty|start empty/i }).first();
     const skipVisible = await skipBtn.isVisible({ timeout: 5_000 }).catch(() => false);
     if (skipVisible) {
       await skipBtn.click();
-      await page.waitForURL(/\/course\//, { timeout: 30_000 });
+      // Skip creates a course then navigates to /course/{id}
+      await expect.poll(() => page.url(), { timeout: 30_000 }).not.toContain("step=content");
+      // Verify localStorage flag was set
       const flag = await page.evaluate(() => localStorage.getItem("opentutor_onboarded"));
       expect(flag).toBe("true");
     } else {

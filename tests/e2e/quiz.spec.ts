@@ -18,14 +18,14 @@ test.describe.serial("Quiz Panel", () => {
   test("quiz tab is visible in right panel", async ({ page }) => {
     const courseId = await createCourseWithContent(page);
     await navigateToPractice(page, courseId);
-    const quizTab = page.getByRole("button", { name: /Quiz|测验/i }).first();
+    const quizTab = page.getByRole("tab", { name: /Quiz|测验/i }).first();
     await expect(quizTab).toBeVisible({ timeout: 15_000 });
   });
 
   test("shows empty state when no problems exist", async ({ page }) => {
     const courseId = await createCourseWithContent(page);
     await navigateToPractice(page, courseId);
-    const quizTab = page.getByRole("button", { name: /Quiz|测验/i }).first();
+    const quizTab = page.getByRole("tab", { name: /Quiz|测验/i }).first();
     await quizTab.click();
     await expect(page.getByText(/No quiz questions yet|没有测验/i)).toBeVisible({ timeout: 15_000 });
   });
@@ -34,7 +34,7 @@ test.describe.serial("Quiz Panel", () => {
     test.skip(!hasRealLlmEnv(), "Requires real LLM API key for quiz generation");
     const courseId = await createCourseWithContent(page);
     await navigateToPractice(page, courseId);
-    await page.getByRole("button", { name: /Quiz|测验/i }).first().click();
+    await page.getByRole("tab", { name: /Quiz|测验/i }).first().click();
     const generateBtn = page.getByRole("button", { name: /Generate Quiz from Content/ });
     await expect(generateBtn).toBeVisible({ timeout: 15_000 });
     await generateBtn.click();
@@ -47,7 +47,7 @@ test.describe.serial("Quiz Panel", () => {
     test.skip(!hasRealLlmEnv(), "Requires real LLM API key for quiz generation");
     const courseId = await createCourseWithContent(page);
     await navigateToPractice(page, courseId);
-    await page.getByRole("button", { name: /Quiz|测验/i }).first().click();
+    await page.getByRole("tab", { name: /Quiz|测验/i }).first().click();
     const generateBtn = page.getByRole("button", { name: /Generate Quiz from Content/ });
     await expect(generateBtn).toBeVisible({ timeout: 15_000 });
     await generateBtn.click();
@@ -66,7 +66,7 @@ test.describe.serial("Quiz Panel — LLM-dependent", () => {
   test("question text and type badge display", async ({ page }) => {
     const courseId = await createCourseWithContent(page);
     await navigateToPractice(page, courseId);
-    await page.getByRole("button", { name: /Quiz|测验/i }).first().click();
+    await page.getByRole("tab", { name: /Quiz|测验/i }).first().click();
     const generateBtn = page.getByRole("button", { name: /Generate Quiz from Content/ });
     await expect(generateBtn).toBeVisible({ timeout: 15_000 });
     await generateBtn.click();
@@ -80,7 +80,7 @@ test.describe.serial("Quiz Panel — LLM-dependent", () => {
   test("question counter shows 'Question X of Y'", async ({ page }) => {
     const courseId = await createCourseWithContent(page);
     await navigateToPractice(page, courseId);
-    await page.getByRole("button", { name: /Quiz|测验/i }).first().click();
+    await page.getByRole("tab", { name: /Quiz|测验/i }).first().click();
     const generateBtn = page.getByRole("button", { name: /Generate Quiz from Content/ });
     await expect(generateBtn).toBeVisible({ timeout: 15_000 });
     await generateBtn.click();
@@ -91,7 +91,7 @@ test.describe.serial("Quiz Panel — LLM-dependent", () => {
   test("score badge shows correct count", async ({ page }) => {
     const courseId = await createCourseWithContent(page);
     await navigateToPractice(page, courseId);
-    await page.getByRole("button", { name: /Quiz|测验/i }).first().click();
+    await page.getByRole("tab", { name: /Quiz|测验/i }).first().click();
     const generateBtn = page.getByRole("button", { name: /Generate Quiz from Content/ });
     await expect(generateBtn).toBeVisible({ timeout: 15_000 });
     await generateBtn.click();
@@ -102,7 +102,7 @@ test.describe.serial("Quiz Panel — LLM-dependent", () => {
   test("MC options render as clickable buttons", async ({ page }) => {
     const courseId = await createCourseWithContent(page);
     await navigateToPractice(page, courseId);
-    await page.getByRole("button", { name: /Quiz|测验/i }).first().click();
+    await page.getByRole("tab", { name: /Quiz|测验/i }).first().click();
     const generateBtn = page.getByRole("button", { name: /Generate Quiz from Content/ });
     await expect(generateBtn).toBeVisible({ timeout: 15_000 });
     await generateBtn.click();
@@ -115,7 +115,7 @@ test.describe.serial("Quiz Panel — LLM-dependent", () => {
   test("clicking an option selects it visually", async ({ page }) => {
     const courseId = await createCourseWithContent(page);
     await navigateToPractice(page, courseId);
-    await page.getByRole("button", { name: /Quiz|测验/i }).first().click();
+    await page.getByRole("tab", { name: /Quiz|测验/i }).first().click();
     const generateBtn = page.getByRole("button", { name: /Generate Quiz from Content/ });
     await expect(generateBtn).toBeVisible({ timeout: 15_000 });
     await generateBtn.click();
@@ -129,7 +129,7 @@ test.describe.serial("Quiz Panel — LLM-dependent", () => {
   test("submitting answer shows correct/incorrect feedback", async ({ page }) => {
     const courseId = await createCourseWithContent(page);
     await navigateToPractice(page, courseId);
-    await page.getByRole("button", { name: /Quiz|测验/i }).first().click();
+    await page.getByRole("tab", { name: /Quiz|测验/i }).first().click();
     const generateBtn = page.getByRole("button", { name: /Generate Quiz from Content/ });
     await expect(generateBtn).toBeVisible({ timeout: 15_000 });
     await generateBtn.click();
@@ -144,7 +144,7 @@ test.describe.serial("Quiz Panel — LLM-dependent", () => {
   test("correct answer shows green indicator", async ({ page }) => {
     const courseId = await createCourseWithContent(page);
     await navigateToPractice(page, courseId);
-    await page.getByRole("button", { name: /Quiz|测验/i }).first().click();
+    await page.getByRole("tab", { name: /Quiz|测验/i }).first().click();
     const generateBtn = page.getByRole("button", { name: /Generate Quiz from Content/ });
     await expect(generateBtn).toBeVisible({ timeout: 15_000 });
     await generateBtn.click();
@@ -159,7 +159,7 @@ test.describe.serial("Quiz Panel — LLM-dependent", () => {
   test("options disabled after answering", async ({ page }) => {
     const courseId = await createCourseWithContent(page);
     await navigateToPractice(page, courseId);
-    await page.getByRole("button", { name: /Quiz|测验/i }).first().click();
+    await page.getByRole("tab", { name: /Quiz|测验/i }).first().click();
     const generateBtn = page.getByRole("button", { name: /Generate Quiz from Content/ });
     await expect(generateBtn).toBeVisible({ timeout: 15_000 });
     await generateBtn.click();
@@ -180,7 +180,7 @@ test.describe.serial("Quiz Panel — LLM-dependent", () => {
   test("explanation appears after answering", async ({ page }) => {
     const courseId = await createCourseWithContent(page);
     await navigateToPractice(page, courseId);
-    await page.getByRole("button", { name: /Quiz|测验/i }).first().click();
+    await page.getByRole("tab", { name: /Quiz|测验/i }).first().click();
     const generateBtn = page.getByRole("button", { name: /Generate Quiz from Content/ });
     await expect(generateBtn).toBeVisible({ timeout: 15_000 });
     await generateBtn.click();
@@ -194,7 +194,7 @@ test.describe.serial("Quiz Panel — LLM-dependent", () => {
   test("Next button advances to next question", async ({ page }) => {
     const courseId = await createCourseWithContent(page);
     await navigateToPractice(page, courseId);
-    await page.getByRole("button", { name: /Quiz|测验/i }).first().click();
+    await page.getByRole("tab", { name: /Quiz|测验/i }).first().click();
     const generateBtn = page.getByRole("button", { name: /Generate Quiz from Content/ });
     await expect(generateBtn).toBeVisible({ timeout: 15_000 });
     await generateBtn.click();
@@ -207,7 +207,7 @@ test.describe.serial("Quiz Panel — LLM-dependent", () => {
   test("Prev button goes to previous question", async ({ page }) => {
     const courseId = await createCourseWithContent(page);
     await navigateToPractice(page, courseId);
-    await page.getByRole("button", { name: /Quiz|测验/i }).first().click();
+    await page.getByRole("tab", { name: /Quiz|测验/i }).first().click();
     const generateBtn = page.getByRole("button", { name: /Generate Quiz from Content/ });
     await expect(generateBtn).toBeVisible({ timeout: 15_000 });
     await generateBtn.click();

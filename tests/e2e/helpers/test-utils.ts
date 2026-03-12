@@ -21,6 +21,67 @@ export async function skipOnboarding(page: Page): Promise<void> {
 }
 
 /**
+ * STEM Student template layout, matching buildLayoutFromTemplate("stem_student").
+ * Pre-setting this in localStorage avoids the template picker entirely.
+ */
+const STEM_STUDENT_LAYOUT = {
+  templateId: "stem_student",
+  columns: 2,
+  mode: "course_following",
+  blocks: [
+    { id: "stem_student-chapter_list-0", type: "chapter_list", position: 0, size: "full", config: {}, visible: true, source: "template" },
+    { id: "stem_student-notes-1", type: "notes", position: 1, size: "large", config: { note_format: "step_by_step" }, visible: true, source: "template" },
+    { id: "stem_student-quiz-2", type: "quiz", position: 2, size: "medium", config: { difficulty: "adaptive" }, visible: true, source: "template" },
+    { id: "stem_student-knowledge_graph-3", type: "knowledge_graph", position: 3, size: "medium", config: {}, visible: true, source: "template" },
+    { id: "stem_student-progress-4", type: "progress", position: 4, size: "small", config: {}, visible: true, source: "template" },
+  ],
+};
+
+/**
+ * Pre-set the STEM Student template layout for a course.
+ * Sets BOTH localStorage (for instant client load) AND backend API (for persistence).
+ * This bypasses the template picker entirely.
+ */
+export async function presetTemplateLayout(page: Page, courseId: string): Promise<void> {
+  // 1. Set localStorage via init script (runs before React hydration)
+  await page.addInitScript(
+    ({ courseId, layout }) => {
+      localStorage.setItem(`opentutor_blocks_${courseId}`, JSON.stringify(layout));
+    },
+    { courseId, layout: STEM_STUDENT_LAYOUT },
+  );
+  // 2. Also persist to backend so server-side load has it
+  await fetch(`${apiBaseUrl}/courses/${courseId}/layout`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(STEM_STUDENT_LAYOUT),
+  }).catch(() => {/* best-effort */});
+}
+
+/**
+ * Select a workspace template if the template picker is shown.
+ * New courses show "Choose a template" on first visit — call this to bypass it.
+ */
+export async function selectTemplateIfShown(page: Page): Promise<void> {
+  const templateHeading = page.getByRole("heading", { name: "Choose a template" });
+  const isShown = await templateHeading.isVisible({ timeout: 3_000 }).catch(() => false);
+  if (!isShown) return;
+  // Click "STEM Student" to create blocks with notes, quiz, progress, knowledge_graph
+  const stemBtn = page.getByRole("button", { name: /STEM Student/i });
+  if (await stemBtn.isVisible({ timeout: 3_000 }).catch(() => false)) {
+    await stemBtn.click();
+  } else {
+    // Fallback: click the first template button that isn't Blank Canvas
+    const firstBtn = page.locator('button').filter({ hasNotText: /Blank Canvas/ }).first();
+    await firstBtn.click();
+  }
+  // Wait for template picker to disappear and blocks to render
+  await expect(templateHeading).not.toBeVisible({ timeout: 15_000 });
+  // Wait for at least one block to render before returning
+  await page.waitForTimeout(500);
+}
+
+/**
  * Open the chat drawer by clicking the floating action button.
  * The chat UI is behind a FAB — call this after navigating to a workspace page.
  */
@@ -41,8 +102,8 @@ export async function createCourseViaApi(
   description?: string,
   metadata?: Record<string, unknown>,
 ): Promise<string> {
-  // Retry on 503 (server overload) — common under parallel test workers
-  for (let attempt = 0; attempt < 5; attempt++) {
+  // Retry on 503/429 (server overload / rate limit) — common under parallel test workers
+  for (let attempt = 0; attempt < 8; attempt++) {
     const response = await fetch(`${apiBaseUrl}/courses/`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -52,8 +113,9 @@ export async function createCourseViaApi(
       const payload = (await response.json()) as { id: string };
       return payload.id;
     }
-    if (response.status === 503 && attempt < 4) {
-      await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
+    if ((response.status === 503 || response.status === 429) && attempt < 7) {
+      const jitter = Math.random() * 1000;
+      await new Promise((r) => setTimeout(r, 3000 * (attempt + 1) + jitter));
       continue;
     }
     throw new Error(`API course creation failed (${response.status})`);
@@ -113,35 +175,57 @@ function treeHasMaterial(nodes: unknown): boolean {
 
 async function waitForCourseContent(courseId: string, timeoutMs = 60_000): Promise<void> {
   const startedAt = Date.now();
+  let lastStatus = "";
+  let lastBody = "";
 
   while (Date.now() - startedAt < timeoutMs) {
     const response = await fetch(`${apiBaseUrl}/courses/${courseId}/content-tree`);
+    lastStatus = `${response.status}`;
     if (response.ok) {
       const payload = (await response.json()) as unknown;
+      lastBody = JSON.stringify(payload).slice(0, 500);
       if (treeHasMaterial(payload)) {
         return;
       }
+    } else {
+      lastBody = await response.text().catch(() => "(unreadable)");
     }
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
 
-  throw new Error(`Course content tree did not become ready within ${timeoutMs}ms`);
+  throw new Error(
+    `Course content tree did not become ready within ${timeoutMs}ms. ` +
+    `Last status=${lastStatus}, body=${lastBody}`,
+  );
 }
 
 export async function seedCourseFixture(courseId: string, fixturePath: string): Promise<void> {
   const fileBuffer = await fs.readFile(fixturePath);
-  const form = new FormData();
-  form.append("course_id", courseId);
-  form.append("file", new Blob([fileBuffer], { type: "text/markdown" }), path.basename(fixturePath));
 
-  const response = await fetch(`${apiBaseUrl}/content/upload`, {
-    method: "POST",
-    body: form,
-  });
-  if (!response.ok) {
-    throw new Error(`Fixture upload failed (${response.status})`);
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const form = new FormData();
+    form.append("course_id", courseId);
+    form.append("file", new Blob([fileBuffer], { type: "text/markdown" }), path.basename(fixturePath));
+
+    const response = await fetch(`${apiBaseUrl}/content/upload`, {
+      method: "POST",
+      body: form,
+    });
+    if (response.ok) {
+      const uploadResult = await response.json();
+      console.log(`[seedCourseFixture] Upload OK:`, JSON.stringify(uploadResult).slice(0, 300));
+      await waitForCourseContent(courseId);
+      return;
+    }
+    const errBody = await response.text().catch(() => "(unreadable)");
+    console.log(`[seedCourseFixture] Upload failed: status=${response.status}, body=${errBody.slice(0, 300)}`);
+    if ((response.status === 429 || response.status === 503) && attempt < 7) {
+      const jitter = Math.random() * 1000;
+      await new Promise((r) => setTimeout(r, 3000 * (attempt + 1) + jitter));
+      continue;
+    }
+    throw new Error(`Fixture upload failed (${response.status}): ${errBody.slice(0, 200)}`);
   }
-  await waitForCourseContent(courseId);
 }
 
 export async function seedFlashcardsViaApi(courseId: string, count = 3): Promise<void> {
@@ -177,59 +261,55 @@ export async function seedFlashcardsViaApi(courseId: string, count = 3): Promise
  * Returns the courseId extracted from the URL.
  */
 export async function createCourse(page: Page, name: string): Promise<string> {
-  try {
-    await page.goto("/new");
-    await page.getByTestId("mode-option-upload").click();
-    await page.getByTestId("mode-continue").click();
-    // Wait for the step transition — the name input appears on step 2
-    await expect(page.getByTestId("project-name-input")).toBeVisible({ timeout: 15_000 });
-    await page.getByTestId("project-name-input").fill(name);
-    await page.getByTestId("start-parsing").click();
-    try {
-      await expect(page.getByTestId("continue-to-features")).toBeVisible({ timeout: 60_000 });
-    } catch {
-      // Parsing step may fail if no files were uploaded — fall through to API
-      throw new Error("Wizard parsing step did not complete");
-    }
-    await page.getByTestId("continue-to-features").click();
-    await page.getByTestId("enter-workspace").click();
-    await expect(page).toHaveURL(/\/course\//);
-    const url = page.url();
-    const match = url.match(/\/course\/([^/?#]+)/);
-    return match ? match[1] : "";
-  } catch {
-    // Fallback: create course via API when the wizard flow fails
-    const courseId = await createCourseViaApi(name);
-    await page.goto(`/course/${courseId}`);
-    await expect(page).toHaveURL(new RegExp(`/course/${courseId}`), { timeout: 30_000 });
-    return courseId;
-  }
+  // Create course via API (fastest and most reliable for tests)
+  const courseId = await createCourseViaApi(name);
+  // Pre-set template so template picker doesn't block workspace
+  await presetTemplateLayout(page, courseId);
+  await page.goto(`/course/${courseId}`);
+  await expect(page).toHaveURL(new RegExp(`/course/${courseId}`), { timeout: 30_000 });
+  // Wait for the workspace to load — any ONE of these signals is enough
+  await expect.poll(
+    async () =>
+      (await Promise.all([
+        page.getByRole("button", { name: "Open chat" }).isVisible().catch(() => false),
+        page.getByRole("button", { name: "Sync course content" }).isVisible().catch(() => false),
+      ])).some(Boolean),
+    { timeout: 30_000 },
+  ).toBe(true);
+  return courseId;
 }
 
 /**
  * Create a course and upload the sample fixture file.
+ * Waits for workspace blocks to render with content before returning.
  */
 export async function createCourseWithContent(page: Page, name = "Test Course"): Promise<string> {
   const courseId = await createCourseViaApi(name);
   await seedCourseFixture(courseId, SAMPLE_COURSE_MD);
+  // Pre-set STEM Student template layout before navigating.
+  await presetTemplateLayout(page, courseId);
   await page.goto(`/course/${courseId}`);
   await expect(page).toHaveURL(new RegExp(`/course/${courseId}`), { timeout: 30_000 });
-  await expect
-    .poll(
-      async () =>
-        (
-          await Promise.all([
-            page.getByRole("button", { name: "Upload" }).isVisible().catch(() => false),
-            page.getByTestId("workspace-upload-trigger").isVisible().catch(() => false),
-            page.getByTestId("chat-input").isVisible().catch(() => false),
-            page.getByRole("textbox", { name: /Ask anything/i }).isVisible().catch(() => false),
-            page.getByRole("heading", { name: "Choose a template" }).isVisible().catch(() => false),
-            page.getByRole("button", { name: "Open chat" }).isVisible().catch(() => false),
-          ])
-        ).some(Boolean),
-      { timeout: 30_000 },
-    )
-    .toBe(true);
+  // Wait for workspace to load — header buttons signal the shell is ready
+  await expect.poll(
+    async () =>
+      (await Promise.all([
+        page.getByRole("button", { name: "Open chat" }).isVisible().catch(() => false),
+        page.getByRole("button", { name: "Sync course content" }).isVisible().catch(() => false),
+      ])).some(Boolean),
+    { timeout: 30_000 },
+  ).toBe(true);
+  // If template picker is still showing (localStorage race), dismiss it
+  await selectTemplateIfShown(page);
+  // Wait for workspace blocks list to render (proves template was applied)
+  await expect(
+    page.getByRole("list", { name: "Workspace blocks" }),
+  ).toBeVisible({ timeout: 15_000 });
+  // Reload to ensure fresh content tree fetch (initial load may cache empty state)
+  await page.reload();
+  await expect(
+    page.getByRole("list", { name: "Workspace blocks" }),
+  ).toBeVisible({ timeout: 15_000 });
   return courseId;
 }
 
@@ -293,23 +373,23 @@ export async function dispatchShortcut(page: Page, key: string): Promise<void> {
 }
 
 async function activateSection(page: Page, label: "Practice" | "Plan" | "Analytics" | "Notes", targetTestId: string): Promise<void> {
-  await expect(page.getByTestId("section-container")).toBeVisible({ timeout: 30_000 });
+  // In the block-based workspace, sections render as blocks in a grid.
+  // The target testId should already be visible if the right template was applied.
+  const target = page.getByTestId(targetTestId);
+  const alreadyVisible = await target.isVisible({ timeout: 5_000 }).catch(() => false);
+  if (alreadyVisible) return;
 
+  // Try keyboard shortcut as fallback
   const shortcutKey = SECTION_SHORTCUT_KEY[label];
-
-  // Unfocus any active input so the keyboard shortcut fires on window
   await page.keyboard.press("Escape");
-
-  // Retry shortcut dispatch — the React useKeyboardShortcuts hook may not
-  // have attached its listener yet when the page just finished loading.
   for (let attempt = 0; attempt < 5; attempt++) {
     await dispatchShortcut(page, shortcutKey);
-    const visible = await page.getByTestId(targetTestId).isVisible().catch(() => false);
+    const visible = await target.isVisible().catch(() => false);
     if (visible) return;
     await page.waitForTimeout(500);
   }
 
-  await expect(page.getByTestId(targetTestId)).toBeVisible({ timeout: 15_000 });
+  await expect(target).toBeVisible({ timeout: 15_000 });
 }
 
 /**

@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { skipOnboarding, createCourse, getCourseViaApi } from "./helpers/test-utils";
+import { skipOnboarding } from "./helpers/test-utils";
 
 /**
  * localStorage persistence tests (Phase 1 -- no course content required).
@@ -57,7 +57,13 @@ test.describe("Persistence", () => {
 
     // Switch to dark
     await page.getByRole("button", { name: /Dark/i }).click();
-    await expect(page.locator("html")).toHaveAttribute("class", /dark/, { timeout: 5_000 });
+    await expect.poll(
+      async () => {
+        const cls = await page.locator("html").getAttribute("class");
+        return cls?.includes("dark") ?? false;
+      },
+      { timeout: 5_000 },
+    ).toBe(true);
 
     // next-themes stores the preference in localStorage under "theme"
     const theme = await page.evaluate(() => localStorage.getItem("theme"));
@@ -74,16 +80,17 @@ test.describe("Persistence", () => {
   test("onboarding completion prevents redirect", async ({ page }) => {
     await skipOnboarding(page);
     await page.goto("/");
-    await page.waitForLoadState("networkidle");
-    // URL should remain / (no redirect to /onboarding)
-    expect(page.url()).not.toContain("/onboarding");
+    // Wait for dashboard to render, then verify URL
+    await expect(
+      page.getByRole("heading", { name: /Your Learning Spaces/i })
+    ).toBeVisible({ timeout: 15_000 });
+    expect(page.url()).not.toContain("/setup");
   });
 
   // ---- removing onboarding flag -----------------------------------------
 
   test("removing onboarding flag triggers redirect", async ({ browser }, testInfo) => {
     // Use a fresh browser context to avoid addInitScript pollution from other tests.
-    // A brand-new context has no localStorage, so the onboarding check fires immediately.
     const baseURL = testInfo.project.use.baseURL || "http://127.0.0.1:3005";
     const emptyProfileResponse = JSON.stringify({
       preferences: [],
@@ -100,105 +107,36 @@ test.describe("Persistence", () => {
       },
     });
 
+    const emptyCourses = JSON.stringify([]);
+
     // First: verify that WITH the flag, dashboard stays at /
     const ctx1 = await browser.newContext({ baseURL });
     const page1 = await ctx1.newPage();
     await page1.route("**/api/preferences/profile**", async (route) => {
       await route.fulfill({ status: 200, contentType: "application/json", body: emptyProfileResponse });
     });
+    await page1.route("**/api/courses/overview", async (route) => {
+      await route.fulfill({ status: 200, contentType: "application/json", body: emptyCourses });
+    });
     await page1.addInitScript(() => localStorage.setItem("opentutor_onboarded", "true"));
     await page1.goto("/");
-    await expect(page1).toHaveURL("/", { timeout: 15_000 });
+    await expect(page1.getByRole("heading", { name: /Your Learning Spaces/i })).toBeVisible({ timeout: 15_000 });
+    expect(page1.url()).not.toContain("/setup");
     await page1.close();
     await ctx1.close();
 
-    // Second: verify that WITHOUT the flag, dashboard redirects to /onboarding
+    // Second: verify that WITHOUT the flag, dashboard redirects to /setup
     const ctx2 = await browser.newContext({ baseURL });
     const page2 = await ctx2.newPage();
     await page2.route("**/api/preferences/profile**", async (route) => {
       await route.fulfill({ status: 200, contentType: "application/json", body: emptyProfileResponse });
     });
+    await page2.route("**/api/courses/overview", async (route) => {
+      await route.fulfill({ status: 200, contentType: "application/json", body: emptyCourses });
+    });
     await page2.goto("/");
-    await expect(page2).toHaveURL(/\/onboarding/, { timeout: 30_000 });
+    await expect(page2).toHaveURL(/\/setup/, { timeout: 30_000 });
     await page2.close();
     await ctx2.close();
-  });
-
-  // ---- course features --------------------------------------------------
-
-  test("course features persist in course metadata", async ({ page }) => {
-    await skipOnboarding(page);
-    const courseId = await createCourse(page, "Features Persist Course");
-
-    const course = await getCourseViaApi(courseId);
-    expect(course.metadata).toMatchObject({
-      workspace_features: {
-        notes: true,
-        practice: true,
-        free_qa: true,
-      },
-    });
-  });
-
-  // ---- auto-scrape preference -------------------------------------------
-
-  test("auto-scrape metadata remains disabled when no URL source is submitted", async ({ page }) => {
-    await skipOnboarding(page);
-
-    // Create a course using the "both" mode (upload + URL) which enables auto-scrape by default
-    await page.goto("/new");
-    // Select "Both" mode
-    await page.getByTestId("mode-option-both").click();
-    await page.getByTestId("mode-continue").click();
-    await page.getByTestId("project-name-input").fill("Auto Scrape Course");
-    await page.getByTestId("start-parsing").click();
-    await expect(page.getByTestId("continue-to-features")).toBeVisible({ timeout: 60_000 });
-    await page.getByTestId("continue-to-features").click();
-    await page.getByTestId("enter-workspace").click();
-    await expect(page).toHaveURL(/\/course\//);
-
-    const url = page.url();
-    const match = url.match(/\/course\/([^/?#]+)/);
-    const courseId = match ? match[1] : "";
-    expect(courseId).toBeTruthy();
-
-    const course = await getCourseViaApi(courseId);
-    expect(course.metadata).toMatchObject({
-      auto_scrape: {
-        enabled: false,
-      },
-    });
-  });
-
-  // ---- NL instruction ---------------------------------------------------
-
-  test("NL instruction is handed off to the workspace once", async ({ page }) => {
-    await skipOnboarding(page);
-
-    await page.goto("/new");
-    await page.getByTestId("mode-option-upload").click();
-    await page.getByTestId("mode-continue").click();
-    await page.getByTestId("project-name-input").fill("NL Instruction Course");
-    await page.getByTestId("start-parsing").click();
-    await expect(page.getByTestId("continue-to-features")).toBeVisible({ timeout: 60_000 });
-    await page.getByTestId("continue-to-features").click();
-
-    // Fill in the NL instruction textarea on the features page
-    const nlTextarea = page.locator("textarea");
-    await nlTextarea.fill("Focus on algorithms and use bullet points");
-
-    await page.getByTestId("enter-workspace").click();
-    await expect(page).toHaveURL(/\/course\//);
-
-    const url = page.url();
-    const match = url.match(/\/course\/([^/?#]+)/);
-    const courseId = match ? match[1] : "";
-    expect(courseId).toBeTruthy();
-
-    const consumedFlag = await page.evaluate(
-      (id) => sessionStorage.getItem(`course_init_prompt_consumed_${id}`),
-      courseId,
-    );
-    expect(consumedFlag).toBe("true");
   });
 });

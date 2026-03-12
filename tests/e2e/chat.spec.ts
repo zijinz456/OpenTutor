@@ -7,6 +7,7 @@ import {
   expectAssistantMessage,
   hasRealLlmEnv,
   openChatDrawer,
+  presetTemplateLayout,
 } from "./helpers/test-utils";
 
 // ---------------------------------------------------------------------------
@@ -21,22 +22,26 @@ test.describe("Basic chat", () => {
 
   test.beforeEach(async ({ page }) => {
     await skipOnboarding(page);
+    await presetTemplateLayout(page, courseId);
     await page.goto(`/course/${courseId}`);
     await openChatDrawer(page);
   });
 
   test("shows empty state with placeholder text", async ({ page }) => {
     // When no messages exist, the chat panel shows placeholder text
-    await expect(page.getByText(/No messages yet|AI will reference/i)).toBeVisible();
+    // This works even without LLM — the empty state is always shown
+    await expect(page.getByText(/No messages yet/i)).toBeVisible();
   });
 
   test("chat input accepts text", async ({ page }) => {
+    test.skip(!hasRealLlmEnv(), "Chat input is disabled without a real LLM provider");
     const chatInput = page.getByTestId("chat-input");
     await chatInput.fill("Hello, this is a test message");
     await expect(chatInput).toHaveValue("Hello, this is a test message");
   });
 
   test("send button disabled when input is empty", async ({ page }) => {
+    test.skip(!hasRealLlmEnv(), "Chat input is disabled without a real LLM provider");
     const sendButton = page.getByTestId("chat-send");
     // Input should be empty initially
     await expect(page.getByTestId("chat-input")).toHaveValue("");
@@ -44,6 +49,7 @@ test.describe("Basic chat", () => {
   });
 
   test("sending a message shows user bubble", async ({ page }) => {
+    test.skip(!hasRealLlmEnv(), "Chat input is disabled without a real LLM provider");
     const message = "What is binary search?";
     await page.getByTestId("chat-input").fill(message);
     await page.getByTestId("chat-send").click();
@@ -53,11 +59,13 @@ test.describe("Basic chat", () => {
   });
 
   test("assistant responds after sending a message", async ({ page }) => {
+    test.skip(!hasRealLlmEnv(), "Chat input is disabled without a real LLM provider");
     await sendChatMessage(page, "Explain bubble sort");
     await expectAssistantMessage(page);
   });
 
   test("Enter key sends message", async ({ page }) => {
+    test.skip(!hasRealLlmEnv(), "Chat input is disabled without a real LLM provider");
     const chatInput = page.getByTestId("chat-input");
     await chatInput.fill("Sending with enter key");
     await chatInput.press("Enter");
@@ -67,6 +75,7 @@ test.describe("Basic chat", () => {
   });
 
   test("Shift+Enter inserts newline without sending", async ({ page }) => {
+    test.skip(!hasRealLlmEnv(), "Chat input is disabled without a real LLM provider");
     const chatInput = page.getByTestId("chat-input");
     await chatInput.fill("Line one");
     await chatInput.press("Shift+Enter");
@@ -105,7 +114,9 @@ test.describe.serial("Session management", () => {
   });
 
   test.beforeEach(async ({ page }) => {
+    test.skip(!hasRealLlmEnv(), "Chat input is disabled without a real LLM provider");
     await skipOnboarding(page);
+    await presetTemplateLayout(page, courseId);
     await page.goto(`/course/${courseId}`);
     await openChatDrawer(page);
   });
@@ -151,6 +162,7 @@ test.describe.serial("Chat with content", () => {
   let courseId: string;
 
   test.beforeAll(async ({ browser }) => {
+    test.skip(!hasRealLlmEnv(), "Chat input is disabled without a real LLM provider");
     const page = await browser.newPage();
     await skipOnboarding(page);
     courseId = await createCourseWithContent(page, "Chat Content Tests");
@@ -158,7 +170,9 @@ test.describe.serial("Chat with content", () => {
   });
 
   test.beforeEach(async ({ page }) => {
+    test.skip(!hasRealLlmEnv(), "Chat input is disabled without a real LLM provider");
     await skipOnboarding(page);
+    await presetTemplateLayout(page, courseId);
     await page.goto(`/course/${courseId}`);
     await openChatDrawer(page);
   });
@@ -203,7 +217,9 @@ test.describe("Edge cases", () => {
   });
 
   test.beforeEach(async ({ page }) => {
+    test.skip(!hasRealLlmEnv(), "Chat input is disabled without a real LLM provider");
     await skipOnboarding(page);
+    await presetTemplateLayout(page, courseId);
     await page.goto(`/course/${courseId}`);
     await openChatDrawer(page);
   });

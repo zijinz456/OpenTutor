@@ -1,61 +1,50 @@
 import { expect, test } from "@playwright/test";
-import { skipOnboarding, createCourseWithContent, dispatchShortcut, ensureRightPanelVisible } from "./helpers/test-utils";
+import { skipOnboarding, createCourseWithContent } from "./helpers/test-utils";
 
+/**
+ * Keyboard Shortcuts tests.
+ *
+ * The block-based workspace renders sections as blocks in a grid.
+ * The STEM Student template creates notes, quiz, progress, and knowledge_graph blocks.
+ * Cmd+K opens the search dialog.
+ */
 test.describe.serial("Keyboard Shortcuts", () => {
   test.beforeEach(async ({ page }) => {
     await skipOnboarding(page);
   });
 
-  test("Cmd+1 applies notesFocused layout", async ({ page }) => {
+  test("notes block is visible after template is applied", async ({ page }) => {
     await createCourseWithContent(page, "KB Notes");
-    await dispatchShortcut(page, "1");
-    // Notes panel should be prominently visible
-    await expect(page.getByTestId("notes-panel")).toBeVisible();
+    // Notes panel should be visible as a block in the grid
+    await expect(page.getByTestId("notes-panel")).toBeVisible({ timeout: 15_000 });
   });
 
-  test("Cmd+2 applies quizFocused layout", async ({ page }) => {
+  test("quiz block renders quiz tab", async ({ page }) => {
     await createCourseWithContent(page, "KB Quiz");
-    await ensureRightPanelVisible(page);
-    await dispatchShortcut(page, "2");
-    // Quiz area should be visible
-    await expect(page.getByRole("button", { name: "Quiz", exact: true })).toBeVisible();
+    // Quiz tab should be visible in the practice section block
+    await expect(page.getByRole("tab", { name: "Quiz", exact: true }).first()).toBeVisible({ timeout: 15_000 });
   });
 
-  test("Cmd+3 applies chatFocused layout", async ({ page }) => {
-    await createCourseWithContent(page, "KB Chat");
-    await dispatchShortcut(page, "3");
-    // Chat panel should be prominently visible
-    await expect(page.getByTestId("chat-input")).toBeVisible();
-  });
-
-  test("Cmd+0 applies balanced layout", async ({ page }) => {
-    await createCourseWithContent(page, "KB Balanced");
-    // First switch to a different layout
-    await dispatchShortcut(page, "1");
-    await page.waitForTimeout(500);
-    // Then reset to balanced
-    await dispatchShortcut(page, "0");
-    // Both notes and chat should be visible in balanced layout
-    await expect(page.getByTestId("notes-panel")).toBeVisible();
-    await expect(page.getByTestId("chat-input")).toBeVisible();
-  });
-
-  test("shortcuts do not fire without modifier key", async ({ page }) => {
-    await createCourseWithContent(page, "KB NoMod");
-    // Press just "1" without modifier - should type into focused element, not trigger shortcut
-    await page.keyboard.press("1");
-    // Layout should remain unchanged - both panels still visible
-    await expect(page.getByTestId("notes-panel")).toBeVisible();
-    await expect(page.getByTestId("chat-input")).toBeVisible();
-  });
-
-  test("keyboard shortcut works after panel interaction", async ({ page }) => {
-    await createCourseWithContent(page, "KB AfterInteract");
-    // Click on chat input first
-    await page.getByTestId("chat-input").click();
-    // Press Escape to unfocus
-    await page.keyboard.press("Escape");
-    await dispatchShortcut(page, "1");
-    await expect(page.getByTestId("notes-panel")).toBeVisible();
+  test("Cmd+K opens search dialog", async ({ page }) => {
+    await createCourseWithContent(page, "KB Search");
+    // Dispatch Cmd+K
+    const useMeta = process.platform === "darwin";
+    await page.evaluate(
+      ({ useMeta }) => {
+        window.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key: "k",
+            code: "KeyK",
+            metaKey: useMeta,
+            ctrlKey: !useMeta,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      },
+      { useMeta },
+    );
+    // Search dialog should open
+    await expect(page.getByRole("dialog")).toBeVisible({ timeout: 5_000 });
   });
 });

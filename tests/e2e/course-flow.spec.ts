@@ -20,11 +20,15 @@ async function uploadFixture(page: import("@playwright/test").Page, courseId: st
   await page.reload();
   await expect(page).toHaveURL(new RegExp(`/course/${courseId}`), { timeout: 30_000 });
   // Wait for the workspace to load (template picker, block grid, or sync button)
-  await expect(
-    page.getByRole("button", { name: "Sync course content" })
-      .or(page.getByRole("heading", { name: "Choose a template" }))
-      .or(page.getByRole("button", { name: "Open chat" }))
-  ).toBeVisible({ timeout: 30_000 });
+  await expect.poll(
+    async () =>
+      (await Promise.all([
+        page.getByRole("button", { name: "Sync course content" }).isVisible().catch(() => false),
+        page.getByRole("heading", { name: "Choose a template" }).isVisible().catch(() => false),
+        page.getByRole("button", { name: "Open chat" }).isVisible().catch(() => false),
+      ])).some(Boolean),
+    { timeout: 30_000 },
+  ).toBe(true);
 }
 
 async function createCourseViaApi(
