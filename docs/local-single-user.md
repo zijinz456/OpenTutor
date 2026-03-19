@@ -90,7 +90,7 @@ For release-candidate parity with CI test gates, also run:
 bash scripts/dev_local.sh verify-host --ci-parity
 ```
 
-Current beta-phase coverage gate is `35`. The next target after this stabilization cycle is `45+`.
+Current beta-phase coverage gate is `45`.
 
 For final release closeout, run `scripts/quickstart.sh` on a clean machine and verify all health checks pass.
 

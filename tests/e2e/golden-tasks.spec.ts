@@ -31,11 +31,13 @@ test.describe.serial("Golden tasks — core learning journey", () => {
     test.setTimeout(120_000);
     const courseId = await createCourseWithContent(page, "Golden Upload");
 
-    // Verify content tree has nodes
-    const treeResp = await request.get(`${apiBaseUrl}/courses/${courseId}/content-tree`);
-    expect(treeResp.ok()).toBeTruthy();
-    const tree = await treeResp.json();
-    expect(tree.length).toBeGreaterThan(0);
+    // Verify content tree has nodes (poll to handle read-after-write lag under load)
+    await expect.poll(async () => {
+      const treeResp = await request.get(`${apiBaseUrl}/courses/${courseId}/content-tree`);
+      if (!treeResp.ok()) return 0;
+      const tree = await treeResp.json();
+      return Array.isArray(tree) ? tree.length : 0;
+    }, { timeout: 15_000 }).toBeGreaterThan(0);
   });
 
   test("GT-2: Chat sends message and receives response", async ({ page }) => {
@@ -57,16 +59,22 @@ test.describe.serial("Golden tasks — core learning journey", () => {
     test.setTimeout(120_000);
     const courseId = await createCourseWithContent(page, "Golden Plan");
 
-    const resp = await request.post(`${apiBaseUrl}/tasks/submit`, {
-      data: {
-        task_type: "exam_prep",
-        title: "Golden exam prep task",
-        course_id: courseId,
-        input_json: { course_id: courseId, days_until_exam: 3 },
-        requires_approval: true,
-        max_attempts: 2,
-      },
-    });
+    // Retry on 503 (SQLite lock from concurrent ingestion) or 429 (rate limit)
+    let resp!: Awaited<ReturnType<typeof request.post>>;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      resp = await request.post(`${apiBaseUrl}/tasks/submit`, {
+        data: {
+          task_type: "exam_prep",
+          title: "Golden exam prep task",
+          course_id: courseId,
+          input_json: { course_id: courseId, days_until_exam: 3 },
+          requires_approval: true,
+          max_attempts: 2,
+        },
+      });
+      if (resp.ok() || (resp.status() !== 503 && resp.status() !== 429)) break;
+      await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
+    }
     expect(resp.ok()).toBeTruthy();
     const task = await resp.json();
     expect(task.status).toBe("pending_approval");
@@ -77,31 +85,41 @@ test.describe.serial("Golden tasks — core learning journey", () => {
     test.setTimeout(150_000);
     const courseId = await createCourseWithContent(page, "Golden Goal");
 
-    // Create a study goal with a deadline
-    const goalResp = await request.post(`${apiBaseUrl}/goals/`, {
-      data: {
-        course_id: courseId,
-        title: "Master Chapter 1",
-        objective: "Achieve 90% accuracy on Chapter 1 quiz",
-        target_date: new Date(Date.now() + 3 * 86_400_000).toISOString(),
-        next_action: "Review key concepts",
-      },
-    });
+    // Create a study goal with a deadline (retry on 503 — SQLite lock from ingestion)
+    let goalResp!: Awaited<ReturnType<typeof request.post>>;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      goalResp = await request.post(`${apiBaseUrl}/goals/`, {
+        data: {
+          course_id: courseId,
+          title: "Master Chapter 1",
+          objective: "Achieve 90% accuracy on Chapter 1 quiz",
+          target_date: new Date(Date.now() + 3 * 86_400_000).toISOString(),
+          next_action: "Review key concepts",
+        },
+      });
+      if (goalResp.ok() || (goalResp.status() !== 503 && goalResp.status() !== 429)) break;
+      await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
+    }
     expect(goalResp.ok()).toBeTruthy();
     const goal = await goalResp.json();
     expect(goal.id).toBeTruthy();
 
-    // Submit a task linked to the goal
-    const taskResp = await request.post(`${apiBaseUrl}/tasks/submit`, {
-      data: {
-        task_type: "exam_prep",
-        title: "Golden task: review prep",
-        course_id: courseId,
-        input_json: { course_id: courseId, days_until_exam: 3 },
-        requires_approval: true,
-        max_attempts: 2,
-      },
-    });
+    // Submit a task linked to the goal (retry on 503/429)
+    let taskResp!: Awaited<ReturnType<typeof request.post>>;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      taskResp = await request.post(`${apiBaseUrl}/tasks/submit`, {
+        data: {
+          task_type: "exam_prep",
+          title: "Golden task: review prep",
+          course_id: courseId,
+          input_json: { course_id: courseId, days_until_exam: 3 },
+          requires_approval: true,
+          max_attempts: 2,
+        },
+      });
+      if (taskResp.ok() || (taskResp.status() !== 503 && taskResp.status() !== 429)) break;
+      await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
+    }
     expect(taskResp.ok()).toBeTruthy();
     const task = await taskResp.json();
     expect(task.status).toBe("pending_approval");
@@ -118,16 +136,21 @@ test.describe.serial("Golden tasks — core learning journey", () => {
     test.setTimeout(120_000);
     const courseId = await createCourseWithContent(page, "Golden Prefs");
 
-    // Set a preference via API
-    const prefResp = await request.post(`${apiBaseUrl}/preferences/`, {
-      data: {
-        dimension: "explanation_style",
-        value: "detailed",
-        scope: "course",
-        course_id: courseId,
-        source: "golden_test",
-      },
-    });
+    // Set a preference via API (retry on 503 — SQLite lock)
+    let prefResp!: Awaited<ReturnType<typeof request.post>>;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      prefResp = await request.post(`${apiBaseUrl}/preferences/`, {
+        data: {
+          dimension: "explanation_style",
+          value: "detailed",
+          scope: "course",
+          course_id: courseId,
+          source: "golden_test",
+        },
+      });
+      if (prefResp.ok() || (prefResp.status() !== 503 && prefResp.status() !== 429)) break;
+      await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
+    }
     expect(prefResp.ok()).toBeTruthy();
     const pref = await prefResp.json();
 

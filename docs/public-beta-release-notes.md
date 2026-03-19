@@ -36,7 +36,8 @@ These features are available but may change quickly. Behavior may vary across co
 - Backend regression suite passes
 - Frontend lint + tests + production build pass
 - SQLite local integration and API smoke gates pass in CI
-- Coverage gate: `--cov-fail-under=35`
+- Browser E2E suite passes in CI
+- Coverage gate: `--cov-fail-under=45`
 
 ## Rollback Policy
 

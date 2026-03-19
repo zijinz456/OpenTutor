@@ -8,7 +8,7 @@ const apiBaseUrl = process.env.PLAYWRIGHT_API_URL || `http://127.0.0.1:${backend
 const pythonBin = process.env.PYTHON_BIN || "../../.venv/bin/python";
 const llmRequired = process.env.LLM_REQUIRED || "0";
 const localEnvFile = process.env.LOCAL_ENV_FILE || "/tmp/opentutor_playwright.env";
-const playwrightWorkers = Number(process.env.PLAYWRIGHT_WORKERS || (useExistingServer ? "1" : "5"));
+const playwrightWorkers = Number(process.env.PLAYWRIGHT_WORKERS || (useExistingServer ? "1" : "2"));
 const bootstrapLlmFromEnv = process.env.BOOTSTRAP_LLM_FROM_ENV === "1";
 const backendLlmEnv = bootstrapLlmFromEnv
   ? 'OPENAI_API_KEY="${OPENAI_API_KEY:-}" ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}" DEEPSEEK_API_KEY="${DEEPSEEK_API_KEY:-}" OPENROUTER_API_KEY="${OPENROUTER_API_KEY:-}" GEMINI_API_KEY="${GEMINI_API_KEY:-}" GROQ_API_KEY="${GROQ_API_KEY:-}"'
@@ -41,7 +41,7 @@ export default defineConfig({
     ? undefined
     : [
         {
-          command: `cd apps/api && rm -f ${localEnvFile} && touch ${localEnvFile} && LOCAL_ENV_FILE=${localEnvFile} ${backendLlmEnv} APP_AUTO_CREATE_TABLES=true APP_AUTO_SEED_SYSTEM=true APP_RUN_SCHEDULER=0 CORS_ORIGINS=http://127.0.0.1:${frontendPort} SCRAPE_FIXTURE_DIR=../../tests/e2e/fixtures/scrape LLM_REQUIRED=${llmRequired} ${pythonBin} -m uvicorn main:app --host 127.0.0.1 --port ${backendPort}`,
+          command: `cd apps/api && rm -f ${localEnvFile} && touch ${localEnvFile} && LOCAL_ENV_FILE=${localEnvFile} ${backendLlmEnv} DATABASE_URL=sqlite+aiosqlite:///$(mktemp -d)/playwright_test.db APP_AUTO_CREATE_TABLES=true APP_AUTO_SEED_SYSTEM=true APP_RUN_SCHEDULER=0 CORS_ORIGINS=http://127.0.0.1:${frontendPort} SCRAPE_FIXTURE_DIR=../../tests/e2e/fixtures/scrape LLM_REQUIRED=${llmRequired} RATE_LIMIT_RPM=600 RATE_LIMIT_LLM_RPM=100 ${pythonBin} -m uvicorn main:app --host 127.0.0.1 --port ${backendPort}`,
           url: `${apiBaseUrl}/health`,
           reuseExistingServer: false,
           stdout: "ignore",

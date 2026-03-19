@@ -91,6 +91,8 @@ class Settings(BaseSettings):
 
     # Rate limiting
     rate_limit_mode: str = "simple"  # "simple" | "cost_aware"
+    rate_limit_rpm: int = 120  # requests per minute per IP (simple mode)
+    rate_limit_llm_rpm: int = 20  # requests per minute per IP for LLM endpoints
     rate_limit_cost_budget: int = 500  # cost units per minute per IP (cost_aware mode)
     trust_proxy_headers: bool = False  # Trust X-Forwarded-For header (only enable behind a reverse proxy)
 

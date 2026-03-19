@@ -196,14 +196,14 @@ OpenTutor/
 │   │   │   ├── search/             # Hybrid BM25 + vector RAG
 │   │   │   ├── spaced_repetition/  # FSRS scheduler + flashcards
 │   │   │   └── learning_science/   # BKT, difficulty selection, cognitive load
-│   │   ├── routers/           # 42 API route modules
-│   │   └── models/            # 27 SQLAlchemy ORM models
+│   │   ├── routers/           # API route modules (composed + subrouters)
+│   │   └── models/            # SQLAlchemy ORM models
 │   └── web/              # Next.js 16 frontend
 │       └── src/
 │           ├── components/blocks/  # 12 composable learning blocks
 │           ├── store/              # Zustand state stores
 │           └── lib/block-system/   # Block registry, templates, feature unlock
-├── tests/                # pytest + Playwright E2E (187+ tests)
+├── tests/                # pytest + Playwright E2E
 └── docs/                 # PRD, SPEC, architecture decisions
 ```
 
@@ -223,7 +223,7 @@ OpenTutor/
 |-------|-------------|
 | **Frontend** | Next.js 16, React 19, TypeScript, Tailwind CSS 4, Zustand, shadcn/ui |
 | **Backend** | FastAPI, Python 3.11+, Pydantic 2, SQLAlchemy 2 (async), Alembic |
-| **Database** | SQLite (local-first), optional PostgreSQL |
+| **Database** | SQLite (local-first, current release channel) |
 | **Learning Science** | FSRS 4.5, BKT, LOOM, LECTOR, Cognitive Load Theory |
 | **CI/CD** | GitHub Actions, Docker Compose, Playwright |
 

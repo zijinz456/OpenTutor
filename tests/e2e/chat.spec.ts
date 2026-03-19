@@ -27,10 +27,12 @@ test.describe("Basic chat", () => {
     await openChatDrawer(page);
   });
 
-  test("shows empty state with placeholder text", async ({ page }) => {
-    // When no messages exist, the chat panel shows placeholder text
-    // This works even without LLM — the empty state is always shown
-    await expect(page.getByText(/No messages yet/i)).toBeVisible();
+  test("shows welcome or empty state when chat opens", async ({ page }) => {
+    // The backend auto-generates a welcome greeting on new sessions,
+    // so the chat may show either the "No messages yet" empty state
+    // or a "Welcome back" greeting depending on timing.
+    const welcomeOrEmpty = page.getByText(/No messages yet|Welcome back/i).first();
+    await expect(welcomeOrEmpty).toBeVisible({ timeout: 15_000 });
   });
 
   test("chat input accepts text", async ({ page }) => {

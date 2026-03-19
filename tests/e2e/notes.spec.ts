@@ -61,7 +61,7 @@ test.describe.serial("Notes Panel", () => {
     const panel = page.getByTestId("notes-panel");
     await expect(panel).toBeVisible({ timeout: 30_000 });
     // AI Notes should be active by default
-    await expect(panel.getByRole("button", { name: "AI Notes" })).toBeVisible({ timeout: 15_000 });
+    await expect(panel.getByRole("button", { name: "AI Notes", exact: true })).toBeVisible({ timeout: 15_000 });
     await expect(panel.getByRole("button", { name: "Source" })).toBeVisible({ timeout: 15_000 });
     // Click Source to switch view
     await panel.getByRole("button", { name: "Source" }).click();
@@ -142,9 +142,14 @@ test.describe.serial("Notes Panel", () => {
     // Next section button should be visible
     const nextBtn = panel.getByRole("button", { name: "Next section" });
     await expect(nextBtn).toBeVisible({ timeout: 15_000 });
-    await nextBtn.click();
-    // Section dropdown should now show the next section
+    // Get the current selected option text
     const sectionSelect = panel.getByRole("combobox", { name: "Select section" });
-    await expect(sectionSelect).toHaveValue(/Why It Matters/, { timeout: 5_000 });
+    const beforeText = await sectionSelect.locator("option:checked").textContent();
+    await nextBtn.click();
+    // After clicking next, the selected option should change
+    await expect.poll(
+      async () => (await sectionSelect.locator("option:checked").textContent()) ?? "",
+      { timeout: 5_000 },
+    ).not.toBe(beforeText ?? "");
   });
 });

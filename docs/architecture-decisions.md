@@ -147,7 +147,7 @@ p_l_new = p_l_post + (1 - p_l_post) × p_t  # Learning opportunity
 - Agent can surface relevant blocks based on detected needs (e.g., wrong_answers block after consecutive failures)
 - Each block is independently renderable and testable
 
-**Block types (13):** `notes`, `quiz`, `flashcards`, `progress`, `knowledge_graph`, `review`, `plan`, `chapter_list`, `podcast`, `forecast`, `wrong_answers`, `agent_insight`
+**Block types (current):** `notes`, `quiz`, `flashcards`, `progress`, `knowledge_graph`, `review`, `plan`, `chapter_list`, `forecast`, `wrong_answers`, `agent_insight`
 
 **Three-source model:** Blocks originate from user (manual add), template (mode selection), or agent (AI-suggested). Agent blocks can require explicit approval before activation (`needsApproval` flag).
 
@@ -173,16 +173,15 @@ p_l_new = p_l_post + (1 - p_l_post) × p_t  # Learning opportunity
 
 **Context:** OpenTutor targets individual students who need a self-hosted tutoring system without infrastructure complexity.
 
-**Decision:** Default to SQLite (via aiosqlite) with optional PostgreSQL for multi-user deployments.
+**Decision:** SQLite-only local mode in this repository channel (via aiosqlite).
 
 **Rationale:**
 - Zero-config setup for single users (just run the app)
 - SQLite handles concurrent reads well; single-user write contention is minimal
-- Same SQLAlchemy ORM code works for both backends
 - StaticPool for SQLite eliminates connection overhead
-- Production PostgreSQL path uses proper connection pooling (pool_size=10, max_overflow=20)
+- Zero external infrastructure requirement for local single-user beta
 
-**Implementation:** `apps/api/database.py` — conditional engine configuration based on `DATABASE_URL` prefix. `config.py:Settings.database_url` defaults to `sqlite+aiosqlite:///./opentutor.db`.
+**Implementation:** `apps/api/database.py` enables SQLite WAL + local performance pragmas. `apps/api/config.py` resolves default DB path to `~/.opentutor/data.db` and rejects non-SQLite URLs for this channel.
 
 ---
 
@@ -205,16 +204,16 @@ p_l_new = p_l_post + (1 - p_l_post) × p_t  # Learning opportunity
 
 ---
 
-## ADR-008: 8-Signal Cognitive Load Detection
+## ADR-008: 12-Signal Cognitive Load Detection
 
 **Status:** Accepted
 **Date:** 2026-02-25
 
 **Context:** Adaptive tutoring requires sensing when a student is overwhelmed to adjust difficulty and pacing.
 
-**Decision:** Compute cognitive load as a weighted sum of 8 real-time signals from student interaction data.
+**Decision:** Compute cognitive load as a weighted sum of 12 real-time signals from student interaction data.
 
-**Signals:**
+**Signals (current):**
 1. Message length trend (shorter = overloaded)
 2. Question frequency (more questions = confusion)
 3. Topic switching rate (rapid switching = scattered attention)
@@ -222,6 +221,10 @@ p_l_new = p_l_post + (1 - p_l_post) × p_t  # Learning opportunity
 5. Session duration fatigue
 6. Vocabulary complexity drop
 7. Response latency increase
-8. Help-seeking frequency
+8. NLP affect (frustration/confusion)
+9. Relative baseline shift
+10. Wrong-answer streak
+11. Inter-message gap
+12. Repeated error loops
 
 **Implementation:** `apps/api/services/cognitive_load.py` — async `compute_cognitive_load()` returns 0.0-1.0 score with individual signal breakdown. Used by tutor agent to adjust response complexity and suggest breaks.

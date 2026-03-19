@@ -17,7 +17,7 @@ const securityHeaders = [
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob:",
       "font-src 'self' data:",
-      `connect-src 'self'${process.env.NODE_ENV === "development" ? " http://localhost:* ws://localhost:*" : ""}`,
+      `connect-src 'self' ${API_URL.replace(/\/api$/, "")}${process.env.NODE_ENV === "development" ? " http://localhost:* ws://localhost:*" : ""}`,
       "frame-ancestors 'none'",
     ].join("; "),
   },
@@ -28,6 +28,10 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: path.join(__dirname, "..", ".."),
   },
+  // Prevent Next.js from issuing 308 redirects for trailing slashes on /api/* paths.
+  // Without this, POST /api/courses/ gets a 308 before the rewrite runs, and the
+  // redirected request may expose the backend origin, which CSP connect-src blocks.
+  skipTrailingSlashRedirect: true,
   async headers() {
     return [
       {
@@ -37,12 +41,18 @@ const nextConfig: NextConfig = {
     ];
   },
   async rewrites() {
-    return [
-      {
-        source: "/api/:path*",
-        destination: `${API_URL}/:path*`,
-      },
-    ];
+    return {
+      // beforeFiles ensures the API proxy runs before Next.js file matching
+      // and trailing slash normalization, preventing 308 redirect races.
+      beforeFiles: [
+        {
+          source: "/api/:path*",
+          destination: `${API_URL}/:path*`,
+        },
+      ],
+      afterFiles: [],
+      fallback: [],
+    };
   },
 };
 

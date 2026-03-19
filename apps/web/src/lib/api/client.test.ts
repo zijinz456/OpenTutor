@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from "vitest";
 import { request, requestBlob, ApiError, parseApiError, API_BASE } from "./client";
 
 // Mock fetch globally
@@ -46,6 +46,8 @@ describe("parseApiError", () => {
 });
 
 describe("request", () => {
+  const randomSpy = vi.spyOn(Math, "random").mockReturnValue(0);
+
   beforeEach(() => {
     mockFetch.mockReset();
     vi.useFakeTimers();
@@ -53,6 +55,10 @@ describe("request", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  afterAll(() => {
+    randomSpy.mockRestore();
   });
 
   it("makes a GET request and returns parsed JSON", async () => {
@@ -85,7 +91,7 @@ describe("request", () => {
       .mockResolvedValueOnce(jsonResponse({ ok: true }));
 
     const promise = request<{ ok: boolean }>("/health");
-    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(2000);
     const result = await promise;
     expect(result).toEqual({ ok: true });
     expect(mockFetch).toHaveBeenCalledTimes(2);
@@ -97,7 +103,7 @@ describe("request", () => {
       .mockResolvedValueOnce(jsonResponse({ ok: true }));
 
     const promise = request<{ ok: boolean }>("/health");
-    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(2000);
     const result = await promise;
     expect(result).toEqual({ ok: true });
     expect(mockFetch).toHaveBeenCalledTimes(2);
@@ -114,7 +120,7 @@ describe("request", () => {
 
     try {
       await expect(request("/health")).rejects.toThrow(ApiError);
-      expect(mockFetch).toHaveBeenCalledTimes(4); // 1 initial + 3 retries
+      expect(mockFetch).toHaveBeenCalledTimes(5); // 1 initial + 4 retries
     } finally {
       globalThis.setTimeout = origSetTimeout;
     }

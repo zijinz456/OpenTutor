@@ -30,6 +30,10 @@ export function GraphView({ courseId, focusTerms, maxNodes = 20 }: GraphViewProp
   const [edges, setEdges] = useState<KnowledgeGraphEdge[]>([]);
   const [selected, setSelected] = useState<SimNode | null>(null);
   const [featureEnabled, setFeatureEnabled] = useState<boolean | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [empty, setEmpty] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [reloadTick, setReloadTick] = useState(0);
 
   useEffect(() => {
     getFeatureFlags()
@@ -37,21 +41,12 @@ export function GraphView({ courseId, focusTerms, maxNodes = 20 }: GraphViewProp
       .catch(() => setFeatureEnabled(false));
   }, []);
 
-  if (featureEnabled === null) return <div className="p-4 text-muted-foreground text-sm">Loading...</div>;
-  if (!featureEnabled) {
-    return (
-      <div className="p-8 text-center text-muted-foreground">
-        <p className="text-sm">Knowledge Graph (LOOM) is an experimental feature.</p>
-        <p className="text-xs mt-1">Enable it by setting <code className="bg-muted px-1 rounded">ENABLE_EXPERIMENTAL_LOOM=true</code> in your .env file.</p>
-      </div>
-    );
-  }
-  const [loading, setLoading] = useState(true);
-  const [empty, setEmpty] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [reloadTick, setReloadTick] = useState(0);
-
   useEffect(() => {
+    if (featureEnabled !== true) {
+      setLoading(false);
+      return;
+    }
+
     let cancelled = false;
     setLoading(true);
     setError(null);
@@ -104,10 +99,10 @@ export function GraphView({ courseId, focusTerms, maxNodes = 20 }: GraphViewProp
     return () => {
       cancelled = true;
     };
-  }, [courseId, focusTerms, maxNodes, reloadTick, t]);
+  }, [courseId, featureEnabled, focusTerms, maxNodes, reloadTick, t]);
 
   useEffect(() => {
-    if (nodes.length === 0) return;
+    if (featureEnabled !== true || nodes.length === 0) return;
     let iter = 0;
     let frame: number;
     const nodeMap = new Map<string, number>();
@@ -124,7 +119,7 @@ export function GraphView({ courseId, focusTerms, maxNodes = 20 }: GraphViewProp
     frame = requestAnimationFrame(step);
     return () => cancelAnimationFrame(frame);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- nodes identity changes every frame; depend only on length
-  }, [nodes.length, edges]);
+  }, [featureEnabled, nodes.length, edges]);
 
   const handleNodeClick = useCallback(
     (node: SimNode) => {
@@ -132,6 +127,16 @@ export function GraphView({ courseId, focusTerms, maxNodes = 20 }: GraphViewProp
     },
     [selected],
   );
+
+  if (featureEnabled === null) return <div className="p-4 text-muted-foreground text-sm">Loading...</div>;
+  if (!featureEnabled) {
+    return (
+      <div className="p-8 text-center text-muted-foreground">
+        <p className="text-sm">Knowledge Graph (LOOM) is an experimental feature.</p>
+        <p className="text-xs mt-1">Enable it by setting <code className="bg-muted px-1 rounded">ENABLE_EXPERIMENTAL_LOOM=true</code> in your .env file.</p>
+      </div>
+    );
+  }
 
   if (loading) {
     return (

@@ -606,8 +606,8 @@ dev_local = Path(sys.argv[3]).read_text(encoding="utf-8")
 cov_match = re.search(r"--cov-fail-under=(\d+)", pytest_ini)
 if cov_match is None:
     raise SystemExit("pytest.ini does not define --cov-fail-under.")
-if int(cov_match.group(1)) < 25:
-    raise SystemExit("pytest coverage gate must be at least 25 for this release phase.")
+if int(cov_match.group(1)) < 45:
+    raise SystemExit("pytest coverage gate must be at least 45 for this release phase.")
 
 api_tests_section = re.search(
     r"- name:\s*Run API unit tests(?P<body>.*?)(?:\n\s*-\s+name:|\Z)",

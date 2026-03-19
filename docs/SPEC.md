@@ -1,9 +1,11 @@
-# OpenTutor — Reverse-Engineered Product & Technical Specification
+# OpenTutor — Reverse-Engineered Product & Technical Specification (Archived Snapshot)
 
 > Generated: 2026-02-27
-> Scope: All code on the main branch (2 commits, ~12,110 LOC, 110+ source files)
+> Scope at generation time: historical branch snapshot
 >
-> Note: This is a historical reverse-engineering snapshot. Current repository runtime is SQLite-only local mode.
+> **Important:** This document is archived context, not the authoritative live spec.
+> For current behavior, use `README.md`, `docs/PRD.md`, and code under `apps/api` + `apps/web`.
+> Current release channel in this repository is SQLite-first local single-user mode.
 
 ---
 
@@ -39,11 +41,11 @@ OpenTutor is a self-hosted, open-source personalized learning agent. Upload PDF/
 │  (React 19, Zustand 5, react-resizable-panels 4)         │
 │                        ↕ REST API + SSE                   │
 │  Backend — Python FastAPI                                 │
-│  ├── 11 Routers (API endpoints)                           │
-│  ├── 14 Services (business logic)                         │
-│  └── 14 ORM Models (data layer)                           │
+│  ├── API routers (composed + subrouters)                  │
+│  ├── Service modules (business logic)                     │
+│  └── ORM models (data layer)                              │
 │                        ↕                                  │
-│  Data — PostgreSQL + pgvector │ Redis                     │
+│  Data — SQLite local mode (Redis optional)                │
 └──────────────────────────────────────────────────────────┘
 ```
 

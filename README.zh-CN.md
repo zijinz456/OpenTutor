@@ -164,14 +164,14 @@ OpenTutor/
 │   │   │   ├── search/             # 混合 BM25 + 向量 RAG
 │   │   │   ├── spaced_repetition/  # FSRS 调度 + 闪卡
 │   │   │   └── learning_science/   # BKT、难度选择、认知负荷
-│   │   ├── routers/           # 42 个 API 路由模块
-│   │   └── models/            # 27 个 SQLAlchemy ORM 模型
+│   │   ├── routers/           # API 路由模块（组合路由 + 子路由）
+│   │   └── models/            # SQLAlchemy ORM 模型
 │   └── web/              # Next.js 16 前端
 │       └── src/
 │           ├── components/blocks/  # 12 种可组合学习 Block
 │           ├── store/              # Zustand 状态管理
 │           └── lib/block-system/   # Block 注册、模板、功能解锁
-├── tests/                # pytest + Playwright E2E（187+ 测试）
+├── tests/                # pytest + Playwright E2E
 └── docs/                 # PRD、SPEC、架构决策
 ```
 
@@ -191,7 +191,7 @@ OpenTutor/
 |------|------|
 | **前端** | Next.js 16、React 19、TypeScript、Tailwind CSS 4、Zustand、shadcn/ui |
 | **后端** | FastAPI、Python 3.11+、Pydantic 2、SQLAlchemy 2（异步）、Alembic |
-| **数据库** | SQLite（本地优先）、可选 PostgreSQL |
+| **数据库** | SQLite（本地优先，当前发布通道） |
 | **学习科学** | FSRS 4.5、BKT、LOOM、LECTOR、认知负荷理论 |
 | **CI/CD** | GitHub Actions、Docker Compose、Playwright |
 

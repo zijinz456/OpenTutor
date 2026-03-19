@@ -61,8 +61,8 @@ def _configure_middleware(app: FastAPI) -> None:
     app.add_middleware(AuditLogMiddleware)
     app.add_middleware(
         RateLimitMiddleware,
-        default_rpm=120,
-        llm_rpm=20,
+        default_rpm=settings.rate_limit_rpm,
+        llm_rpm=settings.rate_limit_llm_rpm,
         cost_budget_per_minute=settings.rate_limit_cost_budget,
         cost_aware=(settings.rate_limit_mode == "cost_aware"),
     )

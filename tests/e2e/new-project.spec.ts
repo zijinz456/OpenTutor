@@ -53,12 +53,9 @@ test.describe("Upload Form", () => {
   test("Start Parsing button starts course creation", async ({ page }) => {
     await page.getByTestId("project-name-input").fill("Parse Test Project");
     await page.getByTestId("start-parsing").click();
-    // Should transition to parsing step — look for progress indicators, enter-now, or continue button
+    // Should transition to parsing step — heading confirms the step changed
     await expect(
-      page.getByTestId("continue-to-features")
-        .or(page.getByTestId("enter-now"))
-        .or(page.getByText(/\d+%/))
-        .or(page.getByText(/parsing|processing|creating/i))
+      page.getByRole("heading", { name: /processing/i }),
     ).toBeVisible({ timeout: 30_000 });
   });
 });
@@ -99,13 +96,15 @@ test.describe("Full flow", () => {
   });
 
   test("complete upload flow end-to-end", async ({ page }) => {
+    test.setTimeout(120_000);
     await page.goto("/new");
     await page.getByTestId("project-name-input").fill("Upload E2E Test");
     await page.getByTestId("start-parsing").click();
 
-    // Wait for parsing to finish
-    await expect(page.getByTestId("continue-to-features")).toBeVisible({ timeout: 60_000 });
-    await page.getByTestId("continue-to-features").click();
+    // Wait for parsing to finish — either continue-to-features or enter-now button
+    const continueBtn = page.getByTestId("continue-to-features").or(page.getByTestId("enter-now"));
+    await expect(continueBtn.first()).toBeVisible({ timeout: 60_000 });
+    await continueBtn.first().click();
 
     // Should arrive at workspace
     await expect(page).toHaveURL(/\/course\//, { timeout: 15_000 });

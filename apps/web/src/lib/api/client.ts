@@ -79,11 +79,16 @@ export async function parseApiError(res: Response): Promise<ApiError> {
   });
 }
 
-const MAX_RETRIES = 3;
-const RETRY_BASE_MS = 1000;
+const MAX_RETRIES = 4;
+const RETRY_BASE_MS = 1500;
+const REQUEST_TIMEOUT_MS = 30_000;
 
 function isRetryable(status: number): boolean {
   return status >= 500 || status === 429;
+}
+
+function retryDelay(attempt: number): number {
+  return RETRY_BASE_MS * 2 ** attempt + Math.random() * 500;
 }
 
 function getCsrfToken(): string | undefined {
@@ -171,16 +176,20 @@ export async function request<T>(path: string, options?: RequestInit): Promise<T
   let lastError: Error | undefined;
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     try {
       const res = await fetch(`${API_BASE}${path}`, {
         ...fetchOptions,
+        signal: controller.signal,
       });
+      clearTimeout(timeoutId);
 
       if (!res.ok) {
         const err = await parseApiError(res);
         if (attempt < MAX_RETRIES && isRetryable(res.status)) {
           lastError = err;
-          await new Promise((r) => setTimeout(r, RETRY_BASE_MS * 2 ** attempt));
+          await new Promise((r) => setTimeout(r, retryDelay(attempt)));
           continue;
         }
         showApiErrorToast(err);
@@ -194,6 +203,13 @@ export async function request<T>(path: string, options?: RequestInit): Promise<T
       const text = await res.text();
       return text ? (JSON.parse(text) as T) : (undefined as T);
     } catch (err) {
+      clearTimeout(timeoutId);
+      // Abort errors are retryable (request timed out)
+      if (err instanceof DOMException && err.name === "AbortError" && attempt < MAX_RETRIES) {
+        lastError = new TypeError("Request timed out");
+        await new Promise((r) => setTimeout(r, retryDelay(attempt)));
+        continue;
+      }
       // Network errors (fetch throws TypeError for network failures).
       // Only retry genuine network errors, not JSON.parse or other TypeErrors.
       if (
@@ -202,7 +218,7 @@ export async function request<T>(path: string, options?: RequestInit): Promise<T
         (err.message.includes("fetch") || err.message.includes("network") || err.message === "Failed to fetch" || err.message.includes("NetworkError"))
       ) {
         lastError = err;
-        await new Promise((r) => setTimeout(r, RETRY_BASE_MS * 2 ** attempt));
+        await new Promise((r) => setTimeout(r, retryDelay(attempt)));
         continue;
       }
       throw err;
@@ -227,16 +243,20 @@ export async function requestBlob(path: string, options?: RequestInit): Promise<
   let lastError: Error | undefined;
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     try {
       const res = await fetch(`${API_BASE}${path}`, {
         ...fetchOptions,
+        signal: controller.signal,
       });
+      clearTimeout(timeoutId);
 
       if (!res.ok) {
         const err = await parseApiError(res);
         if (attempt < MAX_RETRIES && isRetryable(res.status)) {
           lastError = err;
-          await new Promise((r) => setTimeout(r, RETRY_BASE_MS * 2 ** attempt));
+          await new Promise((r) => setTimeout(r, retryDelay(attempt)));
           continue;
         }
         showApiErrorToast(err);
@@ -251,9 +271,15 @@ export async function requestBlob(path: string, options?: RequestInit): Promise<
         contentType: res.headers.get("Content-Type") || "application/octet-stream",
       };
     } catch (err) {
+      clearTimeout(timeoutId);
+      if (err instanceof DOMException && err.name === "AbortError" && attempt < MAX_RETRIES) {
+        lastError = new TypeError("Request timed out");
+        await new Promise((r) => setTimeout(r, retryDelay(attempt)));
+        continue;
+      }
       if (err instanceof TypeError && attempt < MAX_RETRIES) {
         lastError = err;
-        await new Promise((r) => setTimeout(r, RETRY_BASE_MS * 2 ** attempt));
+        await new Promise((r) => setTimeout(r, retryDelay(attempt)));
         continue;
       }
       throw err;

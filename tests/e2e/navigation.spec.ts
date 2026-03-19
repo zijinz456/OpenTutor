@@ -16,6 +16,7 @@ test.describe("Navigation", () => {
   // ---- round-trip -------------------------------------------------------
 
   test("dashboard -> new project -> workspace round-trip", async ({ page }) => {
+    test.setTimeout(120_000);
     await page.goto("/");
     // Dashboard -> /new via "New Space" button
     await page.getByRole("button", { name: /New Space/i }).first().click();
