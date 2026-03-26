@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   getHealthStatus,
@@ -39,6 +39,8 @@ export function useSetup() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const t = useT();
+  const tRef = useRef(t);
+  tRef.current = t;
   const { addCourse } = useCourseStore();
 
   // ── Step (honor ?step=content query param for returning users) ──
@@ -107,8 +109,14 @@ export function useSetup() {
   const probeSentRef = useRef(false);
 
   // ── Derived ──
-  const parseSteps = deriveParseSteps(ingestionJobs, isSubmittingContent, noSourcesSubmitted, t);
-  const parseProgress = deriveParseProgress(ingestionJobs, isSubmittingContent, noSourcesSubmitted);
+  const parseSteps = useMemo(
+    () => deriveParseSteps(ingestionJobs, isSubmittingContent, noSourcesSubmitted, t),
+    [ingestionJobs, isSubmittingContent, noSourcesSubmitted, t],
+  );
+  const parseProgress = useMemo(
+    () => deriveParseProgress(ingestionJobs, isSubmittingContent, noSourcesSubmitted),
+    [ingestionJobs, isSubmittingContent, noSourcesSubmitted],
+  );
   const hasCompletedJob = ingestionJobs.some((job) => job.status === "completed");
   const allJobsFailed = ingestionJobs.length > 0 && ingestionJobs.every((job) => job.status === "failed");
 
@@ -230,10 +238,8 @@ export function useSetup() {
   useEffect(() => {
     if (step !== "discovery" || !createdCourseId || noSourcesSubmitted) return;
     let cancelled = false;
-    const addLog = (text: string, color: string) => {
-      setParseLogs((prev) => [...prev, { text, color }]);
-    };
     const pollJobs = async () => {
+      const newLogs: ParseLog[] = [];
       try {
         const jobs = await listIngestionJobs(createdCourseId);
         if (cancelled) return;
@@ -242,15 +248,18 @@ export function useSetup() {
           const stateKey = `${job.status}:${job.embedding_status}:${job.error_message ?? ""}`;
           if (seenJobStatesRef.current[job.id] === stateKey) continue;
           seenJobStatesRef.current[job.id] = stateKey;
-          const label = job.filename || t("new.untitledSource");
+          const label = job.filename || tRef.current("new.untitledSource");
           if (job.error_message) {
-            addLog(`${label}: ${job.error_message}`, "text-destructive");
+            newLogs.push({ text: `${label}: ${job.error_message}`, color: "text-destructive" });
           } else if (job.phase_label) {
-            addLog(`${label}: ${job.phase_label}`, "text-muted-foreground");
+            newLogs.push({ text: `${label}: ${job.phase_label}`, color: "text-muted-foreground" });
           }
         }
       } catch {
         // ignore polling errors
+      }
+      if (newLogs.length > 0 && !cancelled) {
+        setParseLogs((prev) => [...prev, ...newLogs]);
       }
     };
     let interval = 2000;
@@ -268,7 +277,7 @@ export function useSetup() {
     void pollJobs();
     schedule();
     return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [createdCourseId, noSourcesSubmitted, step, t]);
+  }, [createdCourseId, noSourcesSubmitted, step]);
 
   // ── Enable "Enter Workspace" after 5s even if ingestion is still running ──
   useEffect(() => {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import {
   type IngestionJobSummary,
@@ -24,6 +24,8 @@ import { submitSources, buildMetadata } from "./parse-actions";
 export function useNewProject() {
   const router = useRouter();
   const t = useT();
+  const tRef = useRef(t);
+  tRef.current = t;
   const { addCourse, fetchContentTree } = useCourseStore();
 
   /* ---------- State ---------- */
@@ -31,6 +33,8 @@ export function useNewProject() {
   const [mode, setMode] = useState<Mode>("both");
   const [learningMode, setLearningMode] = useState<LearningMode>("course_following");
   const [projectName, setProjectName] = useState("");
+  const projectNameRef = useRef(projectName);
+  projectNameRef.current = projectName;
   const [files, setFiles] = useState<FileItem[]>([]);
   const [url, setUrl] = useState("");
   const [autoScrape, setAutoScrape] = useState(true);
@@ -53,8 +57,14 @@ export function useNewProject() {
   const seenJobStatesRef = useRef<Record<string, string>>({});
 
   /* ---------- Derived values ---------- */
-  const parseSteps = deriveParseSteps(ingestionJobs, isSubmittingContent, noSourcesSubmitted, t);
-  const parseProgress = deriveParseProgress(ingestionJobs, isSubmittingContent, noSourcesSubmitted);
+  const parseSteps = useMemo(
+    () => deriveParseSteps(ingestionJobs, isSubmittingContent, noSourcesSubmitted, t),
+    [ingestionJobs, isSubmittingContent, noSourcesSubmitted, t],
+  );
+  const parseProgress = useMemo(
+    () => deriveParseProgress(ingestionJobs, isSubmittingContent, noSourcesSubmitted),
+    [ingestionJobs, isSubmittingContent, noSourcesSubmitted],
+  );
   const hasCompletedJob = ingestionJobs.some((job) => job.status === "completed");
   const allJobsFailed = ingestionJobs.length > 0 && ingestionJobs.every((job) => job.status === "failed");
   const canContinueToFeatures = noSourcesSubmitted || hasCompletedJob;
@@ -90,11 +100,9 @@ export function useNewProject() {
     if (step !== "parsing" || !createdCourseId || noSourcesSubmitted) return;
 
     let cancelled = false;
-    const addLog = (text: string, color: string) => {
-      setParseLogs((prev) => [...prev, { text, color }]);
-    };
 
     const pollJobs = async () => {
+      const newLogs: ParseLog[] = [];
       try {
         const jobs = await listIngestionJobs(createdCourseId);
         if (cancelled) return;
@@ -105,17 +113,20 @@ export function useNewProject() {
           if (seenJobStatesRef.current[job.id] === stateKey) continue;
           seenJobStatesRef.current[job.id] = stateKey;
 
-          const label = job.filename || t("new.untitledSource");
+          const label = job.filename || tRef.current("new.untitledSource");
           if (job.error_message) {
-            addLog(`${new Date().toLocaleTimeString()}  ${label}: ${job.error_message}`, "text-destructive");
+            newLogs.push({ text: `${new Date().toLocaleTimeString()}  ${label}: ${job.error_message}`, color: "text-destructive" });
           } else if (job.phase_label) {
-            addLog(`${new Date().toLocaleTimeString()}  ${label}: ${job.phase_label}`, "text-muted-foreground");
+            newLogs.push({ text: `${new Date().toLocaleTimeString()}  ${label}: ${job.phase_label}`, color: "text-muted-foreground" });
           }
         }
       } catch (error) {
         if (!cancelled) {
-          addLog(`${new Date().toLocaleTimeString()}  ${t("new.logRefreshFailed")}: ${(error as Error).message}`, "text-destructive");
+          newLogs.push({ text: `${new Date().toLocaleTimeString()}  ${tRef.current("new.logRefreshFailed")}: ${(error as Error).message}`, color: "text-destructive" });
         }
+      }
+      if (newLogs.length > 0 && !cancelled) {
+        setParseLogs((prev) => [...prev, ...newLogs]);
       }
     };
 
@@ -134,17 +145,17 @@ export function useNewProject() {
     void pollJobs();
     schedule();
     return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [createdCourseId, noSourcesSubmitted, step, t]);
+  }, [createdCourseId, noSourcesSubmitted, step]);
 
   /* ---------- Auto-fill project name from Canvas ---------- */
   const autoFillCanvasName = useCallback(async (canvasUrl: string) => {
     try {
       const info = await fetchCanvasCourseInfo(canvasUrl);
-      if (info.name && !projectName.trim()) {
+      if (info.name && !projectNameRef.current.trim()) {
         setProjectName(info.name);
       }
     } catch { /* non-critical */ }
-  }, [projectName, setProjectName]);
+  }, []);
 
   /* ---------- Canvas URL add handler ---------- */
   const handleAddUrl = useCallback(async () => {
