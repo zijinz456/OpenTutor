@@ -305,10 +305,27 @@ export async function listAuthSessions(): Promise<AuthSessionSummary[]> {
 export async function canvasBrowserLogin(
   canvasUrl: string,
 ): Promise<{ status: string; message: string }> {
-  return request("/canvas/browser-login", {
-    method: "POST",
-    body: JSON.stringify({ canvas_url: canvasUrl, timeout_seconds: 300 }),
-  });
+  // Use a dedicated long timeout (330s > backend 300s) instead of the
+  // generic 30s apiClient timeout, and no retries (each retry opens a new
+  // Chromium window on the backend).
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 330_000);
+  try {
+    const res = await fetch(`${API_BASE}/canvas/browser-login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ canvas_url: canvasUrl, timeout_seconds: 300 }),
+      signal: controller.signal,
+      credentials: "include",
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({})) as { message?: string; detail?: string };
+      throw new Error(body.message ?? body.detail ?? "Login failed");
+    }
+    return res.json();
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 export async function fetchCanvasCourseInfo(

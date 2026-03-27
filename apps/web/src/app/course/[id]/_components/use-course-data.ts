@@ -12,15 +12,14 @@ export function useCourseData(courseId: string) {
     () => ttlCache.get<HealthStatus>("course:health") ?? null,
   );
 
-  const {
-    activeCourse,
-    setActiveCourse,
-    courses,
-    fetchCourses,
-    contentTree,
-    fetchContentTree,
-    fetchIngestionJobs,
-  } = useCourseStore();
+  // Use granular selectors to avoid re-rendering on every store change
+  const activeCourse = useCourseStore((s) => s.activeCourse);
+  const courses = useCourseStore((s) => s.courses);
+  const contentTree = useCourseStore((s) => s.contentTree);
+  const fetchCourses = useCourseStore((s) => s.fetchCourses);
+  const setActiveCourse = useCourseStore((s) => s.setActiveCourse);
+  const fetchContentTree = useCourseStore((s) => s.fetchContentTree);
+  const fetchIngestionJobs = useCourseStore((s) => s.fetchIngestionJobs);
 
   useEffect(() => {
     if (courses.length === 0) void fetchCourses();

@@ -1,4 +1,4 @@
-import { request } from "./client";
+import { API_BASE, request } from "./client";
 
 import type { NullableDateTime } from "./client";
 
@@ -99,5 +99,24 @@ export async function deleteScrapeSource(sourceId: string): Promise<void> {
 }
 
 export async function scrapeNow(sourceId: string): Promise<{ status: string; content_changed: boolean; last_status: string }> {
-  return request(`/scrape/sources/${sourceId}/scrape-now`, { method: "POST" });
+  // Full browser-based scrape can take well over 30s for large Canvas courses.
+  // Use a dedicated 120s timeout and bypass apiClient auto-retry (each retry
+  // would trigger a redundant full scrape).
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 120_000);
+  try {
+    const res = await fetch(`${API_BASE}/scrape/sources/${sourceId}/scrape-now`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      credentials: "include",
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({})) as { message?: string; detail?: string };
+      throw new Error(body.message ?? body.detail ?? `Scrape failed (${res.status})`);
+    }
+    return res.json();
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }

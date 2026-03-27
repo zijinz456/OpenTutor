@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { useWorkspaceStore } from "@/store/workspace";
 import { WorkspaceHeader } from "@/components/shell/workspace-header";
@@ -34,6 +34,13 @@ export default function CoursePage() {
   const { health, course, courses, contentTree, aiActionsEnabled } = useCourseData(courseId);
   const { blocks, blocksInitialized } = useBlockPersistence(courseId, course);
   const applyBlockTemplate = useWorkspaceStore((s) => s.applyBlockTemplate);
+
+  const handleIngestionComplete = useCallback(() => {
+    const store = useWorkspaceStore.getState();
+    if (store.spaceLayout.blocks.length === 0) {
+      store.applyBlockTemplate("stem_student");
+    }
+  }, []);
   const handleAction = useChatActions(courseId);
   const queueModeSuggestion = useQueueModeSuggestion(courseId);
 
@@ -65,12 +72,7 @@ export default function CoursePage() {
         <SyncSettingsPanel courseId={courseId} />
         <IngestionProgress
           courseId={courseId}
-          onIngestionComplete={() => {
-            const store = useWorkspaceStore.getState();
-            if (store.spaceLayout.blocks.length === 0) {
-              store.applyBlockTemplate("stem_student");
-            }
-          }}
+          onIngestionComplete={handleIngestionComplete}
         />
       </div>
 
