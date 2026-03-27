@@ -40,6 +40,11 @@ def _load_session_cookies(
 
         state_path = SessionManager.state_file(session_name)
         if not state_path.exists():
+            logger.warning(
+                "Canvas session state file not found for '%s' (expected: %s) — "
+                "no cookies available for httpx requests",
+                session_name, state_path,
+            )
             return {}
 
         state = SessionManager._load_state_json(state_path)

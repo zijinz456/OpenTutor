@@ -202,30 +202,62 @@ async def run_ingestion_pipeline(
                 try:
                     deep_result = await _try_canvas_api_deep(url, session_name=session_name)
                 except CanvasAuthExpiredError as auth_err:
-                    # Mark auth session invalid in DB
-                    try:
-                        from models.scrape import AuthSession
-                        auth_result = await db.execute(
-                            select(AuthSession).where(
-                                AuthSession.session_name == session_name,
-                                AuthSession.is_valid == True,  # noqa: E712
-                            )
-                        )
-                        auth_session = auth_result.scalar_one_or_none()
-                        if auth_session:
-                            auth_session.is_valid = False
-                            logger.info("Marked auth session %s as invalid", session_name)
-                    except (sa.exc.SQLAlchemyError, OSError) as e:
-                        logger.debug("Failed to invalidate auth session: %s", e)
-                    _set_job_phase(
-                        job,
-                        status="failed",
-                        progress_percent=20,
-                        embedding_status="failed",
-                        error_message=str(auth_err),
+                    # httpx returned 401 — session cookies may not work outside a real
+                    # browser context (common with SSO/Okta-based Canvas logins).
+                    # Try Playwright-based HTML extraction as a fallback before failing.
+                    logger.warning(
+                        "Canvas API returned 401 for %s (httpx). Trying Playwright fallback.",
+                        url,
                     )
-                    await db.commit()
-                    return job
+                    _playwright_fallback_ok = False
+                    try:
+                        from services.browser.automation import fetch_with_browser
+                        from services.ingestion.document_loader import (
+                            clean_soup_canvas_aware,
+                            get_text_from_soup,
+                        )
+                        from bs4 import BeautifulSoup
+
+                        fallback_html = await fetch_with_browser(url, session_name=session_name)
+                        if fallback_html and len(fallback_html) > 200:
+                            soup = BeautifulSoup(fallback_html, "lxml")
+                            soup = clean_soup_canvas_aware(soup)
+                            fallback_text = get_text_from_soup(soup)
+                            if fallback_text:
+                                extracted = fallback_text
+                                _playwright_fallback_ok = True
+                                logger.info(
+                                    "Canvas Playwright fallback succeeded: %d chars for %s",
+                                    len(extracted), url,
+                                )
+                    except Exception as fb_exc:
+                        logger.debug("Canvas Playwright fallback also failed: %s", fb_exc)
+
+                    if not _playwright_fallback_ok:
+                        # Both approaches failed — mark session as expired and fail the job.
+                        try:
+                            from models.scrape import AuthSession
+                            auth_result = await db.execute(
+                                select(AuthSession).where(
+                                    AuthSession.session_name == session_name,
+                                    AuthSession.is_valid == True,  # noqa: E712
+                                )
+                            )
+                            auth_session = auth_result.scalar_one_or_none()
+                            if auth_session:
+                                auth_session.is_valid = False
+                                logger.info("Marked auth session %s as invalid", session_name)
+                        except (sa.exc.SQLAlchemyError, OSError) as e:
+                            logger.debug("Failed to invalidate auth session: %s", e)
+                        _set_job_phase(
+                            job,
+                            status="failed",
+                            progress_percent=20,
+                            embedding_status="failed",
+                            error_message=str(auth_err),
+                        )
+                        await db.commit()
+                        return job
                 else:
                     if deep_result:
                         extracted = deep_result.content

@@ -1,6 +1,7 @@
 """Auto-configuration of course layout and welcome message."""
 
 import logging
+import re
 import uuid
 
 import sqlalchemy as sa
@@ -13,7 +14,8 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Layout presets (mirror frontend LAYOUT_PRESETS)
+# Legacy layout presets (kept for backward compatibility — not used by frontend)
+# The frontend reads metadata["spaceLayout"] which uses mode + blocks format.
 # ---------------------------------------------------------------------------
 
 _LAYOUT_PRESETS = {
@@ -63,6 +65,74 @@ _LAYOUT_PRESETS = {
     },
 }
 
+# ---------------------------------------------------------------------------
+# Content-topic keyword groups for mode inference
+# Each entry: (pattern, weight)
+# ---------------------------------------------------------------------------
+
+_EXAM_PREP_SIGNALS: list[tuple[str, float]] = [
+    # Exam/assessment content
+    (r"\bexam\b", 2.0),
+    (r"\bmidterm\b", 2.0),
+    (r"\bfinal exam\b", 2.5),
+    (r"\bpast (paper|exam|question)\b", 2.5),
+    (r"\bpractice (question|problem|test)\b", 2.0),
+    (r"\bsample (question|exam)\b", 2.0),
+    # Research/statistical methods (commonly tested)
+    (r"\bstudy design\b", 1.5),
+    (r"\bresearch design\b", 1.5),
+    (r"\bexperimental design\b", 1.5),
+    (r"\bobservational study\b", 1.5),
+    (r"\brandomized controlled\b", 1.5),
+    (r"\bcohort study\b", 1.5),
+    (r"\bcase.control\b", 1.5),
+    (r"\bhypothesis test\b", 1.5),
+    (r"\bnull hypothesis\b", 1.5),
+    (r"\bp.?value\b", 1.5),
+    (r"\bstatistical significance\b", 1.5),
+    (r"\bconfidence interval\b", 1.5),
+    (r"\bconfounding\b", 1.2),
+    (r"\bbias\b", 0.8),
+    (r"\bsample size\b", 1.2),
+    (r"\bpower (analysis|calculation)\b", 1.5),
+    (r"\bt.test\b", 1.2),
+    (r"\bchi.square\b", 1.2),
+    (r"\banova\b", 1.2),
+    (r"\bregression (analysis|model)\b", 1.2),
+    # Assessment language
+    (r"\blearning outcome\b", 1.0),
+    (r"\bkey concept\b", 0.8),
+    (r"\bdefinition\b", 0.5),
+    (r"\bformula\b", 0.8),
+]
+
+# Signals that suggest deadlines/assignment mode (strong)
+_ASSIGNMENT_SIGNALS: list[tuple[str, float]] = [
+    (r"\bassignment\b", 1.5),
+    (r"\bdue (date|by)\b", 2.0),
+    (r"\bsubmit\b", 1.5),
+    (r"\bdeadline\b", 2.0),
+    (r"\bproject\b", 1.0),
+    (r"\bword limit\b", 1.5),
+    (r"\bmarking rubric\b", 2.0),
+    (r"\bmarks?\b", 0.5),
+]
+
+_SCORE_THRESHOLD_SUGGEST = 5.0   # Add agent_insight suggesting exam_prep
+_SCORE_THRESHOLD_SWITCH = 12.0   # Directly switch mode to exam_prep
+
+
+def _score_content(text: str, signals: list[tuple[str, float]]) -> float:
+    """Score text against a list of (pattern, weight) signals."""
+    if not text:
+        return 0.0
+    text_lower = text.lower()
+    total = 0.0
+    for pattern, weight in signals:
+        matches = re.findall(pattern, text_lower)
+        total += len(matches) * weight
+    return total
+
 
 async def auto_configure_course(
     db_factory,
@@ -71,10 +141,14 @@ async def auto_configure_course(
 ) -> dict | None:
     """Analyze ingested course content and auto-configure layout + welcome message.
 
-    Called after auto_prepare completes. Analyzes:
-    - Assignment count & deadlines -> assignment preset
-    - Content categories (exam/quiz heavy) -> exam_prep preset
-    - Default -> daily_study preset
+    Called after auto_prepare completes. Updates metadata["spaceLayout"] (the
+    format the frontend actually reads) based on:
+    - Content topic analysis: keyword scoring on extracted markdown
+    - Assignment count & deadlines
+    - Content categories (exam_schedule, assignment, etc.)
+
+    For lecture slides, analyses the actual text to detect exam-prep signals
+    (e.g. study design, hypothesis testing) and adds a mode suggestion block.
     """
     from datetime import datetime, timezone
     from models.content import CourseContentTree
@@ -87,14 +161,15 @@ async def auto_configure_course(
         assignments = assign_result.scalars().all()
         deadline_count = sum(1 for a in assignments if a.due_date)
 
-        # 2. Check ingestion job content categories
+        # 2. Check ingestion job content categories + extracted text
         job_result = await db.execute(
-            select(IngestionJob.content_category).where(
+            select(IngestionJob.content_category, IngestionJob.extracted_markdown).where(
                 IngestionJob.course_id == course_id,
-                IngestionJob.content_category.isnot(None),
             )
         )
-        categories = [r[0] for r in job_result.all()]
+        job_rows = job_result.all()
+        categories = [r[0] for r in job_rows if r[0]]
+        all_content = "\n".join(r[1] or "" for r in job_rows)
 
         # 3. Count content nodes
         node_result = await db.execute(
@@ -112,23 +187,107 @@ async def auto_configure_course(
         if not course:
             return None
 
-        # --- Select layout preset ---
-        exam_categories = {"exam_schedule", "assignment", "exam"}
-        exam_cat_count = sum(1 for c in categories if c in exam_categories)
+        # --- Content-topic scoring ---
+        exam_signal_score = _score_content(all_content, _EXAM_PREP_SIGNALS)
+        assign_signal_score = _score_content(all_content, _ASSIGNMENT_SIGNALS)
 
-        if deadline_count >= 3:
-            preset_id = "assignment"
-        elif exam_cat_count >= 2 or (deadline_count >= 1 and exam_cat_count >= 1):
-            preset_id = "exam_prep"
+        # Also score categories
+        hard_exam_cats = {"exam_schedule", "exam"}
+        hard_assign_cats = {"assignment"}
+        exam_cat_count = sum(1 for c in categories if c in hard_exam_cats)
+        assign_cat_count = sum(1 for c in categories if c in hard_assign_cats)
+
+        # --- Determine mode intent ---
+        # Priority: hard category signals > deadline count > content scoring
+        if assign_cat_count >= 1 or deadline_count >= 3:
+            mode_intent = "assignment"       # switch to assignment/plan mode
+        elif exam_cat_count >= 1 or (deadline_count >= 1 and exam_signal_score >= 3.0):
+            mode_intent = "exam_prep_direct" # switch to exam_prep directly
+        elif exam_signal_score >= _SCORE_THRESHOLD_SWITCH:
+            mode_intent = "exam_prep_direct"
+        elif exam_signal_score >= _SCORE_THRESHOLD_SUGGEST:
+            mode_intent = "exam_prep_suggest" # suggest via agent_insight (needs approval)
         else:
-            preset_id = "focused"
+            mode_intent = "no_change"        # keep cold-start layout as-is
 
-        layout = _LAYOUT_PRESETS[preset_id]
+        # --- Update spaceLayout (new format, actually read by frontend) ---
+        now = datetime.now(timezone.utc)
+        metadata = dict(course.metadata_ or {})
+        space_layout = dict(metadata.get("spaceLayout") or {})
+
+        if mode_intent == "assignment":
+            space_layout["mode"] = "exam_prep"  # closest mode in new system
+            # Ensure plan block is present
+            blocks = list(space_layout.get("blocks", []))
+            block_types = [b.get("type") for b in blocks]
+            if "plan" not in block_types:
+                blocks.append({"type": "plan", "size": "medium", "source": "template"})
+            space_layout["blocks"] = blocks
+
+        elif mode_intent == "exam_prep_direct":
+            space_layout["mode"] = "exam_prep"
+            blocks = list(space_layout.get("blocks", []))
+            block_types = [b.get("type") for b in blocks]
+            # Ensure quiz is present and prominent for exam prep
+            if "quiz" not in block_types:
+                blocks.append({"type": "quiz", "size": "large", "source": "template"})
+            else:
+                for b in blocks:
+                    if b.get("type") == "quiz":
+                        b["size"] = "large"
+            space_layout["blocks"] = blocks
+
+        elif mode_intent == "exam_prep_suggest":
+            # Add an agent_insight block suggesting exam_prep mode (needs user approval)
+            blocks = list(space_layout.get("blocks", []))
+            # Don't add duplicate suggestion insights
+            existing_suggestions = [
+                b for b in blocks
+                if b.get("type") == "agent_insight"
+                and b.get("config", {}).get("insightType") == "mode_suggestion"
+            ]
+            if not existing_suggestions:
+                insight_id = f"blk-autoconf-{int(now.timestamp())}"
+                blocks.insert(0, {
+                    "id": insight_id,
+                    "type": "agent_insight",
+                    "position": 0,
+                    "size": "full",
+                    "config": {
+                        "insightType": "mode_suggestion",
+                        "suggestedMode": "exam_prep",
+                        "reason": (
+                            "This material covers exam-relevant concepts "
+                            "(e.g. study design, hypothesis testing, statistical methods). "
+                            "Switch to Exam Prep mode to focus on practice and weak areas."
+                        ),
+                    },
+                    "visible": True,
+                    "source": "agent",
+                    "agentMeta": {
+                        "reason": "Content analysis detected exam-prep relevant topics.",
+                        "needsApproval": True,
+                        "dismissible": True,
+                        "approvalCta": "Switch to Exam Prep",
+                    },
+                })
+                space_layout["blocks"] = blocks
+
+        if space_layout:
+            metadata["spaceLayout"] = space_layout
+
+        # --- Also update legacy layout key (kept for any legacy readers) ---
+        legacy_preset_map = {
+            "assignment": "assignment",
+            "exam_prep_direct": "exam_prep",
+            "exam_prep_suggest": "daily_study",
+            "no_change": "focused",
+        }
+        legacy_preset_id = legacy_preset_map.get(mode_intent, "focused")
+        metadata["layout"] = _LAYOUT_PRESETS[legacy_preset_id]
 
         # --- Build welcome message ---
-        now = datetime.now(timezone.utc)
         parts = [f"**{course.name}** is ready! Here's what I found:\n"]
-
         parts.append(f"- **{node_count}** content sections indexed")
 
         if prep_summary.get("notes", 0) > 0:
@@ -139,7 +298,6 @@ async def auto_configure_course(
             parts.append(f"- **{prep_summary['quiz']}** quiz questions generated")
 
         if deadline_count > 0:
-            # Find the nearest upcoming deadline
             upcoming = [
                 a for a in assignments
                 if a.due_date and a.due_date > now
@@ -155,31 +313,35 @@ async def auto_configure_course(
 
         parts.append("")
 
-        if preset_id == "assignment":
+        if mode_intent == "assignment":
             parts.append(
-                "I've set up your workspace in **Assignment Mode** with study plan "
-                "and deadlines front and center. You can switch modes anytime by asking me."
+                "I've switched to **Exam Prep mode** and added a study plan block "
+                "since I detected assignment deadlines. You can switch modes anytime by asking me."
             )
-        elif preset_id == "exam_prep":
+        elif mode_intent == "exam_prep_direct":
             parts.append(
-                "I've set up your workspace in **Exam Prep Mode** with practice questions "
-                "and analytics visible. Ask me to quiz you or review weak areas."
+                "I've switched to **Exam Prep mode** — this material covers topics "
+                "that are commonly tested. Ask me to quiz you or review weak areas."
+            )
+        elif mode_intent == "exam_prep_suggest":
+            parts.append(
+                "Your workspace is ready. I noticed this material covers exam-relevant topics "
+                "(study design, statistical methods). I've added a suggestion to switch to "
+                "**Exam Prep mode** — approve it above or ask me to switch anytime."
             )
         else:
             parts.append(
                 "Your workspace is ready. "
-                "Ask me anything about your materials -- I'll explain, quiz you, or help you review."
+                "Ask me anything about your materials — I'll explain, quiz you, or help you review."
             )
 
         welcome_message = "\n".join(parts)
-
-        # --- Save to course metadata ---
-        metadata = dict(course.metadata_ or {})
-        metadata["layout"] = layout
         metadata["welcome_message"] = welcome_message
         metadata["auto_configured_at"] = now.isoformat()
         metadata["auto_config"] = {
-            "preset": preset_id,
+            "mode_intent": mode_intent,
+            "exam_signal_score": round(exam_signal_score, 1),
+            "assign_signal_score": round(assign_signal_score, 1),
             "node_count": node_count,
             "deadline_count": deadline_count,
             "categories": categories[:20],
@@ -188,7 +350,7 @@ async def auto_configure_course(
         await db.commit()
 
         logger.info(
-            "Auto-configured course %s: preset=%s, nodes=%d, deadlines=%d",
-            course_id, preset_id, node_count, deadline_count,
+            "Auto-configured course %s: mode_intent=%s, exam_score=%.1f, nodes=%d, deadlines=%d",
+            course_id, mode_intent, exam_signal_score, node_count, deadline_count,
         )
-        return {"preset": preset_id, "welcome_message": welcome_message}
+        return {"mode_intent": mode_intent, "welcome_message": welcome_message}

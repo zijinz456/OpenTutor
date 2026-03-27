@@ -77,10 +77,17 @@ async def _try_canvas_api_deep(
 
         cookies = _load_session_cookies(session_name, target_domain=canvas_info.domain) if session_name else {}
         if session_name:
-            logger.info(
-                "Canvas deep API using %d cookies from session %s for %s",
-                len(cookies), session_name, canvas_info.domain,
-            )
+            if cookies:
+                logger.info(
+                    "Canvas deep API using %d cookies from session %s for %s",
+                    len(cookies), session_name, canvas_info.domain,
+                )
+            else:
+                logger.warning(
+                    "Canvas deep API: 0 cookies loaded from session '%s' for %s — "
+                    "API requests will be unauthenticated and likely return 401",
+                    session_name, canvas_info.domain,
+                )
 
         all_file_urls: list[dict] = []
         seen_page_slugs: set[str] = set()
