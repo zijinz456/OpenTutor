@@ -346,6 +346,121 @@ async def memory_consolidation_job():
 # - fsrs_review_job       → forgetting_risk signal
 
 
+async def canvas_session_keepalive_job():
+    """Keep Canvas sessions alive by periodically visiting the check URL.
+
+    Canvas sessions expire after ~30 minutes of inactivity.  This job runs
+    every 20 minutes and makes a lightweight HTTP request with the saved
+    session cookies, which causes the Canvas server to reset the cookie
+    expiry (Set-Cookie headers with renewed max-age).
+
+    If a session is found to have expired (401 / redirect to login), it is
+    marked invalid so the user knows to re-authenticate.
+    """
+    import json
+
+    import httpx
+    from sqlalchemy import select
+
+    from models.scrape import AuthSession
+    from services.browser.session_manager import SessionManager, _encrypt_data
+
+    logger.info("Running Canvas session keep-alive job...")
+    kept_alive = 0
+    expired = 0
+    skipped = 0
+
+    try:
+        async with async_session() as db:
+            result = await db.execute(
+                select(AuthSession).where(
+                    AuthSession.is_valid.is_(True),
+                    AuthSession.check_url.isnot(None),
+                )
+            )
+            sessions = result.scalars().all()
+
+            for session in sessions:
+                state_path = SessionManager.state_file(session.session_name)
+                if not state_path.exists():
+                    skipped += 1
+                    continue
+
+                try:
+                    state = SessionManager._load_state_json(state_path)
+                    cookie_jar = {
+                        c["name"]: c["value"] for c in state.get("cookies", [])
+                    }
+                    if not cookie_jar:
+                        skipped += 1
+                        continue
+
+                    async with httpx.AsyncClient(
+                        cookies=cookie_jar,
+                        follow_redirects=True,
+                        timeout=10.0,
+                    ) as client:
+                        # Lightweight ping — Canvas /api/v1/users/self returns small JSON
+                        ping_url = (
+                            session.check_url.rstrip("/") + "/api/v1/users/self"
+                            if "/api/v1" not in session.check_url
+                            else session.check_url
+                        )
+                        resp = await client.get(ping_url)
+
+                    final_url = str(resp.url).lower()
+                    if resp.status_code in (401, 403) or "login" in final_url:
+                        logger.info(
+                            "Canvas session expired (status=%d url=%s): %s",
+                            resp.status_code, final_url, session.session_name,
+                        )
+                        session.is_valid = False
+                        expired += 1
+                    else:
+                        # Merge any refreshed cookies back into the saved state
+                        refreshed = dict(resp.cookies)
+                        if refreshed:
+                            for cookie in state.get("cookies", []):
+                                if cookie["name"] in refreshed:
+                                    cookie["value"] = refreshed[cookie["name"]]
+                            state_path.write_text(
+                                _encrypt_data(json.dumps(state, indent=2))
+                            )
+                            state_path.chmod(0o600)
+
+                        session.last_validated_at = datetime.now(timezone.utc)
+                        kept_alive += 1
+                        logger.debug(
+                            "Canvas session kept alive: %s", session.session_name
+                        )
+
+                except (OSError, RuntimeError, ConnectionError, TimeoutError) as e:
+                    logger.warning(
+                        "Canvas keep-alive failed for %s: %s",
+                        session.session_name, e,
+                    )
+                    skipped += 1
+                except Exception as e:  # httpx errors
+                    if "httpx" in type(e).__module__ or "anyio" in type(e).__module__:
+                        logger.warning(
+                            "Canvas keep-alive HTTP error for %s: %s",
+                            session.session_name, e,
+                        )
+                        skipped += 1
+                    else:
+                        raise
+
+            await db.commit()
+
+    except (SQLAlchemyError, ImportError, OSError) as e:
+        logger.exception("Canvas keep-alive job failed")
+
+    logger.info(
+        "Canvas session keep-alive: kept_alive=%d expired=%d skipped=%d",
+        kept_alive, expired, skipped,
+    )
+
+
 async def timing_analysis_job():
     """Timing analysis — no-op stub (notification system removed in Phase 1.1)."""
     logger.debug("Timing analysis job skipped (notification system removed)")

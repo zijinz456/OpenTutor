@@ -294,6 +294,43 @@ async def _background_embed(course_id: uuid.UUID, job_id: uuid.UUID, user_id: uu
         logger.exception("Background embedding failed for job %s", job_id)
 
 
+async def _complete_canvas_embedding_jobs(course_id: uuid.UUID, user_id: uuid.UUID | None) -> None:
+    """Run embedding once for the whole course, then mark all stuck 'embedding' jobs done."""
+    try:
+        from services.embedding.content import embed_course_content
+        from services.embedding.registry import is_noop_provider
+
+        async with async_session() as db:
+            # Compute embeddings for all new content in one pass
+            skipped = is_noop_provider()
+            if not skipped:
+                await embed_course_content(db, course_id)
+
+            # Mark all "embedding" status jobs for this course as completed
+            result = await db.execute(
+                select(IngestionJob).where(
+                    IngestionJob.course_id == course_id,
+                    IngestionJob.status == "embedding",
+                )
+            )
+            jobs = result.scalars().all()
+            for job in jobs:
+                _set_job_phase(
+                    job,
+                    status="completed",
+                    progress_percent=100,
+                    embedding_status="skipped" if skipped else "completed",
+                    nodes_created=job.nodes_created,
+                )
+            await db.commit()
+            logger.info(
+                "Canvas embedding complete for course %s: marked %d jobs done (skipped=%s)",
+                course_id, len(jobs), skipped,
+            )
+    except (SQLAlchemyError, OSError) as e:
+        logger.exception("Canvas embedding completion failed for course %s", course_id)
+
+
 def start_background_canvas_pipeline(
     *,
     user_id: uuid.UUID,
@@ -320,5 +357,7 @@ def start_background_canvas_pipeline(
         )
         await auto_summarize_titles(db_factory=async_session, course_id=course_id)
         await auto_prepare(db_factory=async_session, course_id=course_id, user_id=user_id)
+        # Complete all canvas file ingestion jobs that are stuck in "embedding" state
+        await _complete_canvas_embedding_jobs(course_id, user_id)
 
     track_background_task(asyncio.create_task(_pipeline()))

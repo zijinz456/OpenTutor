@@ -183,6 +183,11 @@ async def canvas_browser_login(
                 success = False
                 elapsed = 0.0
                 poll_interval = 1.5
+                # Track whether we've visited an auth page (external SSO domain or Canvas
+                # login path).  Once we've been through auth and returned to the Canvas
+                # domain on a non-login path, we know the login succeeded — even if the
+                # final landing URL is just "/" (the root).
+                visited_auth_page = False
 
                 while elapsed < timeout:
                     await asyncio.sleep(poll_interval)
@@ -198,19 +203,55 @@ async def canvas_browser_login(
                     path = parsed.path.rstrip("/")
                     host = parsed.netloc
 
-                    # Must be back on the Canvas domain
+                    # Track when we leave the Canvas domain (external SSO/OAuth flow)
                     if domain.lower() not in host:
+                        visited_auth_page = True
+                        logger.debug("Canvas login: on external auth host=%s", host)
                         continue
 
-                    # Must NOT still be on a login/SSO page
+                    # Still on Canvas domain — check if we're on a login/SSO path
                     path_parts = set(path.split("/"))
-                    if path_parts & login_keywords:
+                    on_login_path = bool(path_parts & login_keywords)
+
+                    if on_login_path:
+                        if not visited_auth_page:
+                            visited_auth_page = True
+                            logger.debug("Canvas login: on Canvas login path=%s", path)
+                            continue
+                        # We already went through auth and are back on Canvas domain
+                        # but still on a login/callback path (e.g. /login/saml callback).
+                        # Wait a bit for the redirect to settle rather than looping forever.
+                        logger.debug(
+                            "Canvas login: back on Canvas login path after auth, waiting for redirect (url=%s)",
+                            current_url,
+                        )
+                        await asyncio.sleep(2)
                         continue
 
-                    # Must be on a recognized Canvas page, or at least away from login
+                    # We're back on the Canvas domain on a non-login path.
+                    # If we already went through an auth page (SSO or login form), this
+                    # means login completed — accept any URL including the root "/".
+                    if visited_auth_page:
+                        cookies = await context.cookies()
+                        logger.info(
+                            "Canvas browser login: SSO round-trip complete for %s (url=%s, cookies=%d)",
+                            session_name,
+                            current_url,
+                            len(cookies),
+                        )
+                        success = True
+                        break
+
+                    # Fallback for cases where Canvas doesn't redirect to an external SSO:
+                    # require a known Canvas page or any non-empty non-login path.
                     on_known_page = any(path.startswith(sp) for sp in canvas_success_paths)
                     not_on_login = "login" not in current_url
                     if on_known_page or (not_on_login and path != ""):
+                        logger.info(
+                            "Canvas browser login: detected logged-in page for %s (url=%s)",
+                            session_name,
+                            current_url,
+                        )
                         success = True
                         break
 

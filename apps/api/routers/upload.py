@@ -97,8 +97,7 @@ async def upload_file(
     safe_name = re.sub(r"[^\w.\-]", "_", os.path.basename(file.filename)) or "unnamed"
     safe_name = safe_name[:255]
     save_path = os.path.join(settings.upload_dir, f"{file_hash}_{safe_name}")
-    with open(save_path, "wb") as f:
-        f.write(file_bytes)
+    await asyncio.to_thread(Path(save_path).write_bytes, file_bytes)
 
     try:
         job = await run_ingestion_pipeline(
@@ -355,8 +354,7 @@ async def upload_image(
     safe_name = re.sub(r"[^\w.\-]", "_", os.path.basename(file.filename)) or "unnamed"
     safe_name = safe_name[:255]
     save_path = os.path.join(settings.upload_dir, f"img_{file_hash}_{safe_name}")
-    with open(save_path, "wb") as f:
-        f.write(file_bytes)
+    await asyncio.to_thread(Path(save_path).write_bytes, file_bytes)
 
     b64_data = base64.b64encode(file_bytes).decode("utf-8")
 

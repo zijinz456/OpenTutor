@@ -45,6 +45,8 @@ async def auto_summarize_titles(db_factory, course_id: uuid.UUID) -> int:
             return True
         return False
 
+    import asyncio as _asyncio
+
     updated = 0
     async with db_factory() as db:
         result = await db.execute(
@@ -55,6 +57,8 @@ async def auto_summarize_titles(db_factory, course_id: uuid.UUID) -> int:
         )
         nodes = result.scalars().all()
 
+        # Pre-fetch all content previews sequentially (safe DB access)
+        to_process: list[tuple] = []
         for node in nodes:
             title = node.title or ""
             if not _is_meaningless_title(title):
@@ -72,26 +76,47 @@ async def auto_summarize_titles(db_factory, course_id: uuid.UUID) -> int:
                     content_preview = (child.content or "")[:500]
             if not content_preview or len(content_preview) < 30:
                 continue
-            try:
-                client = get_llm_client("fast")
-                prompt = (
-                    f"Based on this document content, generate a short descriptive title "
-                    f"(max 60 chars). Just output the title, nothing else.\n\n"
-                    f"Original filename: {title}\n"
-                    f"Content preview:\n{content_preview}"
-                )
-                new_title, _ = await client.extract(
-                    "You are a document title generator. Output only the title.", prompt,
-                )
-                new_title = new_title.strip().strip('"\'')
-                if new_title and 5 < len(new_title) < 100:
-                    node.title = new_title
-                    updated += 1
-                    logger.info("Renamed '%s' -> '%s'", title, new_title)
-            except (ConnectionError, TimeoutError) as e:
-                logger.warning("AI title generation network error for '%s': %s", title, e)
-            except (ValueError, RuntimeError) as e:
-                logger.exception("AI title generation unexpected error for '%s'", title)
+            to_process.append((node, title, content_preview))
+
+        # Run concurrent LLM calls (no DB access inside)
+        sem = _asyncio.Semaphore(5)
+
+        async def _gen_title(node, title, content_preview):
+            async with sem:
+                try:
+                    client = get_llm_client("fast")
+                    prompt = (
+                        f"Based on this document content, generate a short descriptive title "
+                        f"(max 60 chars). Just output the title, nothing else.\n\n"
+                        f"Original filename: {title}\n"
+                        f"Content preview:\n{content_preview}"
+                    )
+                    new_title, _ = await client.extract(
+                        "You are a document title generator. Output only the title.", prompt,
+                    )
+                    new_title = new_title.strip().strip('"\'')
+                    if new_title and 5 < len(new_title) < 100:
+                        return (node, title, new_title)
+                except (ConnectionError, TimeoutError) as e:
+                    logger.warning("AI title generation network error for '%s': %s", title, e)
+                except (ValueError, RuntimeError):
+                    logger.exception("AI title generation unexpected error for '%s'", title)
+                return None
+
+        results = await _asyncio.gather(
+            *[_gen_title(n, t, cp) for n, t, cp in to_process],
+            return_exceptions=True,
+        )
+        for res in results:
+            if isinstance(res, BaseException):
+                logger.warning("AI title gather exception: %s", res)
+                continue
+            if res:
+                node, old_title, new_title = res
+                node.title = new_title
+                updated += 1
+                logger.info("Renamed '%s' -> '%s'", old_title, new_title)
+
         await db.commit()
     logger.info("AI title summarization: %d nodes renamed", updated)
     return updated
@@ -289,16 +314,21 @@ async def _auto_generate_learning_content(
     db: AsyncSession, course_id: uuid.UUID, user_id: uuid.UUID, nodes: list,
 ) -> None:
     """Auto-generate practice problems and flashcards for newly ingested content nodes."""
+    import asyncio as _asyncio
     from models.practice import PracticeProblem
 
     eligible = [n for n in nodes if n.content and len(n.content) > 300]
     if not eligible:
         return
 
-    for node in eligible[:20]:
-        try:
+    sem = _asyncio.Semaphore(5)
+
+    async def _gen_one(node) -> list:
+        async with sem:
             content_preview = (node.content or "")[:3000]
-            if content_preview:
+            if not content_preview:
+                return []
+            try:
                 client = get_llm_client("fast")
                 prompt = (
                     f"Generate 2 multiple-choice practice problems from this content.\n"
@@ -307,33 +337,40 @@ async def _auto_generate_learning_content(
                     f"Format as JSON array."
                 )
                 raw, _ = await client.chat("You are a quiz generator. Output valid JSON arrays.", prompt)
-                try:
-                    json_start = raw.find("[")
-                    json_end = raw.rfind("]") + 1
-                    if json_start >= 0 and json_end > json_start:
-                        problems = json.loads(raw[json_start:json_end])
-                        for p in problems[:3]:
-                            if not p.get("question"):
-                                continue
-                            options = p.get("options", {})
-                            if isinstance(options, list):
-                                options = {chr(65 + i): opt for i, opt in enumerate(options)}
-                            problem = PracticeProblem(
-                                course_id=course_id, content_node_id=node.id,
-                                question_type="mc", question=p["question"],
-                                options=options, correct_answer=p.get("correct_answer", "A"),
-                                explanation=p.get("explanation", ""), difficulty_layer=1,
-                                source="ai_generated", source_owner="ai", locked=False,
-                            )
-                            db.add(problem)
-                except (json.JSONDecodeError, ValueError) as exc:
-                    logger.debug("Failed to parse LLM response for auto-generation: %s", exc)
-        except (ConnectionError, TimeoutError) as e:
-            logger.warning("Auto-generate learning content network error for '%s': %s", node.title, e)
-        except (json.JSONDecodeError, ValueError, KeyError) as e:
-            logger.warning("Auto-generate learning content parse error for '%s': %s", node.title, e)
-        except (RuntimeError, sa.exc.SQLAlchemyError, OSError) as e:
-            logger.exception("Auto-generate learning content unexpected error for '%s'", node.title)
+                json_start = raw.find("[")
+                json_end = raw.rfind("]") + 1
+                if json_start >= 0 and json_end > json_start:
+                    problems_data = json.loads(raw[json_start:json_end])
+                    result = []
+                    for p in problems_data[:3]:
+                        if not p.get("question"):
+                            continue
+                        options = p.get("options", {})
+                        if isinstance(options, list):
+                            options = {chr(65 + i): opt for i, opt in enumerate(options)}
+                        result.append(PracticeProblem(
+                            course_id=course_id, content_node_id=node.id,
+                            question_type="mc", question=p["question"],
+                            options=options, correct_answer=p.get("correct_answer", "A"),
+                            explanation=p.get("explanation", ""), difficulty_layer=1,
+                            source="ai_generated", source_owner="ai", locked=False,
+                        ))
+                    return result
+            except (json.JSONDecodeError, ValueError) as exc:
+                logger.debug("Failed to parse LLM response for auto-generation: %s", exc)
+            except (ConnectionError, TimeoutError) as e:
+                logger.warning("Auto-generate learning content network error for '%s': %s", node.title, e)
+            except (RuntimeError, sa.exc.SQLAlchemyError, OSError):
+                logger.exception("Auto-generate learning content unexpected error for '%s'", node.title)
+            return []
+
+    all_results = await _asyncio.gather(*[_gen_one(n) for n in eligible[:20]], return_exceptions=True)
+    for res in all_results:
+        if isinstance(res, BaseException):
+            logger.warning("Auto-generate gather exception: %s", res)
+            continue
+        for problem in res:
+            db.add(problem)
 
     try:
         await db.flush()

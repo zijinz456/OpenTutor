@@ -178,6 +178,11 @@ async def run_ingestion_pipeline(
     await db.flush()
     await db.commit()
 
+    extracted = ""
+    canvas_file_urls: list[dict] = []
+    canvas_quiz_questions: list[dict] = []
+    canvas_assignments_data: list[dict] = []
+
     try:
         # Step 1: MIME detection
         if filename:
@@ -188,10 +193,6 @@ async def run_ingestion_pipeline(
         await db.commit()
 
         # For Canvas URLs with auth, prefer deep Canvas REST API extraction
-        extracted = ""
-        canvas_file_urls: list[dict] = []
-        canvas_quiz_questions: list[dict] = []
-        canvas_assignments_data: list[dict] = []
         if url and session_name:
             from services.scraper.canvas_detector import detect_canvas_url as _detect
             _cinfo = _detect(url)

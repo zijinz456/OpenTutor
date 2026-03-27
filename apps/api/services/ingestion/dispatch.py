@@ -41,25 +41,43 @@ async def dispatch_content(db: AsyncSession, job: IngestionJob) -> dict:
         # Dedup: remove existing content tree nodes from the same source
         # before inserting new ones (prevents duplicates on re-ingestion)
         existing = await db.execute(
-            select(CourseContentTree).where(
+            select(CourseContentTree.id).where(
                 CourseContentTree.course_id == job.course_id,
                 CourseContentTree.source_file == source_label,
             )
         )
-        old_nodes = existing.scalars().all()
-        if old_nodes:
-            old_ids = [n.id for n in old_nodes]
-            # Nullify FK references from practice_problems before deleting
+        old_ids = existing.scalars().all()
+        if old_ids:
             from models.practice import PracticeProblem
+            from sqlalchemy import delete as sa_delete
+
+            # 1. Nullify FK references from practice_problems
             await db.execute(
                 PracticeProblem.__table__.update()
                 .where(PracticeProblem.content_node_id.in_(old_ids))
                 .values(content_node_id=None)
             )
-            for old_node in old_nodes:
-                await db.delete(old_node)
+            # 2. Break self-referential parent_id chain (NO ACTION on delete):
+            #    a) NULL out parent_id of the nodes being deleted
+            await db.execute(
+                CourseContentTree.__table__.update()
+                .where(CourseContentTree.id.in_(old_ids))
+                .values(parent_id=None)
+            )
+            #    b) NULL out parent_id of any OTHER node whose parent is being deleted
+            await db.execute(
+                CourseContentTree.__table__.update()
+                .where(CourseContentTree.parent_id.in_(old_ids))
+                .values(parent_id=None)
+            )
+            # 3. Bulk delete — all FK chains are now clear
+            await db.execute(
+                sa_delete(CourseContentTree).where(
+                    CourseContentTree.id.in_(old_ids)
+                )
+            )
             await db.flush()
-            logger.info("Dedup: removed %d existing nodes for source %s", len(old_nodes), source_label)
+            logger.info("Dedup: removed %d existing nodes for source %s", len(old_ids), source_label)
 
         # PPT files: keep as single node (one note per file, not per slide)
         is_pptx = source_name.endswith((".pptx", ".ppt"))
@@ -107,6 +125,9 @@ async def dispatch_content(db: AsyncSession, job: IngestionJob) -> dict:
 
             async def _safe_auto_generate(course_id, user_id, node_data):
                 """Run auto-generation with an independent DB session."""
+                # Brief yield so the caller's transaction has time to commit
+                # before we try to reference content_node_id FKs from a new session.
+                await _asyncio_dispatch.sleep(1)
                 try:
                     async with async_session_factory() as bg_db:
                         await _auto_generate_learning_content(bg_db, course_id, user_id, node_data)

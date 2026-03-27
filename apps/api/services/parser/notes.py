@@ -60,8 +60,13 @@ When the content includes:
 - Comparisons → use markdown tables
 - Hierarchies/taxonomies → use Mermaid mindmap
 - Mathematical formulas → use KaTeX ($...$) or ($$...$$)
-- Timelines → use Mermaid timeline
-- Relationships → use Mermaid class diagram
+- Relationships → prefer concise bullets or a simple markdown table
+
+Mermaid rules:
+- Prefer only Mermaid mindmap or graph TD for notes
+- Keep Mermaid node labels short and plain-text only
+- Do not put code snippets, JSON, braces, quotes, markdown formatting, or long examples inside Mermaid nodes
+- Put concrete examples and detailed explanations in normal markdown below the diagram
 
 Always output valid Mermaid syntax wrapped in ```mermaid blocks.
 Always output valid KaTeX wrapped in $ or $$ delimiters."""
@@ -96,6 +101,7 @@ Important:
 - Preserve all important information from the original
 - Use proper markdown formatting
 - Include Mermaid diagrams and KaTeX formulas where they add value
+- Keep Mermaid labels simple and diagram-safe; move detailed examples into bullets below the diagram
 - Do NOT add information not present in the original content"""
 
     user_message = f"## {title}\n\n{content}"

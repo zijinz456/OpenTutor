@@ -38,6 +38,14 @@ logger = logging.getLogger(__name__)
 
 _CLARIFY_RE = re.compile(r'^\[CLARIFY:([^:]+):(.+)\]$')
 
+_ADAPTATION_WARNING = {
+    "type": "advanced_adaptation_unavailable",
+    "message": (
+        "Advanced adaptation is temporarily unavailable for this reply. "
+        "I'll keep helping, but personalized pacing and layout tuning may be reduced."
+    ),
+}
+
 
 def _parse_clarify_inputs(message: str) -> dict[str, str]:
     """Parse clarify response from frontend.
@@ -61,6 +69,17 @@ def _parse_clarify_inputs(message: str) -> dict[str, str]:
         return {m.group(1): m.group(2)}
 
     return {}
+
+
+def _record_stream_warning(ctx: AgentContext, warning: dict[str, str]) -> None:
+    """Attach a deduplicated warning for SSE consumers."""
+    warnings = ctx.metadata.setdefault("stream_warnings", [])
+    if not isinstance(warnings, list):
+        warnings = []
+        ctx.metadata["stream_warnings"] = warnings
+    if any(existing.get("type") == warning.get("type") for existing in warnings if isinstance(existing, dict)):
+        return
+    warnings.append(warning)
 
 
 async def _apply_turn_enrichment(ctx: AgentContext, db: AsyncSession) -> AgentContext:
@@ -98,6 +117,7 @@ async def _apply_turn_enrichment(ctx: AgentContext, db: AsyncSession) -> AgentCo
                 logger.debug("Failed to persist cognitive load counter")
     except (SQLAlchemyError, ImportError, ConnectionError, TimeoutError, ValueError) as e:
         logger.debug("Cognitive load detection skipped: %s", e)
+        _record_stream_warning(ctx, _ADAPTATION_WARNING)
 
     # Block Decision Engine — always run so cognitive badge state is updated.
     try:
@@ -149,6 +169,7 @@ async def _apply_turn_enrichment(ctx: AgentContext, db: AsyncSession) -> AgentCo
         ctx.metadata["block_decisions"] = decisions
     except (ImportError, SQLAlchemyError, ConnectionError, TimeoutError, ValueError, AttributeError) as e:
         logger.debug("Block decision engine skipped: %s", e)
+        _record_stream_warning(ctx, _ADAPTATION_WARNING)
 
     return ctx
 
@@ -333,6 +354,9 @@ async def orchestrate_stream(
 
     ctx = await load_context(ctx, db, db_factory=db_factory)
     ctx = await _apply_turn_enrichment(ctx, db)
+    for warning in ctx.metadata.get("stream_warnings", []):
+        if isinstance(warning, dict):
+            yield {"event": "warning", "data": json.dumps(warning)}
 
     # Complex request contract: emit one `plan_step` then continue normal chat response.
     from services.agent.task_planner import is_complex_request

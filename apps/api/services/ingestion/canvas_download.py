@@ -6,8 +6,10 @@ with URL normalization and binary content detection.
 Extracted from canvas_loader.py.
 """
 
+import asyncio
 import logging
 import re
+from pathlib import Path
 
 import httpx
 
@@ -73,8 +75,7 @@ async def download_canvas_file(
                         os.makedirs(save_dir, exist_ok=True)
                         file_hash = hashlib.sha256(resp.content).hexdigest()[:12]
                         save_path = os.path.join(save_dir, f"{file_hash}_{filename}")
-                        with open(save_path, "wb") as f:
-                            f.write(resp.content)
+                        await asyncio.to_thread(Path(save_path).write_bytes, resp.content)
                         logger.info("Downloaded Canvas file: %s (%d bytes)", filename, len(resp.content))
                         return save_path
                 except (httpx.HTTPError, OSError) as e:

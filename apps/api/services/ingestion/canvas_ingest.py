@@ -4,6 +4,7 @@
 - link_pdfs_to_canvas_topics: reparent PDF nodes under Canvas module topics
 """
 
+import asyncio
 import logging
 import re
 import uuid
@@ -28,61 +29,66 @@ async def ingest_canvas_files(
 
     Returns number of files successfully ingested.
     """
+    from pathlib import Path as _Path
     from services.ingestion.document_loader import download_canvas_file
+    from services.ingestion.pipeline import run_ingestion_pipeline
     from config import settings
 
     ingested = 0
     failed_files: list[str] = []
     save_dir = getattr(settings, "upload_dir", "uploads")
+    sem = asyncio.Semaphore(5)
 
-    for file_info in file_urls:
-        try:
-            # Download the file
-            saved_path = await download_canvas_file(
-                file_info,
-                session_name=session_name,
-                target_domain=canvas_domain,
-                save_dir=save_dir,
-            )
-            if not saved_path:
-                fname = file_info.get("filename", "unknown")
-                failed_files.append(fname)
-                logger.warning("Skipped Canvas file (download failed): %s", fname)
-                continue
-
-            # Read file bytes for dedup
-            from pathlib import Path as _Path
-            file_bytes = _Path(saved_path).read_bytes()
-            if len(file_bytes) < 100:
-                logger.debug("Skipped Canvas file (too small): %s", file_info.get("filename"))
-                continue
-
-            filename = file_info.get("filename", "file.pdf")
-
-            # Run through ingestion pipeline
-            from services.ingestion.pipeline import run_ingestion_pipeline
-
-            async with db_factory() as file_db:
-                job = await run_ingestion_pipeline(
-                    db=file_db,
-                    user_id=user_id,
-                    file_path=saved_path,
-                    filename=filename,
-                    course_id=course_id,
-                    file_bytes=file_bytes,
+    async def _ingest_one(file_info: dict) -> tuple[int, str | None]:
+        async with sem:
+            try:
+                saved_path = await download_canvas_file(
+                    file_info,
+                    session_name=session_name,
+                    target_domain=canvas_domain,
+                    save_dir=save_dir,
                 )
-                await file_db.commit()
+                if not saved_path:
+                    fname = file_info.get("filename", "unknown")
+                    logger.warning("Skipped Canvas file (download failed): %s", fname)
+                    return (0, fname)
+
+                file_bytes = _Path(saved_path).read_bytes()
+                if len(file_bytes) < 100:
+                    logger.debug("Skipped Canvas file (too small): %s", file_info.get("filename"))
+                    return (0, None)
+
+                filename = file_info.get("filename", "file.pdf")
+                async with db_factory() as file_db:
+                    job = await run_ingestion_pipeline(
+                        db=file_db,
+                        user_id=user_id,
+                        file_path=saved_path,
+                        filename=filename,
+                        course_id=course_id,
+                        file_bytes=file_bytes,
+                    )
+                    await file_db.commit()
 
                 if job.status != "failed" and (job.nodes_created or 0) > 0:
-                    ingested += 1
                     logger.info("Ingested Canvas file: %s (%d nodes)", filename, job.nodes_created or 0)
+                    return (1, None)
                 else:
                     logger.debug("Canvas file ingestion produced no nodes: %s", filename)
+                    return (0, None)
 
-        except (IOError, OSError) as e:
-            logger.warning("Canvas file I/O error for %s: %s", file_info.get("filename"), e)
-        except (ValueError, RuntimeError, ConnectionError, TimeoutError) as e:
-            logger.exception("Unexpected error ingesting Canvas file %s", file_info.get("filename"))
+            except (IOError, OSError) as e:
+                logger.warning("Canvas file I/O error for %s: %s", file_info.get("filename"), e)
+                return (0, None)
+            except (ValueError, RuntimeError, ConnectionError, TimeoutError):
+                logger.exception("Unexpected error ingesting Canvas file %s", file_info.get("filename"))
+                return (0, None)
+
+    results = await asyncio.gather(*[_ingest_one(f) for f in file_urls])
+    for count, failed in results:
+        ingested += count
+        if failed:
+            failed_files.append(failed)
 
     if failed_files:
         logger.warning(

@@ -37,6 +37,7 @@ from services.scheduler.engine_jobs_maintenance import (  # noqa: F401
     _get_or_create_weekly_review_goal,
     _has_scheduled_weekly_task,
     agenda_tick_job,
+    canvas_session_keepalive_job,
     escalation_check_job,
     memory_consolidation_job,
     scrape_refresh_job,
@@ -64,6 +65,7 @@ _SCHEDULED_JOBS: list[tuple] = [
     # Standalone maintenance jobs
     (weekly_prep_job, CronTrigger(day_of_week="mon", hour=8, minute=0), "weekly_prep", "Weekly Study Prep (WF-2)"),
     (scrape_refresh_job, IntervalTrigger(hours=1), "scrape_refresh", "Auto-Scrape Refresh"),
+    (canvas_session_keepalive_job, IntervalTrigger(minutes=20), "canvas_keepalive", "Canvas Session Keep-Alive"),
     (memory_consolidation_job, IntervalTrigger(hours=6), "memory_consolidation", "Memory Consolidation (dedup + decay + categorize)"),
     (timing_analysis_job, CronTrigger(hour=3, minute=0), "timing_analysis", "Study Timing Analysis"),
     (escalation_check_job, IntervalTrigger(hours=2), "escalation_check", "Notification Escalation Check"),
