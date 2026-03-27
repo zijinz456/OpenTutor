@@ -5,6 +5,7 @@ import { useChatStore } from "@/store/chat";
 import { useWorkspaceStore, type SectionId } from "@/store/workspace";
 import { ChatHeader } from "@/components/chat/chat-header";
 import { MessageList } from "@/components/chat/message-list";
+import { GeneratedQuizCard } from "@/components/chat/generated-quiz-card";
 import { ChatInput } from "@/components/chat/chat-input";
 import { ToolStatus } from "@/components/chat/tool-status";
 import { AiFeatureBlocked } from "@/components/shared/ai-feature-blocked";
@@ -109,6 +110,8 @@ export function ChatView({
       <MessageList messages={messages} />
 
       <ToolStatus status={toolStatus} />
+
+      <GeneratedQuizCard courseId={courseId} />
 
       {!aiActionsEnabled ? <AiFeatureBlocked compact className="mx-3 mb-2" /> : null}
 

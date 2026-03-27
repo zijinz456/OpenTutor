@@ -26,6 +26,9 @@ export function MessageList({ messages }: MessageListProps) {
   const error = useChatStore((s) => s.error);
   const errorCategory = useChatStore((s) => s.errorCategory);
   const isMockLlm = useChatStore((s) => s.isMockLlm);
+  const streamPhase = useChatStore((s) => s.streamPhase);
+  const slowState = useChatStore((s) => s.slowState);
+  const latestWarning = useChatStore((s) => s.latestWarning);
 
   const errorLabels: Record<string, string> = {
     rate_limit: t("chat.error.rateLimit"),
@@ -34,6 +37,21 @@ export function MessageList({ messages }: MessageListProps) {
     llm_unavailable: t("chat.error.llmUnavailable"),
     generic: t("chat.error.generic"),
   };
+  const phaseLabels: Record<string, string> = {
+    routing: t("chat.status.routing"),
+    loading: t("chat.status.loading"),
+    generating: t("chat.status.generating"),
+    verifying: t("chat.status.verifying"),
+  };
+  const slowHint =
+    slowState === "analyzing"
+      ? t("chat.slow.analyzing")
+      : slowState === "delayed"
+        ? t("chat.slow.delayed")
+        : null;
+  const showWarningBanner =
+    latestWarning &&
+    ["adaptation_degraded", "verification_skipped", "slow_response"].includes(latestWarning.type);
 
   // Extra items: clarify card + streaming indicator + bottom spacer
   const extraCount =
@@ -84,6 +102,12 @@ export function MessageList({ messages }: MessageListProps) {
           <span>{t("chat.mockWarning")}</span>
         </div>
       )}
+      {showWarningBanner ? (
+        <div role="status" className="sticky top-0 z-10 flex items-center gap-2 bg-warning/10 border-b border-warning/30 px-3 py-1.5 text-xs text-warning">
+          <AlertTriangle className="size-3.5 shrink-0" />
+          <span>{latestWarning.message}</span>
+        </div>
+      ) : null}
       <div
         className="relative w-full p-3"
         style={{ height: `${virtualizer.getTotalSize()}px` }}
@@ -108,7 +132,10 @@ export function MessageList({ messages }: MessageListProps) {
             } else if (isStreaming) {
               content = (
                 <div className="flex justify-start">
-                  <StreamingIndicator />
+                  <StreamingIndicator
+                    phaseLabel={streamPhase ? phaseLabels[streamPhase] ?? streamPhase : null}
+                    hint={slowHint}
+                  />
                 </div>
               );
             }

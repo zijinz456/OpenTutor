@@ -885,6 +885,12 @@
 
   "chat.mockWarning": "No LLM API key configured. Responses are local fallback text, not AI-generated.",
   "chat.persistenceWarning": "Your conversation was not saved. You may need to resend your message.",
+  "chat.status.routing": "Choosing the best help mode",
+  "chat.status.loading": "Reviewing your materials",
+  "chat.status.generating": "Drafting the answer",
+  "chat.status.verifying": "Double-checking the answer",
+  "chat.slow.analyzing": "Still analyzing your materials…",
+  "chat.slow.delayed": "This is taking longer than usual. You can wait, stop, or retry with a narrower request.",
   "chat.error.rateLimit": "Rate limit reached. Please wait a moment and try again.",
   "chat.error.authError": "Authentication error. Check your API key configuration.",
   "chat.error.timeout": "Request timed out. The LLM may be overloaded.",

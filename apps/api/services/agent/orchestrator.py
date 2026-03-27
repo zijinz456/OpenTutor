@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 _CLARIFY_RE = re.compile(r'^\[CLARIFY:([^:]+):(.+)\]$')
 
 _ADAPTATION_WARNING = {
-    "type": "advanced_adaptation_unavailable",
+    "type": "adaptation_degraded",
     "message": (
         "Advanced adaptation is temporarily unavailable for this reply. "
         "I'll keep helping, but personalized pacing and layout tuning may be reduced."
@@ -354,9 +354,11 @@ async def orchestrate_stream(
 
     ctx = await load_context(ctx, db, db_factory=db_factory)
     ctx = await _apply_turn_enrichment(ctx, db)
+    emitted_warning_count = 0
     for warning in ctx.metadata.get("stream_warnings", []):
         if isinstance(warning, dict):
             yield {"event": "warning", "data": json.dumps(warning)}
+            emitted_warning_count += 1
 
     # Complex request contract: emit one `plan_step` then continue normal chat response.
     from services.agent.task_planner import is_complex_request
@@ -456,6 +458,11 @@ async def orchestrate_stream(
     )
     streamed_response = ctx.response
     ctx = await apply_verifier(ctx, agent)
+    new_warnings = ctx.metadata.get("stream_warnings", [])[emitted_warning_count:]
+    for warning in new_warnings:
+        if isinstance(warning, dict):
+            yield {"event": "warning", "data": json.dumps(warning)}
+            emitted_warning_count += 1
 
     should_reflect = (
         bool(ctx.response)
@@ -465,6 +472,11 @@ async def orchestrate_stream(
     if should_reflect:
         yield {"event": "status", "data": json.dumps({"phase": "verifying"})}
         ctx = await apply_reflection(ctx)
+        new_warnings = ctx.metadata.get("stream_warnings", [])[emitted_warning_count:]
+        for warning in new_warnings:
+            if isinstance(warning, dict):
+                yield {"event": "warning", "data": json.dumps(warning)}
+                emitted_warning_count += 1
     # Build provenance once after all post-processing
     ctx.metadata["provenance"] = build_provenance(ctx)
     if ctx.response != streamed_response:

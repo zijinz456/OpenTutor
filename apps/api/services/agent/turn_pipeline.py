@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import asdict
 import logging
+import time
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,6 +14,25 @@ from services.agent.marker_parser import MarkerParser
 from services.agent.state import AgentContext, AgentTurnEnvelope, AgentVerificationResult, IntentType, TaskPhase
 
 logger = logging.getLogger(__name__)
+
+_VERIFIER_BUDGET_SECONDS = 12
+_REFLECTION_BUDGET_SECONDS = 15
+_SHORT_TURN_MAX_REQUEST_CHARS = 90
+_SHORT_TURN_MAX_RESPONSE_CHARS = 240
+
+
+def _record_stream_warning(ctx: AgentContext, warning_type: str, message: str) -> None:
+    warnings = ctx.metadata.setdefault("stream_warnings", [])
+    if not isinstance(warnings, list):
+        warnings = []
+        ctx.metadata["stream_warnings"] = warnings
+    if any(item.get("type") == warning_type for item in warnings if isinstance(item, dict)):
+        return
+    warnings.append({"type": warning_type, "message": message})
+
+
+def _turn_elapsed_seconds(ctx: AgentContext) -> float:
+    return max(0.0, time.time() - ctx.created_at)
 
 
 def _build_content_evidence_groups(content_docs: list[dict]) -> list[dict]:
@@ -227,6 +247,19 @@ async def apply_verifier(ctx: AgentContext, agent: BaseAgent) -> AgentContext:
     """Run verifier/repair only for the intents that benefit from it."""
     if ctx.intent not in (IntentType.LEARN, IntentType.PLAN, IntentType.GENERAL):
         return ctx
+    elapsed = _turn_elapsed_seconds(ctx)
+    if elapsed >= _VERIFIER_BUDGET_SECONDS:
+        _record_stream_warning(
+            ctx,
+            "slow_response",
+            "This reply is taking longer than usual, so some extra checks were skipped to keep things moving.",
+        )
+        _record_stream_warning(
+            ctx,
+            "verification_skipped",
+            "Final verification was skipped for this turn to avoid adding more delay.",
+        )
+        return ctx
     try:
         from services.agent.verifier import verify_and_repair
 
@@ -238,6 +271,11 @@ async def apply_verifier(ctx: AgentContext, agent: BaseAgent) -> AgentContext:
         ctx.metadata["verifier_replaced"] = ctx.response != original_response
     except (ConnectionError, TimeoutError, ValueError, RuntimeError) as exc:
         logger.exception("Verifier failed (non-critical): %s", exc)
+        _record_stream_warning(
+            ctx,
+            "verification_skipped",
+            "Final verification was unavailable for this reply, so the first draft was kept.",
+        )
     return ctx
 
 
@@ -247,6 +285,19 @@ async def apply_reflection(ctx: AgentContext) -> AgentContext:
     if verifier_status == "failed":
         return ctx
     if not ctx.response or ctx.intent not in (IntentType.LEARN, IntentType.GENERAL) or len(ctx.response) <= 100:
+        return ctx
+    elapsed = _turn_elapsed_seconds(ctx)
+    if elapsed >= _REFLECTION_BUDGET_SECONDS:
+        _record_stream_warning(
+            ctx,
+            "adaptation_degraded",
+            "Advanced adaptation is temporarily unavailable for this reply. I'll keep helping, but some polishing was skipped.",
+        )
+        _record_stream_warning(
+            ctx,
+            "slow_response",
+            "This reply is taking longer than usual, so extra polishing was skipped.",
+        )
         return ctx
     try:
         original_response = ctx.response
@@ -260,4 +311,9 @@ async def apply_reflection(ctx: AgentContext) -> AgentContext:
         )
     except (ConnectionError, TimeoutError, ValueError, RuntimeError) as exc:
         logger.exception("Reflection failed (non-critical): %s", exc)
+        _record_stream_warning(
+            ctx,
+            "adaptation_degraded",
+            "Advanced adaptation is temporarily unavailable for this reply. I'll keep helping with the current answer.",
+        )
     return ctx

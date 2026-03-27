@@ -885,6 +885,12 @@
 
   "chat.mockWarning": "未配置 LLM API Key，当前响应为本地回退文本，非 AI 生成。",
   "chat.persistenceWarning": "对话未保存成功，你可能需要重新发送消息。",
+  "chat.status.routing": "正在选择最合适的帮助方式",
+  "chat.status.loading": "正在阅读你的材料",
+  "chat.status.generating": "正在组织回答",
+  "chat.status.verifying": "正在复核答案",
+  "chat.slow.analyzing": "还在分析你的材料…",
+  "chat.slow.delayed": "这次响应比平时更慢。你可以继续等待，点停止，或换个更具体的问题再试。",
   "chat.error.rateLimit": "请求过于频繁，请稍等片刻再试。",
   "chat.error.authError": "认证错误，请检查你的 API Key 配置。",
   "chat.error.timeout": "请求超时，LLM 可能负载过高。",
