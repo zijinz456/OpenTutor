@@ -178,8 +178,8 @@ run_step_required "list templates" "$API_STATUS" "$API_BODY"
 api_call "GET" "/api/progress/courses/${course_id}"
 run_step_required "course progress" "$API_STATUS" "$API_BODY"
 
-api_call "GET" "/api/progress/courses/${course_id}/knowledge-graph"
-run_step_optional "knowledge graph" "$API_STATUS" "$API_BODY"
+# Knowledge graph requires ENABLE_EXPERIMENTAL_LOOM — skip in CI.
+record_warn "skip knowledge graph: LOOM is experimental"
 
 # 11) Flashcards (LLM-dependent)
 fc_payload="{\"course_id\":\"${course_id}\",\"count\":5}"
