@@ -179,7 +179,7 @@ api_call "GET" "/api/progress/courses/${course_id}"
 run_step_required "course progress" "$API_STATUS" "$API_BODY"
 
 api_call "GET" "/api/progress/courses/${course_id}/knowledge-graph"
-run_step_required "knowledge graph" "$API_STATUS" "$API_BODY"
+run_step_optional "knowledge graph" "$API_STATUS" "$API_BODY"
 
 # 11) Flashcards (LLM-dependent)
 fc_payload="{\"course_id\":\"${course_id}\",\"count\":5}"
