@@ -312,7 +312,12 @@ async def get_memory_stats(
     )
     oldest = oldest_q.scalar()
     now = datetime.now(timezone.utc)
-    oldest_days = int((now - oldest).total_seconds() / 86400) if oldest else 0
+    if oldest:
+        if oldest.tzinfo is None:
+            oldest = oldest.replace(tzinfo=timezone.utc)
+        oldest_days = int((now - oldest).total_seconds() / 86400)
+    else:
+        oldest_days = 0
 
     # Merged memories count (those with merge_count > 1 in metadata)
     # We can approximate from metadata_json but for now count all

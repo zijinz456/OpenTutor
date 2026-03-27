@@ -159,67 +159,76 @@ async def canvas_browser_login(
     session_name = _default_session_name(user.id, domain)
     timeout = min(body.timeout_seconds, 600)  # cap at 10 minutes
 
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False)
-        context = await browser.new_context()
-        page = await context.new_page()
-
-        try:
-            await page.goto(canvas_url, wait_until="domcontentloaded", timeout=30000)
-        except Exception as nav_exc:
-            await context.close()
-            await browser.close()
-            raise ExternalServiceError(
-                service="Canvas",
-                message=f"Failed to navigate to Canvas URL: {nav_exc}",
-            ) from nav_exc
-
-        # Poll until the user completes login or timeout expires.
-        # Success signals: URL returns to Canvas domain AND is no longer
-        # on an SSO / login page.
-        login_keywords = {"login", "auth", "okta", "sso", "saml", "adfs", "idp", "signin"}
-        canvas_success_paths = {"/dashboard", "/courses", "/profile", "/calendar", "/grades"}
-
-        success = False
-        elapsed = 0.0
-        poll_interval = 1.5
-
-        while elapsed < timeout:
-            await asyncio.sleep(poll_interval)
-            elapsed += poll_interval
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=False)
+            context = await browser.new_context()
+            page = await context.new_page()
 
             try:
-                current_url = page.url.lower()
-            except (AttributeError, RuntimeError, OSError):
-                logger.debug("Browser closed during Canvas login polling")  # expected during user close
-                break  # browser was closed by user
+                try:
+                    await page.goto(canvas_url, wait_until="domcontentloaded", timeout=30000)
+                except Exception as nav_exc:
+                    raise ExternalServiceError(
+                        service="Canvas",
+                        message=f"Failed to navigate to Canvas URL: {nav_exc}",
+                    ) from nav_exc
 
-            parsed = urlparse(current_url)
-            path = parsed.path.rstrip("/")
-            host = parsed.netloc
+                # Poll until the user completes login or timeout expires.
+                # Success signals: URL returns to Canvas domain AND is no longer
+                # on an SSO / login page.
+                login_keywords = {"login", "auth", "okta", "sso", "saml", "adfs", "idp", "signin"}
+                canvas_success_paths = {"/dashboard", "/courses", "/profile", "/calendar", "/grades"}
 
-            # Must be back on the Canvas domain
-            if domain.lower() not in host:
-                continue
+                success = False
+                elapsed = 0.0
+                poll_interval = 1.5
 
-            # Must NOT still be on a login/SSO page
-            path_parts = set(path.split("/"))
-            if path_parts & login_keywords:
-                continue
+                while elapsed < timeout:
+                    await asyncio.sleep(poll_interval)
+                    elapsed += poll_interval
 
-            # Must be on a recognized Canvas page, or at least away from login
-            on_known_page = any(path.startswith(sp) for sp in canvas_success_paths)
-            not_on_login = "login" not in current_url
-            if on_known_page or (not_on_login and path != ""):
-                success = True
-                break
+                    try:
+                        current_url = page.url.lower()
+                    except (AttributeError, RuntimeError, OSError):
+                        logger.debug("Browser closed during Canvas login polling")  # expected during user close
+                        break  # browser was closed by user
 
-        if success:
-            await SessionManager.save_state(context, session_name)
-            logger.info("Canvas browser login succeeded for %s", session_name)
+                    parsed = urlparse(current_url)
+                    path = parsed.path.rstrip("/")
+                    host = parsed.netloc
 
-        await context.close()
-        await browser.close()
+                    # Must be back on the Canvas domain
+                    if domain.lower() not in host:
+                        continue
+
+                    # Must NOT still be on a login/SSO page
+                    path_parts = set(path.split("/"))
+                    if path_parts & login_keywords:
+                        continue
+
+                    # Must be on a recognized Canvas page, or at least away from login
+                    on_known_page = any(path.startswith(sp) for sp in canvas_success_paths)
+                    not_on_login = "login" not in current_url
+                    if on_known_page or (not_on_login and path != ""):
+                        success = True
+                        break
+
+                if success:
+                    await SessionManager.save_state(context, session_name)
+                    logger.info("Canvas browser login succeeded for %s", session_name)
+            finally:
+                await context.close()
+                await browser.close()
+    except ExternalServiceError:
+        raise
+    except PermissionDeniedError:
+        raise
+    except Exception as exc:
+        raise ExternalServiceError(
+            service="Canvas",
+            message=f"Browser automation failed: {exc}",
+        ) from exc
 
     if not success:
         raise PermissionDeniedError(

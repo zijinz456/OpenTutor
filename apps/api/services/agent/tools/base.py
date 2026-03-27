@@ -128,13 +128,20 @@ class Tool(ABC):
         """
         ...
 
+    # Map Python type names to JSON Schema type names.
+    _PY_TO_JSON_TYPE: dict[str, str] = {
+        "str": "string", "int": "integer", "float": "number",
+        "bool": "boolean", "list": "array", "dict": "object",
+    }
+
     def to_openai_schema(self) -> dict:
         """Convert to OpenAI function calling JSON schema."""
         properties: dict[str, Any] = {}
         required: list[str] = []
         for param in self.get_parameters():
+            json_type = self._PY_TO_JSON_TYPE.get(param.type, param.type)
             prop: dict[str, Any] = {
-                "type": param.type,
+                "type": json_type,
                 "description": param.description,
             }
             if param.enum:

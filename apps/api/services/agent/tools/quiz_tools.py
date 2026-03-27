@@ -155,11 +155,11 @@ async def derive_diagnostic_tool(parameters: dict[str, Any], ctx: Any, db: Async
     ),
     category=ToolCategory.WRITE,
     params=[
-        param("topic", "str", "The concept/topic being probed", required=True),
-        param("understood", "bool", "Whether the student demonstrated true understanding", required=True),
-        param("probe_type", "str", "Type of probe: transfer | misconception | feynman", required=True),
-        param("misconception_type", "str", "If understood=false: surface_memorization | confused_similar | missing_prerequisite | procedural_only | partial_understanding", required=False),
-        param("notes", "str", "Brief notes on what the student got right or wrong", required=False),
+        param("topic", "string", "The concept/topic being probed", required=True),
+        param("understood", "boolean", "Whether the student demonstrated true understanding", required=True),
+        param("probe_type", "string", "Type of probe: transfer | misconception | feynman", required=True),
+        param("misconception_type", "string", "If understood=false: surface_memorization | confused_similar | missing_prerequisite | procedural_only | partial_understanding", required=False),
+        param("notes", "string", "Brief notes on what the student got right or wrong", required=False),
     ],
 )
 async def record_comprehension_tool(parameters: dict[str, Any], ctx: Any, db: AsyncSession) -> ToolResult:

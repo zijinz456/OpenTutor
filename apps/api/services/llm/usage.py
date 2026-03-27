@@ -8,7 +8,7 @@ import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import cast, func, select, Date
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.usage_event import UsageEvent
@@ -266,8 +266,8 @@ async def get_daily_usage(
     """Get daily usage time series for charts."""
     start = datetime.now(timezone.utc) - timedelta(days=days)
 
-    # Use cast(Date) instead of date_trunc for SQLite compatibility
-    day_col = cast(UsageEvent.created_at, Date).label("day")
+    # Use func.date() for SQLite compatibility (cast+Date fails with timezone-aware datetimes)
+    day_col = func.date(UsageEvent.created_at).label("day")
 
     result = await db.execute(
         select(
