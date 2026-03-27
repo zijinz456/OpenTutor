@@ -23,6 +23,8 @@ interface ContentStepProps {
   canvasSessionValid: boolean;
   canvasAuthenticating: boolean;
   onAuthCanvas: () => void;
+  onQuickStart: () => void;
+  quickStartLoading: boolean;
   onStartLearning: () => void;
   onSkip: () => void;
   onTryDemo: () => void;
@@ -36,7 +38,7 @@ export function ContentStep({
   url, onUrlChange, urlError, onValidateUrl,
   autoScrape, onAutoScrapeChange,
   isCanvasDetected, canvasSessionValid, canvasAuthenticating,
-  onAuthCanvas, onStartLearning, onSkip, onTryDemo, demoLoading, t,
+  onAuthCanvas, onQuickStart, quickStartLoading, onStartLearning, onSkip, onTryDemo, demoLoading, t,
 }: ContentStepProps) {
   const [tab, setTab] = useState<ContentTab>("upload");
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -238,12 +240,21 @@ export function ContentStep({
       <div className="flex items-center gap-3 pt-2">
         <button
           type="button"
-          onClick={onStartLearning}
-          disabled={!canStart}
-          data-testid="setup-start-learning"
+          onClick={onQuickStart}
+          disabled={!canStart || quickStartLoading}
+          data-testid="setup-quick-start"
           className={`h-10 px-6 rounded-lg text-sm font-semibold text-brand-foreground ${
-            canStart ? "bg-brand hover:opacity-90" : "bg-brand/50 cursor-not-allowed"
+            canStart && !quickStartLoading ? "bg-brand hover:opacity-90" : "bg-brand/50 cursor-not-allowed"
           }`}
+        >
+          {quickStartLoading ? t("setup.quickStartLoading") : t("setup.quickStart")}
+        </button>
+        <button
+          type="button"
+          onClick={onStartLearning}
+          disabled={!canStart || quickStartLoading}
+          data-testid="setup-start-learning"
+          className="h-10 px-4 text-sm text-muted-foreground hover:text-foreground disabled:opacity-50"
         >
           {t("setup.startLearning")}
         </button>
@@ -255,6 +266,9 @@ export function ContentStep({
           {t("setup.skipContent")}
         </button>
       </div>
+      <p className="text-xs text-muted-foreground">
+        {t("setup.quickStartHint")}
+      </p>
 
       {/* Demo fast path */}
       <div className="flex items-center gap-3 pt-1">

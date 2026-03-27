@@ -134,6 +134,8 @@ export function QuizView({
       // Show toast if backend reported warnings (e.g. progress tracking failed)
       if (res.warnings && res.warnings.length > 0) {
         toast.warning(t("quiz.progressWarning"));
+      } else if (!res.explanation || (!res.is_correct && !res.correct_answer)) {
+        toast.warning(t("quiz.feedbackWarning"));
       }
       const newScore = {
         correct: score.correct + (res.is_correct ? 1 : 0),

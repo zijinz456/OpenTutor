@@ -1,6 +1,7 @@
 import { setPreference } from "@/lib/api";
 import { useWorkspaceStore } from "@/store/workspace";
 import { updateUnlockContext } from "@/lib/block-system/feature-unlock";
+import { saveStoredSpaceLayout } from "@/lib/block-system/layout-storage";
 import { TEMPLATES } from "@/lib/block-system/templates";
 import { isCanvasUrl, type Mode } from "../new/types";
 import { buildMetadata } from "../new/parse-actions";
@@ -101,7 +102,7 @@ export function persistWorkspaceLayout(
   }
   const layout = store.spaceLayout;
   if (selectedTemplate || selectedMode || interviewLayout) {
-    try { localStorage.setItem(`opentutor_blocks_${createdCourseId}`, JSON.stringify(layout)); } catch { /* quota */ }
+    saveStoredSpaceLayout(createdCourseId, layout);
     if (layout.mode) {
       updateUnlockContext(createdCourseId, { mode: layout.mode });
     }

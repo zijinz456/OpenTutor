@@ -10,19 +10,25 @@ interface QuizResultProps {
 
 export function QuizResult({ result }: QuizResultProps) {
   const t = useT();
+  const badgeText = result.is_correct
+    ? t("quiz.correct")
+    : result.correct_answer?.toUpperCase() || t("quiz.answerRecorded");
+  const fallbackCopy = result.is_correct
+    ? t("quiz.answerRecorded")
+    : result.correct_answer
+      ? `${t("quiz.correctAnswerLabel")} ${result.correct_answer.toUpperCase()}`
+      : t("quiz.feedbackUnavailable");
 
   return (
     <>
-      {result.explanation ? (
-        <div className="space-y-1.5 pt-1" aria-live="assertive">
-          <Badge variant={result.is_correct ? "default" : "destructive"}>
-            {result.is_correct ? t("quiz.correct") : result.correct_answer?.toUpperCase()}
-          </Badge>
-          <p className="text-xs text-muted-foreground leading-relaxed">
-            {t("quiz.explanation")} {result.explanation}
-          </p>
-        </div>
-      ) : null}
+      <div className="space-y-1.5 pt-1" aria-live="assertive">
+        <Badge variant={result.is_correct ? "default" : "destructive"}>
+          {badgeText}
+        </Badge>
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          {result.explanation ? `${t("quiz.explanation")} ${result.explanation}` : fallbackCopy}
+        </p>
+      </div>
 
       {result.prerequisite_gaps && result.prerequisite_gaps.length > 0 ? (
         <div className="rounded-2xl border border-warning/30 bg-warning-muted/20 p-3.5 space-y-2">

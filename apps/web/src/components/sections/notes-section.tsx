@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -14,6 +14,7 @@ import {
   getAiNoteForNode,
   type AiNoteForNode,
 } from "@/lib/api";
+import { stabilizeMarkdownMermaidBlocks } from "@/lib/markdown/mermaid";
 import { useBatchManager } from "@/hooks/use-batch-manager";
 import { MarkdownRenderer } from "@/components/shared/markdown-renderer";
 import { AiFeatureBlocked } from "@/components/shared/ai-feature-blocked";
@@ -31,6 +32,50 @@ interface GeneratedNoteDraft {
   markdown: string;
   format: string;
   sourceNodeId: string;
+}
+
+function cleanNoteText(value: unknown): string {
+  return typeof value === "string" ? value.replaceAll("\u0000", "").trim() : "";
+}
+
+function cleanNoteMarkdown(value: unknown): string {
+  const markdown = cleanNoteText(value);
+  return markdown ? stabilizeMarkdownMermaidBlocks(markdown) : "";
+}
+
+function normalizeGeneratedNoteDraft(
+  payload: unknown,
+  sourceNodeId: string,
+  fallbackTitle: string,
+): GeneratedNoteDraft | null {
+  if (!payload || typeof payload !== "object") return null;
+
+  const record = payload as Record<string, unknown>;
+  const markdown = cleanNoteMarkdown(record.ai_content);
+  if (!markdown) return null;
+
+  return {
+    title: cleanNoteText(record.original_title) || fallbackTitle,
+    markdown,
+    format: cleanNoteText(record.format_used) || "markdown",
+    sourceNodeId,
+  };
+}
+
+function normalizeAiNote(note: AiNoteForNode | null): AiNoteForNode | null {
+  if (!note || typeof note !== "object") return null;
+
+  const markdown = cleanNoteMarkdown(note.markdown);
+  if (!markdown) return null;
+
+  return {
+    id: typeof note.id === "string" ? note.id : "",
+    title: cleanNoteText(note.title) || "AI Notes",
+    markdown,
+    format: cleanNoteText(note.format) || "markdown",
+    auto_generated: !!note.auto_generated,
+    version: typeof note.version === "number" ? note.version : 1,
+  };
 }
 
 export function NotesSection({
@@ -52,6 +97,8 @@ export function NotesSection({
   const [viewMode, setViewMode] = useState<"ai" | "source">("ai");
   const [aiNote, setAiNote] = useState<AiNoteForNode | null>(null);
   const [aiNoteLoading, setAiNoteLoading] = useState(false);
+  const aiFetchRequestRef = useRef(0);
+  const generateRequestRef = useRef(0);
 
   const contentNodes = useMemo(() => collectContentNodes(contentTree), [contentTree]);
 
@@ -94,20 +141,24 @@ export function NotesSection({
   // Fetch AI note for selected node
   useEffect(() => {
     if (!selectedNodeForFetch) {
+      aiFetchRequestRef.current += 1;
       setAiNote(null);
+      setAiNoteLoading(false);
       return;
     }
+
+    const requestId = ++aiFetchRequestRef.current;
     let cancelled = false;
     setAiNoteLoading(true);
     getAiNoteForNode(courseId, selectedNodeForFetch)
       .then((note) => {
-        if (!cancelled) {
-          setAiNote(note);
+        if (!cancelled && requestId === aiFetchRequestRef.current) {
+          setAiNote(normalizeAiNote(note));
           setAiNoteLoading(false);
         }
       })
       .catch(() => {
-        if (!cancelled) {
+        if (!cancelled && requestId === aiFetchRequestRef.current) {
           setAiNote(null);
           setAiNoteLoading(false);
         }
@@ -121,21 +172,33 @@ export function NotesSection({
       return;
     }
 
+    const requestId = ++generateRequestRef.current;
     setGenerating(true);
     try {
       const result = await restructureNotes(selectedNode.id);
-      setDraft({
-        title: result.original_title,
-        markdown: result.ai_content,
-        format: result.format_used,
-        sourceNodeId: selectedNode.id,
-      });
+      if (requestId !== generateRequestRef.current) return;
+
+      const nextDraft = normalizeGeneratedNoteDraft(
+        result,
+        selectedNode.id,
+        selectedNode.title || "Untitled section",
+      );
+
+      if (!nextDraft) {
+        throw new Error("AI notes came back empty");
+      }
+
+      setDraft(nextDraft);
       setViewMode("ai");
       toast.success("Generated AI notes");
     } catch (error) {
-      toast.error((error as Error).message || "Failed to generate notes");
+      if (requestId === generateRequestRef.current) {
+        toast.error((error as Error).message || "Failed to generate notes");
+      }
     } finally {
-      setGenerating(false);
+      if (requestId === generateRequestRef.current) {
+        setGenerating(false);
+      }
     }
   }, [selectedNode]);
 

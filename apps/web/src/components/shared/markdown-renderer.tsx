@@ -1,30 +1,65 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import DOMPurify from "dompurify";
 import ReactMarkdown from "react-markdown";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
+import { buildMermaidFallbackText, stabilizeMermaidCode } from "@/lib/markdown/mermaid";
 import "katex/dist/katex.min.css";
 
+type MermaidInstance = typeof import("mermaid")["default"];
+
+let mermaidLoader: Promise<MermaidInstance> | null = null;
+
+function getMermaid() {
+  if (!mermaidLoader) {
+    mermaidLoader = import("mermaid").then(({ default: mermaid }) => {
+      mermaid.initialize({
+        startOnLoad: false,
+        theme: "default",
+        suppressErrorRendering: true,
+      });
+      return mermaid;
+    });
+  }
+  return mermaidLoader;
+}
+
+function createMermaidRenderId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return `mermaid-${crypto.randomUUID()}`;
+  }
+  return `mermaid-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function MermaidBlock({ code }: { code: string }) {
-  const ref = useRef<HTMLDivElement>(null);
+  const renderIdRef = useRef<string | null>(null);
+  const [svgMarkup, setSvgMarkup] = useState("");
+  const [fallbackText, setFallbackText] = useState("");
+
+  if (renderIdRef.current == null) {
+    renderIdRef.current = createMermaidRenderId();
+  }
 
   useEffect(() => {
     let cancelled = false;
 
     (async () => {
       try {
-        const mermaid = (await import("mermaid")).default;
-        mermaid.initialize({ startOnLoad: false, theme: "default" });
-        if (!ref.current || cancelled) return;
-        const { svg } = await mermaid.render(`mermaid-${Date.now()}`, code);
-        if (ref.current && !cancelled) {
-          ref.current.innerHTML = DOMPurify.sanitize(svg);
+        const mermaid = await getMermaid();
+        const preparedCode = stabilizeMermaidCode(code);
+        const renderId = renderIdRef.current ?? createMermaidRenderId();
+        renderIdRef.current = renderId;
+        const { svg } = await mermaid.render(renderId, preparedCode);
+        if (!cancelled) {
+          setSvgMarkup(DOMPurify.sanitize(svg));
+          setFallbackText("");
         }
       } catch {
-        if (ref.current && !cancelled) {
-          ref.current.textContent = code;
+        if (!cancelled) {
+          setSvgMarkup("");
+          setFallbackText(buildMermaidFallbackText(code));
         }
       }
     })();
@@ -34,7 +69,35 @@ function MermaidBlock({ code }: { code: string }) {
     };
   }, [code]);
 
-  return <div ref={ref} className="my-4 flex justify-center" />;
+  if (svgMarkup) {
+    return (
+      <div
+        className="my-4 flex justify-center"
+        dangerouslySetInnerHTML={{ __html: svgMarkup }}
+      />
+    );
+  }
+
+  if (fallbackText) {
+    return (
+      <div className="my-4">
+        <div className="rounded-xl border border-border/60 bg-muted/20 p-3">
+          <p className="mb-2 text-xs font-medium text-muted-foreground">
+            Diagram preview unavailable. Showing a text outline instead.
+          </p>
+          <pre className="whitespace-pre-wrap text-sm text-foreground">{fallbackText}</pre>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="my-4">
+      <div className="rounded-xl border border-border/40 bg-muted/10 px-3 py-2 text-xs text-muted-foreground">
+        Rendering diagram...
+      </div>
+    </div>
+  );
 }
 
 interface MarkdownRendererProps {

@@ -14,6 +14,7 @@ import { useT } from "@/lib/i18n-context";
 import { useCourseStore } from "@/store/course";
 import { useWorkspaceStore } from "@/store/workspace";
 import { updateUnlockContext } from "@/lib/block-system/feature-unlock";
+import { saveStoredSpaceLayout } from "@/lib/block-system/layout-storage";
 import { buildLayoutFromMode } from "@/lib/block-system/templates";
 import type { LearningMode } from "@/lib/block-system/types";
 
@@ -253,7 +254,7 @@ export function useNewProject() {
 
     // Prime workspace state so the first paint on /course is mode-correct.
     useWorkspaceStore.getState().loadBlocks(layout);
-    try { localStorage.setItem(`opentutor_blocks_${createdCourseId}`, JSON.stringify(layout)); } catch { /* quota */ }
+    saveStoredSpaceLayout(createdCourseId, layout);
     updateUnlockContext(createdCourseId, { mode: learningMode });
 
     try { await updateCourse(createdCourseId, { metadata }); } catch { /* still works */ }

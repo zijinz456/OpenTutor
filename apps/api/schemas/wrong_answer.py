@@ -11,6 +11,7 @@ class WrongAnswerResponse(BaseModel):
     problem_id: uuid.UUID
     question: str | None = None
     question_type: str | None = None
+    options: dict[str, str] | None = None
     user_answer: str
     correct_answer: str | None
     explanation: str | None

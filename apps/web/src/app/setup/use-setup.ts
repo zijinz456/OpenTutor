@@ -35,6 +35,9 @@ import type { SpaceLayoutResponse } from "@/lib/api/onboarding";
 
 export type SetupStep = "llm" | "content" | "interview" | "template" | "discovery";
 
+const QUICK_START_TEMPLATE = "stem_student";
+const QUICK_START_MODE: LearningMode = "course_following";
+
 export function useSetup() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -342,58 +345,66 @@ export function useSetup() {
     setStep("template");
   }, []);
 
+  const beginDiscovery = useCallback(async (
+    templateId: string | null,
+    mode: LearningMode | null,
+    layoutOverride?: SpaceLayoutResponse | null,
+  ) => {
+    const { metadata, sourceMode } = buildCourseMetadata(files, url, templateId, mode);
+    const course = await addCourse(projectName.trim() || t("new.untitledProject"), undefined, metadata);
+
+    await applyDefaultPreferences();
+    persistWorkspaceLayout(course.id, templateId, mode, layoutOverride);
+
+    setCreatedCourseId(course.id);
+    setIngestionJobs([]);
+    setParseLogs([]);
+    setNoSourcesSubmitted(false);
+    setCanEnterEarly(false);
+    setAiProbeResponse("");
+    setAiProbeDone(false);
+    setAiProbeStreaming(false);
+    seenJobStatesRef.current = {};
+    probeSentRef.current = false;
+    setStep("discovery");
+    setIsSubmittingContent(true);
+
+    const addLog = (text: string, color: string) => {
+      setParseLogs((prev) => [...prev, { text, color }]);
+    };
+
+    void submitSources({
+      course,
+      files,
+      url,
+      mode: sourceMode,
+      autoScrape,
+      canvasSessionValid,
+      projectName,
+      addLog,
+      setCanvasSessionValid,
+      setShowCanvasLogin,
+      setCanvasLogging,
+      setCanvasLoginError,
+      setNoSourcesSubmitted,
+      t,
+    })
+      .catch((err) => {
+        addLog((err as Error).message, "text-destructive");
+      })
+      .finally(() => {
+        setIsSubmittingContent(false);
+      });
+  }, [addCourse, autoScrape, canvasSessionValid, files, projectName, t, url]);
+
   // ── Confirm template: create course and continue with discovery before workspace ──
   const confirmTemplate = useCallback(async () => {
     try {
-      const { metadata, sourceMode } = buildCourseMetadata(files, url, selectedTemplate, selectedMode);
-      const course = await addCourse(projectName.trim() || t("new.untitledProject"), undefined, metadata);
-
-      await applyDefaultPreferences();
-      persistWorkspaceLayout(course.id, selectedTemplate, selectedMode, interviewLayout);
-
-      setCreatedCourseId(course.id);
-      setIngestionJobs([]);
-      setParseLogs([]);
-      setNoSourcesSubmitted(false);
-      setCanEnterEarly(false);
-      setAiProbeResponse("");
-      setAiProbeDone(false);
-      setAiProbeStreaming(false);
-      seenJobStatesRef.current = {};
-      probeSentRef.current = false;
-      setStep("discovery");
-      setIsSubmittingContent(true);
-
-      const addLog = (text: string, color: string) => {
-        setParseLogs((prev) => [...prev, { text, color }]);
-      };
-
-      void submitSources({
-        course,
-        files,
-        url,
-        mode: sourceMode,
-        autoScrape,
-        canvasSessionValid,
-        projectName,
-        addLog,
-        setCanvasSessionValid,
-        setShowCanvasLogin,
-        setCanvasLogging,
-        setCanvasLoginError,
-        setNoSourcesSubmitted,
-        t,
-      })
-        .catch((err) => {
-          addLog((err as Error).message, "text-destructive");
-        })
-        .finally(() => {
-          setIsSubmittingContent(false);
-        });
+      await beginDiscovery(selectedTemplate, selectedMode, interviewLayout);
     } catch (err) {
       setNameError((err as Error).message);
     }
-  }, [addCourse, autoScrape, canvasSessionValid, files, interviewLayout, projectName, selectedMode, selectedTemplate, t, url]);
+  }, [beginDiscovery, interviewLayout, selectedMode, selectedTemplate]);
 
   // ── Enter workspace ──
   const enterWorkspace = useCallback(async () => {
@@ -407,6 +418,7 @@ export function useSetup() {
 
   // ── Demo fast path: one click to a working workspace ──
   const [demoLoading, setDemoLoading] = useState(false);
+  const [quickStartLoading, setQuickStartLoading] = useState(false);
   const tryDemo = useCallback(async () => {
     setDemoLoading(true);
     try {
@@ -432,6 +444,19 @@ export function useSetup() {
       setNameError((err as Error).message);
     }
   }, [addCourse, projectName, router, t]);
+
+  const quickStart = useCallback(async () => {
+    setQuickStartLoading(true);
+    setSelectedTemplate(QUICK_START_TEMPLATE);
+    setSelectedMode(QUICK_START_MODE);
+    try {
+      await beginDiscovery(QUICK_START_TEMPLATE, QUICK_START_MODE, null);
+    } catch (err) {
+      setNameError((err as Error).message);
+    } finally {
+      setQuickStartLoading(false);
+    }
+  }, [beginDiscovery]);
 
   return {
     t, step, setStep,
@@ -460,5 +485,6 @@ export function useSetup() {
     // Actions
     startLearning, confirmTemplate, enterWorkspace, skipContent,
     tryDemo, demoLoading,
+    quickStart, quickStartLoading,
   };
 }

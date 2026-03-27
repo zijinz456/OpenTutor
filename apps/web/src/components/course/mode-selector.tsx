@@ -7,6 +7,7 @@ import { useWorkspaceStore } from "@/store/workspace";
 import { LEARNING_MODE_LIST } from "@/lib/block-system/templates";
 import type { LearningMode } from "@/lib/block-system/types";
 import { updateUnlockContext } from "@/lib/block-system/feature-unlock";
+import { saveStoredSpaceLayout } from "@/lib/block-system/layout-storage";
 import { updateCourseLayout } from "@/lib/api";
 import { useT } from "@/lib/i18n-context";
 
@@ -68,8 +69,8 @@ export function ModeSelector({ onModeChange }: ModeSelectorProps) {
       if (courseId) {
         updateUnlockContext(courseId, { mode });
         const layout = useWorkspaceStore.getState().spaceLayout;
-        try { localStorage.setItem(`opentutor_blocks_${courseId}`, JSON.stringify(layout)); } catch { /* quota */ }
-        updateCourseLayout(courseId, layout).catch(() => undefined);
+        const persistedLayout = saveStoredSpaceLayout(courseId, layout);
+        updateCourseLayout(courseId, persistedLayout).catch(() => undefined);
       }
       onModeChange?.(mode);
       setOpen(false);

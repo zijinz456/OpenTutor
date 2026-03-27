@@ -71,6 +71,7 @@ async def list_wrong_answers(
             problem_id=wa.problem_id,
             question=prob.question,
             question_type=prob.question_type,
+            options=prob.options,
             user_answer=wa.user_answer,
             correct_answer=wa.correct_answer,
             explanation=wa.explanation,

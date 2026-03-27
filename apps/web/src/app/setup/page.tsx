@@ -68,6 +68,8 @@ function SetupInner() {
               canvasSessionValid={s.canvasSessionValid}
               canvasAuthenticating={s.canvasLogging}
               onAuthCanvas={s.handleAuthCanvas}
+              onQuickStart={s.quickStart}
+              quickStartLoading={s.quickStartLoading}
               onStartLearning={s.startLearning}
               onSkip={s.skipContent}
               onTryDemo={s.tryDemo}

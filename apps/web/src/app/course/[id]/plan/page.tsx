@@ -11,6 +11,7 @@ import { ChatDrawer } from "@/components/chat/chat-drawer";
 import { getHealthStatus, type HealthStatus } from "@/lib/api";
 import { ttlCache } from "@/lib/cache";
 import type { LearningMode } from "@/lib/block-system/types";
+import { getStoredSpaceLayoutMode } from "@/lib/block-system/layout-storage";
 
 function asLearningMode(value: unknown): LearningMode | undefined {
   return value === "course_following" ||
@@ -56,19 +57,7 @@ export default function PlanPage() {
       ? asLearningMode((layout as Record<string, unknown>).mode)
       : undefined;
     const metaMode = asLearningMode(metadata.learning_mode);
-
-    let localMode: LearningMode | undefined;
-    if (typeof window !== "undefined") {
-      try {
-        const raw = localStorage.getItem(`opentutor_blocks_${courseId}`);
-        if (raw) {
-          const parsed = JSON.parse(raw) as { mode?: unknown };
-          localMode = asLearningMode(parsed.mode);
-        }
-      } catch {
-        // ignore malformed local storage
-      }
-    }
+    const localMode = typeof window !== "undefined" ? getStoredSpaceLayoutMode(courseId) : undefined;
 
     return spaceMode ?? localMode ?? layoutMode ?? metaMode;
   }, [course?.metadata, courseId, spaceMode]);

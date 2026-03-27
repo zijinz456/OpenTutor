@@ -57,6 +57,7 @@ export interface WrongAnswer {
   problem_id: string;
   question: string | null;
   question_type: string | null;
+  options: Record<string, string> | null;
   user_answer: string;
   correct_answer: string | null;
   explanation: string | null;
