@@ -46,6 +46,17 @@ const nextConfig: NextConfig = {
       // and trailing slash normalization, preventing 308 redirect races.
       beforeFiles: [
         {
+          // FastAPI serves chat SSE on `/api/chat/` and responds with an
+          // absolute 307 redirect if the trailing slash is lost. Handle chat
+          // explicitly so the browser stays on the Next.js origin.
+          source: "/api/chat",
+          destination: `${API_URL}/chat/`,
+        },
+        {
+          source: "/api/chat/",
+          destination: `${API_URL}/chat/`,
+        },
+        {
           source: "/api/:path*",
           destination: `${API_URL}/:path*`,
         },

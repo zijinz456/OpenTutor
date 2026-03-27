@@ -15,12 +15,12 @@ import type {
   LearningMode,
 } from "@/lib/block-system/types";
 import { buildLayoutFromTemplate, buildLayoutFromMode } from "@/lib/block-system/templates";
+import { createBlockId, normalizeSpaceLayout, parseSpaceLayout } from "@/lib/block-system/layout-storage";
 import { BLOCK_REGISTRY } from "@/lib/block-system/registry";
 import { recordBlockEvent } from "@/hooks/use-block-engagement";
 
-let blockIdCounter = 0;
 export function nextBlockId(): string {
-  return `blk-${Date.now()}-${++blockIdCounter}`;
+  return createBlockId();
 }
 
 /** Reorder blocks by placing one of each type in `orderedTypes` first, then the rest. */
@@ -214,7 +214,7 @@ export function createBlockSlice<TState extends BlockSystemState>(
       const layout = buildLayoutFromTemplate(templateId);
       if (layout) {
         const existingMode = get().spaceLayout.mode;
-        set({ spaceLayout: { ...layout, mode: existingMode ?? layout.mode } });
+        set({ spaceLayout: normalizeSpaceLayout({ ...layout, mode: existingMode ?? layout.mode }) });
       }
     },
 
@@ -281,11 +281,16 @@ export function createBlockSlice<TState extends BlockSystemState>(
       }));
     },
 
-    loadBlocks: (layout) => set({ spaceLayout: layout }),
+    loadBlocks: (layout) => {
+      const parsed = parseSpaceLayout(layout);
+      if (parsed) {
+        set({ spaceLayout: parsed });
+      }
+    },
 
     setLearningMode: (mode) => {
       const layout = buildLayoutFromMode(mode);
-      set({ spaceLayout: layout });
+      set({ spaceLayout: normalizeSpaceLayout(layout) });
     },
 
     setSpaceMode: (mode) => {

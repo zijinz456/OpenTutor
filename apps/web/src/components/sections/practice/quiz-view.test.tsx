@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QuizView } from "./quiz-view";
+import { toast } from "sonner";
 
 vi.mock("@/lib/api", async () => {
   const problems = [
@@ -33,6 +34,12 @@ vi.mock("@/lib/api", async () => {
 
 vi.mock("@/lib/i18n-context", () => ({
   useT: () => (key: string) => key,
+}));
+
+vi.mock("sonner", () => ({
+  toast: {
+    warning: vi.fn(),
+  },
 }));
 
 vi.mock("@/store/workspace", () => ({
@@ -124,6 +131,27 @@ describe("QuizView", () => {
     await waitFor(() => {
       expect(screen.getByText(/Blue is correct/)).toBeInTheDocument();
     });
+  });
+
+  it("shows fallback feedback when explanation details are missing", async () => {
+    const { submitAnswer } = await import("@/lib/api");
+    vi.mocked(submitAnswer).mockResolvedValueOnce({
+      is_correct: false,
+      correct_answer: null,
+      explanation: null,
+      prerequisite_gaps: [],
+    });
+
+    render(<QuizView courseId="test" />);
+    await waitFor(() => screen.getByText("What color is the sky?"));
+
+    fireEvent.click(screen.getByTestId("quiz-option-b"));
+
+    await waitFor(() => {
+      expect(screen.getByText("quiz.answerRecorded")).toBeInTheDocument();
+      expect(screen.getByText("quiz.feedbackUnavailable")).toBeInTheDocument();
+    });
+    expect(toast.warning).toHaveBeenCalledWith("quiz.feedbackWarning");
   });
 
   it("navigates to next question", async () => {

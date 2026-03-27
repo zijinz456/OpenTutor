@@ -329,6 +329,7 @@ export async function uploadFixture(page: Page, fixturePath: string): Promise<vo
  * Send a chat message and wait for the assistant response.
  */
 export async function sendChatMessage(page: Page, message: string): Promise<void> {
+  await openChatDrawer(page);
   await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 15_000 });
   await page.getByTestId("chat-input").fill(message);
   await expect(page.getByTestId("chat-send")).toBeEnabled({ timeout: 30_000 });
@@ -398,7 +399,28 @@ async function activateSection(page: Page, label: "Practice" | "Plan" | "Analyti
  */
 export async function switchScene(page: Page, sceneId: string): Promise<void> {
   if (sceneId === "exam_prep") {
-    await activateSection(page, "Plan", "plan-section");
+    const planSection = page.getByTestId("plan-section");
+    const sectionVisible = await planSection.isVisible({ timeout: 2_000 }).catch(() => false);
+
+    if (!sectionVisible) {
+      await page.keyboard.press("Escape");
+      await dispatchShortcut(page, "4");
+    }
+
+    const visibleAfterShortcut = await planSection.isVisible({ timeout: 2_000 }).catch(() => false);
+    if (!visibleAfterShortcut) {
+      const match = page.url().match(/\/course\/([^/?#]+)/);
+      if (match?.[1]) {
+        await page.goto(`/course/${match[1]}/plan?tab=plan`);
+      }
+    }
+
+    const planTab = page.getByTestId("right-tab-plan");
+    const planTabVisible = await planTab.isVisible({ timeout: 2_000 }).catch(() => false);
+    if (planTabVisible) {
+      await planTab.click();
+    }
+
     await expect(page.getByTestId("study-plan-panel")).toBeVisible({ timeout: 15_000 });
     return;
   }

@@ -24,7 +24,7 @@ const BLOCK_FULL_PAGE_LINKS: Partial<Record<BlockType, (courseId: string) => str
   plan: (courseId) => `/course/${courseId}/plan`,
   review: (courseId) => `/course/${courseId}/review`,
   progress: (courseId) => `/course/${courseId}/profile?tab=progress`,
-  wrong_answers: (courseId) => `/course/${courseId}/profile?tab=blindspots`,
+  wrong_answers: (courseId) => `/course/${courseId}/wrong-answers`,
   forecast: (courseId) => `/course/${courseId}/profile?tab=forecast`,
 };
 

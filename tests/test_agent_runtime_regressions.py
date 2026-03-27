@@ -421,6 +421,50 @@ async def test_orchestrate_stream_emits_block_update_before_done(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_orchestrate_stream_emits_enrichment_warning_before_done(monkeypatch):
+    async def fake_classify_intent(ctx):
+        ctx.intent = IntentType.LEARN
+        ctx.intent_confidence = 0.89
+        return ctx
+
+    async def fake_load_context(ctx, _db, db_factory=None):
+        return ctx
+
+    async def fake_enrichment(ctx, _db):
+        ctx.metadata["stream_warnings"] = [
+            {
+                "type": "advanced_adaptation_unavailable",
+                "message": "Advanced adaptation is temporarily unavailable.",
+            }
+        ]
+        return ctx
+
+    dummy_agent = _StreamingOnlyAgent(["Answer continues without adaptive tuning."])
+
+    monkeypatch.setattr("services.agent.orchestrator.classify_intent", fake_classify_intent)
+    monkeypatch.setattr("services.agent.orchestrator.load_context", fake_load_context)
+    monkeypatch.setattr("services.agent.orchestrator._apply_turn_enrichment", fake_enrichment)
+    monkeypatch.setattr("services.agent.orchestrator.get_agent", lambda _intent: dummy_agent)
+    monkeypatch.setattr("services.agent.task_planner.is_complex_request", lambda _message: False)
+
+    events = []
+    async for event in orchestrate_stream(
+        user_id=uuid.uuid4(),
+        course_id=uuid.uuid4(),
+        message="Explain recursion",
+        db=None,
+        db_factory=None,
+    ):
+        events.append(event)
+
+    event_names = [event["event"] for event in events]
+    assert "warning" in event_names
+    assert event_names.index("warning") < event_names.index("done")
+    warning_payload = json.loads(next(event["data"] for event in events if event["event"] == "warning"))
+    assert warning_payload["type"] == "advanced_adaptation_unavailable"
+
+
+@pytest.mark.asyncio
 async def test_orchestrate_stream_enqueues_durable_post_process_task(monkeypatch):
     class _Agent(_StreamingOnlyAgent):
         def get_required_inputs(self):

@@ -1,11 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { useChatStore } from "./chat";
+import { toast } from "sonner";
 
 // Mock API functions
 vi.mock("@/lib/api", () => ({
   getChatSessionMessages: vi.fn(),
   listChatSessions: vi.fn(),
   streamChat: vi.fn(),
+}));
+
+vi.mock("sonner", () => ({
+  toast: {
+    warning: vi.fn(),
+  },
 }));
 
 vi.mock("@/lib/cache", () => ({
@@ -20,15 +27,18 @@ vi.mock("@/store/workspace", () => ({
   useWorkspaceStore: {
     getState: () => ({
       triggerSectionRefresh: vi.fn(),
+      spaceLayout: { mode: "course_following", blocks: [] },
     }),
   },
 }));
 
 import {
   listChatSessions,
+  streamChat,
 } from "@/lib/api";
 
 const mockListChatSessions = vi.mocked(listChatSessions);
+const mockStreamChat = vi.mocked(streamChat);
 
 function resetStore() {
   useChatStore.setState({
@@ -43,7 +53,9 @@ function resetStore() {
     isLoadingSessions: false,
     error: null,
     errorCategory: null,
+    isMockLlm: false,
     _abortController: null,
+    _toolStatusTimer: null,
     toolStatus: null,
     clarifyOptions: null,
     actionHandlers: {},
@@ -55,6 +67,7 @@ describe("useChatStore", () => {
   beforeEach(() => {
     resetStore();
     vi.clearAllMocks();
+    mockListChatSessions.mockResolvedValue([] as never);
   });
 
   describe("setCourseContext", () => {
@@ -147,6 +160,25 @@ describe("useChatStore", () => {
     it("initializes with no error", () => {
       expect(useChatStore.getState().error).toBeNull();
       expect(useChatStore.getState().errorCategory).toBeNull();
+    });
+
+    it("shows a toast when the stream emits a warning", async () => {
+      mockStreamChat.mockReturnValueOnce((async function* () {
+        yield {
+          type: "warning" as const,
+          warningType: "advanced_adaptation_unavailable",
+          message: "Advanced adaptation is temporarily unavailable.",
+        };
+        yield {
+          type: "done" as const,
+          sessionId: "session-1",
+          metadata: {},
+        };
+      })());
+
+      await useChatStore.getState().sendMessage("c1", "help me understand recursion");
+
+      expect(toast.warning).toHaveBeenCalledWith("Advanced adaptation is temporarily unavailable.");
     });
   });
 

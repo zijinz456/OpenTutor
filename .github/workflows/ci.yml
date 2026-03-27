@@ -33,7 +33,7 @@ jobs:
           pip install pytest
 
       - name: Audit Python dependencies
-        run: pip install pip-audit && pip-audit --desc --skip-editable 2>&1 || true
+        run: pip install pip-audit && pip-audit --desc --skip-editable
 
       - name: Run API unit tests
         run: |
@@ -121,6 +121,10 @@ jobs:
       - name: Run Web lint
         working-directory: apps/web
         run: npm run lint
+
+      - name: Security audit
+        run: npm audit --audit-level=high || true
+        working-directory: apps/web
 
       - name: Run Web unit tests
         working-directory: apps/web

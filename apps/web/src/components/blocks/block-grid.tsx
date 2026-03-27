@@ -21,7 +21,7 @@ export function BlockGrid({ courseId, aiActionsEnabled }: BlockGridProps) {
   const gridRef = useRef<HTMLDivElement>(null);
   useRovingTabindex(gridRef, "both");
 
-  const visibleBlocks = blocks.filter((b) => b.visible);
+  const visibleBlocks = blocks.filter((b) => b.visible && !!BLOCK_REGISTRY[b.type]);
 
   const toggleCollapse = useCallback((blockId: string) => {
     setCollapsed((prev) => ({ ...prev, [blockId]: !prev[blockId] }));

@@ -1,5 +1,6 @@
 import type { Course, AppNotification, AgentTask } from "@/lib/api";
 import type { LearningMode, SpaceLayout } from "@/lib/block-system/types";
+import { getStoredSpaceLayoutMode } from "@/lib/block-system/layout-storage";
 
 export const CARD_COLORS = [
   { bg: "bg-brand-muted", text: "text-brand" },
@@ -48,15 +49,8 @@ export function notificationMatchesTask(notification: AppNotification, taskId: s
 
 export function getCourseMode(course: Course): LearningMode | undefined {
   if (typeof window === "undefined") return undefined;
-  try {
-    const raw = localStorage.getItem(`opentutor_blocks_${course.id}`);
-    if (raw) {
-      const layout = JSON.parse(raw) as SpaceLayout;
-      if (layout.mode) return layout.mode;
-    }
-  } catch {
-    // Ignore local parse failures and fall back to server metadata.
-  }
+  const localMode = getStoredSpaceLayoutMode(course.id);
+  if (localMode) return localMode;
   const metadata = (course.metadata ?? {}) as Record<string, unknown>;
   const layout = metadata.spaceLayout as SpaceLayout | undefined;
   const mode = layout?.mode ?? metadata.learning_mode;

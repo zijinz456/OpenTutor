@@ -97,4 +97,36 @@ describe("useBlockPersistence", () => {
       expect.objectContaining({ blocks: [] }),
     );
   });
+
+  it("ignores malformed local storage and falls back to server metadata", async () => {
+    localStorage.setItem("opentutor_blocks_course-4", "{\"broken\":true}");
+    useWorkspaceStore.setState({ spaceLayout: makeLayout([]) });
+
+    renderHook(() =>
+      useBlockPersistence("course-4", {
+        metadata: {
+          spaceLayout: makeLayout([
+            {
+              id: "server-notes",
+              type: "notes",
+              position: 0,
+              size: "large",
+              config: {},
+              visible: true,
+              source: "template",
+            },
+          ]),
+        },
+      }),
+    );
+
+    await act(async () => {});
+
+    expect(useWorkspaceStore.getState().spaceLayout.blocks).toEqual([
+      expect.objectContaining({
+        id: "server-notes",
+        type: "notes",
+      }),
+    ]);
+  });
 });

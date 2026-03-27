@@ -26,7 +26,8 @@ describe("streamChat", () => {
     }
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
-    const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+    const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/chat");
     const headers = new Headers(init.headers);
     expect(init.credentials).toBe("include");
     expect(headers.get("Authorization")).toBe("Bearer token-123");

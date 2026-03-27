@@ -24,6 +24,9 @@ class _FakeDB:
     async def commit(self):
         return None
 
+    async def rollback(self):
+        return None
+
     async def execute(self, _stmt):
         class _Res:
             def scalar_one_or_none(self):
@@ -174,3 +177,27 @@ async def test_run_ingestion_pipeline_url_sets_source_fields():
     assert nodes
     assert all(n.source_type == "url" for n in nodes)
     assert all(n.source_file == target_url for n in nodes)
+
+
+@pytest.mark.asyncio
+async def test_run_ingestion_pipeline_preserves_original_error_when_setup_fails_early():
+    db = _FakeDB()
+
+    with patch(
+        "services.ingestion.pipeline.detect_mime_type",
+        side_effect=RuntimeError("mime detection broke"),
+    ):
+        job = await run_ingestion_pipeline(
+            db=db,
+            user_id=uuid.uuid4(),
+            file_path="/tmp/test.pdf",
+            filename="lecture01.pdf",
+            course_id=uuid.uuid4(),
+            file_bytes=b"%PDF-1.7 test",
+        )
+
+    assert job.status == "failed"
+    assert job.error_message == "mime detection broke"
+    assert getattr(job, "_canvas_file_urls", []) == []
+    assert getattr(job, "_canvas_quiz_questions", []) == []
+    assert getattr(job, "_canvas_assignments_data", []) == []

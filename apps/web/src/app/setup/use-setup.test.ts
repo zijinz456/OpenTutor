@@ -87,6 +87,39 @@ describe("useSetup", () => {
     expect(result.current.step).toBe("interview");
   });
 
+  it("quickStart enters discovery with a default workspace", async () => {
+    const { result } = renderHook(() => useSetup());
+    await waitFor(() => {
+      expect(result.current.llmChecking).toBe(false);
+      expect(result.current.step).toBe("content");
+    });
+
+    act(() => {
+      result.current.setProjectName("Quick Start Physics");
+      result.current.setFiles([
+        {
+          file: new File(["# waves"], "waves.md", { type: "text/markdown" }),
+          name: "waves.md",
+          size: "8 KB",
+        },
+      ]);
+    });
+
+    await act(async () => {
+      await result.current.quickStart();
+    });
+
+    expect(result.current.step).toBe("discovery");
+    expect(result.current.createdCourseId).toBe("course-123");
+    expect(submitSources).toHaveBeenCalledTimes(1);
+    expect(persistWorkspaceLayout).toHaveBeenCalledWith(
+      "course-123",
+      "stem_student",
+      "course_following",
+      null,
+    );
+  });
+
   it("transitions confirmTemplate to discovery without immediate navigation", async () => {
     const { result } = renderHook(() => useSetup());
     await waitFor(() => {

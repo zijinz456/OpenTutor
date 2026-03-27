@@ -5,6 +5,7 @@ import { useWorkspaceStore } from "@/store/workspace";
 import { updateCourseLayout } from "@/lib/api";
 import type { LearningMode } from "@/lib/block-system/types";
 import { buildLayoutFromMode } from "@/lib/block-system/templates";
+import { loadStoredSpaceLayout, parseSpaceLayout, saveStoredSpaceLayout } from "@/lib/block-system/layout-storage";
 
 export function useBlockPersistence(
   courseId: string,
@@ -19,8 +20,8 @@ export function useBlockPersistence(
   const flushLayout = useCallback(() => {
     if (!blocksInitialized.current) return;
     const layout = useWorkspaceStore.getState().spaceLayout;
-    try { localStorage.setItem(`opentutor_blocks_${courseId}`, JSON.stringify(layout)); } catch { /* quota */ }
-    updateCourseLayout(courseId, layout).catch((e) => console.error("[Course] layout persist failed:", e));
+    const persistedLayout = saveStoredSpaceLayout(courseId, layout);
+    updateCourseLayout(courseId, persistedLayout).catch((e) => console.error("[Course] layout persist failed:", e));
   }, [courseId]);
 
   useEffect(() => {
@@ -31,25 +32,23 @@ export function useBlockPersistence(
     if (blocksInitialized.current) return;
 
     // Try localStorage first (always available)
-    const saved = localStorage.getItem(`opentutor_blocks_${courseId}`);
+    const saved = loadStoredSpaceLayout(courseId);
     if (saved) {
-      try {
-        loadBlocks(JSON.parse(saved));
-        blocksInitialized.current = true;
-        return;
-      } catch { /* ignore */ }
+      loadBlocks(saved);
+      blocksInitialized.current = true;
+      return;
     }
 
     // Wait for course metadata to load before checking server-side layout
     if (!course) return;
     blocksInitialized.current = true;
 
-    const savedLayout = (course.metadata as Record<string, unknown> | undefined)?.spaceLayout;
-    if (savedLayout && typeof savedLayout === "object") {
-      try {
-        loadBlocks(savedLayout as Parameters<typeof loadBlocks>[0]);
-        return;
-      } catch { /* ignore */ }
+    const savedLayout = parseSpaceLayout(
+      (course.metadata as Record<string, unknown> | undefined)?.spaceLayout,
+    );
+    if (savedLayout) {
+      loadBlocks(savedLayout);
+      return;
     }
 
     const savedMode = (course.metadata as Record<string, unknown> | undefined)

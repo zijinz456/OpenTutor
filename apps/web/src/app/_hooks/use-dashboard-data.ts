@@ -24,6 +24,7 @@ import { ttlCache } from "@/lib/cache";
 import { useT, useTF } from "@/lib/i18n-context";
 import { buildLayoutFromMode } from "@/lib/block-system/templates";
 import { updateUnlockContext } from "@/lib/block-system/feature-unlock";
+import { saveStoredSpaceLayout } from "@/lib/block-system/layout-storage";
 import { initStudyNotifications } from "@/lib/study-notifications";
 import {
   getCourseMode,
@@ -293,7 +294,7 @@ export function useDashboardData() {
     setActingModeCourses((prev) => new Set(prev).add(item.courseId));
     try {
       const layout = buildLayoutFromMode(item.suggestedMode);
-      localStorage.setItem(`opentutor_blocks_${item.courseId}`, JSON.stringify(layout));
+      saveStoredSpaceLayout(item.courseId, layout);
       updateUnlockContext(item.courseId, { mode: item.suggestedMode });
       await updateCourseLayout(item.courseId, layout);
       await logAgentDecision({
