@@ -199,16 +199,19 @@ async def auto_configure_course(
 
         # --- Determine mode intent ---
         # Priority: hard category signals > deadline count > content scoring
+        # NOTE: exam_prep mode is never auto-switched — only suggested via agent_insight.
+        # The user must manually enable exam_prep from the frontend.
         if assign_cat_count >= 1 or deadline_count >= 3:
-            mode_intent = "assignment"       # switch to assignment/plan mode
-        elif exam_cat_count >= 1 or (deadline_count >= 1 and exam_signal_score >= 3.0):
-            mode_intent = "exam_prep_direct" # switch to exam_prep directly
-        elif exam_signal_score >= _SCORE_THRESHOLD_SWITCH:
-            mode_intent = "exam_prep_direct"
-        elif exam_signal_score >= _SCORE_THRESHOLD_SUGGEST:
-            mode_intent = "exam_prep_suggest" # suggest via agent_insight (needs approval)
+            mode_intent = "assignment"        # switch to assignment/plan mode
+        elif (
+            exam_cat_count >= 1
+            or (deadline_count >= 1 and exam_signal_score >= 3.0)
+            or exam_signal_score >= _SCORE_THRESHOLD_SWITCH
+            or exam_signal_score >= _SCORE_THRESHOLD_SUGGEST
+        ):
+            mode_intent = "exam_prep_suggest" # suggest via agent_insight (needs user approval)
         else:
-            mode_intent = "no_change"        # keep cold-start layout as-is
+            mode_intent = "no_change"         # keep cold-start layout as-is
 
         # --- Update spaceLayout (new format, actually read by frontend) ---
         now = datetime.now(timezone.utc)
@@ -222,19 +225,6 @@ async def auto_configure_course(
             block_types = [b.get("type") for b in blocks]
             if "plan" not in block_types:
                 blocks.append({"type": "plan", "size": "medium", "source": "template"})
-            space_layout["blocks"] = blocks
-
-        elif mode_intent == "exam_prep_direct":
-            space_layout["mode"] = "exam_prep"
-            blocks = list(space_layout.get("blocks", []))
-            block_types = [b.get("type") for b in blocks]
-            # Ensure quiz is present and prominent for exam prep
-            if "quiz" not in block_types:
-                blocks.append({"type": "quiz", "size": "large", "source": "template"})
-            else:
-                for b in blocks:
-                    if b.get("type") == "quiz":
-                        b["size"] = "large"
             space_layout["blocks"] = blocks
 
         elif mode_intent == "exam_prep_suggest":
@@ -279,7 +269,6 @@ async def auto_configure_course(
         # --- Also update legacy layout key (kept for any legacy readers) ---
         legacy_preset_map = {
             "assignment": "assignment",
-            "exam_prep_direct": "exam_prep",
             "exam_prep_suggest": "daily_study",
             "no_change": "focused",
         }
@@ -317,11 +306,6 @@ async def auto_configure_course(
             parts.append(
                 "I've switched to **Exam Prep mode** and added a study plan block "
                 "since I detected assignment deadlines. You can switch modes anytime by asking me."
-            )
-        elif mode_intent == "exam_prep_direct":
-            parts.append(
-                "I've switched to **Exam Prep mode** — this material covers topics "
-                "that are commonly tested. Ask me to quiz you or review weak areas."
             )
         elif mode_intent == "exam_prep_suggest":
             parts.append(
