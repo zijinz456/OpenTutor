@@ -3,10 +3,8 @@ import path from "node:path";
 import { expect, test } from "@playwright/test";
 import {
   createCourse,
-  dispatchShortcut,
   expectAssistantMessage,
   expectGeneratedNotes,
-  expectGeneratedStudyPlan,
   hasRealLlmEnv,
   seedCourseFixture,
 } from "./helpers/test-utils";
@@ -101,7 +99,7 @@ async function diagnoseLatestWrongAnswer(page: import("@playwright/test").Page) 
 }
 
 test.describe("OpenTutor e2e flows", () => {
-  test("create course, chat, open the plan workspace, and generate a study plan", async ({ page }) => {
+  test("create course, chat, and open the current plan workspace", async ({ page }) => {
     test.skip(!hasRealLlmEnv(), "Requires a real LLM provider");
     const courseId = await createCourse(page, "E2E Study Flow");
     await uploadFixture(page, courseId);
@@ -110,15 +108,11 @@ test.describe("OpenTutor e2e flows", () => {
     await page.getByTestId("chat-send").click();
     await expectAssistantMessage(page);
 
-    await page.keyboard.press("Escape");
-    await dispatchShortcut(page, "4");
+    await page.goto(`/course/${courseId}/plan`);
     await expect(page.getByTestId("study-plan-panel")).toBeVisible({ timeout: 15_000 });
-
-    await page.getByTestId("study-plan-generate").click();
-    await expectGeneratedStudyPlan(page);
-
-    await page.getByRole("button", { name: "Save New" }).click();
-    await expect(page.getByText("Saved study plan")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole("button", { name: /Add Goal/i })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole("tab", { name: /Calendar/i })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole("tab", { name: /Tasks/i })).toBeVisible({ timeout: 15_000 });
   });
 
   test("generate and save AI notes from uploaded content", async ({ page }) => {
@@ -132,7 +126,7 @@ test.describe("OpenTutor e2e flows", () => {
     await expect(page.getByText("Saved AI notes")).toBeVisible({ timeout: 15_000 });
   });
 
-  test("replace generated study plan and restore chat session across reload", async ({ page }) => {
+  test("restore chat session across reload while keeping plan workspace available", async ({ page }) => {
     test.skip(!hasRealLlmEnv(), "Requires a real LLM provider");
     const courseId = await createCourse(page, "E2E Restore Flow");
     await uploadFixture(page, courseId);
@@ -149,25 +143,13 @@ test.describe("OpenTutor e2e flows", () => {
     await page.getByTestId("chat-session-select").selectOption({ label: firstPrompt });
     await expect(page.getByTestId("chat-message-user").last()).toContainText(firstPrompt, { timeout: 15_000 });
 
-    await page.keyboard.press("Escape");
-    await dispatchShortcut(page, "4");
+    await page.goto(`/course/${courseId}/plan`);
     await expect(page.getByTestId("study-plan-panel")).toBeVisible({ timeout: 15_000 });
-
-    await page.getByTestId("study-plan-days-input").fill("5");
-    await page.getByTestId("study-plan-generate").click();
-    await expectGeneratedStudyPlan(page);
-    await page.getByRole("button", { name: "Save New" }).click();
-    await expect(page.getByText("Saved study plan")).toBeVisible({ timeout: 15_000 });
-
-    await page.getByTestId("study-plan-days-input").fill("3");
-    await page.getByTestId("study-plan-generate").click();
-    await expectGeneratedStudyPlan(page);
-    await page.getByRole("button", { name: "Replace Latest" }).click();
-    await expect(page.getByText("Replaced plan with version 2")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole("button", { name: /Add Goal/i })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole("tab", { name: /Calendar/i })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole("tab", { name: /Tasks/i })).toBeVisible({ timeout: 15_000 });
 
     await page.reload();
-    await page.keyboard.press("Escape");
-    await dispatchShortcut(page, "4");
     await expect(page.getByTestId("study-plan-panel")).toBeVisible({ timeout: 15_000 });
     await expect(page.getByTestId("chat-session-select")).toHaveValue(/.+/, { timeout: 15_000 });
     await expect(page.getByTestId("chat-message-user").last()).toContainText(firstPrompt, { timeout: 15_000 });

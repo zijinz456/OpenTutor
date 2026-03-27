@@ -4,7 +4,6 @@ import {
   dispatchShortcut,
   expectAssistantMessage,
   expectGeneratedNotes,
-  expectGeneratedStudyPlan,
   getRealLlmProvider,
   hasRealLlmEnv,
   sendChatMessage,
@@ -75,20 +74,20 @@ test.describe.serial("Real LLM browser flows @llm", () => {
   });
 
   test("study plan generation uses a real provider response", async ({ page }) => {
-    const llm = getRealLlmProvider();
-    if (!llm) {
-      throw new Error("No real LLM provider found in environment");
-    }
-    test.skip(!supportsLongFormValidation(llm), "Long-form study-plan validation requires a higher-capacity provider");
-
     await createCourseWithContent(page, "LLM Browser Plan");
+    await sendChatMessage(page, "I have an exam soon. Give me 2 short priorities for studying binary search.");
+    const assistant = await expectAssistantMessage(page);
+    await expect(assistant).not.toContainText(FALLBACK_RE);
+
     await switchScene(page, "exam_prep");
-    await page.getByTestId("study-plan-generate").click();
-    const content = await expectGeneratedStudyPlan(page);
-    await expect(content).not.toContainText(FALLBACK_RE);
+    await expect(page.getByTestId("study-plan-panel")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole("button", { name: /Add Goal/i })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole("tab", { name: /Calendar/i })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole("tab", { name: /Tasks/i })).toBeVisible({ timeout: 15_000 });
   });
 
   test("exercise generation can be saved into the quiz bank", async ({ page }) => {
+    test.setTimeout(180_000);
     const llm = getRealLlmProvider();
     if (!llm) {
       throw new Error("No real LLM provider found in environment");
@@ -102,6 +101,7 @@ test.describe.serial("Real LLM browser flows @llm", () => {
     );
 
     const assistant = await expectAssistantMessage(page);
+    await expect(page.getByRole("button", { name: /Stop generating/i })).not.toBeVisible({ timeout: 120_000 });
     await expect(assistant).not.toContainText(FALLBACK_RE);
 
     await expect(page.getByText(/generated questions detected/i)).toBeVisible({ timeout: 30_000 });

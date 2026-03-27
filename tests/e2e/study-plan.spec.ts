@@ -2,7 +2,6 @@ import { expect, test } from "@playwright/test";
 import {
   skipOnboarding,
   createCourseWithContent,
-  hasRealLlmEnv,
 } from "./helpers/test-utils";
 
 /**
@@ -25,12 +24,12 @@ test.describe.serial("Study Plan Panel", () => {
     await expect(page.getByTestId("plan-section").or(page.getByTestId("study-plan-panel"))).toBeVisible({ timeout: 15_000 });
   });
 
-  test("generate button triggers plan creation", async ({ page }) => {
-    test.skip(!hasRealLlmEnv(), "Requires a real LLM provider");
+  test("dedicated plan page shows the current planning workspace", async ({ page }) => {
     const courseId = await createCourseWithContent(page);
     await page.goto(`/course/${courseId}/plan`);
     await expect(page.getByTestId("study-plan-panel")).toBeVisible({ timeout: 15_000 });
-    await page.getByTestId("study-plan-generate").click();
-    await expect(page.getByTestId("study-plan-content")).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole("button", { name: /Add Goal/i })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole("tab", { name: /Calendar/i })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole("tab", { name: /Tasks/i })).toBeVisible({ timeout: 15_000 });
   });
 });

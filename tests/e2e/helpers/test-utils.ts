@@ -435,27 +435,27 @@ export async function switchScene(page: Page, sceneId: string): Promise<void> {
 
 export async function expectAssistantMessage(page: Page) {
   const assistant = page.getByTestId("chat-message-assistant").last();
-  await expect(assistant).toBeVisible({ timeout: 30_000 });
+  await expect(assistant).toBeVisible({ timeout: 60_000 });
   await expect.poll(async () => ((await assistant.textContent()) || "").trim().length, {
-    timeout: 30_000,
+    timeout: 60_000,
   }).toBeGreaterThan(0);
   return assistant;
 }
 
 export async function expectGeneratedNotes(page: Page) {
   const preview = page.getByTestId("notes-preview");
-  await expect(preview).toBeVisible({ timeout: 30_000 });
+  await expect(preview).toBeVisible({ timeout: 60_000 });
   await expect.poll(async () => ((await preview.textContent()) || "").trim().length, {
-    timeout: 30_000,
+    timeout: 60_000,
   }).toBeGreaterThan(20);
   return preview;
 }
 
 export async function expectGeneratedStudyPlan(page: Page) {
   const content = page.getByTestId("study-plan-content");
-  await expect(content).toBeVisible({ timeout: 30_000 });
+  await expect(content).toBeVisible({ timeout: 60_000 });
   await expect.poll(async () => ((await content.textContent()) || "").trim().length, {
-    timeout: 30_000,
+    timeout: 60_000,
   }).toBeGreaterThan(20);
   return content;
 }

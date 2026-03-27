@@ -105,6 +105,7 @@ export function ContentStep({
       <div className="flex border-b border-border">
         <button
           type="button"
+          data-testid="setup-tab-upload"
           onClick={() => setTab("upload")}
           className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
             tab === "upload"
@@ -116,6 +117,7 @@ export function ContentStep({
         </button>
         <button
           type="button"
+          data-testid="setup-tab-url"
           onClick={() => setTab("url")}
           className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
             tab === "url"
