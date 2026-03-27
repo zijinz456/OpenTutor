@@ -8,7 +8,6 @@ Uses a separate LLM call to evaluate agent responses on:
 Reference: "Judging LLM-as-a-Judge" (Zheng et al., 2023)
 """
 
-import json
 import logging
 from dataclasses import dataclass
 import re
@@ -130,6 +129,8 @@ async def eval_response(
         client = get_llm_client("small")  # Use cheaper model for judging
         if getattr(client, "provider_name", "") == "mock":
             return _heuristic_eval_response(question, response, context)
+        from libs.text_utils import parse_llm_json
+
         prompt = _JUDGE_PROMPT.format(
             question=question,
             context=context[:2000] if context else "(no context provided)",
@@ -139,14 +140,16 @@ async def eval_response(
             "You are an evaluation judge. Output valid JSON only.",
             prompt,
         )
-        scores = json.loads(result)
+        scores = parse_llm_json(result, default=None)
+        if not isinstance(scores, dict):
+            raise ValueError("Judge did not return a JSON object")
         return ResponseScore(
             correctness=scores.get("correctness", {}).get("score", 3),
             relevance=scores.get("relevance", {}).get("score", 3),
             helpfulness=scores.get("helpfulness", {}).get("score", 3),
             rationale=scores,
         )
-    except (ConnectionError, TimeoutError, ValueError, json.JSONDecodeError, KeyError, RuntimeError, Exception) as exc:
+    except (ConnectionError, TimeoutError, ValueError, KeyError, RuntimeError, Exception) as exc:
         logger.exception("Response evaluation LLM call failed: %s", exc)
         return _heuristic_eval_response(question, response, context)
 
