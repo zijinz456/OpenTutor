@@ -7,11 +7,23 @@ consistent problem metadata for downstream review, assessment, and mastery
 tracking. The metadata schema is generic learning analytics, not domain-specific.
 """
 
+from dataclasses import dataclass, field
+import logging
+import math
+from typing import Any
 import uuid
 
 from models.practice import PracticeProblem
 from services.llm.router import get_llm_client
-from services.practice.annotation import build_practice_problem, normalize_problem_annotation, parse_question_array
+from services.practice.annotation import (
+    build_practice_problem,
+    build_question_dedupe_key,
+    normalize_problem_annotation,
+    parse_question_array,
+    validate_question_payload,
+)
+
+logger = logging.getLogger(__name__)
 
 # 7 question types (from Obsidian Quiz Generator)
 QUESTION_TYPES = {
@@ -113,6 +125,89 @@ Output ONLY a valid JSON array with this structure:
 ```
 
 IMPORTANT: Output ONLY the JSON array, no other text."""
+
+_REPAIR_PROMPT = """You are repairing ONE invalid practice question so it can be safely saved.
+
+Return ONLY one valid JSON object using the shared schema:
+{
+  "question_type": "...",
+  "question": "...",
+  "options": {"A": "...", "B": "...", "C": "...", "D": "..."} | null,
+  "correct_answer": "...",
+  "explanation": "...",
+  "difficulty_layer": 1 | 2 | 3,
+  "problem_metadata": {
+    "core_concept": "...",
+    "bloom_level": "remember|understand|apply|analyze|evaluate|create",
+    "potential_traps": [],
+    "layer_justification": "...",
+    "skill_focus": "...",
+    "source_section": "..."
+  }
+}
+
+Rules:
+- Fix only the validation issues called out below.
+- Keep the question grounded in the provided source excerpt.
+- For `mc`, provide exactly 4 options and ensure `correct_answer` is one option label.
+- For `tf`, use `True` or `False`.
+- Always provide a non-empty `correct_answer` and `explanation`.
+- Never add commentary outside the JSON object."""
+
+_SHORT_CONTENT_THRESHOLD = 500
+_MIN_VALID_QUESTIONS_SHORT = 1
+_MIN_VALID_QUESTIONS_DEFAULT = 2
+_MAX_NODE_ERRORS = 5
+_QUESTION_TYPE_SHARE_CAP = 0.6
+_QUESTION_TYPE_MIN_CAP = 2
+_SIMILARITY_DUPLICATE_THRESHOLD = 0.85
+
+
+@dataclass
+class QuizNodeFailure:
+    title: str
+    reason: str
+    node_id: str | None = None
+    discarded_count: int = 0
+    errors: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "node_id": self.node_id,
+            "title": self.title,
+            "reason": self.reason,
+            "discarded_count": self.discarded_count,
+            "errors": self.errors,
+        }
+
+
+@dataclass
+class QuizExtractionOutcome:
+    problems: list[PracticeProblem] = field(default_factory=list)
+    validated_count: int = 0
+    repaired_count: int = 0
+    discarded_count: int = 0
+    warnings: list[str] = field(default_factory=list)
+    node_failures: list[QuizNodeFailure] = field(default_factory=list)
+
+    def extend(self, other: "QuizExtractionOutcome") -> None:
+        self.problems.extend(other.problems)
+        self.validated_count += other.validated_count
+        self.repaired_count += other.repaired_count
+        self.discarded_count += other.discarded_count
+        self.warnings.extend(other.warnings)
+        self.node_failures.extend(other.node_failures)
+
+
+@dataclass
+class _PreparedQuestionBatch:
+    questions: list[dict[str, Any]] = field(default_factory=list)
+    repaired_count: int = 0
+    discarded_count: int = 0
+    warnings: list[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+
+
 def _normalize_problem_metadata(
     question: dict,
     *,
@@ -136,6 +231,223 @@ _DIFFICULTY_HINTS: dict[str, str] = {
 }
 
 
+def _minimum_valid_questions(content: str) -> int:
+    if len(content.strip()) <= _SHORT_CONTENT_THRESHOLD:
+        return _MIN_VALID_QUESTIONS_SHORT
+    return _MIN_VALID_QUESTIONS_DEFAULT
+
+
+def _question_token_set(text: str) -> set[str]:
+    return {
+        token
+        for token in build_question_dedupe_key(text).split()
+        if len(token) >= 3
+    }
+
+
+def _questions_are_too_similar(first: str, second: str) -> bool:
+    first_tokens = _question_token_set(first)
+    second_tokens = _question_token_set(second)
+    if not first_tokens or not second_tokens:
+        return False
+    union = first_tokens | second_tokens
+    if not union:
+        return False
+    overlap = len(first_tokens & second_tokens) / len(union)
+    return overlap >= _SIMILARITY_DUPLICATE_THRESHOLD
+
+
+def _enforce_type_balance(
+    questions: list[dict[str, Any]],
+    *,
+    title: str,
+) -> tuple[list[dict[str, Any]], int, list[str]]:
+    if len(questions) < 3:
+        return questions, 0, []
+
+    max_per_type = max(_QUESTION_TYPE_MIN_CAP, math.ceil(len(questions) * _QUESTION_TYPE_SHARE_CAP))
+    type_counts: dict[str, int] = {}
+    kept: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    discarded = 0
+
+    for question in questions:
+        question_type = str(question.get("question_type") or "mc")
+        if type_counts.get(question_type, 0) >= max_per_type:
+            discarded += 1
+            warnings.append(
+                f"Dropped extra {question_type} question in {title} to keep the quiz batch diverse."
+            )
+            continue
+        type_counts[question_type] = type_counts.get(question_type, 0) + 1
+        kept.append(question)
+
+    return kept, discarded, warnings
+
+
+async def _repair_question(
+    *,
+    client: Any,
+    question: dict[str, Any],
+    title: str,
+    content: str,
+    errors: list[str],
+) -> dict[str, Any] | None:
+    source_excerpt = content[:3000]
+    user_msg = (
+        f"Title: {title}\n\n"
+        f"Validation errors:\n- " + "\n- ".join(errors[:6]) + "\n\n"
+        f"Source excerpt:\n{source_excerpt}\n\n"
+        f"Invalid question JSON:\n{question}"
+    )
+    try:
+        repaired_raw, _ = await client.chat(_REPAIR_PROMPT, user_msg)
+    except (ConnectionError, TimeoutError, ValueError, RuntimeError) as exc:
+        logger.warning("Quiz repair call failed for %s: %s", title, exc)
+        return None
+
+    repaired_questions = parse_question_array(repaired_raw)
+    if repaired_questions:
+        return repaired_questions[0]
+    return None
+
+
+async def _prepare_question_batch(
+    *,
+    questions: list[dict[str, Any]],
+    title: str,
+    content: str,
+    client: Any,
+    allow_repair: bool,
+) -> _PreparedQuestionBatch:
+    prepared = _PreparedQuestionBatch()
+    seen_questions: set[str] = set()
+
+    for question in questions:
+        validation = validate_question_payload(question, title=title, source="extracted")
+        normalized = validation.question
+        errors = list(validation.errors)
+        repaired = False
+
+        if errors and allow_repair:
+            repaired_question = await _repair_question(
+                client=client,
+                question=question,
+                title=title,
+                content=content,
+                errors=errors,
+            )
+            if repaired_question is not None:
+                repaired_validation = validate_question_payload(
+                    repaired_question,
+                    title=title,
+                    source="extracted",
+                )
+                normalized = repaired_validation.question
+                errors = list(repaired_validation.errors)
+                repaired = len(errors) == 0
+
+        if errors or normalized is None:
+            prepared.discarded_count += 1
+            prepared.errors.append("; ".join(errors[:3]) if errors else "question: validation failed")
+            continue
+
+        dedupe_key = build_question_dedupe_key(normalized["question"])
+        if dedupe_key in seen_questions:
+            prepared.discarded_count += 1
+            prepared.warnings.append(f"Dropped duplicate question in {title}.")
+            continue
+        if any(
+            existing.get("question_type") == normalized["question_type"]
+            and _questions_are_too_similar(existing["question"], normalized["question"])
+            for existing in prepared.questions
+        ):
+            prepared.discarded_count += 1
+            prepared.warnings.append(f"Dropped near-duplicate question in {title}.")
+            continue
+
+        seen_questions.add(dedupe_key)
+        prepared.questions.append(normalized)
+        if repaired:
+            prepared.repaired_count += 1
+
+    prepared.questions, type_balance_discards, type_balance_warnings = _enforce_type_balance(
+        prepared.questions,
+        title=title,
+    )
+    prepared.discarded_count += type_balance_discards
+    prepared.warnings.extend(type_balance_warnings)
+    return prepared
+
+
+async def prepare_generated_questions(
+    *,
+    raw_content: str,
+    title: str,
+) -> _PreparedQuestionBatch:
+    """Validate a raw assistant quiz payload before saving a generated set."""
+    questions = parse_question_array(raw_content)
+    if not questions:
+        return _PreparedQuestionBatch(errors=["payload: no valid question array found"])
+
+    prepared = _PreparedQuestionBatch()
+    seen_questions: set[str] = set()
+    for question in questions:
+        validation = validate_question_payload(question, title=title, source="generated")
+        normalized = validation.question
+        if validation.errors or normalized is None:
+            prepared.discarded_count += 1
+            prepared.errors.append("; ".join(validation.errors[:3]) if validation.errors else "question: validation failed")
+            continue
+
+        dedupe_key = build_question_dedupe_key(normalized["question"])
+        if dedupe_key in seen_questions:
+            prepared.discarded_count += 1
+            prepared.warnings.append(f"Dropped duplicate generated question in {title}.")
+            continue
+        if any(
+            existing.get("question_type") == normalized["question_type"]
+            and _questions_are_too_similar(existing["question"], normalized["question"])
+            for existing in prepared.questions
+        ):
+            prepared.discarded_count += 1
+            prepared.warnings.append(f"Dropped near-duplicate generated question in {title}.")
+            continue
+
+        seen_questions.add(dedupe_key)
+        prepared.questions.append(normalized)
+
+    prepared.questions, type_balance_discards, type_balance_warnings = _enforce_type_balance(
+        prepared.questions,
+        title=title,
+    )
+    prepared.discarded_count += type_balance_discards
+    prepared.warnings.extend(type_balance_warnings)
+    return prepared
+
+
+def _build_low_quality_failure(
+    *,
+    title: str,
+    content_node_id: uuid.UUID | None,
+    validated_count: int,
+    required_count: int,
+    discarded_count: int,
+    errors: list[str],
+) -> QuizNodeFailure:
+    reason = (
+        f"Only {validated_count} validated question(s) survived quality checks; "
+        f"required at least {required_count} to save this node."
+    )
+    return QuizNodeFailure(
+        node_id=str(content_node_id) if content_node_id else None,
+        title=title,
+        reason=reason,
+        discarded_count=discarded_count,
+        errors=errors[:_MAX_NODE_ERRORS],
+    )
+
+
 async def extract_questions(
     content: str,
     title: str,
@@ -143,7 +455,7 @@ async def extract_questions(
     content_node_id: uuid.UUID | None = None,
     mode: str | None = None,
     difficulty: str | None = None,
-) -> list:
+) -> QuizExtractionOutcome:
     """Extract practice questions from content using LLM.
 
     Args:
@@ -154,7 +466,7 @@ async def extract_questions(
         mode: Learning mode hint for question generation style
 
     Returns:
-        List of PracticeProblem ORM objects ready for DB insertion
+        QuizExtractionOutcome with validated PracticeProblem objects and stats.
     """
     client = get_llm_client()
 
@@ -171,22 +483,67 @@ async def extract_questions(
 
     questions = parse_question_array(response)
     if not questions:
-        return []
+        return QuizExtractionOutcome(
+            warnings=[f"No parsable quiz questions were returned for {title}."],
+            node_failures=[
+                QuizNodeFailure(
+                    node_id=str(content_node_id) if content_node_id else None,
+                    title=title,
+                    reason="LLM output did not contain a valid question array.",
+                ),
+            ],
+        )
 
-    # Convert to PracticeProblem models
-    problems = []
-    for i, q in enumerate(questions):
+    prepared = await _prepare_question_batch(
+        questions=questions,
+        title=title,
+        content=content,
+        client=client,
+        allow_repair=True,
+    )
+
+    validated_count = len(prepared.questions)
+    minimum_valid = _minimum_valid_questions(content)
+    if validated_count < minimum_valid:
+        return QuizExtractionOutcome(
+            validated_count=validated_count,
+            repaired_count=prepared.repaired_count,
+            discarded_count=prepared.discarded_count + validated_count,
+            warnings=[
+                f"{title}: discarded low-confidence quiz batch after validation ({validated_count}/{minimum_valid} usable questions).",
+                *prepared.warnings,
+            ],
+            node_failures=[
+                _build_low_quality_failure(
+                    title=title,
+                    content_node_id=content_node_id,
+                    validated_count=validated_count,
+                    required_count=minimum_valid,
+                    discarded_count=prepared.discarded_count + validated_count,
+                    errors=prepared.errors,
+                ),
+            ],
+        )
+
+    problems: list[PracticeProblem] = []
+    for i, question in enumerate(prepared.questions):
         problem = build_practice_problem(
             course_id=course_id,
             content_node_id=content_node_id,
             title=title,
-            question=q,
+            question=question,
             order_index=i,
             source="extracted",
         )
         problems.append(problem)
 
-    return problems
+    return QuizExtractionOutcome(
+        problems=problems,
+        validated_count=validated_count,
+        repaired_count=prepared.repaired_count,
+        discarded_count=prepared.discarded_count,
+        warnings=prepared.warnings,
+    )
 
 
 async def extract_all_questions(
@@ -197,11 +554,11 @@ async def extract_all_questions(
     all_problems = []
     for node in nodes:
         if node.get("content") and len(node["content"]) > 100:
-            problems = await extract_questions(
+            outcome = await extract_questions(
                 node["content"],
                 node["title"],
                 course_id,
                 content_node_id=node.get("id"),
             )
-            all_problems.extend(problems)
+            all_problems.extend(outcome.problems)
     return all_problems

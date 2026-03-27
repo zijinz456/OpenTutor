@@ -13,6 +13,7 @@ import {
   type ImageAttachment,
 } from "@/lib/api";
 import { ttlCache } from "@/lib/cache";
+import { detectGeneratedQuizDraft, type GeneratedQuizDraft } from "@/lib/quiz-detection";
 import { useWorkspaceStore } from "@/store/workspace";
 import { applyBlockDecisions, categorizeError } from "./chat-stream";
 import { getDismissHistory } from "./workspace-blocks";
@@ -51,6 +52,10 @@ interface ChatState {
   planProgressByCourse: Record<string, PlanProgressEvent | null>;
   messages: ChatMessage[];
   activePlan: PlanProgressEvent | null;
+  generatedQuizDraftByCourse: Record<string, GeneratedQuizDraft | null>;
+  generatedQuizErrorByCourse: Record<string, string | null>;
+  generatedQuizDraft: GeneratedQuizDraft | null;
+  generatedQuizError: string | null;
   isStreaming: boolean;
   isLoadingSessions: boolean;
   error: string | null;
@@ -61,7 +66,13 @@ interface ChatState {
   _abortController: AbortController | null;
   /** Timer ID for the tool_status "complete" auto-clear timeout. */
   _toolStatusTimer: ReturnType<typeof setTimeout> | null;
+  _slowAnalyzingTimer: ReturnType<typeof setTimeout> | null;
+  _slowDelayedTimer: ReturnType<typeof setTimeout> | null;
+  streamPhase: string | null;
+  slowState: "analyzing" | "delayed" | null;
+  latestWarning: { type: string; message: string } | null;
   abortStream: () => void;
+  clearGeneratedQuizDraft: (courseId?: string) => void;
 
   /** Active tool status from ReAct agent loop (null when no tool running). */
   toolStatus: { tool: string; status: "running" | "complete"; explanation?: string } | null;
@@ -92,12 +103,21 @@ let actionHandlerCounter = 0;
 
 /** Compute derived `messages`/`activePlan` from per-course maps. */
 function deriveActive(
-  state: Pick<ChatState, "messagesByCourse" | "planProgressByCourse" | "activeCourseId">,
+  state: Pick<
+    ChatState,
+    | "messagesByCourse"
+    | "planProgressByCourse"
+    | "generatedQuizDraftByCourse"
+    | "generatedQuizErrorByCourse"
+    | "activeCourseId"
+  >,
 ) {
   const id = state.activeCourseId;
   return {
     messages: id ? state.messagesByCourse[id] ?? [] : [],
     activePlan: id ? state.planProgressByCourse[id] ?? null : null,
+    generatedQuizDraft: id ? state.generatedQuizDraftByCourse[id] ?? null : null,
+    generatedQuizError: id ? state.generatedQuizErrorByCourse[id] ?? null : null,
   };
 }
 
@@ -109,6 +129,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
   planProgressByCourse: {},
   messages: [],
   activePlan: null,
+  generatedQuizDraftByCourse: {},
+  generatedQuizErrorByCourse: {},
+  generatedQuizDraft: null,
+  generatedQuizError: null,
   isStreaming: false,
   isLoadingSessions: false,
   error: null,
@@ -123,15 +147,49 @@ export const useChatStore = create<ChatState>((set, get) => ({
   actionHandlerOrder: [],
   _abortController: null,
   _toolStatusTimer: null,
+  _slowAnalyzingTimer: null,
+  _slowDelayedTimer: null,
+  streamPhase: null,
+  slowState: null,
+  latestWarning: null,
   abortStream: () => {
     const ctrl = get()._abortController;
     if (ctrl) {
       ctrl.abort();
       const t = get()._toolStatusTimer;
       if (t) clearTimeout(t);
-      set({ _abortController: null, isStreaming: false, toolStatus: null, _toolStatusTimer: null });
+      const slowAnalyzingTimer = get()._slowAnalyzingTimer;
+      const slowDelayedTimer = get()._slowDelayedTimer;
+      if (slowAnalyzingTimer) clearTimeout(slowAnalyzingTimer);
+      if (slowDelayedTimer) clearTimeout(slowDelayedTimer);
+      set({
+        _abortController: null,
+        isStreaming: false,
+        toolStatus: null,
+        _toolStatusTimer: null,
+        _slowAnalyzingTimer: null,
+        _slowDelayedTimer: null,
+        streamPhase: null,
+        slowState: null,
+      });
     }
   },
+  clearGeneratedQuizDraft: (courseId) =>
+    set((s) => {
+      const targetCourseId = courseId ?? s.activeCourseId;
+      if (!targetCourseId) return {};
+      const nextDrafts = { ...s.generatedQuizDraftByCourse, [targetCourseId]: null };
+      const nextErrors = { ...s.generatedQuizErrorByCourse, [targetCourseId]: null };
+      return {
+        generatedQuizDraftByCourse: nextDrafts,
+        generatedQuizErrorByCourse: nextErrors,
+        ...deriveActive({
+          ...s,
+          generatedQuizDraftByCourse: nextDrafts,
+          generatedQuizErrorByCourse: nextErrors,
+        }),
+      };
+    }),
 
   registerOnAction: (cb) => {
     const handlerId = `action-${++actionHandlerCounter}`;
@@ -261,11 +319,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }));
       set((s) => {
         const nextMBC = { ...s.messagesByCourse, [courseId]: hydratedMessages };
-        const next = { ...s, activeCourseId: courseId, messagesByCourse: nextMBC };
-        return {
-          activeCourseId: courseId,
-          messagesByCourse: nextMBC,
-          sessionIds: { ...s.sessionIds, [courseId]: sessionId },
+      const next = { ...s, activeCourseId: courseId, messagesByCourse: nextMBC };
+      return {
+        activeCourseId: courseId,
+        messagesByCourse: nextMBC,
+        sessionIds: { ...s.sessionIds, [courseId]: sessionId },
           ...deriveActive(next),
         };
       });
@@ -278,10 +336,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
   startNewSession: (courseId) =>
     set((s) => {
       const nextMBC = { ...s.messagesByCourse, [courseId]: [] };
-      const next = { ...s, activeCourseId: courseId, messagesByCourse: nextMBC };
+      const nextDrafts = { ...s.generatedQuizDraftByCourse, [courseId]: null };
+      const nextDraftErrors = { ...s.generatedQuizErrorByCourse, [courseId]: null };
+      const next = {
+        ...s,
+        activeCourseId: courseId,
+        messagesByCourse: nextMBC,
+        generatedQuizDraftByCourse: nextDrafts,
+        generatedQuizErrorByCourse: nextDraftErrors,
+      };
       return {
         activeCourseId: courseId,
         messagesByCourse: nextMBC,
+        generatedQuizDraftByCourse: nextDrafts,
+        generatedQuizErrorByCourse: nextDraftErrors,
         sessionIds: Object.fromEntries(
           Object.entries(s.sessionIds).filter(([key]) => key !== courseId),
         ),
@@ -302,7 +370,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const wasInterrupted = get().isStreaming && prevCtrl != null;
     if (wasInterrupted) {
       prevCtrl.abort();
-      set({ _abortController: null, isStreaming: false, toolStatus: null });
+      const slowAnalyzingTimer = get()._slowAnalyzingTimer;
+      const slowDelayedTimer = get()._slowDelayedTimer;
+      if (slowAnalyzingTimer) clearTimeout(slowAnalyzingTimer);
+      if (slowDelayedTimer) clearTimeout(slowDelayedTimer);
+      set({
+        _abortController: null,
+        isStreaming: false,
+        toolStatus: null,
+        _slowAnalyzingTimer: null,
+        _slowDelayedTimer: null,
+        streamPhase: null,
+        slowState: null,
+      });
     }
 
     const userMsg: ChatMessage = {
@@ -332,12 +412,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ...s.messagesByCourse,
         [courseId]: [...(s.messagesByCourse[courseId] ?? []), userMsg, assistantMsg],
       };
+      const nextDrafts = { ...s.generatedQuizDraftByCourse, [courseId]: null };
+      const nextErrors = { ...s.generatedQuizErrorByCourse, [courseId]: null };
       return {
         messagesByCourse: nextMBC,
-        ...deriveActive({ ...s, messagesByCourse: nextMBC }),
+        generatedQuizDraftByCourse: nextDrafts,
+        generatedQuizErrorByCourse: nextErrors,
+        ...deriveActive({
+          ...s,
+          messagesByCourse: nextMBC,
+          generatedQuizDraftByCourse: nextDrafts,
+          generatedQuizErrorByCourse: nextErrors,
+        }),
         isStreaming: true,
         error: null,
         clarifyOptions: null,
+        latestWarning: null,
+        streamPhase: "routing",
+        slowState: null,
       };
     });
 
@@ -345,9 +437,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const prev = get()._abortController;
     if (prev) prev.abort();
     const controller = new AbortController();
-    set({ _abortController: controller });
+    const slowAnalyzingTimer = setTimeout(() => {
+      set((s) => (s.isStreaming ? { slowState: "analyzing" } : {}));
+    }, 8_000);
+    const slowDelayedTimer = setTimeout(() => {
+      set((s) => (s.isStreaming ? { slowState: "delayed" } : {}));
+    }, 15_000);
+    set({
+      _abortController: controller,
+      _slowAnalyzingTimer: slowAnalyzingTimer,
+      _slowDelayedTimer: slowDelayedTimer,
+    });
     try {
       const wsState = useWorkspaceStore.getState();
+      let assistantContent = "";
+      let receivedFirstToken = false;
       for await (const event of streamChat({
         courseId,
         message: content,
@@ -363,6 +467,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
         dismissedBlockTypes: getDismissHistory(courseId),
       })) {
         if (event.type === "content") {
+          assistantContent += event.content;
+          if (!receivedFirstToken) {
+            receivedFirstToken = true;
+            const analyzingTimer = get()._slowAnalyzingTimer;
+            const delayedTimer = get()._slowDelayedTimer;
+            if (analyzingTimer) clearTimeout(analyzingTimer);
+            if (delayedTimer) clearTimeout(delayedTimer);
+            set({ _slowAnalyzingTimer: null, _slowDelayedTimer: null, slowState: null });
+          }
           set((s) => {
             const nextMBC = {
               ...s.messagesByCourse,
@@ -374,6 +487,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
           });
         } else if (event.type === "action") {
           get().dispatchAction(event.action);
+        } else if (event.type === "status") {
+          set({ streamPhase: event.phase });
         } else if (event.type === "plan_step") {
           set((s) => ({
             activePlan: event.task,
@@ -400,6 +515,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
         } else if (event.type === "block_update") {
           await applyBlockDecisions(event);
         } else if (event.type === "replace") {
+          assistantContent = event.content;
+          if (!receivedFirstToken && event.content.trim().length > 0) {
+            receivedFirstToken = true;
+            const analyzingTimer = get()._slowAnalyzingTimer;
+            const delayedTimer = get()._slowDelayedTimer;
+            if (analyzingTimer) clearTimeout(analyzingTimer);
+            if (delayedTimer) clearTimeout(delayedTimer);
+            set({ _slowAnalyzingTimer: null, _slowDelayedTimer: null, slowState: null });
+          }
           set((s) => {
             const nextMBC = {
               ...s.messagesByCourse,
@@ -413,7 +537,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
           // Show SSE warnings (e.g. persistence failure) as toast
           const { toast } = await import("sonner");
           toast.warning(event.message);
-        } else if (event.type === "done" && event.sessionId) {
+          set({ latestWarning: { type: event.warningType, message: event.message } });
+        } else if (event.type === "done") {
           // Detect mock LLM usage from done envelope metadata
           const isMock = (event.metadata as Record<string, unknown> | undefined)?.is_mock === true;
           if (isMock) set({ isMockLlm: true });
@@ -438,7 +563,30 @@ export const useChatStore = create<ChatState>((set, get) => ({
             return {
               messagesByCourse: nextMBC,
               ...deriveActive({ ...s, messagesByCourse: nextMBC }),
-              sessionIds: { ...s.sessionIds, [courseId]: event.sessionId! },
+              sessionIds: event.sessionId
+                ? { ...s.sessionIds, [courseId]: event.sessionId }
+                : s.sessionIds,
+            };
+          });
+
+          const detection = detectGeneratedQuizDraft(assistantContent);
+          set((s) => {
+            const nextDrafts = {
+              ...s.generatedQuizDraftByCourse,
+              [courseId]: detection.draft,
+            };
+            const nextErrors = {
+              ...s.generatedQuizErrorByCourse,
+              [courseId]: detection.error,
+            };
+            return {
+              generatedQuizDraftByCourse: nextDrafts,
+              generatedQuizErrorByCourse: nextErrors,
+              ...deriveActive({
+                ...s,
+                generatedQuizDraftByCourse: nextDrafts,
+                generatedQuizErrorByCourse: nextErrors,
+              }),
             };
           });
         }
@@ -471,7 +619,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } finally {
       const t = get()._toolStatusTimer;
       if (t) clearTimeout(t);
-      set({ isStreaming: false, toolStatus: null, _abortController: null, _toolStatusTimer: null });
+      const analyzingTimer = get()._slowAnalyzingTimer;
+      const delayedTimer = get()._slowDelayedTimer;
+      if (analyzingTimer) clearTimeout(analyzingTimer);
+      if (delayedTimer) clearTimeout(delayedTimer);
+      set({
+        isStreaming: false,
+        toolStatus: null,
+        _abortController: null,
+        _toolStatusTimer: null,
+        _slowAnalyzingTimer: null,
+        _slowDelayedTimer: null,
+        streamPhase: null,
+        slowState: null,
+      });
     }
   },
 
@@ -490,12 +651,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
       const nextPPC = { ...s.planProgressByCourse };
       delete nextPPC[targetCourseId];
+      const nextDrafts = { ...s.generatedQuizDraftByCourse };
+      delete nextDrafts[targetCourseId];
+      const nextDraftErrors = { ...s.generatedQuizErrorByCourse };
+      delete nextDraftErrors[targetCourseId];
 
-      const next = { ...s, messagesByCourse: nextMBC, planProgressByCourse: nextPPC };
+      const next = {
+        ...s,
+        messagesByCourse: nextMBC,
+        planProgressByCourse: nextPPC,
+        generatedQuizDraftByCourse: nextDrafts,
+        generatedQuizErrorByCourse: nextDraftErrors,
+      };
       return {
         messagesByCourse: nextMBC,
         sessionIds: nextSessionIds,
         planProgressByCourse: nextPPC,
+        generatedQuizDraftByCourse: nextDrafts,
+        generatedQuizErrorByCourse: nextDraftErrors,
         ...deriveActive(next),
         error: null,
       };

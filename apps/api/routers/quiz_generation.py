@@ -16,6 +16,7 @@ from models.practice import PracticeProblem
 from models.user import User
 from schemas.quiz import (
     ExtractRequest,
+    ExtractResponse,
     PretestAnswerRequest,
     PretestStartRequest,
     SaveGeneratedRequest,
@@ -23,8 +24,8 @@ from schemas.quiz import (
 from services.auth.dependency import get_current_user
 from services.course_access import get_course_or_404
 from services.llm.readiness import ensure_llm_ready
-from services.parser.quiz import extract_questions
-from services.practice.annotation import build_practice_problem, parse_question_array
+from services.parser.quiz import QuizExtractionOutcome, QuizNodeFailure, extract_questions, prepare_generated_questions
+from services.practice.annotation import build_practice_problem
 from sqlalchemy.exc import SQLAlchemyError
 
 from libs.exceptions import (
@@ -84,10 +85,12 @@ async def save_generated_quiz(
 ):
     """Persist an AI-generated practice set into the course question bank."""
     course = await get_course_or_404(db, body.course_id, user_id=user.id)
+    title = body.title or course.name
 
-    questions = parse_question_array(body.raw_content)
-    if not questions:
-        raise ValidationError("No valid question set found in assistant response")
+    prepared = await prepare_generated_questions(raw_content=body.raw_content, title=title)
+    if not prepared.questions:
+        detail = prepared.errors[0] if prepared.errors else "No valid question set found in assistant response"
+        raise ValidationError(detail)
 
     replace_batch_id = body.replace_batch_id
     next_version = 1
@@ -117,10 +120,9 @@ async def save_generated_quiz(
         )
     )
     start_order = (max_order_result.scalar() or 0) + 1
-    title = body.title or course.name
 
     created: list[PracticeProblem] = []
-    for index, question in enumerate(questions):
+    for index, question in enumerate(prepared.questions):
         problem = build_practice_problem(
             course_id=body.course_id,
             content_node_id=None,
@@ -141,15 +143,25 @@ async def save_generated_quiz(
         "batch_id": str(replace_batch_id),
         "version": next_version,
         "replaced": bool(body.replace_batch_id),
+        "discarded_count": prepared.discarded_count,
+        "warnings": prepared.warnings,
     }
 
 
-@router.post("/extract", summary="Extract quiz questions", description="Generate quiz questions from course content nodes using LLM.")
+@router.post(
+    "/extract",
+    response_model=ExtractResponse,
+    summary="Extract quiz questions",
+    description="Generate quiz questions from course content nodes using LLM.",
+)
 async def extract_quiz(body: ExtractRequest, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """Extract questions from a content node or all nodes in a course."""
     await get_course_or_404(db, body.course_id, user_id=user.id)
     await ensure_llm_ready("Quiz generation")
 
+    outcome = QuizExtractionOutcome()
+    failures: list[Exception] = []
+    results: list[QuizExtractionOutcome] = []
     try:
         if body.content_node_id:
             result = await db.execute(
@@ -162,7 +174,7 @@ async def extract_quiz(body: ExtractRequest, user: User = Depends(get_current_us
             if not node or not node.content:
                 raise NotFoundError("Content node not found or empty")
 
-            problems = await extract_questions(
+            outcome = await extract_questions(
                 node.content,
                 node.title,
                 body.course_id,
@@ -208,17 +220,24 @@ async def extract_quiz(body: ExtractRequest, user: User = Depends(get_current_us
                         )
                     except asyncio.TimeoutError:
                         logger.warning("Quiz extraction timed out for node %s", n.title)
-                        return []
+                        return QuizExtractionOutcome(
+                            warnings=[f"{n.title}: extraction timed out."],
+                            node_failures=[
+                                QuizNodeFailure(
+                                    node_id=str(n.id),
+                                    title=n.title,
+                                    reason="Quiz extraction timed out for this node.",
+                                ),
+                            ],
+                        )
 
             results = await asyncio.gather(*[_extract(n) for n in eligible], return_exceptions=True)
-            problems = []
-            failures = []
-            for r in results:
-                if isinstance(r, list):
-                    problems.extend(r)
-                elif isinstance(r, Exception):
-                    failures.append(r)
-            if failures and not problems:
+            for item in results:
+                if isinstance(item, QuizExtractionOutcome):
+                    outcome.extend(item)
+                elif isinstance(item, Exception):
+                    failures.append(item)
+            if failures and not outcome.problems and not outcome.node_failures:
                 raise failures[0]
             if failures:
                 logger.warning(
@@ -231,12 +250,20 @@ async def extract_quiz(body: ExtractRequest, user: User = Depends(get_current_us
     except SQLAlchemyError as exc:
         reraise_as_app_error(exc, "Quiz extraction failed")
 
-    for p in problems:
-        db.add(p)
+    max_order_result = await db.execute(
+        select(func.max(PracticeProblem.order_index)).where(
+            PracticeProblem.course_id == body.course_id,
+            PracticeProblem.is_diagnostic == False,
+            PracticeProblem.is_archived == False,
+        )
+    )
+    next_order = (max_order_result.scalar() or 0) + 1
+    for index, problem in enumerate(outcome.problems, start=next_order):
+        problem.order_index = index
+        db.add(problem)
     await db.commit()
 
-    response: dict = {"status": "ok", "problems_created": len(problems)}
-    warnings: list[str] = []
+    warnings: list[str] = list(outcome.warnings)
     if failures:
         warnings.append(
             f"Skipped {len(failures)}/{len(results)} content node(s) due to extraction errors."
@@ -245,7 +272,7 @@ async def extract_quiz(body: ExtractRequest, user: User = Depends(get_current_us
     # Check prerequisite gaps for the generated problems' knowledge points
     try:
         kp_names: list[str] = []
-        for p in problems:
+        for p in outcome.problems:
             kp_list = p.knowledge_points if hasattr(p, "knowledge_points") else None
             if kp_list:
                 kp_names.extend(kp_list if isinstance(kp_list, list) else [kp_list])
@@ -260,13 +287,18 @@ async def extract_quiz(body: ExtractRequest, user: User = Depends(get_current_us
                     f"Prerequisite gaps detected: {', '.join(gap_names)}. "
                     "Consider reviewing these concepts first."
                 )
-                response["prerequisite_gaps"] = gaps[:5]
     except (ImportError, KeyError, AttributeError, LookupError) as e:
         logger.debug("Prerequisite check skipped: %s", type(e).__name__)
 
-    if warnings:
-        response["warnings"] = warnings
-    return response
+    return {
+        "status": "ok",
+        "problems_created": len(outcome.problems),
+        "validated_count": outcome.validated_count,
+        "repaired_count": outcome.repaired_count,
+        "discarded_count": outcome.discarded_count,
+        "node_failures": [failure.to_dict() for failure in outcome.node_failures],
+        "warnings": warnings,
+    }
 
 
 # ── CAT Pre-test (Diagnostic Assessment) ──

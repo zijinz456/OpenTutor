@@ -30,6 +30,24 @@ class SaveGeneratedRequest(BaseModel):
     replace_batch_id: uuid.UUID | None = None
 
 
+class QuizNodeFailureResponse(BaseModel):
+    node_id: str | None = None
+    title: str
+    reason: str
+    discarded_count: int = 0
+    errors: list[str] = Field(default_factory=list)
+
+
+class ExtractResponse(BaseModel):
+    status: str
+    problems_created: int
+    validated_count: int = 0
+    repaired_count: int = 0
+    discarded_count: int = 0
+    node_failures: list[QuizNodeFailureResponse] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
 class ProblemResponse(BaseModel):
     id: uuid.UUID
     question_type: str

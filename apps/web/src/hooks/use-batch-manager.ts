@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { GeneratedAssetBatchSummary } from "@/lib/api";
+import type { GeneratedBatchSummaryBase } from "@/lib/api/client";
 import { useWorkspaceStore } from "@/store/workspace";
 import { toast } from "sonner";
 
@@ -8,11 +8,11 @@ interface SaveResult {
   version: number;
 }
 
-interface UseBatchManagerOptions {
+interface UseBatchManagerOptions<TBatch extends GeneratedBatchSummaryBase> {
   courseId: string;
   /** Key into workspace sectionRefreshKey, e.g. "notes", "practice", "plan" */
   refreshSection: string;
-  listFn: (courseId: string) => Promise<GeneratedAssetBatchSummary[]>;
+  listFn: (courseId: string) => Promise<TBatch[]>;
 }
 
 /**
@@ -21,15 +21,15 @@ interface UseBatchManagerOptions {
  * Encapsulates: batch loading, refresh-on-key-change, latest batch detection,
  * and save with "Replace Latest" / "Save New" semantics.
  */
-export function useBatchManager({
+export function useBatchManager<TBatch extends GeneratedBatchSummaryBase>({
   courseId,
   refreshSection,
   listFn,
-}: UseBatchManagerOptions) {
+}: UseBatchManagerOptions<TBatch>) {
   const refreshKey = useWorkspaceStore(
     (s) => s.sectionRefreshKey[refreshSection],
   );
-  const [batches, setBatches] = useState<GeneratedAssetBatchSummary[]>([]);
+  const [batches, setBatches] = useState<TBatch[]>([]);
   const [saving, setSaving] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 

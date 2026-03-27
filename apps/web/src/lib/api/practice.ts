@@ -146,12 +146,40 @@ export interface AnswerResult {
   warnings?: string[];
 }
 
+export interface QuizNodeFailure {
+  node_id?: string | null;
+  title: string;
+  reason: string;
+  discarded_count: number;
+  errors: string[];
+}
+
+export interface ExtractQuizResult {
+  status: string;
+  problems_created: number;
+  validated_count: number;
+  repaired_count: number;
+  discarded_count: number;
+  node_failures: QuizNodeFailure[];
+  warnings: string[];
+}
+
+export interface SavedGeneratedQuizBatch {
+  saved: number;
+  problem_ids: string[];
+  batch_id: string;
+  version: number;
+  replaced: boolean;
+  discarded_count?: number;
+  warnings?: string[];
+}
+
 export async function extractQuiz(
   courseId: string,
   contentNodeId?: string,
   mode?: string,
   difficulty?: "easy" | "medium" | "hard",
-): Promise<{ problems_created: number; warnings?: string[] }> {
+): Promise<ExtractQuizResult> {
   return request("/quiz/extract", {
     method: "POST",
     body: JSON.stringify({
@@ -169,6 +197,23 @@ export async function listProblems(courseId: string): Promise<QuizProblem[]> {
 
 export async function listGeneratedQuizBatches(courseId: string): Promise<GeneratedQuizBatchSummary[]> {
   return request(`/quiz/${courseId}/generated-batches`);
+}
+
+export async function saveGeneratedQuiz(
+  courseId: string,
+  rawContent: string,
+  title?: string,
+  replaceBatchId?: string,
+): Promise<SavedGeneratedQuizBatch> {
+  return request("/quiz/save-generated", {
+    method: "POST",
+    body: JSON.stringify({
+      course_id: courseId,
+      raw_content: rawContent,
+      title,
+      replace_batch_id: replaceBatchId,
+    }),
+  });
 }
 
 export async function submitAnswer(problemId: string, answer: string, answerTimeMs?: number): Promise<AnswerResult> {

@@ -103,6 +103,9 @@ export function QuizView({
       const mode = modeHint ?? layoutMode;
       const res = await extractQuiz(courseId, undefined, mode, difficultyHint);
       let status = t("quiz.extract.success").replace("{count}", String(res.problems_created));
+      if (res.discarded_count > 0) {
+        status += ` (${res.discarded_count} discarded)`;
+      }
       if (res.warnings?.length) {
         status += ` (${res.warnings[0]})`;
       }

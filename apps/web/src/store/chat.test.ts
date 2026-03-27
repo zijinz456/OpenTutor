@@ -49,6 +49,10 @@ function resetStore() {
     planProgressByCourse: {},
     messages: [],
     activePlan: null,
+    generatedQuizDraftByCourse: {},
+    generatedQuizErrorByCourse: {},
+    generatedQuizDraft: null,
+    generatedQuizError: null,
     isStreaming: false,
     isLoadingSessions: false,
     error: null,
@@ -56,6 +60,11 @@ function resetStore() {
     isMockLlm: false,
     _abortController: null,
     _toolStatusTimer: null,
+    _slowAnalyzingTimer: null,
+    _slowDelayedTimer: null,
+    streamPhase: null,
+    slowState: null,
+    latestWarning: null,
     toolStatus: null,
     clarifyOptions: null,
     actionHandlers: {},
@@ -166,7 +175,7 @@ describe("useChatStore", () => {
       mockStreamChat.mockReturnValueOnce((async function* () {
         yield {
           type: "warning" as const,
-          warningType: "advanced_adaptation_unavailable",
+          warningType: "adaptation_degraded",
           message: "Advanced adaptation is temporarily unavailable.",
         };
         yield {
@@ -179,6 +188,35 @@ describe("useChatStore", () => {
       await useChatStore.getState().sendMessage("c1", "help me understand recursion");
 
       expect(toast.warning).toHaveBeenCalledWith("Advanced adaptation is temporarily unavailable.");
+    });
+
+    it("detects a generated quiz draft only after the stream completes", async () => {
+      mockStreamChat.mockReturnValueOnce((async function* () {
+        yield {
+          type: "content" as const,
+          content: JSON.stringify([
+            {
+              question_type: "mc",
+              question: "What must be true before binary search works?",
+              options: { A: "Sorted data", B: "Unique data", C: "Prime length", D: "Recursive code" },
+              correct_answer: "A",
+              explanation: "Binary search relies on sorted order.",
+              difficulty_layer: 1,
+              problem_metadata: { core_concept: "binary search prerequisite" },
+            },
+          ]),
+        };
+        yield {
+          type: "done" as const,
+          sessionId: "session-1",
+          metadata: {},
+        };
+      })());
+
+      await useChatStore.getState().sendMessage("c1", "generate 1 quiz question as JSON");
+
+      expect(useChatStore.getState().generatedQuizDraftByCourse["c1"]?.questionCount).toBe(1);
+      expect(useChatStore.getState().generatedQuizErrorByCourse["c1"]).toBeNull();
     });
   });
 
