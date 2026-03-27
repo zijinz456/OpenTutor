@@ -100,6 +100,27 @@ def detect_mime_type(filename: str, content_bytes: bytes | None = None) -> str:
 
 # ── Step 2: Content extraction ──
 
+async def extract_content_with_title(
+    file_path: str | None,
+    url: str | None,
+    mime_type: str,
+    session_name: str | None = None,
+) -> tuple[str, str]:
+    """Step 2: Extract title + text content via unified document_loader."""
+    from services.ingestion.document_loader import extract_content as unified_extract
+
+    try:
+        return await unified_extract(
+            file_path=file_path, url=url, session_name=session_name,
+        )
+    except (IOError, OSError) as e:
+        logger.warning("Content extraction I/O error: %s", e)
+        return "", ""
+    except (ValueError, RuntimeError) as e:
+        logger.exception("Content extraction failed unexpectedly")
+        return "", ""
+
+
 async def extract_content(
     file_path: str | None,
     url: str | None,
@@ -110,19 +131,13 @@ async def extract_content(
 
     Routes through Crawl4AI (web/PDF/HTML) + loader_dict (Office formats).
     """
-    from services.ingestion.document_loader import extract_content as unified_extract
-
-    try:
-        _title, content = await unified_extract(
-            file_path=file_path, url=url, session_name=session_name,
-        )
-        return content
-    except (IOError, OSError) as e:
-        logger.warning("Content extraction I/O error: %s", e)
-        return ""
-    except (ValueError, RuntimeError) as e:
-        logger.exception("Content extraction failed unexpectedly")
-        return ""
+    _title, content = await extract_content_with_title(
+        file_path=file_path,
+        url=url,
+        mime_type=mime_type,
+        session_name=session_name,
+    )
+    return content
 
 
 # ── Step 3: LLM classification ──

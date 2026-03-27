@@ -90,8 +90,8 @@ async def _try_httpx_clean_soup(url: str) -> tuple[str, str] | None:
         from services.ingestion.document_loader_html import clean_soup, extract_title, get_text_from_soup
 
         soup = clean_soup(soup)
-        title = extract_title(soup)
-        content = get_text_from_soup(soup)
+        title = extract_title(soup, url=url)
+        content = get_text_from_soup(soup, title=title)
 
         if len(content) >= 100:
             return title or url, content
@@ -140,14 +140,18 @@ def _try_trafilatura_url_sync(url: str) -> tuple[str, str] | None:
 async def _try_browser_cascade(url: str) -> tuple[str, str] | None:
     """Layer 4: Playwright browser cascade (existing automation.py)."""
     try:
+        from bs4 import BeautifulSoup
         from services.browser.automation import cascade_fetch
-        from services.parser.url import extract_text_from_html
+        from services.ingestion.document_loader_html import clean_soup, extract_title, get_text_from_soup
 
         html = await cascade_fetch(url)
         if html:
-            text = extract_text_from_html(html)
+            soup = BeautifulSoup(html, "lxml")
+            soup = clean_soup(soup)
+            title = extract_title(soup, url=url)
+            text = get_text_from_soup(soup, title=title)
             if text and len(text) >= 50:
-                return url, text
+                return title or url, text
     except ImportError:
         logger.debug("Browser automation not available, skipping cascade for %s", url)
     except (OSError, ConnectionError, TimeoutError) as e:

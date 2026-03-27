@@ -10,6 +10,34 @@ Extracted from document_loader.py.
 """
 
 import re
+from urllib.parse import urlparse
+
+
+def _clean_title_text(value: str) -> str:
+    value = re.sub(r"\s+", " ", (value or "")).strip()
+    return re.sub(r"\s*[|\-–:]\s*(home|index)$", "", value, flags=re.IGNORECASE).strip()
+
+
+def _humanize_slug_from_url(url: str | None) -> str:
+    if not url:
+        return ""
+    parsed = urlparse(url)
+    last_segment = parsed.path.rstrip("/").split("/")[-1]
+    if not last_segment:
+        return parsed.hostname or ""
+    slug = re.sub(r"\.[a-z0-9]{1,5}$", "", last_segment, flags=re.IGNORECASE)
+    slug = re.sub(r"[-_]+", " ", slug).strip()
+    return slug.title() if slug else (parsed.hostname or "")
+
+
+def _hostname_fallback(url: str | None) -> str:
+    if not url:
+        return ""
+    return urlparse(url).hostname or url
+
+
+def _normalized_compare_key(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", value.lower())
 
 
 def clean_soup(soup):
@@ -71,22 +99,64 @@ def clean_soup_canvas_aware(soup):
     return soup
 
 
-def extract_title(soup) -> str:
+def extract_title(soup, url: str | None = None) -> str:
     """Extract title from BeautifulSoup object.
 
     Ported from GPT-Researcher scraper/utils.py extract_title().
     """
-    return soup.title.string if soup.title else ""
+    meta_candidates = [
+        soup.find("meta", attrs={"property": "og:title"}),
+        soup.find("meta", attrs={"name": "twitter:title"}),
+        soup.find("meta", attrs={"property": "twitter:title"}),
+    ]
+    for tag in meta_candidates:
+        if tag and tag.get("content"):
+            title = _clean_title_text(tag.get("content", ""))
+            if title:
+                return title
+
+    if soup.title and soup.title.string:
+        title = _clean_title_text(soup.title.string)
+        if title:
+            return title
+
+    h1 = soup.find("h1")
+    if h1:
+        title = _clean_title_text(h1.get_text(" ", strip=True))
+        if title:
+            return title
+
+    slug_title = _humanize_slug_from_url(url)
+    if slug_title:
+        return slug_title
+
+    return _hostname_fallback(url)
 
 
-def get_text_from_soup(soup) -> str:
+def get_text_from_soup(soup, *, title: str | None = None) -> str:
     """Get clean text from BeautifulSoup object.
 
     Ported from GPT-Researcher scraper/utils.py get_text_from_soup().
     """
-    text = soup.get_text(strip=True, separator="\n")
+    text_root = soup.body or soup
+    text = text_root.get_text(strip=True, separator="\n")
     # Collapse runs of 3+ newlines to double newline (paragraph break)
     text = re.sub(r"\n{3,}", "\n\n", text)
     # Collapse runs of spaces (but preserve newlines for structure)
     text = re.sub(r"[^\S\n]{2,}", " ", text)
-    return text.strip()
+    text = text.strip()
+
+    if not title or not text:
+        return text
+
+    compare_title = _normalized_compare_key(title)
+    if not compare_title:
+        return text
+
+    lines = [line.strip() for line in text.split("\n") if line.strip()]
+    while lines and _normalized_compare_key(lines[0]) == compare_title:
+        lines.pop(0)
+    if lines and _normalized_compare_key(lines[0]).startswith(compare_title):
+        lines.pop(0)
+
+    return "\n".join(lines).strip() or text

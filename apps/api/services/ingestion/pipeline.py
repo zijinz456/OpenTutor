@@ -37,6 +37,7 @@ from services.ingestion.classification import (  # noqa: F401
     classify_by_filename,
     classify_by_content_heuristics,
     detect_mime_type,
+    extract_content_with_title,
     extract_content,
     CLASSIFICATION_PROMPT,
     classify_content,
@@ -69,6 +70,15 @@ _PHASE_LABELS = {
     "completed": "Ready",
     "failed": "Failed",
 }
+
+
+def _prefer_extracted_title(job: IngestionJob, title: str | None) -> None:
+    normalized = (title or "").strip()
+    if job.source_type != "url" or not normalized:
+        return
+    if normalized == (job.url or "").strip():
+        return
+    job.original_filename = normalized
 
 
 def _set_job_phase(
@@ -179,6 +189,7 @@ async def run_ingestion_pipeline(
     await db.commit()
 
     extracted = ""
+    extracted_title = ""
     canvas_file_urls: list[dict] = []
     canvas_quiz_questions: list[dict] = []
     canvas_assignments_data: list[dict] = []
@@ -293,17 +304,24 @@ async def run_ingestion_pipeline(
         if not extracted and pre_fetched_html:
             # Authenticated scraping: content already fetched, parse HTML to text
             # Use Canvas-aware cleaning that preserves content containers
-            from services.ingestion.document_loader import clean_soup_canvas_aware, get_text_from_soup
+            from services.ingestion.document_loader import (
+                clean_soup_canvas_aware,
+                extract_title,
+                get_text_from_soup,
+            )
             from bs4 import BeautifulSoup
 
             soup = BeautifulSoup(pre_fetched_html, "lxml")
-            soup = clean_soup_canvas_aware(soup)
-            extracted = get_text_from_soup(soup)
+            extracted_title = extract_title(soup, url=url)
+            content_root = clean_soup_canvas_aware(soup)
+            extracted = get_text_from_soup(content_root, title=extracted_title)
+            _prefer_extracted_title(job, extracted_title)
 
         if not extracted:
-            extracted = await extract_content(
+            extracted_title, extracted = await extract_content_with_title(
                 file_path, url, job.mime_type or "", session_name=session_name,
             )
+            _prefer_extracted_title(job, extracted_title)
         job.extracted_markdown = extracted
 
         if not extracted:
