@@ -1,6 +1,5 @@
 """Auto-generation of flashcards, quiz questions, and learning content."""
 
-import json
 import logging
 import uuid
 
@@ -8,6 +7,7 @@ import sqlalchemy as sa
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from libs.text_utils import parse_llm_json
 from services.llm.router import get_llm_client
 
 logger = logging.getLogger(__name__)
