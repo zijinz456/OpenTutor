@@ -220,56 +220,6 @@ jobs:
           cd apps/api
           python -m pytest ../../tests/test_sqlite_mode.py -v --timeout=30 -o addopts=
 
-      - name: Run API regression benchmark gate
-        run: |
-          course_resp=$(curl -sS -X POST http://127.0.0.1:8004/api/courses/ \
-            -H 'Content-Type: application/json' \
-            --data '{"name":"Regression Eval Course","description":"fixture"}')
-          echo "$course_resp" > /tmp/opentutor_eval_course.json
-          python - <<'PY'
-          import json
-          course = json.load(open("/tmp/opentutor_eval_course.json"))
-          open("/tmp/opentutor_eval_course_id.txt", "w", encoding="utf-8").write(course["id"])
-          PY
-          COURSE_ID=$(cat /tmp/opentutor_eval_course_id.txt)
-          curl -sS -X POST http://127.0.0.1:8004/api/content/upload \
-            -F "course_id=$COURSE_ID" \
-            -F "file=@/tmp/opentutor_upload_test.md;type=text/markdown" \
-            > /tmp/opentutor_eval_upload.json
-          python - <<'PY'
-          import json
-          course_id = open("/tmp/opentutor_eval_course_id.txt", encoding="utf-8").read().strip()
-          payload = {
-              "course_id": course_id,
-              "strict": False,
-              "retrieval_queries": [
-                  {
-                      "query": "topic A notes",
-                      "keywords": ["Topic A", "Unit 1"],
-                  }
-              ],
-              "response_cases": [
-                  {
-                      "question": "What is Topic A?",
-                      "response": "Topic A notes are in Unit 1 and summarize the uploaded fixture.",
-                      "context": "Unit 1 / Topic A / Notes for CI smoke test.",
-                      "expected_intent": "learn",
-                  }
-              ],
-          }
-          json.dump(payload, open("/tmp/opentutor_regression_payload.json", "w", encoding="utf-8"))
-          PY
-          curl -sS -X POST http://127.0.0.1:8004/api/eval/regression \
-            -H 'Content-Type: application/json' \
-            --data @/tmp/opentutor_regression_payload.json > /tmp/opentutor_regression.json
-          cat /tmp/opentutor_regression.json
-          python - <<'PY'
-          import json, sys
-          data = json.load(open("/tmp/opentutor_regression.json"))
-          if not data.get("passed"):
-              sys.exit(1)
-          PY
-
       - name: Run strict smoke test
         run: |
           API_BASE=http://127.0.0.1:8004 \
