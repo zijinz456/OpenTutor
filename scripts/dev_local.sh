@@ -797,7 +797,7 @@ run_verify() {
   if (( run_real_llm )); then
     prepare_real_llm_env || fail "--with-real-llm requires a real LLM provider (cloud API key or reachable local runtime)"
 
-    run_reported "Real LLM API validation" bash -lc "API_BASE='${API_HOST}' bash '${ROOT_DIR}/scripts/llm_integration_test.sh'"
+    run_reported "Real LLM API validation" bash -lc "API_BASE='${API_HOST}' UPLOAD_FILE='${UPLOAD_FILE}' bash '${ROOT_DIR}/scripts/llm_integration_test.sh'"
     run_reported "Real LLM browser validation" bash -lc "PLAYWRIGHT_USE_EXISTING_SERVER=1 PLAYWRIGHT_BASE_URL='${WEB_BASE_URL}' PLAYWRIGHT_API_URL='${API_BASE}' npx playwright test tests/e2e/llm-real.spec.ts --project='${PLAYWRIGHT_PROJECT}'"
   fi
 

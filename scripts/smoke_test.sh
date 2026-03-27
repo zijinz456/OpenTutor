@@ -157,6 +157,18 @@ fi
 quiz_payload="{\"course_id\":\"${course_id}\"}"
 api_call "POST" "/api/quiz/extract" "$quiz_payload"
 run_step_optional "quiz extract" "$API_STATUS" "$API_BODY"
+if [[ "$API_STATUS" =~ ^2 ]]; then
+  quiz_created="$(json_get_field "$API_BODY" "problems_created")"
+  quiz_validated="$(json_get_field "$API_BODY" "validated_count")"
+  quiz_repaired="$(json_get_field "$API_BODY" "repaired_count")"
+  quiz_discarded="$(json_get_field "$API_BODY" "discarded_count")"
+  if [[ -n "${quiz_validated}" || -n "${quiz_discarded}" ]]; then
+    log "INFO: quiz extract stats created=${quiz_created:-?} validated=${quiz_validated:-?} repaired=${quiz_repaired:-?} discarded=${quiz_discarded:-?}"
+    if [[ "${STRICT_LLM}" == "1" && "${quiz_validated:-0}" -lt 1 ]]; then
+      record_fail "quiz extract returned no validated questions"
+    fi
+  fi
+fi
 
 api_call "GET" "/api/quiz/${course_id}"
 run_step_required "quiz list" "$API_STATUS" "$API_BODY"
@@ -170,6 +182,10 @@ status="$(curl -sS -o "$out_file" -w "%{http_code}" \
   --data "$chat_payload")"
 body="$(head -c 400 "$out_file" || true)"
 run_step_optional "chat stream" "$status" "$body"
+if [[ "$status" =~ ^2 ]]; then
+  warning_count="$(grep -c '^event: warning$' "$out_file" || true)"
+  log "INFO: chat stream warnings=${warning_count:-0}"
+fi
 
 # 10) Progress + templates + graph
 api_call "GET" "/api/progress/templates"
