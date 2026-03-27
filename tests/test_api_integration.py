@@ -279,9 +279,12 @@ async def test_scrape_fixture_host_uses_local_fixture_without_dns(client, monkey
     (fixture_dir / "binary-search.html").write_text(
         """
         <html>
+          <head>
+            <title>Binary Search Notes</title>
+          </head>
           <body>
             <main>
-              <h1>Binary Search Basics</h1>
+              <h1>Binary Search Notes</h1>
               <p>Binary search halves a sorted search space each step.</p>
             </main>
           </body>
@@ -309,7 +312,8 @@ async def test_scrape_fixture_host_uses_local_fixture_without_dns(client, monkey
     tree = tree_resp.json()
     assert len(tree) >= 1
     flattened = json.dumps(tree)
-    assert "Binary Search Basics" in flattened
+    assert "Binary Search Notes" in flattened
+    assert "binary-search.html" not in flattened
 
 
 @pytest.mark.asyncio
@@ -414,7 +418,12 @@ async def test_save_generated_quiz_accepts_single_object_payload(client):
         {
             "question_type": "mc",
             "question": "What is the loop invariant?",
-            "options": {"A": "Sorted prefix", "B": "Target stays inside bounds"},
+            "options": {
+                "A": "Sorted prefix",
+                "B": "Target stays inside bounds",
+                "C": "Target stays at index 0",
+                "D": "The array length is prime",
+            },
             "correct_answer": "B",
             "explanation": "Binary search preserves the candidate interval.",
             "difficulty_layer": 1,
@@ -434,6 +443,31 @@ async def test_save_generated_quiz_accepts_single_object_payload(client):
     problems = list_resp.json()
     assert len(problems) == 1
     assert problems[0]["question"] == "What is the loop invariant?"
+
+
+@pytest.mark.asyncio
+async def test_save_generated_quiz_rejects_invalid_question_payload(client):
+    create_resp = await client.post("/api/courses/", json={"name": "Invalid Quiz Course", "description": "x"})
+    assert create_resp.status_code == 201
+    course_id = create_resp.json()["id"]
+
+    raw_content = json.dumps(
+        [
+            {
+                "question_type": "mc",
+                "question": "Broken question",
+                "options": {"A": "Only one option"},
+                "correct_answer": "",
+                "explanation": "",
+            }
+        ]
+    )
+
+    save_resp = await client.post(
+        "/api/quiz/save-generated",
+        json={"course_id": course_id, "raw_content": raw_content, "title": "Broken"},
+    )
+    assert save_resp.status_code == 422
 
 
 @pytest.mark.asyncio
@@ -502,7 +536,13 @@ async def test_replace_generated_quiz_archives_previous_batch_version(client):
     course_id = create_resp.json()["id"]
 
     first_payload = json.dumps([
-        {"question_type": "mc", "question": "Q1", "options": {"A": "1", "B": "2", "C": "3", "D": "4"}}
+        {
+            "question_type": "mc",
+            "question": "What must be true before binary search works?",
+            "options": {"A": "Sorted", "B": "Random", "C": "Prime sized", "D": "Recursive"},
+            "correct_answer": "A",
+            "explanation": "Binary search assumes sorted order.",
+        }
     ])
     first_save = await client.post(
         "/api/quiz/save-generated",
@@ -512,7 +552,13 @@ async def test_replace_generated_quiz_archives_previous_batch_version(client):
     batch_id = first_save.json()["batch_id"]
 
     second_payload = json.dumps([
-        {"question_type": "mc", "question": "Q2", "options": {"A": "1", "B": "2", "C": "3", "D": "4"}}
+        {
+            "question_type": "mc",
+            "question": "Why can binary search discard half the array each step?",
+            "options": {"A": "Because it is recursive", "B": "Because the data is sorted", "C": "Because arrays are indexed", "D": "Because the target is unique"},
+            "correct_answer": "B",
+            "explanation": "Sorted order tells us which half cannot contain the target.",
+        }
     ])
     second_save = await client.post(
         "/api/quiz/save-generated",
@@ -530,7 +576,7 @@ async def test_replace_generated_quiz_archives_previous_batch_version(client):
     list_resp = await client.get(f"/api/quiz/{course_id}")
     problems = list_resp.json()
     assert len(problems) == 1
-    assert problems[0]["question"] == "Q2"
+    assert problems[0]["question"] == "Why can binary search discard half the array each step?"
 
     batch_resp = await client.get(f"/api/quiz/{course_id}/generated-batches")
     assert batch_resp.status_code == 200
@@ -538,6 +584,77 @@ async def test_replace_generated_quiz_archives_previous_batch_version(client):
     assert len(batches) == 1
     assert batches[0]["batch_id"] == batch_id
     assert batches[0]["current_version"] == 2
+
+
+@pytest.mark.asyncio
+async def test_extract_quiz_returns_quality_stats_in_response(client, monkeypatch):
+    from services.parser.quiz import QuizExtractionOutcome, QuizNodeFailure
+
+    create_resp = await client.post("/api/courses/", json={"name": "Extract Stats Course", "description": "x"})
+    assert create_resp.status_code == 201
+    course_id = uuid.UUID(create_resp.json()["id"])
+    node_id = uuid.uuid4()
+
+    async with app.state.test_session_factory() as session:
+        session.add(
+            CourseContentTree(
+                id=node_id,
+                course_id=course_id,
+                parent_id=None,
+                title="Week 1 Notes",
+                content="Binary search repeatedly halves a sorted search space and preserves the candidate interval.",
+                level=0,
+                order_index=0,
+                source_type="manual",
+            )
+        )
+        await session.commit()
+
+    async def fake_ready(*_args, **_kwargs):
+        return None
+
+    async def fake_extract_questions(*_args, **_kwargs):
+        return QuizExtractionOutcome(
+            problems=[
+                PracticeProblem(
+                    course_id=course_id,
+                    content_node_id=node_id,
+                    question_type="mc",
+                    question="What must be true before binary search works?",
+                    options={"A": "Sorted", "B": "Random", "C": "Prime sized", "D": "Recursive"},
+                    correct_answer="A",
+                    explanation="Binary search assumes sorted order.",
+                    order_index=0,
+                    source="extracted",
+                )
+            ],
+            validated_count=2,
+            repaired_count=1,
+            discarded_count=1,
+            warnings=["Week 1 Notes: one duplicate question was removed."],
+            node_failures=[
+                QuizNodeFailure(
+                    node_id=str(node_id),
+                    title="Week 1 Notes",
+                    reason="Only 1 validated question survived quality checks; required at least 2 to save this node.",
+                    discarded_count=1,
+                    errors=["options: multiple-choice questions require exactly 4 options"],
+                )
+            ],
+        )
+
+    monkeypatch.setattr("routers.quiz_generation.ensure_llm_ready", fake_ready)
+    monkeypatch.setattr("routers.quiz_generation.extract_questions", fake_extract_questions)
+
+    resp = await client.post("/api/quiz/extract", json={"course_id": str(course_id), "content_node_id": str(node_id)})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["problems_created"] == 1
+    assert data["validated_count"] == 2
+    assert data["repaired_count"] == 1
+    assert data["discarded_count"] == 1
+    assert data["node_failures"][0]["title"] == "Week 1 Notes"
+    assert data["warnings"]
 
 
 @pytest.mark.asyncio

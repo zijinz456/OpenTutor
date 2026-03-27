@@ -113,8 +113,10 @@ def test_base_scores_all_types_defined():
 # ── Ingestion: filename classification ──
 
 from services.ingestion.pipeline import classify_by_filename, detect_mime_type
-from services.parser.quiz import _normalize_problem_metadata
-from services.practice.annotation import normalize_problem_annotation, parse_question_array
+from services.parser.quiz import _normalize_problem_metadata, prepare_generated_questions
+from services.practice.annotation import normalize_problem_annotation, parse_question_array, validate_question_payload
+from services.ingestion.document_loader_html import extract_title, get_text_from_soup
+from services.evaluation.eval_response import eval_response
 
 
 def test_classify_by_filename_lecture():
@@ -512,6 +514,217 @@ def test_parse_question_array_handles_markdown_wrapped_json():
 
     assert len(parsed) == 1
     assert parsed[0]["question"] == "Q?"
+
+
+def test_validate_question_payload_backfills_missing_metadata_fields():
+    validation = validate_question_payload(
+        {
+            "question_type": "short_answer",
+            "question": "Explain why binary search requires sorted data.",
+            "correct_answer": "Because the midpoint comparison only rules out half the array when the order is known.",
+            "explanation": "Sorted order is what makes each comparison eliminate half of the remaining search space.",
+            "problem_metadata": {"core_concept": "main idea", "source_section": ""},
+        },
+        title="Binary Search Basics",
+        source="generated",
+    )
+
+    assert validation.is_valid is True
+    assert validation.question is not None
+    assert validation.question["problem_metadata"]["core_concept"] == "binary search requires sorted data"
+    assert validation.question["problem_metadata"]["source_section"] == "Binary Search Basics"
+
+
+def test_validate_question_payload_rejects_missing_quiz_answers():
+    validation = validate_question_payload(
+        {
+            "question_type": "mc",
+            "question": "What condition must hold before using binary search?",
+            "options": {"A": "Sorted", "B": "Random", "C": "Prime sized", "D": "Recursive"},
+            "correct_answer": "",
+            "explanation": "",
+        },
+        title="Binary Search",
+    )
+
+    assert validation.is_valid is False
+    assert any("correct_answer" in error for error in validation.errors)
+    assert any("explanation" in error for error in validation.errors)
+
+
+def test_validate_question_payload_rejects_bloom_level_mismatch_for_difficulty():
+    validation = validate_question_payload(
+        {
+            "question_type": "mc",
+            "question": "Which invariant keeps binary search correct?",
+            "options": {
+                "A": "The target stays inside the remaining interval",
+                "B": "The midpoint never changes",
+                "C": "The array becomes unsorted",
+                "D": "Every element is unique",
+            },
+            "correct_answer": "A",
+            "explanation": "The interval invariant is the basic idea that justifies each elimination step.",
+            "difficulty_layer": 1,
+            "problem_metadata": {
+                "core_concept": "binary search invariant",
+                "bloom_level": "create",
+            },
+        },
+        title="Binary Search Basics",
+    )
+
+    assert validation.is_valid is False
+    assert any("bloom_level" in error for error in validation.errors)
+
+
+@pytest.mark.asyncio
+async def test_prepare_generated_questions_drops_duplicates_and_invalid_items():
+    prepared = await prepare_generated_questions(
+        raw_content=json.dumps(
+            [
+                {
+                    "question_type": "mc",
+                    "question": "What must be true before binary search works?",
+                    "options": {"A": "Sorted data", "B": "Unique data", "C": "Prime size", "D": "Recursion"},
+                    "correct_answer": "A",
+                    "explanation": "Binary search assumes sorted order.",
+                    "problem_metadata": {"core_concept": "binary search prerequisite"},
+                },
+                {
+                    "question_type": "mc",
+                    "question": "What must be true before binary search works?",
+                    "options": {"A": "Sorted data", "B": "Unique data", "C": "Prime size", "D": "Recursion"},
+                    "correct_answer": "A",
+                    "explanation": "Binary search assumes sorted order.",
+                    "problem_metadata": {"core_concept": "binary search prerequisite"},
+                },
+                {
+                    "question_type": "short_answer",
+                    "question": "Name the invariant.",
+                    "correct_answer": "",
+                    "explanation": "",
+                },
+            ]
+        ),
+        title="Binary Search Basics",
+    )
+
+    assert len(prepared.questions) == 1
+    assert prepared.discarded_count == 2
+
+
+@pytest.mark.asyncio
+async def test_prepare_generated_questions_filters_near_duplicates_and_overrepresented_types():
+    prepared = await prepare_generated_questions(
+        raw_content=json.dumps(
+            [
+                {
+                    "question_type": "mc",
+                    "question": "What must be true before binary search works?",
+                    "options": {"A": "Sorted data", "B": "Unique data", "C": "Prime size", "D": "Recursion"},
+                    "correct_answer": "A",
+                    "explanation": "Binary search assumes sorted order.",
+                    "problem_metadata": {"core_concept": "binary search prerequisite"},
+                },
+                {
+                    "question_type": "mc",
+                    "question": "Before binary search works, what must be true?",
+                    "options": {"A": "Sorted data", "B": "Unique data", "C": "Prime size", "D": "Recursion"},
+                    "correct_answer": "A",
+                    "explanation": "Sorted order is the key prerequisite.",
+                    "problem_metadata": {"core_concept": "binary search prerequisite"},
+                },
+                {
+                    "question_type": "mc",
+                    "question": "Which boundary update keeps binary search moving left?",
+                    "options": {"A": "right = mid - 1", "B": "left = mid + 1", "C": "left = 0", "D": "mid = 0"},
+                    "correct_answer": "A",
+                    "explanation": "When the target is smaller, the right boundary moves left of mid.",
+                    "problem_metadata": {"core_concept": "boundary update"},
+                },
+                {
+                    "question_type": "mc",
+                    "question": "What does the midpoint comparison tell you in binary search?",
+                    "options": {"A": "Which half can be discarded", "B": "Whether the array is unique", "C": "That recursion is required", "D": "That sorting is optional"},
+                    "correct_answer": "A",
+                    "explanation": "The midpoint comparison tells you which half cannot contain the target.",
+                    "problem_metadata": {"core_concept": "midpoint comparison"},
+                },
+                {
+                    "question_type": "mc",
+                    "question": "Why is a sorted array necessary for binary search?",
+                    "options": {"A": "So each comparison rules out half the range", "B": "So indices start at one", "C": "So every value is different", "D": "So recursion becomes mandatory"},
+                    "correct_answer": "A",
+                    "explanation": "Ordering is what makes halving the search space valid.",
+                    "problem_metadata": {"core_concept": "sorted prerequisite"},
+                },
+                {
+                    "question_type": "tf",
+                    "question": "Binary search can discard half the array after each comparison.",
+                    "correct_answer": "True",
+                    "explanation": "That halving step is the central efficiency gain.",
+                    "problem_metadata": {"core_concept": "binary search efficiency"},
+                },
+            ]
+        ),
+        title="Binary Search Basics",
+    )
+
+    assert len(prepared.questions) == 4
+    assert prepared.discarded_count == 2
+    assert any("near-duplicate" in warning for warning in prepared.warnings)
+    assert any("keep the quiz batch diverse" in warning for warning in prepared.warnings)
+
+
+def test_extract_title_prefers_meta_title_and_strips_duplicate_heading():
+    from bs4 import BeautifulSoup
+
+    html = """
+    <html>
+      <head>
+        <meta property="og:title" content="Binary Search Notes" />
+        <title>binary-search.html</title>
+      </head>
+      <body>
+        <h1>Binary Search Notes</h1>
+        <p>Binary search works on sorted arrays.</p>
+      </body>
+    </html>
+    """
+    soup = BeautifulSoup(html, "lxml")
+    title = extract_title(soup, url="https://example.com/binary-search.html")
+    text = get_text_from_soup(soup, title=title)
+
+    assert title == "Binary Search Notes"
+    assert text.startswith("Binary search works on sorted arrays.")
+    assert "binary-search.html" not in title
+
+
+@pytest.mark.asyncio
+async def test_eval_response_uses_shared_json_parser_for_wrapped_judge_output(monkeypatch):
+    class _FakeJudge:
+        provider_name = "deepseek"
+
+        async def chat(self, *_args, **_kwargs):
+            return (
+                """```json
+                {"correctness":{"score":5,"rationale":"good"},"relevance":{"score":4,"rationale":"on topic"},"helpfulness":{"score":4,"rationale":"clear"}}
+                ```""",
+                {},
+            )
+
+    monkeypatch.setattr("services.llm.router.get_llm_client", lambda *_args, **_kwargs: _FakeJudge())
+
+    score = await eval_response(
+        question="Why does binary search need sorted input?",
+        response="It needs sorted data so each midpoint comparison can eliminate half the search space.",
+        context="Binary search repeatedly halves a sorted search space.",
+    )
+
+    assert score.correctness == 5
+    assert score.relevance == 4
+    assert score.helpfulness == 4
 
 
 # ── Embedding: registry pattern ──

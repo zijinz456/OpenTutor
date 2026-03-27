@@ -433,7 +433,7 @@ async def test_orchestrate_stream_emits_enrichment_warning_before_done(monkeypat
     async def fake_enrichment(ctx, _db):
         ctx.metadata["stream_warnings"] = [
             {
-                "type": "advanced_adaptation_unavailable",
+                "type": "adaptation_degraded",
                 "message": "Advanced adaptation is temporarily unavailable.",
             }
         ]
@@ -461,7 +461,7 @@ async def test_orchestrate_stream_emits_enrichment_warning_before_done(monkeypat
     assert "warning" in event_names
     assert event_names.index("warning") < event_names.index("done")
     warning_payload = json.loads(next(event["data"] for event in events if event["event"] == "warning"))
-    assert warning_payload["type"] == "advanced_adaptation_unavailable"
+    assert warning_payload["type"] == "adaptation_degraded"
 
 
 @pytest.mark.asyncio
