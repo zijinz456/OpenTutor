@@ -236,7 +236,10 @@ class AgentContext:
             "created_at": self.created_at,
             "completed_at": self.completed_at,
             "error": self.error,
-            "metadata": dict(self.metadata),
+            "metadata": {
+                k: (v.to_dict() if hasattr(v, "to_dict") else v)
+                for k, v in self.metadata.items()
+            },
             "swarm_mode": self.swarm_mode,
             "merge_strategy": self.merge_strategy,
         }

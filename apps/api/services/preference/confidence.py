@@ -36,6 +36,9 @@ PROMOTION_THRESHOLD = 0.4
 def recency_factor(signal_date: datetime) -> float:
     """Exponential decay: exp(-days/90). Recent signals weigh more."""
     now = datetime.now(timezone.utc)
+    # Normalize naive datetimes to UTC before arithmetic
+    if signal_date.tzinfo is None:
+        signal_date = signal_date.replace(tzinfo=timezone.utc)
     days = (now - signal_date).total_seconds() / 86400
     return math.exp(-days / 90)
 

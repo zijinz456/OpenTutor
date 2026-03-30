@@ -145,6 +145,10 @@ async def execute_post_process_task(payload: dict, db_factory) -> tuple[dict, st
 async def post_process(ctx: AgentContext, db_factory) -> None:
     """Async post-processing: signal extraction + memory encoding + graph extraction."""
     ctx.transition(TaskPhase.POST_PROCESSING)
+    logger.info(
+        "post_process triggered for course=%s, user=%s, intent=%s",
+        ctx.course_id, ctx.user_id, ctx.intent.value if ctx.intent else None,
+    )
     pp_results: list[dict] = []
 
     async def _signal_with_session():
@@ -153,9 +157,11 @@ async def post_process(ctx: AgentContext, db_factory) -> None:
             from services.preference.confidence import process_signal_to_preference
             from models.preference import PreferenceSignal
 
+            logger.info("Extracting preference signal from: %s", (ctx.user_message or "")[:100])
             signal = await extract_preference_signal(
                 ctx.user_message, ctx.response, ctx.user_id, ctx.course_id,
             )
+            logger.info("Preference signal result: %s", signal)
             if not signal:
                 return
             ctx.extracted_signal = signal

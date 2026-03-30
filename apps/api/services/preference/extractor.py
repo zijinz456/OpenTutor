@@ -11,6 +11,7 @@ Phase 1: Full 5-dimension extraction + batch processing.
 
 import json
 import logging
+import re
 import uuid
 from datetime import datetime, timezone
 
@@ -35,6 +36,13 @@ VALUE_NORMALIZATION = {
     "analogy": "example_heavy",
     "example_first": "example_heavy",
 }
+
+# Patterns that strongly indicate explicit preference expression
+_EXPLICIT_PREFERENCE_PATTERNS = re.compile(
+    r"\b(i prefer|i like|i love|please always|i find .{0,30} hard|i (don'?t|do not) like|"
+    r"can you always|could you always|please use|please (don'?t|don't|do not) use)\b",
+    re.IGNORECASE,
+)
 
 EXTRACTION_PROMPT = """You are a preference signal extractor for a learning platform.
 Analyze the following conversation between a student and an AI tutor.
@@ -85,8 +93,19 @@ async def extract_preference_signal(
 
     conversation_text = f"Student: {user_message}\nTutor: {assistant_response}"
 
+    # If the message contains explicit preference language, prepend a hint so
+    # the LLM does not mistakenly return NONE.
+    prompt = EXTRACTION_PROMPT
+    if user_message and _EXPLICIT_PREFERENCE_PATTERNS.search(user_message):
+        prompt = (
+            EXTRACTION_PROMPT
+            + "\nNOTE: The student message contains an explicit preference expression. "
+            "You MUST extract a signal (do NOT return NONE).\n"
+        )
+        logger.debug("Explicit preference keyword detected in message: %s", user_message[:80])
+
     try:
-        result, _ = await client.extract(EXTRACTION_PROMPT, conversation_text)
+        result, _ = await client.extract(prompt, conversation_text)
         result = result.strip()
 
         # "No extraction by default" — most responses should be NONE
@@ -309,8 +328,8 @@ async def collect_behavior_signals(
             s["user_id"] = user_id
             s["course_id"] = course_id
         signals.extend(quiz_signals)
-    except (ValueError, RuntimeError, OSError) as e:
-        logger.exception("Quiz performance inference skipped")
+    except (ValueError, RuntimeError, OSError, ImportError) as e:
+        logger.debug("Quiz performance inference skipped: %s", e)
 
     # Interaction pattern signals
     try:
@@ -319,7 +338,7 @@ async def collect_behavior_signals(
             s["user_id"] = user_id
             s["course_id"] = course_id
         signals.extend(pattern_signals)
-    except (ValueError, RuntimeError, OSError) as e:
-        logger.exception("Interaction pattern inference skipped")
+    except (ValueError, RuntimeError, OSError, ImportError) as e:
+        logger.debug("Interaction pattern inference skipped: %s", e)
 
     return signals

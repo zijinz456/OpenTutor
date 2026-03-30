@@ -79,10 +79,15 @@ async def dispatch_content(db: AsyncSession, job: IngestionJob) -> dict:
             await db.flush()
             logger.info("Dedup: removed %d existing nodes for source %s", len(old_ids), source_label)
 
-        # PPT files: keep as single node (one note per file, not per slide)
+        # PPT files: split per slide for precise search
         is_pptx = source_name.endswith((".pptx", ".ppt"))
         if is_pptx:
             import uuid as _uuid
+            full_content = job.extracted_markdown.strip()
+            slide_separator = "\n\n---\n\n"
+            slide_chunks = [s.strip() for s in full_content.split(slide_separator) if s.strip()]
+
+            root_summary = full_content[:500] + "..." if len(full_content) > 500 else full_content
             root = CourseContentTree(
                 id=_uuid.uuid4(),
                 course_id=job.course_id,
@@ -90,11 +95,30 @@ async def dispatch_content(db: AsyncSession, job: IngestionJob) -> dict:
                 title=job.original_filename or "Presentation",
                 level=0,
                 order_index=0,
-                content=job.extracted_markdown.strip(),
+                content=root_summary,
                 source_file=source_label,
                 source_type=job.source_type,
             )
             nodes = [root]
+
+            for i, slide_content in enumerate(slide_chunks):
+                lines = slide_content.split("\n")
+                title = lines[0].lstrip("#").strip() if lines else f"Slide {i + 1}"
+                if not title or len(title) > 100:
+                    title = f"Slide {i + 1}"
+                child = CourseContentTree(
+                    id=_uuid.uuid4(),
+                    course_id=job.course_id,
+                    parent_id=root.id,
+                    title=title,
+                    level=1,
+                    order_index=i,
+                    content=slide_content,
+                    source_file=source_label,
+                    source_type=job.source_type,
+                )
+                nodes.append(child)
+            logger.info("PPT split into %d slide nodes for %s", len(slide_chunks), source_label)
         else:
             nodes = _markdown_to_tree(
                 markdown=job.extracted_markdown,
