@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 from services.block_decision.rules import (
     BlockOperation,
     rule_cognitive_overload,
+    rule_cognitive_recovery,
     rule_forgetting_risk,
     rule_frustration,
     rule_deadline_approaching,
@@ -137,19 +138,34 @@ class TestConfusionPairsRule:
     def test_fires_with_confused_pairs(self):
         signals = [{
             "signal_type": "layout_adaptation",
-            "detail": {"confused_pairs": [("A", "B"), ("C", "D")]},
+            "detail": {"confused_pairs": [["mitosis", "meiosis"], ["DNA", "RNA"]]},
         }]
         op = rule_confusion_pairs(signals, ["notes", "quiz"])
         assert op is not None
         assert op.action == "update_config"
         assert op.block_type == "quiz"
+        assert op.config["target_concepts"] == ["mitosis", "DNA"]
 
     def test_does_not_fire_without_quiz(self):
         signals = [{
             "signal_type": "layout_adaptation",
-            "detail": {"confused_pairs": [("A", "B"), ("C", "D")]},
+            "detail": {"confused_pairs": [["A", "B"], ["C", "D"]]},
         }]
         assert rule_confusion_pairs(signals, ["notes"]) is None
+
+    def test_does_not_fire_with_single_pair(self):
+        signals = [{
+            "signal_type": "layout_adaptation",
+            "detail": {"confused_pairs": [["A", "B"]]},
+        }]
+        assert rule_confusion_pairs(signals, ["quiz"]) is None
+
+    def test_does_not_fire_with_wrong_signal_type(self):
+        signals = [{
+            "signal_type": "forgetting_risk",
+            "detail": {"confused_pairs": [["A", "B"], ["C", "D"]]},
+        }]
+        assert rule_confusion_pairs(signals, ["quiz"]) is None
 
 
 class TestInactivityRule:
@@ -183,6 +199,47 @@ class TestMasteryCompleteRule:
     def test_does_not_fire_with_empty_signals(self):
         """Empty signals = collection failed, should not false-positive."""
         assert rule_mastery_complete([], ["notes", "quiz"], "course_following") is None
+
+
+class TestCognitiveRecoveryRule:
+    def test_recovers_when_load_low_and_consecutive_decayed(self):
+        """Recovery fires when score < 0.4 and consecutive <= 2."""
+        cl = {"score": 0.2, "consecutive_high": 1}
+        removed = ["forecast", "knowledge_graph"]
+        ops = rule_cognitive_recovery(cl, ["notes", "quiz"], removed)
+        assert len(ops) == 2
+        assert all(op.action == "add" for op in ops)
+        assert {op.block_type for op in ops} == {"forecast", "knowledge_graph"}
+
+    def test_blocks_recovery_when_consecutive_still_high(self):
+        """Recovery blocked when consecutive > 2."""
+        cl = {"score": 0.3, "consecutive_high": 3}
+        removed = ["forecast"]
+        ops = rule_cognitive_recovery(cl, ["notes"], removed)
+        assert ops == []
+
+    def test_blocks_recovery_when_score_high(self):
+        cl = {"score": 0.5, "consecutive_high": 0}
+        removed = ["forecast"]
+        ops = rule_cognitive_recovery(cl, ["notes"], removed)
+        assert ops == []
+
+    def test_no_recovery_without_removed(self):
+        cl = {"score": 0.1, "consecutive_high": 0}
+        ops = rule_cognitive_recovery(cl, ["notes"], removed_for_load=None)
+        assert ops == []
+
+    def test_no_recovery_without_cognitive_data(self):
+        ops = rule_cognitive_recovery(None, ["notes"], removed_for_load=["forecast"])
+        assert ops == []
+
+    def test_does_not_recover_already_present_blocks(self):
+        cl = {"score": 0.1, "consecutive_high": 0}
+        removed = ["forecast", "notes"]
+        ops = rule_cognitive_recovery(cl, ["notes", "quiz"], removed)
+        # "notes" already in current_blocks, should not be re-added
+        assert len(ops) == 1
+        assert ops[0].block_type == "forecast"
 
 
 # ── Engine integration tests ──

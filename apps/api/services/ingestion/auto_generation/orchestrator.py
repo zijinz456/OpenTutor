@@ -28,39 +28,53 @@ async def auto_prepare(
     """
     import asyncio as _asyncio
 
-    async def _safe_notes():
+    async def _safe_notes() -> tuple[int, str | None]:
         try:
-            return await auto_generate_notes(db_factory, course_id, user_id)
+            return (await auto_generate_notes(db_factory, course_id, user_id), None)
         except Exception as e:
             logger.exception("auto_prepare: notes step failed")
-            return 0
+            return (0, str(e))
 
-    async def _safe_flashcards():
+    async def _safe_flashcards() -> tuple[int, str | None]:
         try:
-            return await auto_generate_flashcards(db_factory, course_id, user_id)
+            return (await auto_generate_flashcards(db_factory, course_id, user_id), None)
         except Exception as e:
             logger.exception("auto_prepare: flashcards step failed")
-            return 0
+            return (0, str(e))
 
-    async def _safe_quiz():
+    async def _safe_quiz() -> tuple[int, str | None]:
         try:
-            return await auto_generate_quiz(db_factory, course_id)
+            return (await auto_generate_quiz(db_factory, course_id), None)
         except Exception as e:
             logger.exception("auto_prepare: quiz step failed")
-            return 0
+            return (0, str(e))
+
+    def _unpack(result) -> tuple[int, str | None]:
+        if isinstance(result, BaseException):
+            return (0, f"Unexpected: {result}")
+        return result
 
     results = await _asyncio.gather(
         _safe_notes(), _safe_flashcards(), _safe_quiz(),
         return_exceptions=True,
     )
-    notes_count = results[0] if not isinstance(results[0], BaseException) else 0
-    flashcards_count = results[1] if not isinstance(results[1], BaseException) else 0
-    quiz_count = results[2] if not isinstance(results[2], BaseException) else 0
-    summary: dict[str, int] = {
-        "notes": notes_count,
-        "flashcards": flashcards_count,
-        "quiz": quiz_count,
+    n_count, n_err = _unpack(results[0])
+    f_count, f_err = _unpack(results[1])
+    q_count, q_err = _unpack(results[2])
+    summary: dict = {
+        "notes": n_count,
+        "flashcards": f_count,
+        "quiz": q_count,
     }
+    errors: dict[str, str] = {}
+    if n_err:
+        errors["notes"] = n_err
+    if f_err:
+        errors["flashcards"] = f_err
+    if q_err:
+        errors["quiz"] = q_err
+    if errors:
+        summary["errors"] = errors
 
     # Auto-configure: analyze content -> select layout -> generate welcome message
     try:

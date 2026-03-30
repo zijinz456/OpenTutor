@@ -67,7 +67,7 @@ def rule_cognitive_recovery(
     score = cognitive_load.get("score", 0)
     consecutive = cognitive_load.get("consecutive_high", 0)
     # Only recover when load is clearly low and sustained
-    if score >= 0.4 or consecutive > 0:
+    if score >= 0.4 or consecutive > 2:
         return []
 
     ops = []

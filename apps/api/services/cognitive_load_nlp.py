@@ -5,6 +5,7 @@ Uses the existing local LLM router to classify student messages for:
 
 Also provides text complexity analysis using readability metrics.
 """
+import asyncio
 import logging
 import json
 from functools import lru_cache
@@ -13,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 # Cache to avoid re-analyzing the same message
 _analysis_cache: dict[str, dict] = {}
+_cache_lock = asyncio.Lock()
 _MAX_CACHE_SIZE = 500
 
 
@@ -29,8 +31,9 @@ async def analyze_student_affect(message: str) -> dict:
     """
     # Check cache first
     cache_key = message[:200]  # Truncate for cache key
-    if cache_key in _analysis_cache:
-        return _analysis_cache[cache_key]
+    async with _cache_lock:
+        if cache_key in _analysis_cache:
+            return _analysis_cache[cache_key]
 
     try:
         from services.llm.router import get_llm_client
@@ -70,12 +73,13 @@ async def analyze_student_affect(message: str) -> dict:
         result = _keyword_fallback(message)
 
     # Cache result
-    if len(_analysis_cache) >= _MAX_CACHE_SIZE:
-        # Evict oldest half
-        keys = list(_analysis_cache.keys())[: _MAX_CACHE_SIZE // 2]
-        for k in keys:
-            del _analysis_cache[k]
-    _analysis_cache[cache_key] = result
+    async with _cache_lock:
+        if len(_analysis_cache) >= _MAX_CACHE_SIZE:
+            # Evict oldest half
+            keys = list(_analysis_cache.keys())[: _MAX_CACHE_SIZE // 2]
+            for k in keys:
+                del _analysis_cache[k]
+        _analysis_cache[cache_key] = result
 
     return result
 

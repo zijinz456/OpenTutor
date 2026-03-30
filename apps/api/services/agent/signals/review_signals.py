@@ -113,7 +113,7 @@ async def _collect_layout_adaptation(
                 detail={
                     "action": "add_block",
                     "block_type": "wrong_answers",
-                    "confusion_pairs": len(pairs),
+                    "confused_pairs": [[p["concept_a"], p["concept_b"]] for p in pairs],
                     "suggestion": "Surface wrong_answers block and switch to review tab",
                 },
             ))

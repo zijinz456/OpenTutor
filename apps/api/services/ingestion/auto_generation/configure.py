@@ -14,58 +14,6 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Legacy layout presets (kept for backward compatibility — not used by frontend)
-# The frontend reads metadata["spaceLayout"] which uses mode + blocks format.
-# ---------------------------------------------------------------------------
-
-_LAYOUT_PRESETS = {
-    "focused": {
-        "preset": "focused",
-        "sections": [
-            {"type": "notes", "position": 0, "visible": False},
-            {"type": "practice", "position": 1, "visible": False},
-            {"type": "analytics", "position": 2, "visible": False},
-            {"type": "plan", "position": 3, "visible": False},
-        ],
-        "chat_visible": True, "chat_height": 0.65,
-        "tree_visible": True, "tree_width": 260,
-    },
-    "daily_study": {
-        "preset": "daily_study",
-        "sections": [
-            {"type": "notes", "position": 0, "visible": True, "size": "large"},
-            {"type": "practice", "position": 1, "visible": True, "size": "medium"},
-            {"type": "analytics", "position": 2, "visible": False},
-            {"type": "plan", "position": 3, "visible": False},
-        ],
-        "chat_visible": True, "chat_height": 0.35,
-        "tree_visible": True, "tree_width": 240,
-    },
-    "exam_prep": {
-        "preset": "exam_prep",
-        "sections": [
-            {"type": "notes", "position": 0, "visible": False},
-            {"type": "practice", "position": 1, "visible": True, "size": "large"},
-            {"type": "analytics", "position": 2, "visible": True, "size": "medium"},
-            {"type": "plan", "position": 3, "visible": True, "size": "small"},
-        ],
-        "chat_visible": True, "chat_height": 0.25,
-        "tree_visible": True, "tree_width": 200,
-    },
-    "assignment": {
-        "preset": "assignment",
-        "sections": [
-            {"type": "notes", "position": 0, "visible": True, "size": "medium"},
-            {"type": "practice", "position": 1, "visible": False},
-            {"type": "analytics", "position": 2, "visible": False},
-            {"type": "plan", "position": 3, "visible": True, "size": "large"},
-        ],
-        "chat_visible": True, "chat_height": 0.35,
-        "tree_visible": True, "tree_width": 240,
-    },
-}
-
-# ---------------------------------------------------------------------------
 # Content-topic keyword groups for mode inference
 # Each entry: (pattern, weight)
 # ---------------------------------------------------------------------------
@@ -219,7 +167,7 @@ async def auto_configure_course(
         space_layout = dict(metadata.get("spaceLayout") or {})
 
         if mode_intent == "assignment":
-            space_layout["mode"] = "exam_prep"  # closest mode in new system
+            space_layout["mode"] = "self_paced"  # assignment content uses self-paced with plan block
             # Ensure plan block is present
             blocks = list(space_layout.get("blocks", []))
             block_types = [b.get("type") for b in blocks]
@@ -266,15 +214,6 @@ async def auto_configure_course(
         if space_layout:
             metadata["spaceLayout"] = space_layout
 
-        # --- Also update legacy layout key (kept for any legacy readers) ---
-        legacy_preset_map = {
-            "assignment": "assignment",
-            "exam_prep_suggest": "daily_study",
-            "no_change": "focused",
-        }
-        legacy_preset_id = legacy_preset_map.get(mode_intent, "focused")
-        metadata["layout"] = _LAYOUT_PRESETS[legacy_preset_id]
-
         # --- Build welcome message ---
         parts = [f"**{course.name}** is ready! Here's what I found:\n"]
         parts.append(f"- **{node_count}** content sections indexed")
@@ -285,6 +224,11 @@ async def auto_configure_course(
             parts.append(f"- **{prep_summary['flashcards']}** flashcards created")
         if prep_summary.get("quiz", 0) > 0:
             parts.append(f"- **{prep_summary['quiz']}** quiz questions generated")
+
+        errors = prep_summary.get("errors", {})
+        if errors:
+            failed_steps = ", ".join(errors.keys())
+            parts.append(f"- ⚠ Some auto-generation steps had issues ({failed_steps}). You can retry by asking me.")
 
         if deadline_count > 0:
             upcoming = [
@@ -304,7 +248,7 @@ async def auto_configure_course(
 
         if mode_intent == "assignment":
             parts.append(
-                "I've switched to **Exam Prep mode** and added a study plan block "
+                "I've switched to **Self-Paced mode** and added a study plan block "
                 "since I detected assignment deadlines. You can switch modes anytime by asking me."
             )
         elif mode_intent == "exam_prep_suggest":

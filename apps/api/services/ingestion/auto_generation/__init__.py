@@ -20,7 +20,6 @@ from services.ingestion.auto_generation.practice import (
 )
 from services.ingestion.auto_generation.configure import (
     auto_configure_course,
-    _LAYOUT_PRESETS,
 )
 from services.ingestion.auto_generation.orchestrator import auto_prepare
 
@@ -32,5 +31,4 @@ __all__ = [
     "auto_prepare",
     "auto_configure_course",
     "_auto_generate_learning_content",
-    "_LAYOUT_PRESETS",
 ]

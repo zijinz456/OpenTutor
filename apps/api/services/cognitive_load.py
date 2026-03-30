@@ -12,6 +12,7 @@ Signal weights are tuned for a single-user local deployment where we have
 full session context (no multi-tenant noise).
 """
 
+import asyncio
 import logging
 import re
 import uuid
@@ -29,10 +30,12 @@ logger = logging.getLogger(__name__)
 # Bounded to prevent unbounded memory growth with many students.
 _MAX_TRACKING_SIZE = 200
 _consecutive_high: dict[str, int] = {}  # user_id -> count
+_consecutive_high_lock = asyncio.Lock()
 
 # Cache last NLP affect result per user (reused between LLM calls).
 # Bounded with same limit.
 _last_affect: dict[str, dict] = {}  # user_id -> affect dict
+_last_affect_lock = asyncio.Lock()
 
 # Pre-compiled help-seeking patterns (word boundaries avoid false positives)
 _HELP_PATTERNS = [
@@ -174,13 +177,15 @@ async def compute_cognitive_load(
     _should_run_nlp = (session_messages <= 1) or (session_messages % 3 == 0)
     if _should_run_nlp and user_message:
         affect = await analyze_student_affect(user_message)
-        _affect_key = str(user_id)
-        if _affect_key not in _last_affect and len(_last_affect) >= _MAX_TRACKING_SIZE:
-            # Evict arbitrary entry (oldest by insertion order in Python 3.7+)
-            del _last_affect[next(iter(_last_affect))]
-        _last_affect[_affect_key] = affect
+        async with _last_affect_lock:
+            _affect_key = str(user_id)
+            if _affect_key not in _last_affect and len(_last_affect) >= _MAX_TRACKING_SIZE:
+                # Evict arbitrary entry (oldest by insertion order in Python 3.7+)
+                del _last_affect[next(iter(_last_affect))]
+            _last_affect[_affect_key] = affect
     else:
-        affect = _last_affect.get(str(user_id), {})
+        async with _last_affect_lock:
+            affect = _last_affect.get(str(user_id), {})
     frustration = affect.get("frustration", 0.0)
     confusion = affect.get("confusion", 0.0)
     nlp_signal = (frustration * settings.cognitive_load_nlp_frustration_weight
@@ -304,16 +309,17 @@ async def compute_cognitive_load(
     # Track consecutive high-load messages for proactive intervention.
     # Use decay instead of hard reset: a single non-high message shouldn't
     # erase the history of sustained struggle. Decrement by 1 instead of reset to 0.
-    key = str(user_id)
-    # Evict least-loaded entry if cache is full
-    if key not in _consecutive_high and len(_consecutive_high) >= _MAX_TRACKING_SIZE:
-        evict_key = min(_consecutive_high, key=_consecutive_high.get)
-        del _consecutive_high[evict_key]
-    if level == "high":
-        _consecutive_high[key] = _consecutive_high.get(key, 0) + 1
-    else:
-        _consecutive_high[key] = max(0, _consecutive_high.get(key, 0) - 1)
-    consecutive = _consecutive_high.get(key, 0)
+    async with _consecutive_high_lock:
+        key = str(user_id)
+        # Evict least-loaded entry if cache is full
+        if key not in _consecutive_high and len(_consecutive_high) >= _MAX_TRACKING_SIZE:
+            evict_key = min(_consecutive_high, key=_consecutive_high.get)
+            del _consecutive_high[evict_key]
+        if level == "high":
+            _consecutive_high[key] = _consecutive_high.get(key, 0) + 1
+        else:
+            _consecutive_high[key] = max(0, _consecutive_high.get(key, 0) - 1)
+        consecutive = _consecutive_high.get(key, 0)
 
     # Generate teaching guidance
     guidance = _build_guidance(level, score, signals, consecutive)
