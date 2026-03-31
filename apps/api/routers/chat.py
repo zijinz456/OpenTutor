@@ -301,7 +301,7 @@ async def get_greeting(
         degraded_features.append("review_summary")
 
     try:
-        from services.loom import get_mastery_graph
+        from services.loom_graph import get_mastery_graph
         graph = await get_mastery_graph(db, user.id, course_id)
 
         if graph.get("weak_concepts"):

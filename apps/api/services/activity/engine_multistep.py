@@ -12,12 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from libs.datetime_utils import utcnow as _utcnow
 from models.agent_task import AgentTask
 from models.study_goal import StudyGoal
-from services.activity.tasks import (
-    JsonObject,
-    PlanResultPayload,
-    TaskStepResult,
-    create_task,
-)
+from services.activity.task_records import create_task
+from services.activity.task_types import JsonObject, PlanResultPayload, TaskStepResult
 from services.provenance import merge_provenance
 from services.activity.engine_helpers import (
     TaskCancelledError,

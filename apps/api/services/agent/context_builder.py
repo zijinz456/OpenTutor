@@ -243,7 +243,7 @@ async def load_context(
         if ctx.intent != IntentType.LEARN:
             return
         try:
-            from services.progress.tracker import get_error_pattern_summary
+            from services.progress.analytics import get_error_pattern_summary
             error_patterns = await get_error_pattern_summary(db, ctx.user_id, ctx.course_id)
             if error_patterns:
                 ctx.metadata["error_patterns"] = error_patterns

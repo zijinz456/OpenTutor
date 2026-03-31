@@ -1,19 +1,11 @@
 /**
  * Workspace state management using Zustand.
  *
- * Controls layout, block system, and agent autonomy state.
- * Block system operations extracted to workspace-blocks.ts.
+ * Controls active sections, pane sizing, and block-system state.
+ * Block system operations are extracted to workspace-blocks.ts.
  */
 
 import { create } from "zustand";
-import {
-  type WorkspaceLayout,
-  type PresetId,
-  DEFAULT_LAYOUT,
-  LAYOUT_PRESETS,
-  getVisibleSections,
-  toggleSection,
-} from "@/lib/layout-presets";
 import type { CognitiveState } from "@/lib/api";
 import { type BlockSystemState, createBlockSlice } from "./workspace-blocks";
 
@@ -24,9 +16,6 @@ interface CoreWorkspaceState {
   setActiveSection: (id: SectionId) => void;
   selectedNodeId: string | null;
   setSelectedNodeId: (id: string | null) => void;
-  pdfOverlay: { fileId: string; fileName: string } | null;
-  openPdf: (fileId: string, fileName: string) => void;
-  closePdf: () => void;
   treeCollapsed: boolean;
   toggleTree: () => void;
   treeWidth: number;
@@ -37,10 +26,6 @@ interface CoreWorkspaceState {
   triggerRefresh: (section: SectionId) => void;
   practiceActiveTab: string | null;
   setPracticeTab: (tab: string | null) => void;
-  layout: WorkspaceLayout;
-  setLayout: (layout: WorkspaceLayout) => void;
-  applyPreset: (presetId: PresetId) => void;
-  toggleLayoutSection: (sectionId: SectionId, visible: boolean) => void;
   /** Latest cognitive state from the Block Decision Engine. */
   cognitiveState: CognitiveState | null;
   setCognitiveState: (state: CognitiveState) => void;
@@ -54,14 +39,10 @@ type WorkspaceState = CoreWorkspaceState & BlockSystemState;
 
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   activeSection: "notes",
-  setActiveSection: (id) => set({ activeSection: id, pdfOverlay: null }),
+  setActiveSection: (id) => set({ activeSection: id }),
 
   selectedNodeId: null,
   setSelectedNodeId: (id) => set({ selectedNodeId: id }),
-
-  pdfOverlay: null,
-  openPdf: (fileId, fileName) => set({ pdfOverlay: { fileId, fileName } }),
-  closePdf: () => set({ pdfOverlay: null }),
 
   treeCollapsed: false,
   toggleTree: () => set((s) => ({ treeCollapsed: !s.treeCollapsed })),
@@ -83,28 +64,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   practiceActiveTab: null,
   setPracticeTab: (tab) => set({ practiceActiveTab: tab }),
-
-  layout: DEFAULT_LAYOUT,
-  setLayout: (layout) => {
-    const visible = getVisibleSections(layout);
-    const activeSection = get().activeSection;
-    const nextActive = visible.includes(activeSection) ? activeSection : visible[0] ?? "notes";
-    set({
-      layout,
-      treeWidth: layout.tree_width,
-      treeCollapsed: !layout.tree_visible,
-      chatHeight: layout.chat_height,
-      activeSection: nextActive,
-    });
-  },
-  applyPreset: (presetId) => {
-    const preset = LAYOUT_PRESETS[presetId];
-    if (preset) get().setLayout(preset);
-  },
-  toggleLayoutSection: (sectionId, visible) => {
-    const next = toggleSection(get().layout, sectionId, visible);
-    get().setLayout(next);
-  },
 
   cognitiveState: null,
   setCognitiveState: (state) => set({ cognitiveState: state }),

@@ -14,7 +14,7 @@ from config import settings
 from database import async_session
 from libs.datetime_utils import utcnow as _utcnow
 from models.agent_task import AgentTask
-from services.activity.tasks import (
+from services.activity.task_types import (
     APPROVAL_APPROVED,
     APPROVAL_PENDING,
     APPROVAL_REJECTED,

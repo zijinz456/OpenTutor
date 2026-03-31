@@ -1,4 +1,4 @@
-import { API_BASE, buildSecureHeaders, buildSecureRequestInit, parseApiError, request, requestBlob } from "./client";
+import { API_BASE, buildSecureHeaders, buildSecureRequestInit, parseApiError, request } from "./client";
 
 import type { ContentMutationResult, SavedGeneratedAsset } from "./client";
 import type { GeneratedAssetBatchSummary } from "./practice";
@@ -277,14 +277,6 @@ export async function scrapeUrl(courseId: string, url: string): Promise<ContentM
     throw await parseApiError(res);
   }
   return res.json();
-}
-
-export function getFileUrl(jobId: string): string {
-  return `${API_BASE}/content/files/${jobId}`;
-}
-
-export async function downloadCourseFile(jobId: string) {
-  return requestBlob(`/content/files/${jobId}`);
 }
 
 // ── Canvas / Auth Sessions ──

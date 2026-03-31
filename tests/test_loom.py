@@ -3,12 +3,15 @@ import uuid
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
-from services.loom import (
-    _BLOOM_LEVELS, extract_course_concepts, update_concept_mastery,
-    get_mastery_graph, check_prerequisite_gaps, generate_learning_path,
-    link_cross_course_concepts, build_course_graph,
+from services.loom_extraction import _BLOOM_LEVELS, extract_course_concepts
+from services.loom_graph import (
+    build_course_graph,
+    check_prerequisite_gaps,
+    generate_learning_path,
+    get_mastery_graph,
+    link_cross_course_concepts,
 )
-from services.loom_mastery import _bkt_update
+from services.loom_mastery import _bkt_update, update_concept_mastery
 
 def _node(name, cid, nid=None, meta=None):
     n = MagicMock(); n.id = nid or uuid.uuid4(); n.course_id = cid; n.name = name

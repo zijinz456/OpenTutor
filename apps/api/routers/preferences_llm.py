@@ -83,6 +83,7 @@ Available dimensions and valid values:
 - note_format: bullet_point | table | mind_map | step_by_step | summary
 - detail_level: concise | balanced | detailed
 - explanation_style: formal | conversational | socratic | example_heavy
+- visual_preference: auto | text_heavy | diagram_heavy | mixed
 - language: en | zh | ja | ko | es | fr
 
 Return ONLY a JSON object like {"dimension": "...", "value": "..."}.
@@ -102,6 +103,9 @@ _DIRECT_PARSE_SIGNALS: dict[tuple[str, str], tuple[str, ...]] = {
     ("explanation_style", "conversational"): ("conversational", "casual"),
     ("explanation_style", "socratic"): ("socratic",),
     ("explanation_style", "example_heavy"): ("example", "examples"),
+    ("visual_preference", "diagram_heavy"): ("diagram", "diagrams", "flowchart", "flowcharts", "visual", "chart", "charts", "graph", "graphs"),
+    ("visual_preference", "text_heavy"): ("text", "reading", "written"),
+    ("visual_preference", "mixed"): ("mixed", "both"),
     ("language", "en"): ("english", "en"),
     ("language", "zh"): ("chinese", "mandarin", "zh", "中文"),
     ("language", "ja"): ("japanese", "ja", "日本語"),
@@ -113,7 +117,8 @@ _DIRECT_PARSE_SIGNALS: dict[tuple[str, str], tuple[str, ...]] = {
 _DIMENSION_CONTEXT_SIGNALS: dict[str, tuple[str, ...]] = {
     "note_format": ("note", "notes", "format", "outline"),
     "detail_level": ("detail", "short", "shorter", "brief", "simple", "detailed", "longer"),
-    "explanation_style": ("style", "tone", "voice", "explain", "responses"),
+    "explanation_style": ("style", "tone", "voice", "explain", "responses", "example", "examples"),
+    "visual_preference": ("visual", "diagram", "diagrams", "flowchart", "chart", "graph", "learner", "text"),
     "language": ("language", "english", "chinese", "japanese", "korean", "spanish", "french", "中文", "日本語", "한국어", "español", "français"),
 }
 

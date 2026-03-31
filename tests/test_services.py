@@ -22,7 +22,7 @@ from models.preference import UserPreference
 from models.study_goal import StudyGoal
 from models.user import User
 from services.activity import engine as activity_engine
-from services.activity.tasks import (
+from services.activity.task_types import (
     APPROVAL_PENDING,
     APPROVAL_REQUIRED_STATUS,
     CANCEL_REQUESTED_STATUS,

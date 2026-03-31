@@ -45,7 +45,7 @@ VALID_COMMANDS = {
                 'Array of workspace command objects. Each has a "command" field '
                 "plus command-specific fields. Supported commands: "
                 'switch_tab: {"command":"switch_tab","section":"notes|practice|analytics|plan"}. '
-                'focus_topic: {"command":"focus_topic","node_id":"<uuid>","section":"notes"}. '
+                'focus_topic: {"command":"focus_topic","node_id":"<real-uuid-from-content-tree>","section":"notes"} — node_id MUST be a real UUID obtained from get_course_outline or search_content, never a made-up slug. '
                 'set_layout: {"command":"set_layout","chat_height":0.4,"tree_collapsed":false,"tree_width":240}. '
                 'start_quiz: {"command":"start_quiz","topic":"optional topic name"}. '
                 'generate_notes: {"command":"generate_notes","topic":"topic name"}. '

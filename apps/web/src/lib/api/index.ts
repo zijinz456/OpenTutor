@@ -21,8 +21,6 @@ export {
   getAiNoteForNode,
   uploadFile,
   scrapeUrl,
-  getFileUrl,
-  downloadCourseFile,
   listAuthSessions,
   canvasBrowserLogin,
   fetchCanvasCourseInfo,

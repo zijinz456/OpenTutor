@@ -61,21 +61,6 @@ async def get_knowledge_graph(
         raise KnowledgeGraphUnavailableError() from exc
 
 
-@router.get("/courses/{course_id}/knowledge-graph-mastery", summary="Get mastery-colored graph", description="Return knowledge graph nodes colored by mastery status.")
-async def get_knowledge_graph_mastery(
-    course_id: uuid.UUID,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Get knowledge graph nodes coloured by mastery status."""
-    if not settings.enable_experimental_loom:
-        raise HTTPException(404, "LOOM knowledge graph is experimental. Set ENABLE_EXPERIMENTAL_LOOM=true to enable.")
-    from services.knowledge.graph_memory import get_mastery_colored_graph
-
-    nodes = await get_mastery_colored_graph(db, user.id, course_id)
-    return {"course_id": str(course_id), "nodes": nodes}
-
-
 # ── Learning Path ──
 
 
@@ -88,7 +73,7 @@ async def get_learning_path(
     """Get prerequisite-respecting study order for unmastered concepts (Kahn's algorithm)."""
     if not settings.enable_experimental_loom:
         raise HTTPException(404, "LOOM knowledge graph is experimental. Set ENABLE_EXPERIMENTAL_LOOM=true to enable.")
-    from services.loom import generate_learning_path
+    from services.loom_graph import generate_learning_path
 
     path = await generate_learning_path(db, course_id, user.id)
     return {"course_id": str(course_id), "path": path, "count": len(path)}
@@ -416,7 +401,7 @@ async def get_loom_graph(
     """Get LOOM concept mastery graph with nodes, edges, and recommendations."""
     if not settings.enable_experimental_loom:
         raise HTTPException(404, "LOOM knowledge graph is experimental. Set ENABLE_EXPERIMENTAL_LOOM=true to enable.")
-    from services.loom import get_mastery_graph
+    from services.loom_graph import get_mastery_graph
 
     graph = await get_mastery_graph(db, user.id, course_id)
     return {"course_id": str(course_id), **graph}

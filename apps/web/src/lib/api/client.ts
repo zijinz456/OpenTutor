@@ -288,5 +288,3 @@ export async function requestBlob(path: string, options?: RequestInit): Promise<
 
   throw lastError!;
 }
-
-export { buildAuthHeaders };

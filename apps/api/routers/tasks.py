@@ -21,7 +21,7 @@ from services.activity.engine import (
     retry_task,
     submit_task,
 )
-from services.activity.tasks import serialize_task
+from services.activity.task_records import serialize_task
 from services.auth.dependency import get_current_user
 from services.course_access import get_course_or_404
 

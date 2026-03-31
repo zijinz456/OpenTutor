@@ -9,8 +9,8 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import async_session
-from services.activity.tasks import JsonObject
 from services.activity.engine_helpers import _normalize_uuid
+from services.activity.task_types import JsonObject
 
 logger = logging.getLogger(__name__)
 

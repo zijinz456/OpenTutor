@@ -7,7 +7,7 @@ from typing import Literal
 
 from config import settings
 
-IntegrationStatus = Literal["active", "dormant", "deprecated"]
+IntegrationStatus = Literal["active", "dormant"]
 
 
 @dataclass(frozen=True)
@@ -36,16 +36,6 @@ def get_integration_status_matrix() -> dict[str, IntegrationState]:
             owner="integrations",
             notes="Tool exists but is gated behind ENABLE_EXPERIMENTAL_NOTION_EXPORT.",
         ),
-        "legacy_stream_events": IntegrationState(
-            status="deprecated",
-            owner="agent_runtime",
-            notes="Kept as compatibility shim; orchestrator emits raw SSE dict events.",
-        ),
-        "session_export_sqlite": IntegrationState(
-            status="deprecated",
-            owner="data_portability",
-            notes="No active route/tool entrypoint; retained for migration window.",
-        ),
         "cat_pretest": IntegrationState(
             status="active" if settings.enable_experimental_cat else "dormant",
             owner="diagnosis",
@@ -62,4 +52,3 @@ def get_integration_status_matrix() -> dict[str, IntegrationState]:
             notes="Vision/LaTeX OCR service. Gated behind ENABLE_EXPERIMENTAL_VISION.",
         ),
     }
-

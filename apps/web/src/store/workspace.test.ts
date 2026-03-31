@@ -7,7 +7,6 @@ describe("useWorkspaceStore", () => {
     useWorkspaceStore.setState({
       activeSection: "notes",
       selectedNodeId: null,
-      pdfOverlay: null,
       treeCollapsed: false,
       treeWidth: 240,
       chatHeight: 0.35,
@@ -26,12 +25,6 @@ describe("useWorkspaceStore", () => {
     it("can be changed", () => {
       useWorkspaceStore.getState().setActiveSection("practice");
       expect(useWorkspaceStore.getState().activeSection).toBe("practice");
-    });
-
-    it("clears PDF overlay when switching sections", () => {
-      useWorkspaceStore.setState({ pdfOverlay: { fileId: "f1", fileName: "test.pdf" } });
-      useWorkspaceStore.getState().setActiveSection("analytics");
-      expect(useWorkspaceStore.getState().pdfOverlay).toBeNull();
     });
   });
 
@@ -68,19 +61,6 @@ describe("useWorkspaceStore", () => {
       const initial = useWorkspaceStore.getState().sectionRefreshKey.notes;
       useWorkspaceStore.getState().triggerRefresh("notes");
       expect(useWorkspaceStore.getState().sectionRefreshKey.notes).toBe(initial + 1);
-    });
-  });
-
-  describe("PDF overlay", () => {
-    it("opens and closes PDF", () => {
-      useWorkspaceStore.getState().openPdf("file-1", "lecture.pdf");
-      expect(useWorkspaceStore.getState().pdfOverlay).toEqual({
-        fileId: "file-1",
-        fileName: "lecture.pdf",
-      });
-
-      useWorkspaceStore.getState().closePdf();
-      expect(useWorkspaceStore.getState().pdfOverlay).toBeNull();
     });
   });
 

@@ -6,7 +6,8 @@ import uuid
 from typing import Any
 
 from libs.datetime_utils import utcnow as _utcnow
-from services.activity.tasks import (
+from services.activity.task_types import (
+    APPROVAL_REQUIRED_STATUS,
     GoalUpdatePayload,
     JsonObject,
     PlanProgressStep,
@@ -48,8 +49,6 @@ def _normalize_uuid(value: Any) -> uuid.UUID | None:
 
 
 def _queueable_status(task) -> str:
-    from services.activity.tasks import APPROVAL_REQUIRED_STATUS
-
     if task.requires_approval and task.approved_at is None:
         return APPROVAL_REQUIRED_STATUS
     return "queued"

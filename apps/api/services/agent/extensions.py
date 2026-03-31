@@ -133,10 +133,4 @@ def get_extension_registry() -> ExtensionRegistry:
     global _extension_registry
     if _extension_registry is None:
         _extension_registry = ExtensionRegistry()
-        _load_builtin_extensions(_extension_registry)
     return _extension_registry
-
-
-def _load_builtin_extensions(registry: ExtensionRegistry) -> None:
-    """Load any built-in extensions. Currently a no-op placeholder."""
-    pass

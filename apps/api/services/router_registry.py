@@ -31,13 +31,6 @@ from routers import (
 )
 
 
-# Pruned routers — unregistered 2026-03-12 (feature-pruning sprint).
-# Re-enable by uncommenting the import + tuple entry.
-# - evaluation: internal regression benchmark, no frontend consumer (1 endpoint)
-# - integrations: OAuth stub, IntegrationCredential never populated (1 endpoint)
-# - system_analytics: admin LOOM/LECTOR dashboard, no frontend consumer (1 endpoint)
-# - workspace: file list/download/delete, agent uses ctx.actions instead (3 endpoints)
-
 CORE_ROUTERS = (
     (health.router, "/api", ["health"]),
     (upload.router, "/api/content", ["content"]),

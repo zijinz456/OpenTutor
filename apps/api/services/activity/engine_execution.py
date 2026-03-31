@@ -4,20 +4,16 @@ from __future__ import annotations
 
 import logging
 import uuid
-from contextlib import contextmanager
-
 from sqlalchemy import select
 
 from database import async_session
 from libs.datetime_utils import utcnow as _utcnow
 from models.agent_task import AgentTask
-from services.activity.tasks import (
-    JsonObject,
-    _truncate_summary,
+from services.activity.task_review import (
     attach_task_review_payload,
     build_task_review_payload,
-    infer_approval_status,
 )
+from services.activity.task_types import JsonObject, _truncate_summary, infer_approval_status
 from services.activity.engine_helpers import (
     TaskCancelledError,
     _refresh_task_checkpoint,
@@ -31,12 +27,6 @@ from services.provenance import merge_provenance
 from services.activity.engine_dispatch import dispatch_task as _dispatch_task  # noqa: F401
 
 logger = logging.getLogger(__name__)
-
-
-@contextmanager
-def _force_container_sandbox():
-    """No-op context manager -- container_sandbox module removed."""
-    yield
 
 
 # ------------------------------------------------------------------

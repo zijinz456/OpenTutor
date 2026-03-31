@@ -209,7 +209,7 @@ async def submit_answer(
 
     # Update LOOM concept mastery for each knowledge point
     if kp_list:
-        from services.loom import update_concept_mastery
+        from services.loom_mastery import update_concept_mastery
         for kp in kp_list:
             try:
                 await update_concept_mastery(db, user.id, str(kp), problem.course_id, correct=is_correct, question_type=problem.question_type)
@@ -251,7 +251,7 @@ async def submit_answer(
     prerequisite_gaps = None
     if not is_correct and kp_list:
         try:
-            from services.loom import check_prerequisite_gaps
+            from services.loom_graph import check_prerequisite_gaps
             gaps = await check_prerequisite_gaps(
                 db, user.id, problem.course_id,
                 failed_concept_names=kp_list,

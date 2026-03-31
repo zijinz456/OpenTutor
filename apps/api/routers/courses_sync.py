@@ -9,7 +9,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db, async_session
-from models.course import Course
 from models.ingestion import IngestionJob
 from models import scrape as models_scrape
 from models.user import User
@@ -37,7 +36,7 @@ async def sync_course(
     from services.ingestion.pipeline import run_ingestion_pipeline
     from services.agent.background_runtime import track_background_task
 
-    course = await get_course_or_404(db, course_id, user_id=user.id)
+    await get_course_or_404(db, course_id, user_id=user.id)
 
     # 1. Find the original scrape URL -- try ScrapeSource first, then IngestionJob
     source_url: str | None = None

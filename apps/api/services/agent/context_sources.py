@@ -95,7 +95,7 @@ async def _fetch_latest_by_types(
             "memory_type": row.memory_type,
             "importance": row.importance,
             "category": row.category,
-            "created_at": row.created_at.isoformat(),
+            "created_at": row.created_at if isinstance(row.created_at, str) else row.created_at.isoformat(),
             "source": "auto_recall",
         }
         for row in rows.fetchall()

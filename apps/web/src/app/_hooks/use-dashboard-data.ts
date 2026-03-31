@@ -6,7 +6,6 @@ import { useCourseStore } from "@/store/course";
 import {
   getHealthStatus,
   getCourseProgress,
-  updateCourseLayout,
   getKnowledgeGraph,
   getReviewSession,
   listAgentTasks,
@@ -21,10 +20,9 @@ import {
   type StudyGoal,
 } from "@/lib/api";
 import { ttlCache } from "@/lib/cache";
+import { syncCourseSpaceLayout } from "@/lib/block-system/layout-sync";
 import { useT, useTF } from "@/lib/i18n-context";
 import { buildLayoutFromMode } from "@/lib/block-system/templates";
-import { updateUnlockContext } from "@/lib/block-system/feature-unlock";
-import { saveStoredSpaceLayout } from "@/lib/block-system/layout-storage";
 import { initStudyNotifications } from "@/lib/study-notifications";
 import {
   getCourseMode,
@@ -37,6 +35,10 @@ import {
   type KnowledgeDensitySummary,
   type ModeRecommendation,
 } from "../_components/dashboard-utils";
+import {
+  buildGoalDeadlineSnapshots,
+  evaluateModeSuggestion,
+} from "../_components/mode-recommendations";
 
 export function useDashboardData() {
   const router = useRouter();
@@ -161,32 +163,6 @@ export function useDashboardData() {
     return () => { cancelled = true; };
   }, [courses]);
 
-  // Fetch upcoming deadlines from study goals
-  useEffect(() => {
-    if (courses.length === 0) return;
-    const fetchDeadlines = async () => {
-      const deadlines: Array<StudyGoal & { courseName: string }> = [];
-      for (const course of courses) {
-        try {
-          const goals = await listStudyGoals(course.id, "active");
-          for (const goal of goals) {
-            if (goal.target_date) {
-              const targetDate = new Date(goal.target_date);
-              const now = new Date();
-              const daysUntil = Math.ceil((targetDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-              if (daysUntil >= -1 && daysUntil <= 30) {
-                deadlines.push({ ...goal, courseName: course.name });
-              }
-            }
-          }
-        } catch (e) { console.warn("[Dashboard] goals fetch failed for course %s:", course.id, e); }
-      }
-      deadlines.sort((a, b) => new Date(a.target_date!).getTime() - new Date(b.target_date!).getTime());
-      setUpcomingDeadlines(deadlines.slice(0, 10));
-    };
-    fetchDeadlines();
-  }, [courses]);
-
   // Cross-course knowledge density
   useEffect(() => {
     if (courses.length < 2) return;
@@ -218,61 +194,61 @@ export function useDashboardData() {
     return () => { cancelled = true; };
   }, [courses]);
 
-  // Cross-course mode recommendations
+  // Goal-driven dashboard data: upcoming deadlines + mode recommendations
   useEffect(() => {
-    if (courses.length === 0) return;
+    if (courses.length === 0) {
+      setUpcomingDeadlines([]);
+      setModeRecommendations([]);
+      return;
+    }
     let cancelled = false;
-    const fetchModeRecommendations = async () => {
+    const fetchGoalDrivenDashboardData = async () => {
+      const deadlineItems: Array<StudyGoal & { courseName: string }> = [];
       const next: ModeRecommendation[] = [];
       await Promise.all(
         courses.map(async (course) => {
+          let goals: StudyGoal[] = [];
+          try {
+            goals = await listStudyGoals(course.id, "active");
+          } catch (e) {
+            console.warn("[Dashboard] goals fetch failed for course %s:", course.id, e);
+          }
+          const deadlines = buildGoalDeadlineSnapshots(goals);
+          for (const deadline of deadlines) {
+            if (deadline.daysLeft >= -1 && deadline.daysLeft <= 30) {
+              deadlineItems.push({ ...deadline.goal, courseName: course.name });
+            }
+          }
+
           const currentMode = getCourseMode(course);
           if (!currentMode) return;
-          const goals = await listStudyGoals(course.id, "active").catch(() => [] as StudyGoal[]);
-          const now = Date.now();
-          const deadlines = goals
-            .filter((g) => g.target_date)
-            .map((g) => ({ goal: g, daysLeft: Math.ceil((new Date(g.target_date!).getTime() - now) / (1000 * 60 * 60 * 24)) }));
-          const upcoming = deadlines.filter((d) => d.daysLeft >= 0 && d.daysLeft <= 7).sort((a, b) => a.daysLeft - b.daysLeft)[0];
-          const allDeadlinesPassed = deadlines.length > 0 && deadlines.every((d) => d.daysLeft < 0);
-
-          let mastery: number | null = null;
-          let errorRatePct: number | null = null;
-          if (currentMode === "course_following" || currentMode === "self_paced") {
-            const progress = await getCourseProgress(course.id).catch(() => null);
-            if (progress) {
-              mastery = Math.round((progress.average_mastery ?? 0) * 100);
-              const totalAttempts = progress.mastered + progress.reviewed + progress.in_progress;
-              if (totalAttempts > 10) errorRatePct = Math.round((progress.in_progress / totalAttempts) * 100);
-            }
-          }
-
-          if (currentMode === "exam_prep" && allDeadlinesPassed) {
-            if (isModeRecommendationSnoozed(course.id, "exam_passed")) return;
-            next.push({ courseId: course.id, courseName: course.name, currentMode, suggestedMode: "maintenance", recommendationKey: "exam_passed", reason: t("course.modeSuggestion.examPassed"), signals: [t("course.modeSuggestion.signal.deadlinesPassed")] });
-            return;
-          }
-          if (currentMode === "course_following" || currentMode === "self_paced") {
-            if (upcoming && errorRatePct != null && errorRatePct > 40) {
-              if (isModeRecommendationSnoozed(course.id, "error_rate")) return;
-              next.push({ courseId: course.id, courseName: course.name, currentMode, suggestedMode: "exam_prep", recommendationKey: "error_rate", reason: tf("course.modeSuggestion.errorRateDetailed", { rate: errorRatePct, days: upcoming.daysLeft }), signals: [tf("course.modeSuggestion.signal.errorRate", { rate: errorRatePct }), tf("course.modeSuggestion.signal.deadline", { days: upcoming.daysLeft })] });
-              return;
-            }
-            if (upcoming) {
-              if (isModeRecommendationSnoozed(course.id, "deadline")) return;
-              next.push({ courseId: course.id, courseName: course.name, currentMode, suggestedMode: "exam_prep", recommendationKey: "deadline", reason: tf("course.modeSuggestion.deadline", { title: upcoming.goal.title, days: upcoming.daysLeft }), signals: [tf("course.modeSuggestion.signal.deadline", { days: upcoming.daysLeft })] });
-              return;
-            }
-            if (mastery != null && mastery >= 85) {
-              if (isModeRecommendationSnoozed(course.id, "mastery")) return;
-              next.push({ courseId: course.id, courseName: course.name, currentMode, suggestedMode: "maintenance", recommendationKey: "mastery", reason: tf("course.modeSuggestion.mastery", { mastery }), signals: [tf("course.modeSuggestion.signal.mastery", { mastery })] });
-            }
-          }
+          const progress =
+            currentMode === "course_following" || currentMode === "self_paced"
+              ? await getCourseProgress(course.id).catch(() => null)
+              : null;
+          const suggestion = evaluateModeSuggestion({
+            currentMode,
+            deadlines,
+            progress,
+            t,
+            tf,
+          });
+          if (!suggestion) return;
+          if (isModeRecommendationSnoozed(course.id, suggestion.recommendationKey)) return;
+          next.push({
+            courseId: course.id,
+            courseName: course.name,
+            currentMode,
+            ...suggestion,
+          });
         }),
       );
-      if (!cancelled) setModeRecommendations(next.slice(0, 6));
+      if (cancelled) return;
+      deadlineItems.sort((a, b) => new Date(a.target_date!).getTime() - new Date(b.target_date!).getTime());
+      setUpcomingDeadlines(deadlineItems.slice(0, 10));
+      setModeRecommendations(next.slice(0, 6));
     };
-    void fetchModeRecommendations();
+    void fetchGoalDrivenDashboardData();
     return () => { cancelled = true; };
   }, [courses, t, tf]);
 
@@ -294,9 +270,7 @@ export function useDashboardData() {
     setActingModeCourses((prev) => new Set(prev).add(item.courseId));
     try {
       const layout = buildLayoutFromMode(item.suggestedMode);
-      saveStoredSpaceLayout(item.courseId, layout);
-      updateUnlockContext(item.courseId, { mode: item.suggestedMode });
-      await updateCourseLayout(item.courseId, layout);
+      await syncCourseSpaceLayout(item.courseId, layout);
       await logAgentDecision({
         course_id: item.courseId, action: "apply_mode_recommendation",
         title: `${t("home.modeRecommendations.apply")} · ${item.courseName}`, reason: item.reason,

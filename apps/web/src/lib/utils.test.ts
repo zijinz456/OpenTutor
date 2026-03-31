@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach } from "vitest";
-import { cn, safeLocalStorage } from "./utils";
+import { describe, it, expect } from "vitest";
+import { cn } from "./utils";
 
 describe("cn", () => {
   it("merges class names", () => {
@@ -15,30 +15,3 @@ describe("cn", () => {
   });
 });
 
-describe("safeLocalStorage", () => {
-  beforeEach(() => {
-    localStorage.clear();
-  });
-
-  it("returns fallback when key does not exist", () => {
-    expect(safeLocalStorage.get("missing", "default")).toBe("default");
-  });
-
-  it("stores and retrieves values", () => {
-    safeLocalStorage.set("key", { a: 1 });
-    expect(safeLocalStorage.get("key", null)).toEqual({ a: 1 });
-  });
-
-  it("removes values", () => {
-    safeLocalStorage.set("key", "val");
-    safeLocalStorage.remove("key");
-    expect(safeLocalStorage.get("key", "gone")).toBe("gone");
-  });
-
-  it("handles corrupt JSON gracefully", () => {
-    localStorage.setItem("bad", "not-json");
-    expect(safeLocalStorage.get("bad", "fallback")).toBe("fallback");
-    // corrupt key should be removed
-    expect(localStorage.getItem("bad")).toBeNull();
-  });
-});

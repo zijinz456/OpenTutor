@@ -49,6 +49,5 @@ def test_scheduler_job_snapshot():
 
 def test_experimental_status_matrix_snapshot():
     matrix = get_integration_status_matrix()
-    assert {"loom", "lector", "notion_export", "legacy_stream_events", "session_export_sqlite"} <= set(matrix.keys())
-    assert matrix["legacy_stream_events"].status == "deprecated"
-    assert matrix["session_export_sqlite"].status == "deprecated"
+    assert {"loom", "lector", "notion_export", "cat_pretest", "browser", "vision"} <= set(matrix.keys())
+    assert matrix["notion_export"].status in {"active", "dormant"}

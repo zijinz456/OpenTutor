@@ -155,51 +155,6 @@ test.describe("OpenTutor e2e flows", () => {
     await expect(page.getByTestId("chat-message-user").last()).toContainText(firstPrompt, { timeout: 15_000 });
   });
 
-  test.skip("scrape URL into content tree from upload dialog", async ({ page }) => {
-    // Skip: UploadDialog component is not integrated into the workspace yet
-    await createCourse(page, "E2E Scrape Flow");
-
-    // Mock the scrape API
-    await page.route("**/api/content/url", async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({ status: "ok", nodes_created: 3 }),
-      });
-    });
-
-    // Open the upload dialog via the sync button in header
-    const syncBtn = page.getByRole("button", { name: "Sync course content" });
-    await expect(syncBtn).toBeVisible({ timeout: 15_000 });
-    await syncBtn.click();
-
-    await page.getByTestId("workspace-upload-url-tab").click();
-    await page.getByTestId("workspace-upload-url-input").fill("https://example.com/binary-search");
-    await page.getByTestId("workspace-upload-url-submit").click();
-
-    await expect(
-      page.getByText("Scraped URL").or(page.getByText("sections created")),
-    ).toBeVisible({ timeout: 30_000 });
-  });
-
-  test.skip("rejected internal URL shows SSRF error", async ({ page }) => {
-    // Skip: UploadDialog component is not integrated into the workspace yet
-    await createCourse(page, "E2E Scrape Reject");
-
-    // Open the upload dialog via the sync button in header
-    const syncBtn = page.getByRole("button", { name: "Sync course content" });
-    await expect(syncBtn).toBeVisible({ timeout: 15_000 });
-    await syncBtn.click();
-
-    await page.getByTestId("workspace-upload-url-tab").click();
-    await page.getByTestId("workspace-upload-url-input").fill("http://127.0.0.1/private");
-    await page.getByTestId("workspace-upload-url-submit").click();
-
-    await expect(page.getByTestId("workspace-upload-url-error")).toContainText("Internal URLs are not allowed", {
-      timeout: 15_000,
-    });
-  });
-
   test("wrong-answer diagnosis flows through review, progress, and analytics", async ({ page, request }) => {
     test.skip(!hasRealLlmEnv(), "Requires a real LLM provider");
     const courseId = await createCourseViaApi(request, "E2E Diagnosis Flow", {

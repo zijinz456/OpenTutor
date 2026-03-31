@@ -34,9 +34,9 @@ async def get_course_progress(
     db: AsyncSession = Depends(get_db),
 ):
     """Get learning progress overview for a course."""
-    from services.progress.tracker import get_course_progress
+    from services.progress.analytics import get_course_progress as get_course_progress_summary
 
-    return await get_course_progress(db, user.id, course_id)
+    return await get_course_progress_summary(db, user.id, course_id)
 
 
 @router.get("/overview", summary="Get learning overview", description="Return aggregate cross-course learning analytics for the current user.")

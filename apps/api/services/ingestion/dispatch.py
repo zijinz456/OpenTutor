@@ -133,11 +133,6 @@ async def dispatch_content(db: AsyncSession, job: IngestionJob) -> dict:
             db.add(node)
         await db.flush()  # Assign IDs before indexing
 
-        # Build full-text search vectors for BM25
-        node_ids = [str(node.id) for node in nodes]
-        from services.search.indexer import index_content_nodes
-        await index_content_nodes(db, node_ids)
-
         result["content_tree"] = len(nodes)
 
         # Queue auto-generation of learning content (notes, practice, flashcards)

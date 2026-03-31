@@ -3,12 +3,10 @@
 import { useState, useRef, useEffect } from "react";
 import { useParams } from "next/navigation";
 import { GraduationCap, Compass, Clock, Shield, ChevronDown } from "lucide-react";
+import { syncCourseSpaceLayout } from "@/lib/block-system/layout-sync";
 import { useWorkspaceStore } from "@/store/workspace";
 import { LEARNING_MODE_LIST } from "@/lib/block-system/templates";
 import type { LearningMode } from "@/lib/block-system/types";
-import { updateUnlockContext } from "@/lib/block-system/feature-unlock";
-import { saveStoredSpaceLayout } from "@/lib/block-system/layout-storage";
-import { updateCourseLayout } from "@/lib/api";
 import { useT } from "@/lib/i18n-context";
 
 const MODE_ICONS: Record<LearningMode, typeof GraduationCap> = {
@@ -67,10 +65,7 @@ export function ModeSelector({ onModeChange }: ModeSelectorProps) {
     if (confirming === mode) {
       setLearningMode(mode);
       if (courseId) {
-        updateUnlockContext(courseId, { mode });
-        const layout = useWorkspaceStore.getState().spaceLayout;
-        const persistedLayout = saveStoredSpaceLayout(courseId, layout);
-        updateCourseLayout(courseId, persistedLayout).catch(() => undefined);
+        void syncCourseSpaceLayout(courseId, useWorkspaceStore.getState().spaceLayout).catch(() => undefined);
       }
       onModeChange?.(mode);
       setOpen(false);

@@ -32,7 +32,6 @@ notion-client>=2.0.0
 
 # Advanced multimodal / experimentation
 pix2tex>=0.1.2
-scikit-learn>=1.4.0
 # pyBKT 1.4.2 currently publishes a wheel/version metadata mismatch that fails on pip>=26 in CI.
 pyBKT==1.4.1
 

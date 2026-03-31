@@ -12,11 +12,11 @@ from config import settings
 from database import async_session
 from libs.datetime_utils import utcnow as _utcnow
 from models.agent_task import AgentTask
-from services.activity.tasks import (
+from services.activity.task_records import create_task
+from services.activity.task_types import (
     APPROVAL_REQUIRED_STATUS,
     EXECUTABLE_TASK_STATUSES,
     JsonObject,
-    create_task,
     infer_approval_status,
 )
 from services.activity.redis_notify import notify_task_ready
@@ -42,8 +42,6 @@ async def submit_task(
     requires_approval: bool = False,
     max_attempts: int = 2,
 ) -> AgentTask:
-    from services.activity.tasks import create_task
-
     async with _task_session(db) as db_session:
         task = await create_task(
             db_session,

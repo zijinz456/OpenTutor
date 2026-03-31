@@ -18,8 +18,8 @@ import { stabilizeMarkdownMermaidBlocks } from "@/lib/markdown/mermaid";
 import { useBatchManager } from "@/hooks/use-batch-manager";
 import { MarkdownRenderer } from "@/components/shared/markdown-renderer";
 import { AiFeatureBlocked } from "@/components/shared/ai-feature-blocked";
+import { collectContentNodes, findFirstContentNode, findNodeById } from "@/lib/content-tree";
 import { ContentNodeItem } from "./notes/content-node-item";
-import { findFirstContentNode, findNodeById, collectContentNodes } from "./notes/utils";
 import { toast } from "sonner";
 
 interface NotesSectionProps {

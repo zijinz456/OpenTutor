@@ -14,7 +14,7 @@ from models.agent_task import AgentTask
 from models.study_goal import StudyGoal
 from models.user import User
 from schemas.task import AgentTaskResponse
-from services.activity.tasks import serialize_task
+from services.activity.task_records import serialize_task
 from services.agent.agenda import queue_decision, resolve_next_action
 from services.auth.dependency import get_current_user
 from services.course_access import get_course_or_404

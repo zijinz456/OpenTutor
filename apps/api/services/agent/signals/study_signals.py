@@ -259,7 +259,7 @@ async def _collect_prerequisite_gaps(
         return []
 
     try:
-        from services.loom import check_prerequisite_gaps
+        from services.loom_graph import check_prerequisite_gaps
         gaps = await check_prerequisite_gaps(db, user_id, course_id)
     except (SQLAlchemyError, ImportError, ConnectionError, TimeoutError):
         logger.exception("Prerequisite gap check failed (best-effort)")

@@ -17,4 +17,4 @@ function customRender(
 }
 
 export { customRender as render };
-export { screen, waitFor, within, act } from "@testing-library/react";
+export { screen, waitFor } from "@testing-library/react";
