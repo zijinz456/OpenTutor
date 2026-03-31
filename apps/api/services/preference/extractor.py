@@ -192,12 +192,13 @@ async def infer_from_quiz_performance(
     - Consistent low accuracy (<45%) → suggest reducing detail, more examples.
     """
     from sqlalchemy import select, desc
-    from models.quiz import QuizAttempt
+    from models.practice import PracticeResult, PracticeProblem
 
     stmt = (
-        select(QuizAttempt.is_correct)
-        .where(QuizAttempt.user_id == user_id, QuizAttempt.course_id == course_id)
-        .order_by(desc(QuizAttempt.created_at))
+        select(PracticeResult.is_correct)
+        .join(PracticeProblem, PracticeResult.problem_id == PracticeProblem.id)
+        .where(PracticeResult.user_id == user_id, PracticeProblem.course_id == course_id)
+        .order_by(desc(PracticeResult.answered_at))
         .limit(window)
     )
     result = await db.execute(stmt)
@@ -257,16 +258,18 @@ async def infer_from_interaction_patterns(
       detailed responses.
     """
     from sqlalchemy import select, desc, func
-    from models.chat import ChatMessage
+    from models.chat_message import ChatMessageLog
+    from models.chat_session import ChatSession
 
     stmt = (
-        select(func.length(ChatMessage.content))
+        select(func.length(ChatMessageLog.content))
+        .join(ChatSession, ChatMessageLog.session_id == ChatSession.id)
         .where(
-            ChatMessage.user_id == user_id,
-            ChatMessage.course_id == course_id,
-            ChatMessage.role == "user",
+            ChatSession.user_id == user_id,
+            ChatSession.course_id == course_id,
+            ChatMessageLog.role == "user",
         )
-        .order_by(desc(ChatMessage.created_at))
+        .order_by(desc(ChatMessageLog.created_at))
         .limit(window)
     )
     result = await db.execute(stmt)

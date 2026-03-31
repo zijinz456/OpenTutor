@@ -12,10 +12,8 @@ import {
   type ReviewItem,
 } from "@/lib/api";
 import { ttlCache } from "@/lib/cache";
+import { buildFocusTerms, findNodeById, findPathToNode } from "@/lib/content-tree";
 import {
-  findNodeById,
-  findPathToNode,
-  buildFocusTerms,
   matchesFocus,
   scoreWrongAnswerFocus,
   buildErrorPatternSummary,

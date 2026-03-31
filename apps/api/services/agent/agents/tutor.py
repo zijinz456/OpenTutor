@@ -77,6 +77,8 @@ class TutorAgent(ReActMixin, BaseAgent):
         "export_calendar", "list_files",
         # code tools
         "run_code",
+        # memory tools
+        "save_user_preference",
     ]
 
     def build_system_prompt(self, ctx: AgentContext) -> str:

@@ -276,14 +276,21 @@ async def get_course_outline(parameters: dict[str, Any], ctx: Any, db: AsyncSess
         if not nodes:
             return ToolResult(success=True, output="No course outline is available yet.")
 
+        # Build id→title map for parent lookup
+        id_to_title = {str(n.id): n.title for n in nodes}
         lines = []
         for node in nodes:
             if node.level > 2:
                 continue
             indent = "  " * node.level
-            lines.append(f"{indent}- {node.title}")
+            title = node.title
+            # Prefix child titles with parent name to avoid ambiguous "Slide 1" duplicates
+            if node.level > 0 and node.parent_id and str(node.parent_id) in id_to_title:
+                parent_title = id_to_title[str(node.parent_id)]
+                title = f"{parent_title} > {title}"
+            lines.append(f"{indent}- {title}")
 
-        return ToolResult(success=True, output="Course outline:\n" + "\n".join(lines[:20]))
+        return ToolResult(success=True, output="Course outline:\n" + "\n".join(lines[:40]))
     except SQLAlchemyError as e:
         logger.exception("get_course_outline DB error: %s", e)
         return ToolResult(success=False, output="", error="Database error fetching course outline.")

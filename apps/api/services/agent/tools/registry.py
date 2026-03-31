@@ -14,7 +14,7 @@ from config import settings
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.agent.tools.base import Tool, ToolCategory, ToolResult
+from services.agent.tools.base import Tool, ToolResult
 
 logger = logging.getLogger(__name__)
 
@@ -177,6 +177,7 @@ def _register_builtin_tools(registry: ToolRegistry) -> None:
     _register_file_tools(registry)
     _register_mutation_tools(registry)
     _register_workspace_tools(registry)
+    _register_preference_tools(registry)
 
 
 def _register_web_tools(registry: ToolRegistry) -> None:
@@ -262,6 +263,17 @@ def _register_workspace_tools(registry: ToolRegistry) -> None:
         logger.info("Registered workspace control tool")
     except (ImportError, AttributeError) as e:
         logger.exception("Failed to load workspace tools: %s", e)
+
+
+def _register_preference_tools(registry: ToolRegistry) -> None:
+    """Register preference tools (save_user_preference)."""
+    try:
+        from services.agent.tools.preference_tools import save_user_preference
+
+        registry.register(save_user_preference)
+        logger.info("Registered preference tools")
+    except (ImportError, AttributeError) as e:
+        logger.exception("Failed to load preference tools: %s", e)
 
 
 def _register_yaml_tools(registry: ToolRegistry) -> None:

@@ -1,6 +1,7 @@
 import type { Course, AppNotification, AgentTask } from "@/lib/api";
 import type { LearningMode, SpaceLayout } from "@/lib/block-system/types";
 import { getStoredSpaceLayoutMode } from "@/lib/block-system/layout-storage";
+import type { ModeSuggestionDecision } from "./mode-recommendations";
 
 export const CARD_COLORS = [
   { bg: "bg-brand-muted", text: "text-brand" },
@@ -11,7 +12,7 @@ export const CARD_COLORS = [
 
 export function getDashboardNowMs() { return Date.now(); }
 
-export const MODE_REC_SNOOZE_MS = 12 * 60 * 60 * 1000;
+const MODE_REC_SNOOZE_MS = 12 * 60 * 60 * 1000;
 
 export function getInitials(name: string) {
   return name
@@ -74,17 +75,13 @@ export interface KnowledgeDensitySummary {
   topSharedConcepts: string[];
 }
 
-export interface ModeRecommendation {
+export interface ModeRecommendation extends ModeSuggestionDecision {
   courseId: string;
   courseName: string;
   currentMode: LearningMode;
-  suggestedMode: LearningMode;
-  recommendationKey: string;
-  reason: string;
-  signals: string[];
 }
 
-export function modeRecSnoozeStorageKey(courseId: string, recommendationKey: string): string {
+function modeRecSnoozeStorageKey(courseId: string, recommendationKey: string): string {
   return `opentutor_home_mode_rec_snooze_${courseId}_${recommendationKey}`;
 }
 

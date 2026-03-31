@@ -120,9 +120,6 @@ async def test_run_ingestion_pipeline_file_sets_source_fields():
     with patch(
         "services.ingestion.pipeline.extract_content",
         return_value="# Chapter 1\nSection 1.1 overview with enough descriptive text to exceed fifty characters.",
-    ), patch(
-        "services.search.indexer.index_content_nodes",
-        return_value=0,
     ):
         job = await run_ingestion_pipeline(
             db=db,
@@ -156,9 +153,6 @@ async def test_run_ingestion_pipeline_url_sets_source_fields():
             "# Chapter 1\n"
             "Section 1.1 overview with enough descriptive text to exceed fifty characters."
         ),
-    ), patch(
-        "services.search.indexer.index_content_nodes",
-        return_value=0,
     ):
         job = await run_ingestion_pipeline(
             db=db,

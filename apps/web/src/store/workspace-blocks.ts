@@ -19,7 +19,7 @@ import { createBlockId, normalizeSpaceLayout, parseSpaceLayout } from "@/lib/blo
 import { BLOCK_REGISTRY } from "@/lib/block-system/registry";
 import { recordBlockEvent } from "@/hooks/use-block-engagement";
 
-export function nextBlockId(): string {
+function nextBlockId(): string {
   return createBlockId();
 }
 
@@ -43,7 +43,7 @@ function reorderBlocksByType(blocks: BlockInstance[], orderedTypes: BlockType[])
   return reordered;
 }
 
-export const MAX_LAYOUT_HISTORY = 10;
+const MAX_LAYOUT_HISTORY = 10;
 const DISMISS_STORAGE_KEY_PREFIX = "opentutor_dismiss_";
 const DISMISS_RETENTION_MS = 7 * 86_400_000; // 7 days
 
@@ -85,7 +85,6 @@ export interface BlockSystemState {
   lastRemovedBlock: { block: BlockInstance; index: number } | null;
   removeBlock: (blockId: string) => void;
   undoRemoveBlock: () => void;
-  cleanupExpiredBlocks: () => void;
   removeBlockByType: (type: BlockType) => void;
   reorderBlocks: (orderedTypes: BlockType[]) => void;
   resizeBlock: (blockId: string, size: BlockSize) => void;
@@ -110,7 +109,7 @@ export interface BlockSystemState {
   ) => void;
 }
 
-export function pushHistory(layoutHistory: SpaceLayout[], spaceLayout: SpaceLayout): SpaceLayout[] {
+function pushHistory(layoutHistory: SpaceLayout[], spaceLayout: SpaceLayout): SpaceLayout[] {
   const history = [...layoutHistory, spaceLayout];
   return history.slice(-MAX_LAYOUT_HISTORY);
 }
@@ -166,18 +165,6 @@ export function createBlockSlice<TState extends BlockSystemState>(
         const blocks = [...state.spaceLayout.blocks];
         blocks.splice(removed.index, 0, removed.block);
         return { lastRemovedBlock: null, spaceLayout: { ...state.spaceLayout, blocks } };
-      });
-    },
-
-    cleanupExpiredBlocks: () => {
-      set((state) => {
-        const now = new Date().toISOString();
-        const blocks = state.spaceLayout.blocks.filter((b) => {
-          if (b.source !== "agent" || !b.agentMeta?.expiresAt) return true;
-          return b.agentMeta.expiresAt > now;
-        });
-        if (blocks.length === state.spaceLayout.blocks.length) return state;
-        return { spaceLayout: { ...state.spaceLayout, blocks } };
       });
     },
 

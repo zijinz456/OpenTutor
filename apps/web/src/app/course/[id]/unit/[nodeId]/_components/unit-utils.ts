@@ -1,54 +1,6 @@
-import type { ContentNode, WrongAnswer, ReviewItem } from "@/lib/api";
+import type { WrongAnswer, ReviewItem } from "@/lib/api";
 
 export type TranslateFn = (key: string) => string;
-
-export function findNodeById(nodes: ContentNode[], nodeId: string): ContentNode | null {
-  for (const node of nodes) {
-    if (node.id === nodeId) return node;
-    if (node.children?.length) {
-      const found = findNodeById(node.children, nodeId);
-      if (found) return found;
-    }
-  }
-  return null;
-}
-
-export function findPathToNode(nodes: ContentNode[], nodeId: string): ContentNode[] {
-  const walk = (items: ContentNode[], trail: ContentNode[]): ContentNode[] | null => {
-    for (const item of items) {
-      const nextTrail = [...trail, item];
-      if (item.id === nodeId) return nextTrail;
-      if (item.children?.length) {
-        const found = walk(item.children, nextTrail);
-        if (found) return found;
-      }
-    }
-    return null;
-  };
-  return walk(nodes, []) ?? [];
-}
-
-export function collectTitles(node: ContentNode): string[] {
-  const titles: string[] = [node.title];
-  for (const child of node.children ?? []) {
-    titles.push(...collectTitles(child));
-  }
-  return titles;
-}
-
-export function buildFocusTerms(node: ContentNode): string[] {
-  const tokens = collectTitles(node)
-    .flatMap((title) =>
-      title
-        .toLowerCase()
-        .split(/[^a-z0-9\u4e00-\u9fa5]+/)
-        .map((part) => part.trim())
-        .filter((part) => part.length >= 2),
-    )
-    .filter((token, idx, arr) => arr.indexOf(token) === idx);
-
-  return tokens.slice(0, 12);
-}
 
 export function matchesFocus(text: string | null | undefined, terms: string[]): boolean {
   if (!text || terms.length === 0) return false;

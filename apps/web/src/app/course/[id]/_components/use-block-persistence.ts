@@ -1,11 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useRef } from "react";
+import { syncCourseSpaceLayout } from "@/lib/block-system/layout-sync";
 import { useWorkspaceStore } from "@/store/workspace";
-import { updateCourseLayout } from "@/lib/api";
 import type { LearningMode } from "@/lib/block-system/types";
 import { buildLayoutFromMode } from "@/lib/block-system/templates";
-import { loadStoredSpaceLayout, parseSpaceLayout, saveStoredSpaceLayout } from "@/lib/block-system/layout-storage";
+import { loadStoredSpaceLayout, parseSpaceLayout } from "@/lib/block-system/layout-storage";
 
 export function useBlockPersistence(
   courseId: string,
@@ -20,8 +20,7 @@ export function useBlockPersistence(
   const flushLayout = useCallback(() => {
     if (!blocksInitialized.current) return;
     const layout = useWorkspaceStore.getState().spaceLayout;
-    const persistedLayout = saveStoredSpaceLayout(courseId, layout);
-    updateCourseLayout(courseId, persistedLayout).catch((e) => console.error("[Course] layout persist failed:", e));
+    syncCourseSpaceLayout(courseId, layout).catch((e) => console.error("[Course] layout persist failed:", e));
   }, [courseId]);
 
   useEffect(() => {

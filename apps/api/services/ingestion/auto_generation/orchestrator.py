@@ -5,7 +5,6 @@ import uuid
 
 import sqlalchemy as sa
 
-from services.ingestion.auto_generation.titles import auto_summarize_titles
 from services.ingestion.auto_generation.notes import auto_generate_notes
 from services.ingestion.auto_generation.practice import (
     auto_generate_flashcards,
@@ -80,18 +79,18 @@ async def auto_prepare(
     try:
         config = await auto_configure_course(db_factory, course_id, summary)
         summary["auto_configured"] = bool(config)
-    except (sa.exc.SQLAlchemyError, ConnectionError, TimeoutError, ValueError, RuntimeError, OSError) as e:
+    except (sa.exc.SQLAlchemyError, ConnectionError, TimeoutError, ValueError, RuntimeError, OSError):
         logger.exception("auto_prepare: auto-configure step failed")
         summary["auto_configured"] = False
 
     # LOOM: Build knowledge concept graph from content
     try:
-        from services.loom import build_course_graph
+        from services.loom_graph import build_course_graph
         summary["loom_concepts"] = await build_course_graph(db_factory, course_id)
     except ImportError:
         logger.debug("LOOM module not available, skipping graph building")
         summary["loom_concepts"] = 0
-    except (sa.exc.SQLAlchemyError, ConnectionError, TimeoutError, ValueError, RuntimeError, OSError) as e:
+    except (sa.exc.SQLAlchemyError, ConnectionError, TimeoutError, ValueError, RuntimeError, OSError):
         logger.exception("auto_prepare: LOOM graph building failed")
         summary["loom_concepts"] = 0
 

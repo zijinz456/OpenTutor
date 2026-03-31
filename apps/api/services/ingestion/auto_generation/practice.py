@@ -7,9 +7,6 @@ import sqlalchemy as sa
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from libs.text_utils import parse_llm_json
-from services.llm.router import get_llm_client
-
 logger = logging.getLogger(__name__)
 
 
@@ -134,52 +131,22 @@ async def _auto_generate_learning_content(
     Runs as a fire-and-forget task after content tree creation.
     Only processes nodes with >300 chars of content.
     """
-    from models.practice import PracticeProblem
-
     eligible = [n for n in nodes if n.content and len(n.content) > 300]
     if not eligible:
         return
 
+    from services.parser.quiz import extract_questions
+
     for node in eligible[:20]:  # Cap to avoid excessive processing
         try:
-            # Generate 2-3 practice problems per node
-            content_preview = (node.content or "")[:3000]
-            if content_preview:
-                client = get_llm_client("fast")
-                prompt = (
-                    f"Generate 2 multiple-choice practice problems from this content.\n"
-                    f"Topic: {node.title}\n\n"
-                    f"Content:\n{content_preview}\n\n"
-                    f"For each problem provide: question, options (A/B/C/D), correct_answer, explanation.\n"
-                    f"Format as JSON array."
-                )
-                raw, _ = await client.chat(
-                    "You are a quiz generator. Output valid JSON arrays.",
-                    prompt,
-                )
-
-                problems = parse_llm_json(raw, default=[])
-                if isinstance(problems, list):
-                    for p in problems[:3]:
-                        if not isinstance(p, dict) or not p.get("question"):
-                            continue
-                        options = p.get("options", {})
-                        if isinstance(options, list):
-                            options = {chr(65 + i): opt for i, opt in enumerate(options)}
-                        problem = PracticeProblem(
-                            course_id=course_id,
-                            content_node_id=node.id,
-                            question_type="mc",
-                            question=p["question"],
-                            options=options,
-                            correct_answer=p.get("correct_answer", "A"),
-                            explanation=p.get("explanation", ""),
-                            difficulty_layer=1,
-                            source="ai_generated",
-                            source_owner="ai",
-                            locked=False,
-                        )
-                        db.add(problem)
+            if not node.content or len(node.content) <= 300:
+                continue
+            outcome = await extract_questions(node.content, node.title, course_id, node.id)
+            for problem in outcome.problems[:3]:
+                problem.source = "ai_generated"
+                problem.source_owner = "ai"
+                problem.locked = False
+                db.add(problem)
 
         except (ConnectionError, TimeoutError) as e:
             logger.warning("Auto-generate learning content network error for '%s': %s", node.title, e)

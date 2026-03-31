@@ -11,10 +11,9 @@ import {
   fetchCanvasCourseInfo,
 } from "@/lib/api";
 import { useT } from "@/lib/i18n-context";
+import { persistCourseSpaceLayoutLocally } from "@/lib/block-system/layout-sync";
 import { useCourseStore } from "@/store/course";
 import { useWorkspaceStore } from "@/store/workspace";
-import { updateUnlockContext } from "@/lib/block-system/feature-unlock";
-import { saveStoredSpaceLayout } from "@/lib/block-system/layout-storage";
 import { buildLayoutFromMode } from "@/lib/block-system/templates";
 import type { LearningMode } from "@/lib/block-system/types";
 
@@ -254,8 +253,7 @@ export function useNewProject() {
 
     // Prime workspace state so the first paint on /course is mode-correct.
     useWorkspaceStore.getState().loadBlocks(layout);
-    saveStoredSpaceLayout(createdCourseId, layout);
-    updateUnlockContext(createdCourseId, { mode: learningMode });
+    persistCourseSpaceLayoutLocally(createdCourseId, layout);
 
     try { await updateCourse(createdCourseId, { metadata }); } catch { /* still works */ }
     if (nlInput.trim()) try { localStorage.setItem(`course_init_prompt_${createdCourseId}`, nlInput.trim()); } catch { /* quota */ }

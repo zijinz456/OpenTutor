@@ -117,8 +117,27 @@ async def process_signal_to_preference(
 
     Called after a new signal is recorded. If confidence >= threshold,
     upserts the corresponding UserPreference entry.
+
+    Fast-path: a single explicit signal immediately clears the threshold
+    (confidence forced to >= 0.5) so users don't have to repeat themselves.
     """
     confidence, value = await calculate_confidence(db, user_id, dimension, course_id)
+
+    # Fast-path: explicit signals promote on first occurrence
+    if value is not None:
+        has_explicit = await db.scalar(
+            select(func.count(PreferenceSignal.id)).where(
+                PreferenceSignal.user_id == user_id,
+                PreferenceSignal.dimension == dimension,
+                PreferenceSignal.value == value,
+                PreferenceSignal.signal_type == "explicit",
+                PreferenceSignal.dismissed_at.is_(None),
+            ).where(
+                *([PreferenceSignal.course_id == course_id] if course_id else [PreferenceSignal.course_id.is_(None)])
+            )
+        )
+        if has_explicit:
+            confidence = max(confidence, 0.5)
 
     if confidence < PROMOTION_THRESHOLD or value is None:
         return None

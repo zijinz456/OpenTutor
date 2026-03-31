@@ -5,22 +5,7 @@
 
 import { getOptimalStudyWindows, getPersona, formatStudyWindow } from "./learner-persona";
 
-const NOTIF_PERM_KEY = "opentutor_notif_permission";
 const LAST_NOTIF_KEY = "opentutor_last_study_notif";
-
-/** Request notification permission if not already granted. */
-export async function requestNotificationPermission(): Promise<boolean> {
-  if (typeof window === "undefined" || !("Notification" in window)) return false;
-  if (Notification.permission === "granted") return true;
-  if (Notification.permission === "denied") return false;
-
-  const result = await Notification.requestPermission();
-  if (result === "granted") {
-    try { localStorage.setItem(NOTIF_PERM_KEY, "granted"); } catch { /* quota */ }
-    return true;
-  }
-  return false;
-}
 
 /** Check if we should send a study reminder right now. */
 function shouldNotify(): boolean {
@@ -51,7 +36,7 @@ function shouldNotify(): boolean {
 }
 
 /** Send a study reminder notification if appropriate. */
-export function checkAndNotifyStudyReminder(): void {
+function checkAndNotifyStudyReminder(): void {
   if (typeof window === "undefined" || !("Notification" in window)) return;
   if (Notification.permission !== "granted") return;
   if (!shouldNotify()) return;

@@ -7,6 +7,10 @@ import type { LearningMode } from "@/lib/block-system/types";
 import type { ChatAction } from "@/lib/api";
 import { updateUnlockContext } from "@/lib/block-system/feature-unlock";
 import { useT, useTF } from "@/lib/i18n-context";
+import {
+  buildGoalDeadlineSnapshots,
+  evaluateModeSuggestion,
+} from "@/app/_components/mode-recommendations";
 
 const VALID_CHAT_ACTION_TYPES: ChatAction["action"][] = [
   "data_updated",
@@ -32,6 +36,7 @@ interface ModeEvalLatchState {
 
 interface ModeEvalGoalSnapshot {
   id: string;
+  title: string;
   status: string;
   target_date: string | null;
   next_action: string | null;
@@ -130,84 +135,32 @@ export function useModeEvaluator(
           && latestLatch.fingerprint === fingerprint;
         if (shouldSkip) return;
 
-        const deadlines = goals
-          .filter((g) => g.target_date)
-          .map((g) => ({
-            goal: g,
-            daysLeft: Math.ceil((new Date(g.target_date!).getTime() - now) / (1000 * 60 * 60 * 24)),
-          }));
+        const deadlines = buildGoalDeadlineSnapshots(
+          goals as unknown as ModeEvalGoalSnapshot[],
+          now,
+        );
 
         if (deadlines.length > 0) {
           updateUnlockContext(courseId, { hasDeadline: true });
         }
 
-        const upcoming = deadlines
-          .filter((d) => d.daysLeft >= 0 && d.daysLeft <= 7)
-          .sort((a, b) => a.daysLeft - b.daysLeft)[0];
-        const allDeadlinesPassed = deadlines.length > 0 && deadlines.every((d) => d.daysLeft < 0);
-
-        const mastery = Math.round((progress.average_mastery ?? 0) * 100);
-        const totalAttempts = progress.mastered + progress.reviewed + progress.in_progress;
-        const errorRatePct =
-          totalAttempts > 10
-            ? Math.round((progress.in_progress / totalAttempts) * 100)
-            : null;
-
-        if (currentMode === "exam_prep" && allDeadlinesPassed) {
+        const suggestion = evaluateModeSuggestion({
+          currentMode,
+          deadlines,
+          progress,
+          t,
+          tf,
+        });
+        if (suggestion) {
           queueModeSuggestion({
-            suggestedMode: "maintenance",
-            reason: t("course.modeSuggestion.examPassed"),
-            approvalCta: t("course.modeSuggestion.switchMaintenance"),
-            cooldownKey: "exam_passed",
-            signals: [t("course.modeSuggestion.signal.deadlinesPassed")],
+            suggestedMode: suggestion.suggestedMode,
+            reason: suggestion.reason,
+            approvalCta: suggestion.approvalCta,
+            cooldownKey: suggestion.recommendationKey,
+            signals: suggestion.signals,
           });
           writeModeEvalLatch(evalKey, { successAt: Date.now(), fingerprint });
           return;
-        }
-
-        if (currentMode === "course_following" || currentMode === "self_paced") {
-          if (upcoming && errorRatePct != null && errorRatePct > 40) {
-            queueModeSuggestion({
-              suggestedMode: "exam_prep",
-              reason: tf("course.modeSuggestion.errorRateDetailed", {
-                rate: errorRatePct,
-                days: upcoming.daysLeft,
-              }),
-              approvalCta: t("course.modeSuggestion.switchExamPrep"),
-              cooldownKey: "error_rate",
-              signals: [
-                tf("course.modeSuggestion.signal.errorRate", { rate: errorRatePct }),
-                tf("course.modeSuggestion.signal.deadline", { days: upcoming.daysLeft }),
-              ],
-            });
-            writeModeEvalLatch(evalKey, { successAt: Date.now(), fingerprint });
-            return;
-          }
-
-          if (upcoming) {
-            queueModeSuggestion({
-              suggestedMode: "exam_prep",
-              reason: tf("course.modeSuggestion.deadline", {
-                title: upcoming.goal.title,
-                days: upcoming.daysLeft,
-              }),
-              approvalCta: t("course.modeSuggestion.switchExamPrep"),
-              cooldownKey: "deadline",
-              signals: [tf("course.modeSuggestion.signal.deadline", { days: upcoming.daysLeft })],
-            });
-            writeModeEvalLatch(evalKey, { successAt: Date.now(), fingerprint });
-            return;
-          }
-
-          if (mastery >= 85) {
-            queueModeSuggestion({
-              suggestedMode: "maintenance",
-              reason: tf("course.modeSuggestion.mastery", { mastery }),
-              approvalCta: t("course.modeSuggestion.switchMaintenance"),
-              cooldownKey: "mastery",
-              signals: [tf("course.modeSuggestion.signal.mastery", { mastery })],
-            });
-          }
         }
 
         writeModeEvalLatch(evalKey, { successAt: Date.now(), fingerprint });
