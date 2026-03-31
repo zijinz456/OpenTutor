@@ -7,14 +7,12 @@
 | `loom` | `active` | Used by mastery graph + cross-course linking scheduler jobs | learning_science |
 | `lector` | `active` | Used by heartbeat review reminders | learning_science |
 | `notion_export` | `dormant` | Tool exists but is gated by `ENABLE_EXPERIMENTAL_NOTION_EXPORT` | integrations |
-| `legacy_stream_events` | `deprecated` | Compatibility shim only; orchestrator emits raw SSE events | agent_runtime |
-| `session_export_sqlite` | `deprecated` | No active route/tool entrypoint | data_portability |
-| `preference_prompt_template` | `deprecated` | Prompt composition moved into agent prompt builders | agent_runtime |
-| `tutor_prompts_legacy` | `deprecated` | Compatibility shim forwarding to `agents/prompts.py` | agent_runtime |
+| `cat_pretest` | `active` / `dormant` | CAT adaptive diagnostic pretest behind `ENABLE_EXPERIMENTAL_CAT` | diagnosis |
+| `browser` | `active` / `dormant` | Browser automation tool behind `ENABLE_EXPERIMENTAL_BROWSER` | agent_tools |
+| `vision` | `active` / `dormant` | Vision / LaTeX OCR service behind `ENABLE_EXPERIMENTAL_VISION` | agent_tools |
 
 ## Soft-Delete Policy
 
-1. `deprecated` modules remain importable for one migration cycle.
-2. Each deprecated module emits deprecation telemetry/logging/warning on import.
-3. Physical deletion target: next major cleanup milestone after all references are removed.
-
+1. `dormant` integrations stay wired but feature-gated behind explicit settings.
+2. Active integrations must have a live runtime entrypoint or scheduler/tool registration.
+3. Removed integrations should be deleted from this matrix instead of left as placeholders.
