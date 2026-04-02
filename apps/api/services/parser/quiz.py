@@ -25,7 +25,7 @@ from services.practice.annotation import (
 
 logger = logging.getLogger(__name__)
 
-# 7 question types (from Obsidian Quiz Generator)
+# 8 question types
 QUESTION_TYPES = {
     "mc": "Multiple Choice — one correct answer from 4 options",
     "tf": "True/False — statement is true or false",
@@ -34,13 +34,14 @@ QUESTION_TYPES = {
     "matching": "Matching — match items from two columns",
     "select_all": "Select All That Apply — multiple correct answers",
     "free_response": "Free Response — extended written answer",
+    "coding": "Coding — write code to solve a problem (LLM-graded, no execution)",
 }
 
 EXTRACTION_PROMPT = """You are an expert educator creating practice questions from learning materials.
 
 Given the content below, extract or generate practice questions. Follow these rules:
 
-1. Generate a mix of question types: mc (multiple choice), tf (true/false), short_answer, fill_blank
+1. Generate a mix of question types: mc (multiple choice), tf (true/false), short_answer, fill_blank, and coding (for programming/technical content)
 2. Each question should test understanding, not just recall
 3. For multiple choice, always provide exactly 4 options (A, B, C, D)
 4. Include the correct answer and a brief explanation
@@ -118,6 +119,22 @@ Output ONLY a valid JSON array with this structure:
       "potential_traps": [],
       "layer_justification": "Direct recall of a named algorithm",
       "skill_focus": "recall",
+      "source_section": "Section title"
+    }
+  },
+  {
+    "question_type": "coding",
+    "question": "Write a Python function that returns the factorial of n using recursion.",
+    "options": null,
+    "correct_answer": "def factorial(n):\n    if n <= 1:\n        return 1\n    return n * factorial(n - 1)",
+    "explanation": "The recursive case multiplies n by factorial(n-1), with the base case returning 1 when n <= 1.",
+    "difficulty_layer": 2,
+    "problem_metadata": {
+      "core_concept": "recursion",
+      "bloom_level": "apply",
+      "potential_traps": ["forgetting the base case", "not handling n=0"],
+      "layer_justification": "Requires translating a mathematical definition into working code",
+      "skill_focus": "implementation",
       "source_section": "Section title"
     }
   }

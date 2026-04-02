@@ -49,6 +49,7 @@ export function QuizView({
   const [extracting, setExtracting] = useState(false);
   const [extractStatus, setExtractStatus] = useState<string | null>(null);
   const [selectedOption, setSelectedOption] = useState<string | null>(null);
+  const [codeInput, setCodeInput] = useState<string>("");
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [result, setResult] = useState<AnswerResult | null>(null);
   const [score, setScore] = useState({ correct: 0, total: 0 });
@@ -88,6 +89,7 @@ export function QuizView({
 
   useEffect(() => {
     setResult(null);
+    setCodeInput("");
     questionStartTimeRef.current = Date.now();
     // Show previously-selected option for already-answered questions
     const pid = problems[currentIdx]?.id;
@@ -271,14 +273,38 @@ export function QuizView({
           {problem.question}
         </p>
 
-        <QuizOptions
-          optionKeys={optionKeys}
-          options={problem.options ?? {}}
-          selectedOption={selectedOption}
-          result={result}
-          submitting={submitting}
-          onOptionClick={handleOptionClick}
-        />
+        {problem.question_type === "coding" ? (
+          <div className="space-y-2">
+            <textarea
+              className="w-full rounded-lg border border-border bg-muted/30 font-mono text-sm p-3 min-h-[140px] resize-y focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
+              placeholder={t("quiz.coding.placeholder")}
+              value={codeInput}
+              onChange={(e) => setCodeInput(e.target.value)}
+              disabled={!!result || submitting || !!answeredMap[problem.id]}
+              aria-label={t("quiz.coding.ariaLabel")}
+              spellCheck={false}
+            />
+            {!result && !answeredMap[problem.id] && (
+              <Button
+                type="button"
+                size="sm"
+                disabled={submitting || codeInput.trim().length === 0}
+                onClick={() => void handleOptionClick(codeInput.trim())}
+              >
+                {submitting ? `${t("quiz.coding.submitting")}...` : t("quiz.coding.submit")}
+              </Button>
+            )}
+          </div>
+        ) : (
+          <QuizOptions
+            optionKeys={optionKeys}
+            options={problem.options ?? {}}
+            selectedOption={selectedOption}
+            result={result}
+            submitting={submitting}
+            onOptionClick={handleOptionClick}
+          />
+        )}
 
         {submitError && (
           <p role="alert" className="text-xs text-destructive mt-2">{submitError}</p>

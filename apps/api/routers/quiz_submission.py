@@ -140,7 +140,19 @@ async def submit_answer(
     warnings: list[str] = []
 
     is_correct = False
-    if problem.correct_answer:
+    if problem.question_type == "coding":
+        try:
+            from services.diagnosis.coding_grader import grade_coding_answer
+            grading_result = await grade_coding_answer(
+                question=problem.question,
+                reference_answer=problem.correct_answer or "",
+                user_code=body.user_answer,
+            )
+            is_correct = grading_result.get("is_correct", False)
+        except (ValueError, KeyError, TypeError, OSError):
+            logger.exception("Coding grading failed (best-effort)")
+            warnings.append("coding_grading_failed")
+    elif problem.correct_answer:
         is_correct = body.user_answer.strip().lower() == problem.correct_answer.strip().lower()
 
     pr = PracticeResult(

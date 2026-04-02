@@ -25,6 +25,7 @@ VALID_QUESTION_TYPES = {
     "matching",
     "select_all",
     "free_response",
+    "coding",
 }
 
 VALID_BLOOM_LEVELS = {
@@ -58,6 +59,7 @@ _DEFAULT_BLOOM_BY_TYPE = {
     "matching": "understand",
     "select_all": "analyze",
     "free_response": "apply",
+    "coding": "apply",
 }
 
 _DEFAULT_SKILL_BY_TYPE = {
@@ -68,6 +70,7 @@ _DEFAULT_SKILL_BY_TYPE = {
     "matching": "association",
     "select_all": "discrimination",
     "free_response": "application",
+    "coding": "implementation",
 }
 
 _VALID_BLOOM_BY_DIFFICULTY = {
