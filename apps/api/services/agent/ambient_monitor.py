@@ -54,6 +54,7 @@ Your job is to decide what (if anything) to do based on the student's current le
 - "trigger_goal_pursuit": Start or resume goal pursuit workflow.
 - "generate_report": Generate a daily/weekly learning brief.
 - "trigger_guided_session": Start a proactive guided learning session. Only trigger when the student has been studying recently, there is material to review or deadlines approaching, and no guided session was completed in the last 24 hours. This is a lower-priority action than review or goal pursuit.
+- "propose_content_generation": (Tier 2 — requires user approval) Propose generating new content such as notes or a practice set. Use when the student has studied for a while but has no AI-generated notes or practice questions yet. This creates a pending task the student must approve before anything is generated.
 
 ## Output format
 Respond with a single JSON object:
@@ -62,7 +63,8 @@ Respond with a single JSON object:
   "reason": "<1-2 sentence explanation>",
   "message": "<notification text if action=notify, else empty string>",
   "priority": "<low|normal|high>",
-  "target_course_id": "<course_id or null>"
+  "target_course_id": "<course_id or null>",
+  "content_type": "<'notes' or 'quiz' — only for propose_content_generation, else omit>"
 }
 """
 
@@ -311,5 +313,51 @@ async def execute_ambient_decision(
             max_attempts=1,
         )
         return "guided_session_queued"
+
+    elif action == "propose_content_generation":
+        # Tier 2: insert a pending_approval task — user must approve before execution
+        from services.activity.engine import submit_task
+        from models.agent_task import AgentTask
+
+        course_uuid = _parse_course_uuid(decision.get("target_course_id"))
+        content_type = str(decision.get("content_type") or "notes").strip().lower()
+        if content_type not in ("notes", "quiz"):
+            content_type = "notes"
+
+        task_type = "generate_notes" if content_type == "notes" else "extract_quiz"
+        title = (
+            "Generate AI notes for this course"
+            if content_type == "notes"
+            else "Generate practice questions"
+        )
+
+        # Dedup: skip if an identical pending/running task already exists
+        active = await db.execute(
+            select(AgentTask.id)
+            .where(
+                AgentTask.user_id == user_id,
+                AgentTask.task_type == task_type,
+                AgentTask.status.in_(("queued", "running", "pending_approval")),
+            )
+            .limit(1)
+        )
+        if active.scalar_one_or_none() is not None:
+            return f"{task_type}_already_pending"
+
+        await submit_task(
+            user_id=user_id,
+            course_id=course_uuid,
+            task_type=task_type,
+            title=title,
+            summary=decision.get("reason", f"Agent suggests generating {content_type}"),
+            source="ambient_monitor",
+            input_json={
+                "course_id": str(course_uuid) if course_uuid else None,
+                "trigger": "ambient_monitor_tier2",
+            },
+            requires_approval=True,
+            max_attempts=1,
+        )
+        return f"{task_type}_pending_approval"
 
     return "unknown_action"

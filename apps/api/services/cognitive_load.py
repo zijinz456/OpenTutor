@@ -330,6 +330,13 @@ async def compute_cognitive_load(
     except (_SQLAlchemyError, OSError, RuntimeError, ValueError, AttributeError):
         logger.warning("Failed to resolve intervention outcomes", exc_info=True)
 
+    # ── Phase 1 weight auto-tuning: update sliding window ──
+    try:
+        from services.cognitive_load_tuning import update_and_get_multipliers
+        weight_multipliers = update_and_get_multipliers(str(user_id), signals)
+    except Exception:  # noqa: BLE001
+        weight_multipliers = {}
+
     return {
         "score": round(score, 3),
         "level": level,
@@ -338,6 +345,7 @@ async def compute_cognitive_load(
         "consecutive_high": consecutive,
         "affect": affect if user_message else {},
         "baseline_calibrated": relative.get("calibrated", False),
+        "weight_multipliers": {k: round(v, 3) for k, v in weight_multipliers.items()},
     }
 
 

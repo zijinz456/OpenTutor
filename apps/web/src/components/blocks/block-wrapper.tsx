@@ -1,14 +1,15 @@
 "use client";
 
-import { Suspense } from "react";
+import { Suspense, useMemo } from "react";
 import Link from "next/link";
-import { X, Check, Sparkles, Maximize2, AlertTriangle } from "lucide-react";
+import { X, Check, Sparkles, Maximize2, AlertTriangle, Lock } from "lucide-react";
 import { ErrorBoundary } from "@/components/shared/error-boundary";
 import { BLOCK_REGISTRY } from "@/lib/block-system/registry";
 import type { BlockInstance, BlockType, LearningMode } from "@/lib/block-system/types";
-import { updateUnlockContext } from "@/lib/block-system/feature-unlock";
+import { updateUnlockContext, isBlockUnlocked, getUnlockContext } from "@/lib/block-system/feature-unlock";
 import { logAgentDecision } from "@/lib/api";
 import { useWorkspaceStore } from "@/store/workspace";
+import { useCourseStore } from "@/store/course";
 import { cn } from "@/lib/utils";
 import { useT } from "@/lib/i18n-context";
 import { toast } from "sonner";
@@ -42,10 +43,18 @@ export function BlockWrapper({ block, courseId, aiActionsEnabled }: BlockWrapper
   const dismissAgentBlock = useWorkspaceStore((s) => s.dismissAgentBlock);
   const setLearningMode = useWorkspaceStore((s) => s.setLearningMode);
   const applyBlockTemplate = useWorkspaceStore((s) => s.applyBlockTemplate);
+  const currentMode = useWorkspaceStore((s) => s.spaceLayout.mode);
+  const courses = useCourseStore((s) => s.courses);
 
   const setNotesDrawerOpen = useWorkspaceStore((s) => s.setNotesDrawerOpen);
 
   const engagementRef = useBlockEngagement(block.id, block.type, courseId);
+
+  // Feature unlock check
+  const { unlocked, unlockHint, reason: unlockReason } = useMemo(() => {
+    const ctx = { ...getUnlockContext(courseId, courses.length), mode: currentMode ?? undefined };
+    return isBlockUnlocked(block.type, ctx);
+  }, [block.type, courseId, courses.length, currentMode]);
 
   const entry = BLOCK_REGISTRY[block.type];
   if (!entry) return null;
@@ -231,7 +240,7 @@ export function BlockWrapper({ block, courseId, aiActionsEnabled }: BlockWrapper
       )}
 
       {/* Block content */}
-      <div className="flex-1 min-h-0 overflow-auto">
+      <div className="flex-1 min-h-0 overflow-auto relative">
         <ErrorBoundary
           fallback={
             <div className="flex flex-col items-center justify-center h-32 gap-2 text-center p-4">
@@ -257,6 +266,24 @@ export function BlockWrapper({ block, courseId, aiActionsEnabled }: BlockWrapper
             />
           </Suspense>
         </ErrorBoundary>
+
+        {/* Locked overlay */}
+        {!unlocked && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-background/80 backdrop-blur-sm rounded-b-2xl z-20 group">
+            <div className="flex flex-col items-center gap-2 p-4 text-center">
+              <div className="flex size-10 items-center justify-center rounded-full bg-muted ring-2 ring-border group-hover:ring-brand/30 transition-all">
+                <Lock className="size-5 text-muted-foreground group-hover:text-brand transition-colors" />
+              </div>
+              <p className="text-sm font-medium text-foreground">{entry.label} 已锁定</p>
+              {unlockHint && (
+                <p className="text-xs text-muted-foreground max-w-[200px]">{unlockHint}</p>
+              )}
+              {unlockReason && (
+                <p className="text-[11px] text-muted-foreground/70 max-w-[220px]">{unlockReason}</p>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
