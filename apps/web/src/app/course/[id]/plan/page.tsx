@@ -64,7 +64,7 @@ export default function PlanPage() {
 
   const requestedTab = searchParams.get("tab");
   const defaultTab =
-    requestedTab === "plan" || requestedTab === "calendar" || requestedTab === "tasks"
+    requestedTab === "plan" || requestedTab === "calendar" || requestedTab === "tasks" || requestedTab === "timeline"
       ? requestedTab
       : undefined;
 

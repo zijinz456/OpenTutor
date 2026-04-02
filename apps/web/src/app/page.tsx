@@ -15,6 +15,8 @@ import {
   AgentInsightsSection,
   PendingApprovalsSection,
   ModeRecommendationsSection,
+  WeeklyStatsSection,
+  MasteryOverviewSection,
 } from "./_components/dashboard-sections";
 import { CourseSpacesSection, DashboardEmptyState } from "./_components/dashboard-spaces";
 
@@ -24,7 +26,7 @@ export default function DashboardPage() {
     router, t, tf, courses, loading, error, health,
     reviewSummaries, notifications, pendingTasks, actingTasks,
     modeRecommendations, actingModeCourses, upcomingDeadlines,
-    dailyDigest, knowledgeDensity,
+    dailyDigest, knowledgeDensity, weeklyReport, masteryOverview,
     totalActiveGoals, totalPendingApprovals, totalRunningTasks, totalUrgentReviews,
     actOnTask, applyModeRecommendation, dismissModeRecommendation,
   } = useDashboardData();
@@ -75,6 +77,9 @@ export default function DashboardPage() {
                 t={t}
               />
             )}
+
+            {courses.length > 0 && <WeeklyStatsSection weeklyReport={weeklyReport} />}
+            {courses.length > 1 && <MasteryOverviewSection masteryOverview={masteryOverview} onNavigate={navigate} />}
 
             {courses.length > 0 && (
               <TodayDigestSection

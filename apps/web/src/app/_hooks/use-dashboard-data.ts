@@ -14,8 +14,12 @@ import {
   logAgentDecision,
   markTaskNotificationsRead,
   listNotifications,
+  getLearningOverview,
+  getWeeklyReport,
   type HealthStatus,
   type AppNotification,
+  type LearningOverview,
+  type WeeklyReport,
   listStudyGoals,
   type StudyGoal,
 } from "@/lib/api";
@@ -58,6 +62,8 @@ export function useDashboardData() {
   const [upcomingDeadlines, setUpcomingDeadlines] = useState<Array<StudyGoal & { courseName: string }>>([]);
   const [dailyDigest, setDailyDigest] = useState<AppNotification | null>(null);
   const [knowledgeDensity, setKnowledgeDensity] = useState<KnowledgeDensitySummary | null>(null);
+  const [weeklyReport, setWeeklyReport] = useState<WeeklyReport | null>(null);
+  const [masteryOverview, setMasteryOverview] = useState<LearningOverview | null>(null);
 
   const totalActiveGoals = courses.reduce((sum, c) => sum + (c.active_goal_count ?? 0), 0);
   const totalPendingApprovals = courses.reduce((sum, c) => sum + (c.pending_approval_count ?? 0), 0);
@@ -252,6 +258,13 @@ export function useDashboardData() {
     return () => { cancelled = true; };
   }, [courses, t, tf]);
 
+  // Fetch weekly report and mastery overview
+  useEffect(() => {
+    if (courses.length === 0) return;
+    getWeeklyReport().then(setWeeklyReport).catch(() => undefined);
+    getLearningOverview().then(setMasteryOverview).catch(() => undefined);
+  }, [courses.length]);
+
   // Action handlers
   const actOnTask = async (taskId: string, action: "approve" | "reject") => {
     setActingTasks((prev) => new Set(prev).add(taskId));
@@ -300,7 +313,7 @@ export function useDashboardData() {
     router, t, tf, courses, loading, error, health,
     reviewSummaries, notifications, pendingTasks, actingTasks,
     modeRecommendations, actingModeCourses, upcomingDeadlines,
-    dailyDigest, knowledgeDensity,
+    dailyDigest, knowledgeDensity, weeklyReport, masteryOverview,
     totalActiveGoals, totalPendingApprovals, totalRunningTasks, totalUrgentReviews,
     actOnTask, applyModeRecommendation, dismissModeRecommendation,
   };

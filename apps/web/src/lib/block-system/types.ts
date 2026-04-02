@@ -9,7 +9,8 @@ export type BlockType =
   | "plan"
   | "wrong_answers"
   | "forecast"
-  | "agent_insight";
+  | "agent_insight"
+  | "summary";
 
 export type BlockSize = "small" | "medium" | "large" | "full";
 

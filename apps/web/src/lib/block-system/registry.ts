@@ -106,10 +106,16 @@ export const BLOCK_REGISTRY: Record<BlockType, BlockRegistryEntry> = {
     "full", {},
     () => import("@/components/blocks/blocks/agent-insight-block"),
   ),
+  summary: entry(
+    "summary", "Daily Digest", "学习摘要", "Newspaper",
+    "Today's learning snapshot: mastery, quiz accuracy, review due",
+    "small", {},
+    () => import("@/components/blocks/blocks/summary-block"),
+  ),
 };
 
 /** Block types available for user to add manually (excludes agent_insight) */
 export const USER_ADDABLE_BLOCKS: BlockType[] = [
   "notes", "quiz", "flashcards", "review", "plan",
-  "knowledge_graph", "progress", "wrong_answers", "forecast",
+  "knowledge_graph", "progress", "wrong_answers", "forecast", "summary",
 ];

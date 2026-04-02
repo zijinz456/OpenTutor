@@ -7,8 +7,10 @@ import {
   GitBranch,
   ArrowRight,
   Sun,
+  TrendingUp,
+  BookOpen,
 } from "lucide-react";
-import type { Course, AppNotification, StudyGoal } from "@/lib/api";
+import type { Course, AppNotification, StudyGoal, WeeklyReport, LearningOverview } from "@/lib/api";
 import { ModeBadge } from "@/components/course/mode-selector";
 import { Button } from "@/components/ui/button";
 import { DashSection } from "./dash-section";
@@ -280,6 +282,109 @@ export function PendingApprovalsSection({
           ))}
         </div>
       )}
+    </DashSection>
+  );
+}
+
+export function WeeklyStatsSection({ weeklyReport }: { weeklyReport: WeeklyReport | null }) {
+  if (!weeklyReport) return null;
+  const { this_week, last_week, deltas } = weeklyReport;
+
+  const delta = (val: number, unit: string) => {
+    if (val === 0) return null;
+    const sign = val > 0 ? "+" : "";
+    return (
+      <span className={`text-[10px] font-medium ${val > 0 ? "text-success" : "text-destructive"}`}>
+        {sign}{val}{unit}
+      </span>
+    );
+  };
+
+  return (
+    <DashSection title="本周学习统计" icon={TrendingUp}>
+      <div className="grid grid-cols-3 gap-3">
+        <div className="rounded-xl bg-muted/30 p-3.5 flex flex-col gap-1">
+          <p className="text-[11px] text-muted-foreground">学习时长</p>
+          <p className="text-lg font-bold text-foreground tabular-nums">{this_week.study_minutes}<span className="text-xs font-normal text-muted-foreground ml-0.5">分钟</span></p>
+          {delta(deltas.study_minutes, "min")}
+          <p className="text-[10px] text-muted-foreground">上周 {last_week.study_minutes} 分钟</p>
+        </div>
+        <div className="rounded-xl bg-muted/30 p-3.5 flex flex-col gap-1">
+          <p className="text-[11px] text-muted-foreground">测验准确率</p>
+          <p className="text-lg font-bold text-foreground tabular-nums">{this_week.accuracy}<span className="text-xs font-normal text-muted-foreground ml-0.5">%</span></p>
+          {delta(deltas.accuracy, "%")}
+          <p className="text-[10px] text-muted-foreground">上周 {last_week.accuracy}%</p>
+        </div>
+        <div className="rounded-xl bg-muted/30 p-3.5 flex flex-col gap-1">
+          <p className="text-[11px] text-muted-foreground">活跃天数</p>
+          <p className="text-lg font-bold text-foreground tabular-nums">{this_week.active_days}<span className="text-xs font-normal text-muted-foreground ml-0.5">天</span></p>
+          <p className="text-[10px] text-muted-foreground">上周 {last_week.active_days} 天</p>
+        </div>
+      </div>
+      {weeklyReport.highlights.length > 0 && (
+        <div className="mt-3 space-y-1">
+          {weeklyReport.highlights.map((h, i) => (
+            <p key={i} className="text-xs text-muted-foreground flex items-center gap-1.5">
+              <span className="size-1 rounded-full bg-brand shrink-0" />
+              {h}
+            </p>
+          ))}
+        </div>
+      )}
+    </DashSection>
+  );
+}
+
+export function MasteryOverviewSection({
+  masteryOverview,
+  onNavigate,
+}: {
+  masteryOverview: LearningOverview | null;
+  onNavigate: (path: string) => void;
+}) {
+  if (!masteryOverview || masteryOverview.course_summaries.length === 0) return null;
+
+  return (
+    <DashSection title="跨课程掌握度" icon={BookOpen}>
+      <div className="space-y-3">
+        <div className="grid grid-cols-2 gap-3">
+          <div className="rounded-xl bg-muted/30 p-3.5">
+            <p className="text-[11px] text-muted-foreground">总体平均掌握度</p>
+            <p className="text-xl font-bold text-brand tabular-nums">
+              {Math.round(masteryOverview.average_mastery * 100)}%
+            </p>
+          </div>
+          <div className="rounded-xl bg-muted/30 p-3.5">
+            <p className="text-[11px] text-muted-foreground">累计学习时长</p>
+            <p className="text-xl font-bold text-foreground tabular-nums">
+              {masteryOverview.total_study_minutes}<span className="text-xs font-normal text-muted-foreground ml-0.5">分钟</span>
+            </p>
+          </div>
+        </div>
+        <div className="space-y-2">
+          {masteryOverview.course_summaries.slice(0, 4).map((c) => (
+            <button
+              key={c.course_id}
+              type="button"
+              onClick={() => onNavigate(`/course/${c.course_id}/profile`)}
+              className="w-full flex items-center gap-3 rounded-xl bg-muted/20 p-3 hover:bg-muted/40 transition-colors text-left"
+            >
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-foreground truncate">{c.course_name}</p>
+                <div className="mt-1 h-1.5 rounded-full bg-muted/60 overflow-hidden">
+                  <div
+                    className="h-full bg-brand rounded-full transition-all duration-500"
+                    style={{ width: `${Math.round(c.average_mastery * 100)}%` }}
+                  />
+                </div>
+              </div>
+              <span className="text-sm font-semibold text-brand tabular-nums shrink-0">
+                {Math.round(c.average_mastery * 100)}%
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
     </DashSection>
   );
 }

@@ -15,6 +15,9 @@ const CalendarView = lazy(() =>
 const ActivityView = lazy(() =>
   import("./plan/activity-view").then((m) => ({ default: m.ActivityView })),
 );
+const TimelineView = lazy(() =>
+  import("./plan/timeline-view").then((m) => ({ default: m.TimelineView })),
+);
 
 interface PlanSectionProps {
   courseId: string;
@@ -23,7 +26,7 @@ interface PlanSectionProps {
   defaultTab?: PlanTab;
 }
 
-type PlanTab = "plan" | "calendar" | "tasks";
+type PlanTab = "plan" | "calendar" | "tasks" | "timeline";
 
 export function PlanSection({
   courseId,
@@ -37,6 +40,7 @@ export function PlanSection({
   const tabs: TabDef<PlanTab>[] = [
     { id: "plan", label: t("plan.tabs.plan"), testId: "right-tab-plan" },
     { id: "calendar", label: t("plan.tabs.calendar") },
+    { id: "timeline", label: "时间线" },
     { id: "tasks", label: t("plan.tabs.tasks") },
   ];
   const resolvedDefaultTab: PlanTab =
@@ -59,6 +63,7 @@ export function PlanSection({
             />
           ) : null}
           {activeTab === "calendar" ? <CalendarView courseId={courseId} /> : null}
+          {activeTab === "timeline" ? <TimelineView courseId={courseId} /> : null}
           {activeTab === "tasks" ? <ActivityView courseId={courseId} /> : null}
         </>
       )}

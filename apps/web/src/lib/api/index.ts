@@ -131,10 +131,12 @@ export {
   getVelocity,
   getCompletionForecast,
   getTransferOpportunities,
+  getWeeklyReport,
 } from "./progress";
 
 export type {
   CourseProgress,
+  WeeklyReport,
   MisconceptionItem,
   MisconceptionDashboard,
   LearningOverview,

@@ -64,6 +64,29 @@ export async function getGlobalTrends(days = 30): Promise<LearningTrends> {
   return request(`/progress/trends?days=${days}`);
 }
 
+// ── Weekly Report ──
+
+interface WeekStats {
+  study_minutes: number;
+  active_days: number;
+  quiz_total: number;
+  quiz_correct: number;
+  accuracy: number;
+}
+
+export interface WeeklyReport {
+  period: { start: string; end: string };
+  this_week: WeekStats;
+  last_week: WeekStats;
+  deltas: { study_minutes: number; accuracy: number; quiz_total: number };
+  mastery_avg: number;
+  highlights: string[];
+}
+
+export async function getWeeklyReport(): Promise<WeeklyReport> {
+  return request("/progress/weekly-report");
+}
+
 // ── Memory Stats ──
 
 export interface MemoryStats {
