@@ -3,7 +3,7 @@
 # OpenTutor full dependency set for Docker, CI, and optional integrations.
 
 # Redis / background infra
-redis==5.2.1
+redis==7.4.0
 apscheduler>=3.10.0
 
 # Heavier extraction and browser automation
