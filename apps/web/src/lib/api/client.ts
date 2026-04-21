@@ -7,13 +7,11 @@
 import { toast } from "sonner";
 import { buildAuthHeaders } from "@/lib/auth";
 
-// In the browser, always use relative "/api" so requests go through the
-// Next.js rewrite (same origin, avoids CSP connect-src issues).
-// On the server (SSR), use NEXT_PUBLIC_API_URL to reach the backend directly.
+// LearnDopamine Day 0-2 patch: Next.js 16 proxy leaks internal docker host
+// `api:8000` via FastAPI 307 Location headers. Force direct absolute URL
+// from the browser so requests go straight to the API port mapped on host.
 export const API_BASE =
-  typeof window !== "undefined"
-    ? "/api"
-    : process.env.NEXT_PUBLIC_API_URL || "/api";
+  process.env.NEXT_PUBLIC_API_URL || "/api";
 
 /** Show a toast for API errors (non-chat requests). */
 function showApiErrorToast(err: ApiError): void {
@@ -81,7 +79,7 @@ export async function parseApiError(res: Response): Promise<ApiError> {
 
 const MAX_RETRIES = 4;
 const RETRY_BASE_MS = 1500;
-const REQUEST_TIMEOUT_MS = 30_000;
+const REQUEST_TIMEOUT_MS = 300_000; // LearnDopamine: local qwen3:8b slow; was 30s
 
 function isRetryable(status: number): boolean {
   return status >= 500 || status === 429;

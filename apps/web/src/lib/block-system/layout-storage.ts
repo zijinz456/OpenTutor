@@ -44,6 +44,7 @@ const BLOCK_DEFAULT_SIZES: Record<BlockType, BlockSize> = {
   wrong_answers: "medium",
   forecast: "small",
   agent_insight: "full",
+  summary: "medium",
 };
 
 let fallbackBlockIdCounter = 0;

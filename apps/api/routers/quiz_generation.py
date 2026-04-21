@@ -202,7 +202,9 @@ async def extract_quiz(body: ExtractRequest, user: User = Depends(get_current_us
                 and n.content_category not in INFO_CATEGORIES
             ][:max_nodes]
 
-            sem = asyncio.Semaphore(3)
+            # LearnDopamine patch: local qwen3:8b slower than cloud models.
+            # Serialize (sem=1) to avoid VRAM contention + bump timeout to 180s.
+            sem = asyncio.Semaphore(1)
 
             async def _extract(n):
                 async with sem:
@@ -216,7 +218,7 @@ async def extract_quiz(body: ExtractRequest, user: User = Depends(get_current_us
                                 mode=body.mode,
                                 difficulty=body.difficulty,
                             ),
-                            timeout=60,
+                            timeout=180,
                         )
                     except asyncio.TimeoutError:
                         logger.warning("Quiz extraction timed out for node %s", n.title)

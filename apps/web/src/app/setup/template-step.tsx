@@ -17,6 +17,7 @@ const BLOCK_ICONS: Record<BlockType, typeof BookOpen> = {
   wrong_answers: AlertTriangle,
   forecast: BarChart3,
   agent_insight: Lightbulb,
+  summary: FileText,
 };
 
 const MODE_ICONS: Record<LearningMode, typeof GraduationCap> = {
