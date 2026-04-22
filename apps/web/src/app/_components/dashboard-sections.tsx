@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import {
   Sparkles,
   RotateCcw,
@@ -134,52 +135,102 @@ export function UrgentReviewsSection({
   t: (key: string) => string;
   tf: (key: string, vars?: Record<string, string | number | null | undefined>) => string;
 }) {
+  // Phase 13 T6 — MASTER §8 "loud counters" audit: on dashboards with a
+  // long tail of due courses we show only the first three and hide the
+  // rest behind a "+ N more" toggle. Keeps the per-course stat density
+  // low enough that glancing at the card doesn't trigger avoidance, while
+  // still preserving access for users who actively want the full list.
+  // The aggregate badge keeps the true total so the count stays honest.
+  // NOTE: hook must precede the empty-list early return so React's
+  // hook-call order stays stable across renders.
+  const VISIBLE_LIMIT = 3;
+  const [expanded, setExpanded] = useState(false);
+
   // LearnDopamine UX pass: auto-hide when empty
   if (reviewSummaries.length === 0) return null;
+
+  const hiddenCount = reviewSummaries.length - VISIBLE_LIMIT;
+  const items = expanded
+    ? reviewSummaries
+    : reviewSummaries.slice(0, VISIBLE_LIMIT);
+
   return (
     <DashSection title={t("home.urgentReviews")} icon={RotateCcw} badge={totalUrgentReviews}>
-      {reviewSummaries.length === 0 ? (
-        <p className="text-sm text-muted-foreground">{t("home.urgentReviews.empty")}</p>
-      ) : (
-        <div className="space-y-2">
-          {reviewSummaries.map((rs) => (
-            <button key={rs.courseId} type="button" onClick={() => onNavigate(`/course/${rs.courseId}/review`)} className="w-full flex items-center gap-3 rounded-xl bg-muted/30 p-3.5 text-left hover:bg-muted/50 transition-colors">
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-foreground truncate">{rs.courseName}</p>
-                <p className="text-xs text-muted-foreground">
-                  {rs.overdueCount > 0 && <span className="text-destructive font-medium">{tf("home.reviews.overdue", { count: rs.overdueCount })}</span>}
-                  {rs.overdueCount > 0 && rs.urgentCount > 0 && " · "}
-                  {rs.urgentCount > 0 && <span className="text-warning font-medium">{tf("home.reviews.urgent", { count: rs.urgentCount })}</span>}
-                  {" · "}{tf("home.reviews.total", { count: rs.totalCount })}
-                </p>
-              </div>
-              <ArrowRight className="size-4 text-muted-foreground shrink-0" />
-            </button>
-          ))}
-        </div>
-      )}
+      <div className="space-y-2">
+        {items.map((rs) => (
+          <button key={rs.courseId} type="button" onClick={() => onNavigate(`/course/${rs.courseId}/review`)} className="w-full flex items-center gap-3 rounded-xl bg-muted/30 p-3.5 text-left hover:bg-muted/50 transition-colors">
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-foreground truncate">{rs.courseName}</p>
+              <p className="text-xs text-muted-foreground">
+                {rs.overdueCount > 0 && <span className="text-destructive font-medium">{tf("home.reviews.overdue", { count: rs.overdueCount })}</span>}
+                {rs.overdueCount > 0 && rs.urgentCount > 0 && " · "}
+                {rs.urgentCount > 0 && <span className="text-warning font-medium">{tf("home.reviews.urgent", { count: rs.urgentCount })}</span>}
+                {" · "}{tf("home.reviews.total", { count: rs.totalCount })}
+              </p>
+            </div>
+            <ArrowRight className="size-4 text-muted-foreground shrink-0" />
+          </button>
+        ))}
+        {hiddenCount > 0 && (
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            data-testid="urgent-reviews-toggle"
+            className="w-full min-h-[44px] rounded-xl px-3.5 text-left text-xs font-medium text-brand hover:bg-muted/30 transition-colors"
+          >
+            {expanded
+              ? t("dailySession.clampShowLess")
+              : tf("dailySession.clampMore", { count: hiddenCount })}
+          </button>
+        )}
+      </div>
     </DashSection>
   );
 }
 
 // LearnDopamine: SRS flashcard due-count aggregated across courses.
 // Distinct from UrgentReviewsSection which shows concept-level review.
+// `tf` is part of the prop-shape contract all dashboard sections receive
+// from `page.tsx` but this section's clamp pass doesn't need
+// interpolation. We keep the field in the type so callers don't need to
+// branch, and drop it from destructuring so eslint's `no-unused-vars` is
+// happy. `Omit<_, never>` on the intersection is a no-op at runtime.
 export function FlashcardsDueSection({
   flashcardDueByCourse,
   totalDueFlashcards,
   onNavigate,
   t,
-  tf,
 }: {
   flashcardDueByCourse: Array<{ courseId: string; courseName: string; dueCount: number }>;
   totalDueFlashcards: number;
   onNavigate: (path: string) => void;
   t: (key: string) => string;
-  tf: (key: string, vars?: Record<string, string | number | null | undefined>) => string;
+  tf?: (key: string, vars?: Record<string, string | number | null | undefined>) => string;
 }) {
   if (flashcardDueByCourse.length === 0) return null;
+
+  // Phase 13 T6 — MASTER §8: clamp the badge to "10+" once the true due
+  // count crosses the daily-session ceiling. The per-course rows below
+  // stay unclamped because they carry meaningful routing context, but the
+  // top-of-section number is what triggers the "OMG I'm so behind"
+  // response; capping it removes the panic without lying about the pool.
+  // The explanatory under-line makes the clamp transparent.
+  const DAILY_CAP = 10;
+  const isClamped = totalDueFlashcards > DAILY_CAP;
+  const displayBadge: number | string = isClamped
+    ? `${DAILY_CAP}+`
+    : totalDueFlashcards;
+
   return (
-    <DashSection title="Flashcards due" icon={RotateCcw} badge={totalDueFlashcards}>
+    <DashSection title="Flashcards due" icon={RotateCcw} badge={displayBadge}>
+      {isClamped && (
+        <p
+          className="mb-2 text-[11px] text-muted-foreground"
+          data-testid="flashcards-due-clamp-label"
+        >
+          {t("dailySession.flashcardsBatch")}
+        </p>
+      )}
       <div className="space-y-2">
         {flashcardDueByCourse.map((fc) => (
           <button

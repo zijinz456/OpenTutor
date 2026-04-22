@@ -20,6 +20,7 @@ import {
   MasteryOverviewSection,
 } from "./_components/dashboard-sections";
 import { CourseSpacesSection, DashboardEmptyState } from "./_components/dashboard-spaces";
+import { DailySessionCTA } from "@/components/dashboard/daily-session-cta";
 
 export default function DashboardPage() {
   const { locale } = useLocale();
@@ -98,6 +99,15 @@ export default function DashboardPage() {
                 onNavigate={navigate} t={t}
               />
             )}
+
+            {/*
+              ADHD daily-session entry point (Phase 13). Sits ABOVE
+              UrgentReviews per Juri's Q1 decision — not replacing it, so
+              overdue visibility is preserved for users who want it. When
+              no courses are loaded yet, we skip the CTA along with the
+              rest of the dashboard stack to avoid an orphaned button.
+            */}
+            {courses.length > 0 && <DailySessionCTA />}
 
             {courses.length > 0 && (
               <UrgentReviewsSection

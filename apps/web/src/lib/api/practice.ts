@@ -223,6 +223,43 @@ export async function submitAnswer(problemId: string, answer: string, answerTime
   });
 }
 
+// ── Daily Session (ADHD UX §8, Phase 13) ──
+
+/**
+ * One card in the ADHD daily-session response.
+ *
+ * Mirrors the `DailyPlanCard` Pydantic schema at
+ * `apps/api/schemas/sessions.py`. The field set is a deliberate subset of
+ * `QuizProblem` so the same renderer dispatches on `question_type` — see
+ * the render branches in `app/session/daily/page.tsx`.
+ */
+export interface DailyPlanCard {
+  id: string;
+  question_type: string;
+  question: string;
+  options: Record<string, string> | null;
+  correct_answer: string | null;
+  explanation: string | null;
+  difficulty_layer: number | null;
+  content_node_id: string | null;
+  problem_metadata: Record<string, unknown> | null;
+}
+
+/** Allowed session sizes — MASTER §12 + plan/adhd_ux_phase13.md §Q2. */
+export type DailySessionSize = 1 | 5 | 10;
+
+export interface DailyPlan {
+  cards: DailyPlanCard[];
+  size: number;
+  /** `"nothing_due"` when the pool is empty; `null` otherwise (including
+   *  partial fills). The UI renders the quick-closure line on `nothing_due`. */
+  reason: string | null;
+}
+
+export async function getDailyPlan(size: DailySessionSize): Promise<DailyPlan> {
+  return request(`/sessions/daily-plan?size=${size}`);
+}
+
 // ── Flashcards ──
 
 interface FlashcardFsrsState {

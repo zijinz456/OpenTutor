@@ -32,9 +32,13 @@ export function DashSection({
   title: string;
   icon: typeof Sparkles;
   children: React.ReactNode;
-  badge?: number;
+  // Phase 13 T6: string badges allow clamped labels (e.g. "10+") so
+  // sections can cap "loud counter" display without lying about totals.
+  badge?: number | string;
 }) {
   const [collapsed, setCollapsed] = useState(false);
+  const badgeHasContent =
+    typeof badge === "number" ? badge > 0 : typeof badge === "string" && badge.length > 0;
   return (
     <section className="rounded-2xl bg-card card-shadow overflow-hidden animate-slide-up">
       <button
@@ -46,7 +50,7 @@ export function DashSection({
           <Icon className="size-3.5 text-brand" />
         </div>
         <span className="text-sm font-semibold text-foreground flex-1">{title}</span>
-        {badge != null && badge > 0 && (
+        {badgeHasContent && (
           <span className="text-[11px] font-medium bg-brand-muted text-brand px-2.5 py-0.5 rounded-full tabular-nums">
             {badge}
           </span>

@@ -929,5 +929,17 @@
   "summary.studyTimeHM": "{h}h {m}m",
   "summary.studyTimeM": "{m}m",
   "summary.empty": "No data yet. Keep studying!",
-  "summary.loadFailed": "Could not load digest."
+  "summary.loadFailed": "Could not load digest.",
+  "dailySession.ariaLabel": "Quick daily session",
+  "dailySession.title": "Quick session",
+  "dailySession.nothingDue": "Nothing due — great job.",
+  "dailySession.nothingDueSub": "Come back later.",
+  "dailySession.startFailed": "Could not start session. Please try again.",
+  "dailySession.closureTitle": "Done for today.",
+  "dailySession.closureSub": "Come back when you want.",
+  "dailySession.closureBack": "Back to dashboard",
+  "dailySession.closureOneMore": "Do 1 more?",
+  "dailySession.clampMore": "+ {count} more",
+  "dailySession.clampShowLess": "Show fewer",
+  "dailySession.flashcardsBatch": "Today's batch: up to 10"
 }
