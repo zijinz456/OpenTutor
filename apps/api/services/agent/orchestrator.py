@@ -82,6 +82,91 @@ def _record_stream_warning(ctx: AgentContext, warning: dict[str, str]) -> None:
     warnings.append(warning)
 
 
+# ── §14.5 v2.1 T5 — card-candidate hook ─────────────────────────
+# Minimum response length (chars) required for the orchestrator to
+# consider a turn "teaching-style enough" to spawn a card-extraction
+# task. Intentionally stricter than the ``_TRIVIAL_RESPONSE_MIN_CHARS``
+# (100) floor inside ``card_spawner`` itself — that one is a safety net,
+# this one is the primary intent gate. Refusals and single-sentence
+# clarifications cluster well below 200 chars in practice.
+_CARD_SPAWN_MIN_RESPONSE_CHARS: int = 200
+
+
+def _extract_chunk_ids(content_docs: list[dict]) -> list[uuid.UUID]:
+    """Pull ``UUID`` chunk IDs out of the RAG ``content_docs`` list.
+
+    Each ``doc`` is a ``dict`` written by the search layer (see
+    ``services.search.rag_fusion`` / ``hybrid``). The stable field is
+    ``doc["id"]`` which is a stringified UUID. Anything that isn't a
+    dict with a parseable UUID is silently skipped rather than raising —
+    this function must never block the card-spawn hook.
+    """
+
+    chunk_ids: list[uuid.UUID] = []
+    for doc in content_docs:
+        if not isinstance(doc, dict):
+            continue
+        raw_id = doc.get("id")
+        if not raw_id:
+            continue
+        try:
+            chunk_ids.append(uuid.UUID(str(raw_id)))
+        except (ValueError, TypeError):
+            continue
+    return chunk_ids
+
+
+def _maybe_spawn_card_task(ctx: AgentContext) -> uuid.UUID | None:
+    """Fire ``extract_card_candidates`` in the background if the turn
+    was teaching-style; return the freshly-minted ``message_id`` so the
+    caller can emit a ``pending_cards`` SSE event. Returns ``None`` when
+    the intent/length gate rejects the turn — the caller MUST NOT emit
+    a pending_cards event in that case, otherwise the frontend polls
+    for 10s and gets ``no_candidates``.
+
+    Intent gate: ``IntentType.LEARN`` only. Length gate: response has
+    to be >200 chars (see ``_CARD_SPAWN_MIN_RESPONSE_CHARS``). Both
+    must hold. This exists as a module-level helper so tests can drive
+    it directly without mocking the full ``orchestrate_stream``
+    generator.
+    """
+
+    if not ctx.response:
+        return None
+    if ctx.intent != IntentType.LEARN:
+        return None
+    if len(ctx.response) <= _CARD_SPAWN_MIN_RESPONSE_CHARS:
+        return None
+
+    message_id = uuid.uuid4()
+    chunk_ids = _extract_chunk_ids(ctx.content_docs)
+
+    # Snapshot variables for the background task — ``ctx`` is mutated
+    # by post-processing after the hook returns.
+    response_text = ctx.response
+    course_id = ctx.course_id
+    session_id = ctx.session_id
+
+    async def _spawn_and_cache() -> None:
+        from services.agent import card_cache
+        from services.curriculum.card_spawner import extract_card_candidates
+
+        try:
+            cards = await extract_card_candidates(
+                response_text, chunk_ids, course_id,
+            )
+        except Exception as exc:  # defensive — spawner promises never to raise
+            logger.exception(
+                "card_spawner raised unexpectedly (session=%s msg=%s): %s",
+                session_id, message_id, exc,
+            )
+            cards = []
+        card_cache.put(session_id, message_id, cards)
+
+    track_background_task(asyncio.create_task(_spawn_and_cache()))
+    return message_id
+
+
 async def _apply_turn_enrichment(ctx: AgentContext, db: AsyncSession) -> AgentContext:
     """Apply shared per-turn enrichment for stream/non-stream entry points."""
     fatigue = detect_fatigue(ctx.user_message)
@@ -481,6 +566,18 @@ async def orchestrate_stream(
     ctx.metadata["provenance"] = build_provenance(ctx)
     if ctx.response != streamed_response:
         yield {"event": "replace", "data": json.dumps({"content": ctx.response})}
+
+    # ── §14.5 v2.1 T5 — non-blocking card-candidate spawn ──────────
+    # After the assistant's final content has hit the client (either via
+    # the stream itself or the conditional ``replace`` above), fire
+    # ``extract_card_candidates`` as a background task and tell the
+    # frontend to poll the card-candidates endpoint.
+    message_id = _maybe_spawn_card_task(ctx)
+    if message_id is not None:
+        yield {
+            "event": "pending_cards",
+            "data": json.dumps({"message_id": str(message_id)}),
+        }
 
     # Emit block_update event — always send cognitive state for badge, ops may be empty
     block_decisions = ctx.metadata.get("block_decisions")

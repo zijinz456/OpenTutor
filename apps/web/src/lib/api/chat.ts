@@ -171,7 +171,8 @@ type StreamEvent =
   | { type: "clarify"; clarify: ClarifyOption }
   | { type: "block_update"; operations: BlockUpdateOp[]; cognitiveState: CognitiveState; explanation: string; interventionIds?: Record<string, string> }
   | { type: "done"; sessionId?: string; agent?: string; intent?: string; tokens?: number; metadata?: ChatMessageMetadata }
-  | { type: "warning"; warningType: string; message: string };
+  | { type: "warning"; warningType: string; message: string }
+  | { type: "pending_cards"; messageId: string };
 
 export interface BlockUpdateOp {
   action: "add" | "remove" | "resize" | "reorder" | "update_config";
@@ -379,6 +380,11 @@ export async function* streamChat(
           type: "warning" as const,
           warningType: (data.type ?? "unknown") as string,
           message: (data.message ?? "") as string,
+        };
+      } else if (resolvedEvent === "pending_cards" && data.message_id) {
+        yield {
+          type: "pending_cards",
+          messageId: data.message_id as string,
         };
       } else if (resolvedEvent === "error" && data.error) {
         throw new Error(data.error);

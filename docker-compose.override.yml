@@ -5,3 +5,12 @@ services:
         NEXT_PUBLIC_API_URL: http://localhost:8000/api
     environment:
       NEXT_PUBLIC_API_URL: http://localhost:8000/api
+
+  api:
+    environment:
+      # Upstream docker-compose.yml doesn't forward these cloud-provider keys.
+      # LearnDopamine Day 0-2 pivot: Groq primary, OpenAI fallback.
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_MODEL: ${GROQ_MODEL:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}

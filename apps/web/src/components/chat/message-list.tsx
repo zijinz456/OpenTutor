@@ -5,6 +5,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { MessageBubble } from "@/components/chat/message-bubble";
 import { ClarifyCard } from "@/components/chat/clarify-card";
 import { StreamingIndicator } from "@/components/chat/streaming-indicator";
+import { CardToast } from "@/components/curriculum/card-toast";
 import { useChatStore, type ChatMessage } from "@/store/chat";
 import { useT } from "@/lib/i18n-context";
 import { MessageSquare, AlertCircle, AlertTriangle, RotateCcw } from "lucide-react";
@@ -29,6 +30,15 @@ export function MessageList({ messages }: MessageListProps) {
   const streamPhase = useChatStore((s) => s.streamPhase);
   const slowState = useChatStore((s) => s.slowState);
   const latestWarning = useChatStore((s) => s.latestWarning);
+  const pendingCards = useChatStore((s) => s.pendingCards);
+  const sessionIds = useChatStore((s) => s.sessionIds);
+  const activeSessionId = activeCourseId ? sessionIds[activeCourseId] ?? null : null;
+  const shouldShowCardToast =
+    pendingCards &&
+    activeCourseId &&
+    activeSessionId &&
+    pendingCards.courseId === activeCourseId &&
+    !isStreaming;
 
   const errorLabels: Record<string, string> = {
     rate_limit: t("chat.error.rateLimit"),
@@ -154,6 +164,16 @@ export function MessageList({ messages }: MessageListProps) {
           );
         })}
       </div>
+
+      {/* Flashcard candidate toast — shown below the last assistant message */}
+      {shouldShowCardToast && activeCourseId && activeSessionId && pendingCards ? (
+        <CardToast
+          key={pendingCards.messageId}
+          courseId={activeCourseId}
+          sessionId={activeSessionId}
+          messageId={pendingCards.messageId}
+        />
+      ) : null}
 
       {/* Error banner with retry */}
       {error && !isStreaming && (

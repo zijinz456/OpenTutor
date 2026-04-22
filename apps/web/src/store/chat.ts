@@ -71,6 +71,14 @@ interface ChatState {
   streamPhase: string | null;
   slowState: "analyzing" | "delayed" | null;
   latestWarning: { type: string; message: string } | null;
+  /**
+   * Latest `pending_cards` SSE event — the tutor-turn `message_id` the
+   * client should poll `/card-candidates` with. Single-slot by design:
+   * a new LEARN turn replaces the previous toast; only the current
+   * assistant response shows one. `null` means no toast should render.
+   */
+  pendingCards: { messageId: string; courseId: string } | null;
+  clearPendingCards: () => void;
   abortStream: () => void;
   clearGeneratedQuizDraft: (courseId?: string) => void;
 
@@ -152,6 +160,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   streamPhase: null,
   slowState: null,
   latestWarning: null,
+  pendingCards: null,
+  clearPendingCards: () => set({ pendingCards: null }),
   abortStream: () => {
     const ctrl = get()._abortController;
     if (ctrl) {
@@ -428,6 +438,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         error: null,
         clarifyOptions: null,
         latestWarning: null,
+        pendingCards: null,
         streamPhase: "routing",
         slowState: null,
       };
@@ -538,6 +549,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
           const { toast } = await import("sonner");
           toast.warning(event.message);
           set({ latestWarning: { type: event.warningType, message: event.message } });
+        } else if (event.type === "pending_cards") {
+          // Backend signals that a LEARN turn produced a message worth
+          // polling /card-candidates for. Single-slot: new turn clobbers
+          // previous toast.
+          set({ pendingCards: { messageId: event.messageId, courseId } });
         } else if (event.type === "done") {
           // Detect mock LLM usage from done envelope metadata
           const isMock = (event.metadata as Record<string, unknown> | undefined)?.is_mock === true;

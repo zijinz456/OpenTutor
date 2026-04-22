@@ -8,6 +8,7 @@ import { RuntimeAlert } from "@/components/shared/runtime-alert";
 import { IngestionProgress } from "@/components/shared/ingestion-progress";
 import { ContinueLearningCta } from "@/components/course/continue-learning-cta";
 import { BlockGrid } from "@/components/blocks/block-grid";
+import { RoadmapList } from "@/components/curriculum/roadmap-list";
 import { ChatFab } from "@/components/chat/chat-fab";
 import { ChatDrawer } from "@/components/chat/chat-drawer";
 import { SearchDialog } from "@/components/shared/search-dialog";
@@ -74,6 +75,7 @@ export default function CoursePage() {
           courseId={courseId}
           onIngestionComplete={handleIngestionComplete}
         />
+        <RoadmapList courseId={courseId} />
       </div>
 
       <main className="flex-1 max-w-5xl mx-auto w-full px-5 py-8 space-y-6">

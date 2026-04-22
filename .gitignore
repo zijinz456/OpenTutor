@@ -51,3 +51,9 @@ sessions/
 # Local database
 *.db
 *.sqlite
+
+# LearnDopamine — stray artifacts from container exec
+apps/api/.cache/
+apps/api/.local/
+apps/api/nul
+

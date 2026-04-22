@@ -166,6 +166,52 @@ async def dispatch_content(db: AsyncSession, job: IngestionJob) -> dict:
                 _safe_auto_generate(job.course_id, job.user_id, nodes)
             ))
 
+            # §14.5 v2.1 T2: fire build_syllabus + persist in parallel with
+            # _auto_generate_learning_content (both are detached tasks with
+            # their own DB sessions). Gated on ENABLE_URL_ROADMAP (default on)
+            # and scoped to source_type=="url" — other source types (file
+            # upload) bypass the URL-auto-curriculum feature entirely.
+            from config import settings as _settings
+            if _settings.enable_url_roadmap and job.source_type == "url":
+                async def _safe_build_and_persist_syllabus(course_id):
+                    """Generate + persist a topic roadmap on a fresh session.
+
+                    Never raises into the event loop: any failure is logged
+                    and swallowed — the URL ingest itself has already
+                    succeeded and the roadmap is best-effort.
+                    """
+                    # Same 1-second yield as _safe_auto_generate so the
+                    # caller's commit on the content tree is visible before
+                    # syllabus_builder reads course_content_tree rows.
+                    await _asyncio_dispatch.sleep(1)
+                    try:
+                        from services.curriculum.syllabus_builder import build_syllabus
+                        from services.curriculum.syllabus_persist import persist_syllabus
+
+                        async with async_session_factory() as bg_db:
+                            syllabus = await build_syllabus(bg_db, course_id)
+                            if syllabus is None:
+                                logger.info(
+                                    "syllabus build returned None for course %s; skipping persist",
+                                    course_id,
+                                )
+                                return
+                            await persist_syllabus(bg_db, course_id, syllabus)
+                            await bg_db.commit()
+                    except (
+                        sa.exc.SQLAlchemyError,
+                        ConnectionError,
+                        TimeoutError,
+                        RuntimeError,
+                        ValueError,
+                        OSError,
+                    ):
+                        logger.exception("Background syllabus build/persist failed")
+
+                track_background_task(_asyncio_dispatch.create_task(
+                    _safe_build_and_persist_syllabus(job.course_id)
+                ))
+
     elif category == "assignment":
         # Extract assignment info
         from services.ingestion.content_trimmer import trim_for_llm
@@ -239,7 +285,7 @@ async def dispatch_content(db: AsyncSession, job: IngestionJob) -> dict:
                 result["deadlines_extracted"] = deadline_count
         except (sa.exc.SQLAlchemyError, ValueError, KeyError) as e:
             logger.warning("Deadline extraction failed (non-blocking): %s", e)
-        except (RuntimeError, ConnectionError, TimeoutError) as e:
+        except (RuntimeError, ConnectionError, TimeoutError):
             logger.exception("Deadline extraction unexpected error (non-blocking)")
 
     return result

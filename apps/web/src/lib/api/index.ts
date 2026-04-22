@@ -241,3 +241,15 @@ export type {
   SpaceLayoutResponse,
   DemoCourseResponse,
 } from "./onboarding";
+
+export {
+  getCourseRoadmap,
+  getCardCandidates,
+  saveCardCandidates,
+} from "./curriculum";
+export type {
+  RoadmapEntry,
+  CardCandidate,
+  CardCandidatesResponse,
+  SaveCandidatesResponse,
+} from "./curriculum";

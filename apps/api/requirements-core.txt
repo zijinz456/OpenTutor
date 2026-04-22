@@ -56,3 +56,4 @@ tenacity==9.0.0
 httpx==0.28.1
 python-dotenv==1.0.1
 sse-starlette==2.2.1
+cachetools==5.5.2
