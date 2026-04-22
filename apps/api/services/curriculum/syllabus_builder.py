@@ -152,7 +152,9 @@ def _build_user_prompt(rows: list[CourseContentTree]) -> str:
 
 
 async def _fetch_eligible_rows(
-    db: AsyncSession, course_id: uuid.UUID
+    db: AsyncSession,
+    course_id: uuid.UUID,
+    roadmap_scope: dict | None = None,
 ) -> list[CourseContentTree]:
     """Collect knowledge-category content rows with enough substance to teach.
 
@@ -161,6 +163,11 @@ async def _fetch_eligible_rows(
     - ``content_category NOT IN INFO_CATEGORIES``: drop syllabus / assignment /
       exam-schedule rows — they describe logistics, not concepts.
     - ``len(content) > 100``: drop section headers with no real body.
+
+    When ``roadmap_scope`` carries a ``"week_prefix_filter"`` key, only rows
+    whose ``source_file`` starts with that prefix survive. Used by the
+    Coursera ADHD clamp (Phase 14 T6) to roadmap just the first week when a
+    course ships > 20 lectures.
     """
 
     stmt = (
@@ -175,12 +182,19 @@ async def _fetch_eligible_rows(
     result = await db.execute(stmt)
     all_rows = list(result.scalars().all())
 
+    week_prefix = (roadmap_scope or {}).get("week_prefix_filter")
+
     eligible: list[CourseContentTree] = []
     for row in all_rows:
         if row.content_category in INFO_CATEGORIES:
             continue
         if not row.content or len(row.content) <= _MIN_CONTENT_CHARS:
             continue
+        if week_prefix is not None:
+            # Source file may be None for legacy / non-file sources — those
+            # can't match a week prefix and are excluded when a filter is set.
+            if not row.source_file or not row.source_file.startswith(week_prefix):
+                continue
         eligible.append(row)
     return eligible
 
@@ -229,7 +243,11 @@ def _parse_syllabus(raw: str) -> Syllabus | None:
 # ── Public API ──────────────────────────────────────────────
 
 
-async def build_syllabus(db: AsyncSession, course_id: uuid.UUID) -> Syllabus | None:
+async def build_syllabus(
+    db: AsyncSession,
+    course_id: uuid.UUID,
+    roadmap_scope: dict | None = None,
+) -> Syllabus | None:
     """Generate a topic roadmap for an ingested course.
 
     Collects substantive knowledge rows from ``course_content_tree``, merges
@@ -245,6 +263,11 @@ async def build_syllabus(db: AsyncSession, course_id: uuid.UUID) -> Syllabus | N
         db: Async SQLAlchemy session scoped to the ingesting request.
         course_id: UUID of the course whose content tree should be
             summarised.
+        roadmap_scope: Optional filter dict. When it contains
+            ``"week_prefix_filter"``, only content rows whose
+            ``source_file`` starts with that prefix feed the prompt (Phase
+            14 T6 ADHD clamp). ``None`` = existing behaviour (all eligible
+            rows).
 
     Returns:
         Validated ``Syllabus`` instance, or ``None`` if ingestion has too
@@ -252,7 +275,7 @@ async def build_syllabus(db: AsyncSession, course_id: uuid.UUID) -> Syllabus | N
         payload.
     """
 
-    rows = await _fetch_eligible_rows(db, course_id)
+    rows = await _fetch_eligible_rows(db, course_id, roadmap_scope=roadmap_scope)
     if len(rows) < 2:
         logger.info(
             "syllabus_builder: course %s has %d eligible rows, skipping",

@@ -35,6 +35,7 @@ def _row(
     content: str,
     category: str | None = None,
     level: int = 1,
+    source_file: str | None = None,
 ) -> MagicMock:
     """Build a fake ``CourseContentTree`` row with just the fields the
     builder reads. We use ``MagicMock`` so the ORM attribute accesses work
@@ -46,6 +47,7 @@ def _row(
     row.content_category = category
     row.level = level
     row.order_index = 0
+    row.source_file = source_file
     return row
 
 
@@ -339,3 +341,67 @@ async def test_build_syllabus_strips_markdown_fences(
     syllabus = await build_syllabus(db, uuid.uuid4())
     assert syllabus is not None
     assert len(syllabus.nodes) == 3
+
+
+# ── Phase 14 T6: roadmap_scope.week_prefix_filter honoured ─────────────
+
+
+@pytest.mark.asyncio
+async def test_build_syllabus_respects_week_prefix_filter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only rows whose ``source_file`` starts with the prefix reach the prompt.
+
+    Three-row fixture covers Week-1 (kept × 2) and Week-2 (dropped × 1).
+    The filtered prompt must contain both Week-1 titles and none of the
+    Week-2 content.
+    """
+    rows = [
+        _row("Intro to Agents", "A" * 400, source_file="zipA/Week-1/L1.coursera.md"),
+        _row("Tools & Memory", "B" * 400, source_file="zipA/Week-1/L2.coursera.md"),
+        _row(
+            "Advanced Planning",
+            "C" * 400,
+            source_file="zipA/Week-2/L3.coursera.md",
+        ),
+    ]
+    db = _db_with_rows(rows)
+    payload = json.dumps(_valid_syllabus_payload())
+    prompts = _install_fake_llm(monkeypatch, [payload])
+
+    syllabus = await build_syllabus(
+        db,
+        uuid.uuid4(),
+        roadmap_scope={"week_prefix_filter": "zipA/Week-1/"},
+    )
+
+    assert syllabus is not None
+    assert len(prompts) == 1
+    prompt = prompts[0]
+    assert "Intro to Agents" in prompt
+    assert "Tools & Memory" in prompt
+    assert "Advanced Planning" not in prompt
+
+
+@pytest.mark.asyncio
+async def test_build_syllabus_roadmap_scope_none_keeps_existing_behaviour(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``roadmap_scope=None`` = no filtering (backward compatibility)."""
+    rows = [
+        _row("Intro", "A" * 400, source_file="zipA/Week-1/L1.coursera.md"),
+        _row("Middle", "B" * 400, source_file="zipA/Week-2/L2.coursera.md"),
+        _row("End", "C" * 400, source_file="zipA/Week-3/L3.coursera.md"),
+    ]
+    db = _db_with_rows(rows)
+    payload = json.dumps(_valid_syllabus_payload())
+    prompts = _install_fake_llm(monkeypatch, [payload])
+
+    syllabus = await build_syllabus(db, uuid.uuid4(), roadmap_scope=None)
+
+    assert syllabus is not None
+    prompt = prompts[0]
+    # All three titles survive when the caller opts out of the filter.
+    assert "Intro" in prompt
+    assert "Middle" in prompt
+    assert "End" in prompt

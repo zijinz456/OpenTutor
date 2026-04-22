@@ -22,6 +22,7 @@ import { useUnlockSuggestions, useReviewCheck } from "./_components/use-agent-au
 import { useModeEvaluator, useInitPrompt, useGreeting } from "./_components/use-agent-lifecycle";
 import { TemplatePicker } from "./_components/template-picker";
 import { SyncSettingsPanel } from "@/components/course/sync-settings-panel";
+import { CourseraDropZone } from "@/components/CourseraDropZone";
 
 export default function CoursePage() {
   const params = useParams();
@@ -75,6 +76,7 @@ export default function CoursePage() {
           courseId={courseId}
           onIngestionComplete={handleIngestionComplete}
         />
+        <CourseraDropZone courseId={courseId} />
         <RoadmapList courseId={courseId} />
       </div>
 

@@ -257,3 +257,6 @@ export type {
   CardCandidatesResponse,
   SaveCandidatesResponse,
 } from "./curriculum";
+
+export { uploadCoursera, parseCourseraErrorDetail } from "./coursera";
+export type { CourseraUploadResponse, CourseraErrorBody } from "./coursera";

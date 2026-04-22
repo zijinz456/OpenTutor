@@ -34,6 +34,9 @@ xxhash==3.6.0
 # PDF extraction
 pypdf>=6.0.0
 
+# VTT transcript parsing (Coursera ingest Phase 14)
+webvtt-py==0.5.1
+
 # Content Classification
 thefuzz==0.22.1
 

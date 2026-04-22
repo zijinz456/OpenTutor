@@ -14,8 +14,15 @@ from services.llm.router import get_llm_client
 logger = logging.getLogger(__name__)
 
 # ── Step 0: Filename regex patterns (expanded) ──
-
+#
+# Order matters. ``classify_by_filename`` iterates this dict top-to-bottom and
+# returns on the first match (Python 3.7+ preserves insertion order), so more
+# specific patterns MUST come first. The Coursera adapter (Phase 14) emits
+# synthetic ``*.coursera.md`` filenames for VTT+PDF merges — they are lecture
+# slides with a transcript, not free-form notes, so they are matched before
+# the generic notes-ish catch-alls below.
 FILENAME_PATTERNS = {
+    r"(?i)\.coursera\.md$": "lecture_slides",
     r"(?i)lecture|slides|ppt|lec\d|class.?note|presentation": "lecture_slides",
     r"(?i)chapter|textbook|reading|book|reference|manual|guide": "textbook",
     r"(?i)hw|homework|assignment|problem.?set|ps\d|worksheet|exercise|lab\b|project\b": "assignment",
@@ -27,10 +34,19 @@ FILENAME_PATTERNS = {
 # Content heuristics — patterns matched against extracted text (zero LLM cost)
 CONTENT_HEURISTICS = [
     (r"(?i)(due\s+date|submit\s+by|deadline|turn\s+in|submission)", "assignment"),
-    (r"(?i)(grading\s+policy|office\s+hours|prerequisites|course\s+description|learning\s+objectives)", "syllabus"),
+    (
+        r"(?i)(grading\s+policy|office\s+hours|prerequisites|course\s+description|learning\s+objectives)",
+        "syllabus",
+    ),
     (r"(?i)(slide\s+\d+|next\s+slide|previous\s+slide)", "lecture_slides"),
-    (r"(?i)(exam\s+\d|midterm\s+exam|final\s+exam|quiz\s+\d).*\d{1,2}[/\-]\d{1,2}", "exam_schedule"),
-    (r"(?i)(chapter\s+\d+|section\s+\d+\.\d+|theorem\s+\d+|definition\s+\d+)", "textbook"),
+    (
+        r"(?i)(exam\s+\d|midterm\s+exam|final\s+exam|quiz\s+\d).*\d{1,2}[/\-]\d{1,2}",
+        "exam_schedule",
+    ),
+    (
+        r"(?i)(chapter\s+\d+|section\s+\d+\.\d+|theorem\s+\d+|definition\s+\d+)",
+        "textbook",
+    ),
 ]
 
 
@@ -62,6 +78,7 @@ def classify_by_content_heuristics(content: str) -> str | None:
 
 
 # ── Step 1: MIME detection (3-tier: filetype -> python-magic -> extension) ──
+
 
 def detect_mime_type(filename: str, content_bytes: bytes | None = None) -> str:
     """Step 1: Detect MIME type with 3-tier fallback.
@@ -100,6 +117,7 @@ def detect_mime_type(filename: str, content_bytes: bytes | None = None) -> str:
 
 # ── Step 2: Content extraction ──
 
+
 async def extract_content_with_title(
     file_path: str | None,
     url: str | None,
@@ -111,12 +129,14 @@ async def extract_content_with_title(
 
     try:
         return await unified_extract(
-            file_path=file_path, url=url, session_name=session_name,
+            file_path=file_path,
+            url=url,
+            session_name=session_name,
         )
     except (IOError, OSError) as e:
         logger.warning("Content extraction I/O error: %s", e)
         return "", ""
-    except (ValueError, RuntimeError) as e:
+    except (ValueError, RuntimeError):
         logger.exception("Content extraction failed unexpectedly")
         return "", ""
 
@@ -174,8 +194,13 @@ async def classify_content(content: str) -> str:
         result = result.strip().lower()
 
         valid_categories = {
-            "lecture_slides", "textbook", "assignment",
-            "exam_schedule", "syllabus", "notes", "other",
+            "lecture_slides",
+            "textbook",
+            "assignment",
+            "exam_schedule",
+            "syllabus",
+            "notes",
+            "other",
         }
         if result in valid_categories:
             return result
@@ -187,7 +212,7 @@ async def classify_content(content: str) -> str:
     except (ConnectionError, TimeoutError) as e:
         logger.warning("LLM classification network error: %s", e)
         return "other"
-    except (ValueError, RuntimeError) as e:
+    except (ValueError, RuntimeError):
         logger.exception("LLM classification failed")
         return "other"
 
@@ -214,6 +239,7 @@ async def classify_document(content: str, filename: str) -> tuple[str, str]:
 
 # ── Step 4: Course fuzzy matching ──
 
+
 async def match_course(
     db,  # AsyncSession
     filename: str,
@@ -225,7 +251,6 @@ async def match_course(
     Uses thefuzz for fuzzy string matching against course names.
     Falls back to None if no confident match (user assigns manually).
     """
-    import uuid
 
     from sqlalchemy import select
 

@@ -27,6 +27,7 @@ from routers import (
     sessions,
     tasks,
     upload,
+    upload_coursera,
     usage,
     workflows,
     wrong_answers,
@@ -36,6 +37,7 @@ from routers import (
 CORE_ROUTERS = (
     (health.router, "/api", ["health"]),
     (upload.router, "/api/content", ["content"]),
+    (upload_coursera.router, "/api/content", ["content"]),
     (chat.router, "/api/chat", ["chat"]),
     (courses.router, "/api/courses", ["courses"]),
     (curriculum.router, "/api/courses", ["curriculum"]),
@@ -60,7 +62,9 @@ CORE_ROUTERS = (
 )
 
 
-def _include_router(app: FastAPI, router, prefix: str | None = None, tags: list[str] | None = None) -> None:
+def _include_router(
+    app: FastAPI, router, prefix: str | None = None, tags: list[str] | None = None
+) -> None:
     kwargs = {}
     if prefix is not None:
         kwargs["prefix"] = prefix

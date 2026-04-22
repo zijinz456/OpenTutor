@@ -36,6 +36,7 @@ async def dispatch_content(db: AsyncSession, job: IngestionJob) -> dict:
         # Build content tree using PageIndex pattern
         from services.parser.pdf import _markdown_to_tree
         from models.content import CourseContentTree
+
         source_label = job.original_filename or job.url or "Untitled"
 
         # Dedup: remove existing content tree nodes from the same source
@@ -72,22 +73,29 @@ async def dispatch_content(db: AsyncSession, job: IngestionJob) -> dict:
             )
             # 3. Bulk delete — all FK chains are now clear
             await db.execute(
-                sa_delete(CourseContentTree).where(
-                    CourseContentTree.id.in_(old_ids)
-                )
+                sa_delete(CourseContentTree).where(CourseContentTree.id.in_(old_ids))
             )
             await db.flush()
-            logger.info("Dedup: removed %d existing nodes for source %s", len(old_ids), source_label)
+            logger.info(
+                "Dedup: removed %d existing nodes for source %s",
+                len(old_ids),
+                source_label,
+            )
 
         # PPT files: split per slide for precise search
         is_pptx = source_name.endswith((".pptx", ".ppt"))
         if is_pptx:
             import uuid as _uuid
+
             full_content = job.extracted_markdown.strip()
             slide_separator = "\n\n---\n\n"
-            slide_chunks = [s.strip() for s in full_content.split(slide_separator) if s.strip()]
+            slide_chunks = [
+                s.strip() for s in full_content.split(slide_separator) if s.strip()
+            ]
 
-            root_summary = full_content[:500] + "..." if len(full_content) > 500 else full_content
+            root_summary = (
+                full_content[:500] + "..." if len(full_content) > 500 else full_content
+            )
             root = CourseContentTree(
                 id=_uuid.uuid4(),
                 course_id=job.course_id,
@@ -118,7 +126,9 @@ async def dispatch_content(db: AsyncSession, job: IngestionJob) -> dict:
                     source_type=job.source_type,
                 )
                 nodes.append(child)
-            logger.info("PPT split into %d slide nodes for %s", len(slide_chunks), source_label)
+            logger.info(
+                "PPT split into %d slide nodes for %s", len(slide_chunks), source_label
+            )
         else:
             nodes = _markdown_to_tree(
                 markdown=job.extracted_markdown,
@@ -138,7 +148,9 @@ async def dispatch_content(db: AsyncSession, job: IngestionJob) -> dict:
         # Queue auto-generation of learning content (notes, practice, flashcards)
         # Uses its own DB session to avoid sharing the caller's session across tasks.
         if nodes and job.course_id:
-            from services.ingestion.auto_generation import _auto_generate_learning_content
+            from services.ingestion.auto_generation import (
+                _auto_generate_learning_content,
+            )
             from database import async_session as async_session_factory
             import asyncio as _asyncio_dispatch
 
@@ -149,7 +161,9 @@ async def dispatch_content(db: AsyncSession, job: IngestionJob) -> dict:
                 await _asyncio_dispatch.sleep(1)
                 try:
                     async with async_session_factory() as bg_db:
-                        await _auto_generate_learning_content(bg_db, course_id, user_id, node_data)
+                        await _auto_generate_learning_content(
+                            bg_db, course_id, user_id, node_data
+                        )
                         await bg_db.commit()
                 except (
                     sa.exc.SQLAlchemyError,
@@ -162,17 +176,31 @@ async def dispatch_content(db: AsyncSession, job: IngestionJob) -> dict:
                     logger.exception("Background auto-generation failed")
 
             from services.agent.background_runtime import track_background_task
-            track_background_task(_asyncio_dispatch.create_task(
-                _safe_auto_generate(job.course_id, job.user_id, nodes)
-            ))
+
+            track_background_task(
+                _asyncio_dispatch.create_task(
+                    _safe_auto_generate(job.course_id, job.user_id, nodes)
+                )
+            )
 
             # §14.5 v2.1 T2: fire build_syllabus + persist in parallel with
             # _auto_generate_learning_content (both are detached tasks with
             # their own DB sessions). Gated on ENABLE_URL_ROADMAP (default on)
             # and scoped to source_type=="url" — other source types (file
             # upload) bypass the URL-auto-curriculum feature entirely.
+            #
+            # Phase 14 T5 gate: Coursera imports create N child jobs in one
+            # batch — firing build_syllabus per job means N× redundant LLM
+            # calls + overwrites. The `POST /upload/coursera` router triggers
+            # build_syllabus ONCE after all child jobs are dispatched.
             from config import settings as _settings
-            if _settings.enable_url_roadmap and job.source_type == "url":
+
+            if (
+                _settings.enable_url_roadmap
+                and job.source_type == "url"
+                and job.source_type != "coursera"
+            ):
+
                 async def _safe_build_and_persist_syllabus(course_id):
                     """Generate + persist a topic roadmap on a fresh session.
 
@@ -186,7 +214,9 @@ async def dispatch_content(db: AsyncSession, job: IngestionJob) -> dict:
                     await _asyncio_dispatch.sleep(1)
                     try:
                         from services.curriculum.syllabus_builder import build_syllabus
-                        from services.curriculum.syllabus_persist import persist_syllabus
+                        from services.curriculum.syllabus_persist import (
+                            persist_syllabus,
+                        )
 
                         async with async_session_factory() as bg_db:
                             syllabus = await build_syllabus(bg_db, course_id)
@@ -208,9 +238,11 @@ async def dispatch_content(db: AsyncSession, job: IngestionJob) -> dict:
                     ):
                         logger.exception("Background syllabus build/persist failed")
 
-                track_background_task(_asyncio_dispatch.create_task(
-                    _safe_build_and_persist_syllabus(job.course_id)
-                ))
+                track_background_task(
+                    _asyncio_dispatch.create_task(
+                        _safe_build_and_persist_syllabus(job.course_id)
+                    )
+                )
 
     elif category == "assignment":
         # Extract assignment info
@@ -219,7 +251,9 @@ async def dispatch_content(db: AsyncSession, job: IngestionJob) -> dict:
         assignment = Assignment(
             course_id=job.course_id,
             title=job.original_filename or "Assignment",
-            description=trim_for_llm(job.extracted_markdown, max_tokens=2000) if job.extracted_markdown else None,
+            description=trim_for_llm(job.extracted_markdown, max_tokens=2000)
+            if job.extracted_markdown
+            else None,
             assignment_type="homework",
             source_ingestion_id=job.id,
         )
@@ -232,7 +266,9 @@ async def dispatch_content(db: AsyncSession, job: IngestionJob) -> dict:
         assignment = Assignment(
             course_id=job.course_id,
             title=job.original_filename or "Exam",
-            description=trim_for_llm(job.extracted_markdown, max_tokens=2000) if job.extracted_markdown else None,
+            description=trim_for_llm(job.extracted_markdown, max_tokens=2000)
+            if job.extracted_markdown
+            else None,
             assignment_type="exam",
             source_ingestion_id=job.id,
         )
@@ -255,6 +291,7 @@ async def dispatch_content(db: AsyncSession, job: IngestionJob) -> dict:
                 loom_count = 0
                 try:
                     from models.progress import LearningProgress
+
                     count_result = await db.execute(
                         sa.select(sa.func.count(LearningProgress.id)).where(
                             LearningProgress.course_id == job.course_id
@@ -272,7 +309,10 @@ async def dispatch_content(db: AsyncSession, job: IngestionJob) -> dict:
     # ── Automatic deadline extraction (all categories) ──
     if job.course_id and job.extracted_markdown:
         try:
-            from services.ingestion.deadline_extractor import extract_and_create_deadlines
+            from services.ingestion.deadline_extractor import (
+                extract_and_create_deadlines,
+            )
+
             canvas_assignments = getattr(job, "_canvas_assignments_data", None)
             deadline_count = await extract_and_create_deadlines(
                 db=db,
