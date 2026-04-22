@@ -26,7 +26,7 @@ services:
       # accepts lab_exercise type only when this flag is on. The Juice Shop
       # sibling container below starts regardless — infra stays up, route
       # gate is enforced at the API layer.
-      ENABLE_HACKING_LABS: ${ENABLE_HACKING_LABS:-false}
+      ENABLE_HACKING_LABS: ${ENABLE_HACKING_LABS:-true}
 
   # LearnDopamine Phase 12 T1 — Juice Shop target for hacking labs.
   # Independent of api/web/redis; no depends_on. First-start pull is ~800MB;

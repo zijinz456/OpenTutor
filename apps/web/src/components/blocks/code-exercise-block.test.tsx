@@ -26,15 +26,17 @@ vi.mock("@monaco-editor/react", () => {
     __esModule: true,
     default: ({
       value,
+      defaultValue,
       onChange,
     }: {
       value?: string;
+      defaultValue?: string;
       onChange?: (v: string | undefined) => void;
     }) => (
       <textarea
         data-testid="monaco-editor"
         aria-label="Python code editor"
-        value={value ?? ""}
+        defaultValue={defaultValue ?? value ?? ""}
         onChange={(e) => onChange?.(e.target.value)}
       />
     ),
