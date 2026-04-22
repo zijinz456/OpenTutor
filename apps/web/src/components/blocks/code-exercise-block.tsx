@@ -90,7 +90,14 @@ export function CodeExerciseBlock({
   const { resolvedTheme } = useTheme();
   const monacoTheme = resolvedTheme === "dark" ? "vs-dark" : "light";
 
+  // LearnDopamine fix: Monaco editor is UNCONTROLLED to prevent cursor jumps.
+  // Previous: `value={editorValue}` → every keystroke caused parent re-render →
+  // Monaco reconciled `value` → cursor reset to (1,1). Pattern per
+  // @monaco-editor/react docs: use `defaultValue` + editor ref for
+  // programmatic resets. `editorValue` state still tracks content for
+  // Submit/Run; we just don't feed it BACK into Monaco on every keystroke.
   const [editorValue, setEditorValue] = useState<string>(starterCode);
+  const editorRef = useRef<{ setValue: (v: string) => void } | null>(null);
   const [output, setOutput] = useState<RunOutput | null>(null);
   const [running, setRunning] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -108,6 +115,8 @@ export function CodeExerciseBlock({
   // state to avoid leaking the previous card's feedback.
   useEffect(() => {
     setEditorValue(starterCode);
+    // Programmatic reset — does NOT happen on every keystroke.
+    editorRef.current?.setValue(starterCode);
     setOutput(null);
     setResult(null);
     setSubmitError(null);
@@ -230,8 +239,22 @@ export function CodeExerciseBlock({
         <MonacoEditor
           height={height}
           defaultLanguage="python"
-          value={editorValue}
+          defaultValue={starterCode}
           theme={monacoTheme}
+          onMount={(editor) => {
+            editorRef.current = {
+              setValue: (v: string) => editor.setValue(v),
+            };
+            // Focus editor on mount so user can start typing immediately.
+            editor.focus();
+            // Place cursor at end of starter code.
+            const model = editor.getModel();
+            if (model) {
+              const lastLine = model.getLineCount();
+              const lastCol = model.getLineMaxColumn(lastLine);
+              editor.setPosition({ lineNumber: lastLine, column: lastCol });
+            }
+          }}
           onChange={(v) => {
             setEditorValue(v ?? "");
             // Editing invalidates the prior run's hint; let them run again.
@@ -241,7 +264,7 @@ export function CodeExerciseBlock({
             readOnly: isLocked,
             minimap: { enabled: false },
             scrollBeyondLastLine: false,
-            fontSize: 13,
+            fontSize: 14,
             tabSize: 4,
             automaticLayout: true,
             wordWrap: "on",
