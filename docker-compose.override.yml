@@ -14,3 +14,8 @@ services:
       GROQ_MODEL: ${GROQ_MODEL:-}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      # LearnDopamine UX pass: enable experimental features that UI expects.
+      # Without these the course page fires a request that returns 500 and
+      # showApiErrorToast surfaces the error to the user.
+      ENABLE_EXPERIMENTAL_LECTOR: ${ENABLE_EXPERIMENTAL_LECTOR:-true}
+      ENABLE_EXPERIMENTAL_LOOM: ${ENABLE_EXPERIMENTAL_LOOM:-false}

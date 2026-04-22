@@ -94,6 +94,8 @@ export function UpcomingDeadlinesSection({
   onNavigate: (path: string) => void;
   t: (key: string) => string;
 }) {
+  // LearnDopamine UX pass: auto-hide when empty (avoid "No X" filler)
+  if (upcomingDeadlines.length === 0) return null;
   return (
     <DashSection title={t("home.upcomingDeadlines")} icon={CalendarDays} badge={upcomingDeadlines.length}>
       {upcomingDeadlines.length === 0 ? (
@@ -132,6 +134,8 @@ export function UrgentReviewsSection({
   t: (key: string) => string;
   tf: (key: string, vars?: Record<string, string | number | null | undefined>) => string;
 }) {
+  // LearnDopamine UX pass: auto-hide when empty
+  if (reviewSummaries.length === 0) return null;
   return (
     <DashSection title={t("home.urgentReviews")} icon={RotateCcw} badge={totalUrgentReviews}>
       {reviewSummaries.length === 0 ? (
@@ -175,7 +179,7 @@ export function FlashcardsDueSection({
 }) {
   if (flashcardDueByCourse.length === 0) return null;
   return (
-    <DashSection title={t("home.flashcardsDue") || "Flashcards due"} icon={RotateCcw} badge={totalDueFlashcards}>
+    <DashSection title="Flashcards due" icon={RotateCcw} badge={totalDueFlashcards}>
       <div className="space-y-2">
         {flashcardDueByCourse.map((fc) => (
           <button
@@ -188,7 +192,7 @@ export function FlashcardsDueSection({
               <p className="text-sm font-medium text-foreground truncate">{fc.courseName}</p>
               <p className="text-xs text-muted-foreground">
                 <span className="text-warning font-medium">
-                  {tf("home.flashcards.due", { count: fc.dueCount }) || `${fc.dueCount} card${fc.dueCount === 1 ? "" : "s"} due`}
+                  {`${fc.dueCount} card${fc.dueCount === 1 ? "" : "s"} due`}
                 </span>
               </p>
             </div>
@@ -343,24 +347,24 @@ export function WeeklyStatsSection({ weeklyReport }: { weeklyReport: WeeklyRepor
   };
 
   return (
-    <DashSection title="本周学习统计" icon={TrendingUp}>
+    <DashSection title="This week" icon={TrendingUp}>
       <div className="grid grid-cols-3 gap-3">
         <div className="rounded-xl bg-muted/30 p-3.5 flex flex-col gap-1">
-          <p className="text-[11px] text-muted-foreground">学习时长</p>
-          <p className="text-lg font-bold text-foreground tabular-nums">{this_week.study_minutes}<span className="text-xs font-normal text-muted-foreground ml-0.5">分钟</span></p>
+          <p className="text-[11px] text-muted-foreground">Study time</p>
+          <p className="text-lg font-bold text-foreground tabular-nums">{this_week.study_minutes}<span className="text-xs font-normal text-muted-foreground ml-0.5">min</span></p>
           {delta(deltas.study_minutes, "min")}
-          <p className="text-[10px] text-muted-foreground">上周 {last_week.study_minutes} 分钟</p>
+          <p className="text-[10px] text-muted-foreground">Last week: {last_week.study_minutes} min</p>
         </div>
         <div className="rounded-xl bg-muted/30 p-3.5 flex flex-col gap-1">
-          <p className="text-[11px] text-muted-foreground">测验准确率</p>
+          <p className="text-[11px] text-muted-foreground">Quiz accuracy</p>
           <p className="text-lg font-bold text-foreground tabular-nums">{this_week.accuracy}<span className="text-xs font-normal text-muted-foreground ml-0.5">%</span></p>
           {delta(deltas.accuracy, "%")}
-          <p className="text-[10px] text-muted-foreground">上周 {last_week.accuracy}%</p>
+          <p className="text-[10px] text-muted-foreground">Last week: {last_week.accuracy}%</p>
         </div>
         <div className="rounded-xl bg-muted/30 p-3.5 flex flex-col gap-1">
-          <p className="text-[11px] text-muted-foreground">活跃天数</p>
-          <p className="text-lg font-bold text-foreground tabular-nums">{this_week.active_days}<span className="text-xs font-normal text-muted-foreground ml-0.5">天</span></p>
-          <p className="text-[10px] text-muted-foreground">上周 {last_week.active_days} 天</p>
+          <p className="text-[11px] text-muted-foreground">Active days</p>
+          <p className="text-lg font-bold text-foreground tabular-nums">{this_week.active_days}<span className="text-xs font-normal text-muted-foreground ml-0.5">d</span></p>
+          <p className="text-[10px] text-muted-foreground">Last week: {last_week.active_days} d</p>
         </div>
       </div>
       {weeklyReport.highlights.length > 0 && (
@@ -387,19 +391,19 @@ export function MasteryOverviewSection({
   if (!masteryOverview || masteryOverview.course_summaries.length === 0) return null;
 
   return (
-    <DashSection title="跨课程掌握度" icon={BookOpen}>
+    <DashSection title="Mastery across courses" icon={BookOpen}>
       <div className="space-y-3">
         <div className="grid grid-cols-2 gap-3">
           <div className="rounded-xl bg-muted/30 p-3.5">
-            <p className="text-[11px] text-muted-foreground">总体平均掌握度</p>
+            <p className="text-[11px] text-muted-foreground">Average mastery</p>
             <p className="text-xl font-bold text-brand tabular-nums">
               {Math.round(masteryOverview.average_mastery * 100)}%
             </p>
           </div>
           <div className="rounded-xl bg-muted/30 p-3.5">
-            <p className="text-[11px] text-muted-foreground">累计学习时长</p>
+            <p className="text-[11px] text-muted-foreground">Total study time</p>
             <p className="text-xl font-bold text-foreground tabular-nums">
-              {masteryOverview.total_study_minutes}<span className="text-xs font-normal text-muted-foreground ml-0.5">分钟</span>
+              {masteryOverview.total_study_minutes}<span className="text-xs font-normal text-muted-foreground ml-0.5">min</span>
             </p>
           </div>
         </div>
