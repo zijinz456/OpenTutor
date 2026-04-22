@@ -158,6 +158,48 @@ export function UrgentReviewsSection({
   );
 }
 
+// LearnDopamine: SRS flashcard due-count aggregated across courses.
+// Distinct from UrgentReviewsSection which shows concept-level review.
+export function FlashcardsDueSection({
+  flashcardDueByCourse,
+  totalDueFlashcards,
+  onNavigate,
+  t,
+  tf,
+}: {
+  flashcardDueByCourse: Array<{ courseId: string; courseName: string; dueCount: number }>;
+  totalDueFlashcards: number;
+  onNavigate: (path: string) => void;
+  t: (key: string) => string;
+  tf: (key: string, vars?: Record<string, string | number | null | undefined>) => string;
+}) {
+  if (flashcardDueByCourse.length === 0) return null;
+  return (
+    <DashSection title={t("home.flashcardsDue") || "Flashcards due"} icon={RotateCcw} badge={totalDueFlashcards}>
+      <div className="space-y-2">
+        {flashcardDueByCourse.map((fc) => (
+          <button
+            key={fc.courseId}
+            type="button"
+            onClick={() => onNavigate(`/course/${fc.courseId}/practice`)}
+            className="w-full flex items-center gap-3 rounded-xl bg-muted/30 p-3.5 text-left hover:bg-muted/50 transition-colors"
+          >
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-foreground truncate">{fc.courseName}</p>
+              <p className="text-xs text-muted-foreground">
+                <span className="text-warning font-medium">
+                  {tf("home.flashcards.due", { count: fc.dueCount }) || `${fc.dueCount} card${fc.dueCount === 1 ? "" : "s"} due`}
+                </span>
+              </p>
+            </div>
+            <ArrowRight className="size-4 text-muted-foreground shrink-0" />
+          </button>
+        ))}
+      </div>
+    </DashSection>
+  );
+}
+
 export function KnowledgeDensitySection({
   knowledgeDensity,
   t,

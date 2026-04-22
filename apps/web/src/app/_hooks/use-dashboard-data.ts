@@ -8,6 +8,7 @@ import {
   getCourseProgress,
   getKnowledgeGraph,
   getReviewSession,
+  getDueFlashcards,
   listAgentTasks,
   approveAgentTask,
   rejectAgentTask,
@@ -54,6 +55,11 @@ export function useDashboardData() {
     () => ttlCache.get<HealthStatus>("dash:health") ?? null,
   );
   const [reviewSummaries, setReviewSummaries] = useState<ReviewSummary[]>([]);
+  // LearnDopamine: SRS flashcard due-count aggregated across courses.
+  // Distinct from reviewSummaries (concept-level review sessions).
+  const [flashcardDueByCourse, setFlashcardDueByCourse] = useState<
+    Array<{ courseId: string; courseName: string; dueCount: number }>
+  >([]);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [pendingTasks, setPendingTasks] = useState<PendingTaskSummary[]>([]);
   const [actingTasks, setActingTasks] = useState<Set<string>>(new Set());
@@ -69,6 +75,7 @@ export function useDashboardData() {
   const totalPendingApprovals = courses.reduce((sum, c) => sum + (c.pending_approval_count ?? 0), 0);
   const totalRunningTasks = courses.reduce((sum, c) => sum + (c.pending_task_count ?? 0), 0);
   const totalUrgentReviews = reviewSummaries.reduce((s, r) => s + r.overdueCount + r.urgentCount, 0);
+  const totalDueFlashcards = flashcardDueByCourse.reduce((s, r) => s + r.dueCount, 0);
 
   // Onboarding + single-course redirect (only after initial fetch completes)
   const [fetchTriggered, setFetchTriggered] = useState(false);
@@ -79,9 +86,10 @@ export function useDashboardData() {
     // If courses exist, mark onboarded and skip setup
     if (courses.length > 0) {
       try { window.localStorage.setItem("opentutor_onboarded", "true"); } catch { /* quota */ }
-      if (courses.length === 1) {
-        router.replace(`/course/${courses[0].id}`);
-      }
+      // LearnDopamine: disable single-course auto-redirect — we want the
+      // Daily Study dashboard (TodayDigest, UrgentReviews, etc.) to be the
+      // default landing surface even with one course. Users can still click
+      // through to /course/{id} when they want the per-course view.
       return;
     }
 
@@ -131,6 +139,32 @@ export function useDashboardData() {
       setReviewSummaries(summaries);
     };
     fetchReviews();
+    return () => { cancelled = true; };
+  }, [courses]);
+
+  // LearnDopamine: fetch SRS flashcard due-count per course in parallel.
+  // Distinct from concept-review session above. Cards land here from T6
+  // `/save-candidates` (chat-toast "Save N cards" flow). Uses existing
+  // `/api/flashcards/due/{course_id}` endpoint — no new backend.
+  useEffect(() => {
+    if (courses.length === 0) return;
+    let cancelled = false;
+    const fetchFlashcardDue = async () => {
+      const results = await Promise.allSettled(
+        courses.map(async (course) => {
+          const res = await getDueFlashcards(course.id);
+          return { courseId: course.id, courseName: course.name, dueCount: res?.due_count ?? 0 };
+        }),
+      );
+      if (cancelled) return;
+      const summaries = results
+        .filter((r): r is PromiseFulfilledResult<{ courseId: string; courseName: string; dueCount: number }> => r.status === "fulfilled")
+        .map((r) => r.value)
+        .filter((s) => s.dueCount > 0);
+      summaries.sort((a, b) => b.dueCount - a.dueCount);
+      setFlashcardDueByCourse(summaries);
+    };
+    fetchFlashcardDue();
     return () => { cancelled = true; };
   }, [courses]);
 
@@ -314,6 +348,7 @@ export function useDashboardData() {
     reviewSummaries, notifications, pendingTasks, actingTasks,
     modeRecommendations, actingModeCourses, upcomingDeadlines,
     dailyDigest, knowledgeDensity, weeklyReport, masteryOverview,
+    flashcardDueByCourse, totalDueFlashcards,
     totalActiveGoals, totalPendingApprovals, totalRunningTasks, totalUrgentReviews,
     actOnTask, applyModeRecommendation, dismissModeRecommendation,
   };

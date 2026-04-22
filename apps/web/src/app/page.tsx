@@ -11,6 +11,7 @@ import {
   TodayDigestSection,
   UpcomingDeadlinesSection,
   UrgentReviewsSection,
+  FlashcardsDueSection,
   KnowledgeDensitySection,
   AgentInsightsSection,
   PendingApprovalsSection,
@@ -27,6 +28,7 @@ export default function DashboardPage() {
     reviewSummaries, notifications, pendingTasks, actingTasks,
     modeRecommendations, actingModeCourses, upcomingDeadlines,
     dailyDigest, knowledgeDensity, weeklyReport, masteryOverview,
+    flashcardDueByCourse, totalDueFlashcards,
     totalActiveGoals, totalPendingApprovals, totalRunningTasks, totalUrgentReviews,
     actOnTask, applyModeRecommendation, dismissModeRecommendation,
   } = useDashboardData();
@@ -101,6 +103,14 @@ export default function DashboardPage() {
               <UrgentReviewsSection
                 reviewSummaries={reviewSummaries}
                 totalUrgentReviews={totalUrgentReviews}
+                onNavigate={navigate} t={t} tf={tf}
+              />
+            )}
+
+            {courses.length > 0 && (
+              <FlashcardsDueSection
+                flashcardDueByCourse={flashcardDueByCourse}
+                totalDueFlashcards={totalDueFlashcards}
                 onNavigate={navigate} t={t} tf={tf}
               />
             )}
