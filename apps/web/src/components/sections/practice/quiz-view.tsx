@@ -22,6 +22,11 @@ import {
   type CodeExerciseSubmitPayload,
   type CodeExerciseSubmitResult,
 } from "@/components/blocks/code-exercise-block";
+import {
+  LabExerciseBlock,
+  type LabExerciseSubmitPayload,
+  type LabExerciseSubmitResult,
+} from "@/components/blocks/lab-exercise-block";
 import { QuizOptions } from "./quiz-options";
 import { QuizResult } from "./quiz-result";
 import { useQuizPersistence } from "./use-quiz-persistence";
@@ -43,6 +48,43 @@ function readCodeExerciseMetadata(
     ? rawHints.filter((h): h is string => typeof h === "string")
     : [];
   return { starterCode, hints };
+}
+
+/**
+ * Narrow `problem_metadata` to the fields Hacking Labs (§34.6 Phase 12) cards
+ * populate. Same type-guard discipline as `readCodeExerciseMetadata`:
+ * `verification_rubric` / `expected_artifact_type` are NEVER forwarded — the
+ * grading contract lives server-side (see `services.practice.lab_grader`) and
+ * leaking the rubric would defeat the proof-of-solve workflow.
+ *
+ * `targetUrl` is "" when metadata is missing; the dispatch branch below
+ * documents that state as "skip rendering the block" so the user sees an
+ * empty-state rather than a lab card with no target to attack.
+ */
+function readLabExerciseMetadata(
+  metadata: Record<string, unknown> | null | undefined,
+): {
+  target_url: string;
+  category?: string;
+  difficulty?: "easy" | "medium" | "hard";
+  hints: string[];
+} {
+  if (!metadata)
+    return { target_url: "", hints: [] };
+  const target_url =
+    typeof metadata.target_url === "string" ? metadata.target_url : "";
+  const category =
+    typeof metadata.category === "string" ? metadata.category : undefined;
+  const rawDifficulty = metadata.difficulty;
+  const difficulty: "easy" | "medium" | "hard" | undefined =
+    rawDifficulty === "easy" || rawDifficulty === "medium" || rawDifficulty === "hard"
+      ? rawDifficulty
+      : undefined;
+  const rawHints = metadata.hints;
+  const hints = Array.isArray(rawHints)
+    ? rawHints.filter((h): h is string => typeof h === "string")
+    : [];
+  return { target_url, category, difficulty, hints };
 }
 
 interface QuizViewProps {
@@ -256,6 +298,39 @@ export function QuizView({
     [answeredMap, recordAnswer],
   );
 
+  // Hacking Labs (§34.6 Phase 12 T4) — adapter between <LabExerciseBlock>'s
+  // onSubmit contract and the existing /quiz/submit envelope. Same pattern as
+  // handleCodeExerciseSubmit: stringify the proof payload (payload_used +
+  // flag_or_evidence + optional screenshot_url) as user_answer; the backend's
+  // lab_exercise branch validates via LabExerciseSubmitPayload and grades via
+  // Groq rubric. The AnswerResponse today does NOT surface the grader's
+  // confidence — if/when it does, we thread it through here with no block change.
+  const handleLabExerciseSubmit = useCallback(
+    async (
+      problemId: string,
+      payload: LabExerciseSubmitPayload,
+    ): Promise<LabExerciseSubmitResult> => {
+      // Idempotency: align with MC + code_exercise paths — re-submit after
+      // refresh is a no-op treated as "already solved".
+      if (answeredMap[problemId]) {
+        return { is_correct: true };
+      }
+      const answerTimeMs = Date.now() - questionStartTimeRef.current;
+      const serialized = JSON.stringify(payload);
+      const res = await submitAnswer(problemId, serialized, answerTimeMs);
+      recordAnswer(problemId, serialized, res);
+      return {
+        is_correct: res.is_correct,
+        explanation: res.explanation ?? undefined,
+        // `confidence` is intentionally omitted — AnswerResponse today does
+        // not carry it. Forward-compatible: if the response ever grows a
+        // `confidence` field, uncomment the pass-through and the block's
+        // confidence badge will appear automatically.
+      };
+    },
+    [answeredMap, recordAnswer],
+  );
+
   const advanceToNext = useCallback(() => {
     setCurrentIdx((i) => Math.min(i + 1, problems.length - 1));
   }, [problems.length]);
@@ -348,7 +423,50 @@ export function QuizView({
           {problem.question}
         </p>
 
-        {problem.question_type === "code_exercise" ? (
+        {problem.question_type === "lab_exercise" ? (
+          (() => {
+            // Narrow problem_metadata for the Hacking Labs block. The grading
+            // rubric (verification_rubric / expected_artifact_type) stays
+            // server-side only — we never forward it to the client.
+            //
+            // Fallback behaviour: if `target_url` is missing from metadata
+            // (shouldn't happen for properly-seeded labs, but defend in depth)
+            // we skip rendering the block and show a small notice instead.
+            // Rendering the block with an empty href would produce a broken
+            // "Open Lab" link that navigates to the quiz page itself.
+            const { target_url, category, difficulty, hints } =
+              readLabExerciseMetadata(problem.problem_metadata);
+            if (!target_url) {
+              return (
+                <p
+                  role="alert"
+                  className="text-xs text-destructive"
+                  data-testid="lab-exercise-missing-target"
+                >
+                  Lab target URL missing from problem metadata — please
+                  regenerate this card.
+                </p>
+              );
+            }
+            return (
+              <LabExerciseBlock
+                key={problem.id}
+                problemId={problem.id}
+                questionText={problem.question}
+                targetUrl={target_url}
+                category={category}
+                difficulty={difficulty}
+                hints={hints}
+                onSubmit={(payload) =>
+                  handleLabExerciseSubmit(problem.id, payload)
+                }
+                onAdvance={
+                  currentIdx < problems.length - 1 ? advanceToNext : undefined
+                }
+              />
+            );
+          })()
+        ) : problem.question_type === "code_exercise" ? (
           (() => {
             // Narrow the open-ended `problem_metadata` JSONB to the fields the
             // Code Runner block needs. `expected_output` is intentionally NOT

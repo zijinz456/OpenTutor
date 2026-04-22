@@ -14,11 +14,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config import settings
 from database import async_session, get_db
 from models.course import Course
-from models.practice import CODE_EXERCISE_TYPE, PracticeProblem, PracticeResult
+from models.practice import (
+    CODE_EXERCISE_TYPE,
+    LAB_EXERCISE_TYPE,
+    PracticeProblem,
+    PracticeResult,
+)
 from models.user import User
 from schemas.quiz import (
     AnswerResponse,
     CodeExerciseSubmitPayload,
+    LabExerciseSubmitPayload,
     MasterySnapshotResponse,
     ProblemResponse,
     SubmitAnswerRequest,
@@ -187,6 +193,14 @@ async def submit_answer(
 
     warnings: list[str] = []
 
+    # Per-branch overrides for PracticeResult fields. The lab branch repacks
+    # the user's proof + grader output into user_answer (so retrospectives can
+    # replay both sides) and substitutes the grader's explanation for
+    # ai_explanation (the problem row's static explanation isn't meaningful
+    # for LLM-graded labs).
+    practice_user_answer: str | None = None
+    practice_ai_explanation: str | None = None
+
     is_correct = False
     if problem.question_type == CODE_EXERCISE_TYPE:
         # §34.5 Phase 11 — Pyodide-executed code exercise.
@@ -229,6 +243,50 @@ async def submit_answer(
             is_correct = False
         else:
             is_correct = normalizer(payload.stdout) == normalizer(str(expected_output))
+    elif problem.question_type == LAB_EXERCISE_TYPE:
+        # §34.6 Phase 12 — hacking-lab proof graded by an LLM rubric.
+        # Feature flag gate: explicit 400 when off so seeded lab rows can't
+        # be graded when labs are disabled (same pattern as code_exercise).
+        if not settings.enable_hacking_labs:
+            raise ValidationError(
+                "Hacking labs are disabled. Set ENABLE_HACKING_LABS=true to enable."
+            )
+
+        # Parse & validate the proof payload (Pydantic rejects non-localhost
+        # screenshot URLs here — BEFORE we pay for a Groq call).
+        try:
+            raw = json.loads(body.user_answer) if body.user_answer else {}
+            lab_payload = LabExerciseSubmitPayload.model_validate(raw)
+        except (json.JSONDecodeError, PydanticValidationError) as exc:
+            raise ValidationError(
+                f"Lab exercise payload is not valid JSON matching "
+                f"LabExerciseSubmitPayload: {exc}"
+            ) from exc
+
+        # Grade via Groq rubric. The grader never raises — it falls back to
+        # passed=False / confidence=0.0 / "grader unavailable" on any failure.
+        from services.practice.lab_grader import grade_lab_proof
+        grade_result = await grade_lab_proof(db, problem, lab_payload)
+        is_correct = grade_result.passed
+
+        # Repack payload + grader verdict into a single JSON blob so
+        # retrospectives can replay both the user's proof and the grader's
+        # reasoning. ai_explanation takes the grader's one-liner instead of
+        # the static problem.explanation (which is typically the task prompt
+        # rather than feedback).
+        practice_user_answer = json.dumps(
+            {
+                "payload_used": lab_payload.payload_used,
+                "flag_or_evidence": lab_payload.flag_or_evidence,
+                "screenshot_url": lab_payload.screenshot_url,
+                "grader": {
+                    "passed": grade_result.passed,
+                    "explanation": grade_result.explanation,
+                    "confidence": grade_result.confidence,
+                },
+            }
+        )
+        practice_ai_explanation = grade_result.explanation
     elif problem.question_type == "coding":
         try:
             from services.diagnosis.coding_grader import grade_coding_answer
@@ -247,9 +305,17 @@ async def submit_answer(
     pr = PracticeResult(
         problem_id=problem.id,
         user_id=user.id,
-        user_answer=body.user_answer,
+        user_answer=(
+            practice_user_answer
+            if practice_user_answer is not None
+            else body.user_answer
+        ),
         is_correct=is_correct,
-        ai_explanation=problem.explanation,
+        ai_explanation=(
+            practice_ai_explanation
+            if practice_ai_explanation is not None
+            else problem.explanation
+        ),
         difficulty_layer=problem.difficulty_layer,
         answer_time_ms=body.answer_time_ms,
     )

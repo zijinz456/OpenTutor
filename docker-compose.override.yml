@@ -22,3 +22,22 @@ services:
       # LearnDopamine Phase 11 — Code Runner. Backend submit_answer
       # accepts code_exercise type only when this flag is on.
       ENABLE_CODE_EXERCISES: ${ENABLE_CODE_EXERCISES:-true}
+      # LearnDopamine Phase 12 — Hacking Labs (§34.6). Backend submit_answer
+      # accepts lab_exercise type only when this flag is on. The Juice Shop
+      # sibling container below starts regardless — infra stays up, route
+      # gate is enforced at the API layer.
+      ENABLE_HACKING_LABS: ${ENABLE_HACKING_LABS:-false}
+
+  # LearnDopamine Phase 12 T1 — Juice Shop target for hacking labs.
+  # Independent of api/web/redis; no depends_on. First-start pull is ~800MB;
+  # healthcheck uses 60s start_period because the Node process boots slowly.
+  # Stateless per run — no volumes needed.
+  juiceshop:
+    image: bkimminich/juice-shop
+    restart: unless-stopped
+    ports:
+      - "3100:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/ || exit 1"]
+      interval: 30s
+      start_period: 60s

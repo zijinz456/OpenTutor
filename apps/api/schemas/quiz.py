@@ -1,5 +1,6 @@
 """Pydantic schemas for quiz endpoints."""
 
+import re
 import uuid
 from datetime import datetime
 from typing import Any
@@ -7,6 +8,14 @@ from typing import Any
 from pydantic import BaseModel, Field, field_validator
 
 from services.practice.annotation import normalize_question_options
+
+
+# §34.6 Phase 12 — localhost-only URL guard for lab screenshot evidence.
+# Anchors the end with `(/|$)` so `http://localhost:8080.evil.com` and similar
+# lookalike hostnames are rejected. Port digits are required — bare "localhost"
+# won't match. Any external host is refused at the Pydantic layer so we never
+# incur grader cost on obviously-bad input.
+_LOCALHOST_URL_RE = re.compile(r"^http://localhost:\d+(/|$)")
 
 
 class ExtractRequest(BaseModel):
@@ -21,6 +30,52 @@ class SubmitAnswerRequest(BaseModel):
     problem_id: uuid.UUID
     user_answer: str = Field(..., max_length=20000)
     answer_time_ms: int | None = None  # Time from question display to answer submission
+
+
+class LabExerciseSubmitPayload(BaseModel):
+    """Structured payload for hacking-lab answers (§34.6 Phase 12).
+
+    When ``question_type == "lab_exercise"``, ``SubmitAnswerRequest.user_answer``
+    is expected to be this object serialised as JSON. The router parses it,
+    validates the screenshot URL (if any) is a localhost target, then hands the
+    payload to ``services.practice.lab_grader.grade_lab_proof`` for LLM-rubric
+    grading. The full JSON is persisted back into ``PracticeResult.user_answer``
+    so retrospectives can replay the exact proof the user submitted.
+    """
+
+    payload_used: str = Field(
+        ...,
+        max_length=2000,
+        description="Exact payload/input the user sent to the lab",
+    )
+    flag_or_evidence: str = Field(
+        ...,
+        max_length=2000,
+        description="Flag string or description of observed behaviour",
+    )
+    screenshot_url: str | None = Field(
+        default=None,
+        max_length=500,
+        description="Optional localhost URL to a screenshot of the solve",
+    )
+
+    @field_validator("screenshot_url")
+    @classmethod
+    def _screenshot_must_be_localhost(cls, value: str | None) -> str | None:
+        """Reject anything that isn't a localhost URL.
+
+        Users may only reference assets on their own machine — we never want
+        the grader (or, more importantly, a future automated verifier) to
+        reach out to an attacker-controlled URL. Blank/None is allowed — the
+        field is optional.
+        """
+        if value is None or value == "":
+            return value
+        if not _LOCALHOST_URL_RE.match(value):
+            raise ValueError(
+                "screenshot_url must be a localhost URL (http://localhost:<port>/...)"
+            )
+        return value
 
 
 class CodeExerciseSubmitPayload(BaseModel):

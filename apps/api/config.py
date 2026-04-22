@@ -90,6 +90,12 @@ class Settings(BaseSettings):
     # §34.5 Phase 11 — Pyodide-backed in-browser code exercises. Opt-in.
     # When False (default), submit_answer rejects question_type="code_exercise".
     enable_code_exercises: bool = False
+    # §34.6 Phase 12 — Hacking Labs (Juice Shop sibling container + LLM grader).
+    # When False (default), submit_answer rejects question_type="lab_exercise".
+    # Container in docker-compose.override.yml starts regardless — infra is
+    # independent of route gating, so Juice Shop can be explored ad-hoc even
+    # when the graded lab_exercise submit path is closed.
+    enable_hacking_labs: bool = False
     voice_enabled: bool = False
     # §14.5 v2.1 — URL-auto-curriculum: run build_syllabus + persist_syllabus
     # in parallel with auto-generated learning content for source_type=="url".

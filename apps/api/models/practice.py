@@ -16,6 +16,13 @@ from database import Base
 # (starter_code, expected_output, hints, stdout_normalizer).
 CODE_EXERCISE_TYPE = "code_exercise"
 
+# §34.6 Phase 12 — hacking-lab question_type value.
+# Stored in PracticeProblem.question_type as a plain string (no schema change);
+# problem_metadata JSONB carries lab-specific fields (target_url, lab_type,
+# expected_artifact_type, etc.). User submissions are graded by an LLM rubric
+# (services.practice.lab_grader.grade_lab_proof) rather than exact match.
+LAB_EXERCISE_TYPE = "lab_exercise"
+
 
 class PracticeProblem(Base):
     """Practice problems extracted from course content."""

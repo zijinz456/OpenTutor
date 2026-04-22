@@ -90,6 +90,63 @@ vi.mock("@/components/blocks/code-exercise-block", () => {
   return { CodeExerciseBlock };
 });
 
+// Hacking Labs (§34.6 Phase 12 T4): stub <LabExerciseBlock> — same pattern as
+// the code-exercise stub above. We want to exercise the dispatch branch +
+// adapter envelope WITHOUT rendering the real textareas / banner / validator
+// (those live in lab-exercise-block.test.tsx).
+vi.mock("@/components/blocks/lab-exercise-block", () => {
+  function LabExerciseBlock(props: {
+    problemId: string;
+    questionText: string;
+    targetUrl: string;
+    category?: string;
+    difficulty?: "easy" | "medium" | "hard";
+    hints?: string[];
+    onSubmit: (p: {
+      payload_used: string;
+      flag_or_evidence: string;
+      screenshot_url?: string;
+    }) => Promise<{
+      is_correct: boolean;
+      explanation?: string;
+      confidence?: number;
+    }>;
+    onAdvance?: () => void;
+  }) {
+    return (
+      <div data-testid="lab-exercise-block-stub">
+        <span data-testid="leb-problem-id">{props.problemId}</span>
+        <span data-testid="leb-target-url">{props.targetUrl}</span>
+        <span data-testid="leb-category">{props.category ?? ""}</span>
+        <span data-testid="leb-difficulty">{props.difficulty ?? ""}</span>
+        <span data-testid="leb-question">{props.questionText}</span>
+        <span data-testid="leb-hints">{(props.hints ?? []).join("|")}</span>
+        <button
+          data-testid="leb-trigger-submit"
+          onClick={() =>
+            void props.onSubmit({
+              payload_used: "<script>alert(1)</script>",
+              flag_or_evidence: "Alert fired",
+              screenshot_url: "http://localhost:3100/s.png",
+            })
+          }
+        >
+          trigger-submit
+        </button>
+        {props.onAdvance ? (
+          <button
+            data-testid="leb-trigger-advance"
+            onClick={() => props.onAdvance?.()}
+          >
+            trigger-advance
+          </button>
+        ) : null}
+      </div>
+    );
+  }
+  return { LabExerciseBlock };
+});
+
 vi.mock("@/lib/i18n-context", () => ({
   useT: () => (key: string) => key,
 }));
@@ -401,5 +458,224 @@ describe("QuizView — code_exercise dispatch", () => {
       expect(screen.getByTestId("code-exercise-block-stub")).toBeInTheDocument(),
     );
     expect(screen.queryByTestId("ceb-trigger-advance")).toBeNull();
+  });
+});
+
+// Hacking Labs (§34.6 Phase 12 T4) — `lab_exercise` dispatch branch.
+// Verifies:
+//   1. LabExerciseBlock renders (not MC, not CodeExerciseBlock) when
+//      question_type === "lab_exercise".
+//   2. target_url, category, difficulty, hints flow from problem_metadata.
+//   3. verification_rubric / expected_artifact_type are NOT forwarded.
+//   4. adapter stringifies the proof into /quiz/submit's user_answer envelope.
+//   5. Missing target_url → fall-back renders an error, NOT the block.
+describe("QuizView — lab_exercise dispatch", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  async function renderWithProblems(
+    problems: unknown[],
+    submitResult: {
+      is_correct: boolean;
+      correct_answer: string | null;
+      explanation: string | null;
+    } = {
+      is_correct: true,
+      correct_answer: null,
+      explanation: "Nice proof.",
+    },
+  ) {
+    const api = await import("@/lib/api");
+    vi.mocked(api.listProblems).mockResolvedValue(
+      problems as Awaited<ReturnType<typeof api.listProblems>>,
+    );
+    vi.mocked(api.submitAnswer).mockResolvedValue({
+      ...submitResult,
+      prerequisite_gaps: [],
+    });
+    render(<QuizView courseId="test" />);
+    return api;
+  }
+
+  it("renders <LabExerciseBlock> instead of MC radios for lab_exercise", async () => {
+    await renderWithProblems([
+      {
+        id: "lab1",
+        question: "Find a reflected XSS in search.",
+        question_type: "lab_exercise",
+        options: null,
+        difficulty_layer: 2,
+        problem_metadata: {
+          target_url: "http://localhost:3100/#/search",
+          category: "XSS",
+          difficulty: "medium",
+          hints: ["try ?q=<svg>", "use onerror"],
+          // These must NOT leak to the block (SECURITY)
+          verification_rubric: "payload must contain <script> and flag 'XSS'",
+          expected_artifact_type: "alert_dialog",
+        },
+      },
+    ]);
+    await waitFor(() =>
+      expect(screen.getByTestId("lab-exercise-block-stub")).toBeInTheDocument(),
+    );
+    expect(screen.queryByRole("radiogroup")).toBeNull();
+    expect(screen.queryByTestId("code-exercise-block-stub")).toBeNull();
+    expect(screen.getByTestId("leb-problem-id").textContent).toBe("lab1");
+    expect(screen.getByTestId("leb-target-url").textContent).toBe(
+      "http://localhost:3100/#/search",
+    );
+    expect(screen.getByTestId("leb-category").textContent).toBe("XSS");
+    expect(screen.getByTestId("leb-difficulty").textContent).toBe("medium");
+    expect(screen.getByTestId("leb-question").textContent).toBe(
+      "Find a reflected XSS in search.",
+    );
+    expect(screen.getByTestId("leb-hints").textContent).toBe(
+      "try ?q=<svg>|use onerror",
+    );
+  });
+
+  it("adapter POSTs JSON-stringified proof payload as user_answer", async () => {
+    const api = await renderWithProblems([
+      {
+        id: "lab1",
+        question: "q",
+        question_type: "lab_exercise",
+        options: null,
+        difficulty_layer: 2,
+        problem_metadata: {
+          target_url: "http://localhost:3100/#/search",
+        },
+      },
+    ]);
+    const trigger = await screen.findByTestId("leb-trigger-submit");
+    fireEvent.click(trigger);
+    await Promise.resolve();
+    expect(api.submitAnswer).toHaveBeenCalledWith(
+      "lab1",
+      JSON.stringify({
+        payload_used: "<script>alert(1)</script>",
+        flag_or_evidence: "Alert fired",
+        screenshot_url: "http://localhost:3100/s.png",
+      }),
+      expect.any(Number),
+    );
+  });
+
+  it("falls back with alert when target_url is missing from metadata", async () => {
+    await renderWithProblems([
+      {
+        id: "broken",
+        question: "q",
+        question_type: "lab_exercise",
+        options: null,
+        difficulty_layer: 2,
+        problem_metadata: { category: "XSS" }, // no target_url
+      },
+    ]);
+    // Block must NOT render; a visible error should take its place.
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("lab-exercise-missing-target"),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.queryByTestId("lab-exercise-block-stub")).toBeNull();
+  });
+
+  it("ignores non-literal difficulty values from metadata", async () => {
+    await renderWithProblems([
+      {
+        id: "lab2",
+        question: "q",
+        question_type: "lab_exercise",
+        options: null,
+        difficulty_layer: 2,
+        problem_metadata: {
+          target_url: "http://localhost:3100/#/search",
+          difficulty: "extreme", // not in easy|medium|hard
+        },
+      },
+    ]);
+    await waitFor(() =>
+      expect(screen.getByTestId("lab-exercise-block-stub")).toBeInTheDocument(),
+    );
+    // Unknown difficulty narrows to undefined → stub renders empty string.
+    expect(screen.getByTestId("leb-difficulty").textContent).toBe("");
+  });
+
+  it("filters non-string entries from metadata.hints", async () => {
+    await renderWithProblems([
+      {
+        id: "lab3",
+        question: "q",
+        question_type: "lab_exercise",
+        options: null,
+        difficulty_layer: 2,
+        problem_metadata: {
+          target_url: "http://localhost:3100/#/search",
+          hints: ["good", 42, null, "also good"],
+        },
+      },
+    ]);
+    await waitFor(() =>
+      expect(screen.getByTestId("lab-exercise-block-stub")).toBeInTheDocument(),
+    );
+    expect(screen.getByTestId("leb-hints").textContent).toBe("good|also good");
+  });
+
+  it("onAdvance is wired only when a next problem exists", async () => {
+    await renderWithProblems([
+      {
+        id: "solo",
+        question: "q",
+        question_type: "lab_exercise",
+        options: null,
+        difficulty_layer: 2,
+        problem_metadata: {
+          target_url: "http://localhost:3100/#/search",
+        },
+      },
+    ]);
+    await waitFor(() =>
+      expect(screen.getByTestId("lab-exercise-block-stub")).toBeInTheDocument(),
+    );
+    expect(screen.queryByTestId("leb-trigger-advance")).toBeNull();
+  });
+
+  it("adapter maps AnswerResponse to LabExerciseSubmitResult (no confidence today)", async () => {
+    // Backend does NOT currently surface confidence in AnswerResponse; the
+    // adapter intentionally drops the field. If the backend ever grows one,
+    // flip the pass-through in handleLabExerciseSubmit — the block supports
+    // confidence already (see lab-exercise-block.test.tsx).
+    await renderWithProblems(
+      [
+        {
+          id: "lab-conf",
+          question: "q",
+          question_type: "lab_exercise",
+          options: null,
+          difficulty_layer: 2,
+          problem_metadata: {
+            target_url: "http://localhost:3100/#/search",
+          },
+        },
+      ],
+      {
+        is_correct: true,
+        correct_answer: null,
+        explanation: "Good proof.",
+      },
+    );
+    const trigger = await screen.findByTestId("leb-trigger-submit");
+    fireEvent.click(trigger);
+    await Promise.resolve();
+    // We can't assert on the returned LabExerciseSubmitResult directly
+    // (the stub awaits and discards it). The contract is enforced by the
+    // TypeScript compiler (adapter return type declares confidence?: number).
+    // What we CAN assert: submitAnswer was called exactly once, adapter path
+    // executed. The richer adapter wiring is covered by the unit test above.
+    const api = await import("@/lib/api");
+    expect(api.submitAnswer).toHaveBeenCalledTimes(1);
   });
 });
