@@ -10,6 +10,12 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
 
+# §34.5 Phase 11 — code-exercise question_type value.
+# Stored in PracticeProblem.question_type as a plain string (no schema change);
+# problem_metadata JSONB carries the code-runner-specific fields
+# (starter_code, expected_output, hints, stdout_normalizer).
+CODE_EXERCISE_TYPE = "code_exercise"
+
 
 class PracticeProblem(Base):
     """Practice problems extracted from course content."""

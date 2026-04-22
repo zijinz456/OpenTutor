@@ -13,11 +13,15 @@ const securityHeaders = [
     key: "Content-Security-Policy",
     value: [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-eval' 'unsafe-inline'",
+      // `https://cdn.jsdelivr.net` allows the Pyodide CDN loader script
+      // (src/lib/pyodide-runtime.ts); Code Runner Phase 11 Q4=A.
+      "script-src 'self' 'unsafe-eval' 'unsafe-inline' https://cdn.jsdelivr.net",
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob:",
       "font-src 'self' data:",
-      `connect-src 'self' ${API_URL.replace(/\/api$/, "")}${process.env.NODE_ENV === "development" ? " http://localhost:* ws://localhost:*" : ""}`,
+      // Pyodide fetches its WASM + stdlib tarball from the same CDN origin
+      // via `fetch()` — whitelist it alongside the API origin and dev WS.
+      `connect-src 'self' https://cdn.jsdelivr.net ${API_URL.replace(/\/api$/, "")}${process.env.NODE_ENV === "development" ? " http://localhost:* ws://localhost:*" : ""}`,
       "frame-ancestors 'none'",
     ].join("; "),
   },

@@ -19,3 +19,6 @@ services:
       # showApiErrorToast surfaces the error to the user.
       ENABLE_EXPERIMENTAL_LECTOR: ${ENABLE_EXPERIMENTAL_LECTOR:-true}
       ENABLE_EXPERIMENTAL_LOOM: ${ENABLE_EXPERIMENTAL_LOOM:-false}
+      # LearnDopamine Phase 11 — Code Runner. Backend submit_answer
+      # accepts code_exercise type only when this flag is on.
+      ENABLE_CODE_EXERCISES: ${ENABLE_CODE_EXERCISES:-true}

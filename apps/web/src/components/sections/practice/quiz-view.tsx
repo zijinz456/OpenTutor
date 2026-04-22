@@ -17,9 +17,33 @@ import { toast } from "sonner";
 import { AiFeatureBlocked } from "@/components/shared/ai-feature-blocked";
 import { SkeletonCard } from "@/components/ui/skeleton";
 import { updateUnlockContext, getUnlockContext } from "@/lib/block-system/feature-unlock";
+import {
+  CodeExerciseBlock,
+  type CodeExerciseSubmitPayload,
+  type CodeExerciseSubmitResult,
+} from "@/components/blocks/code-exercise-block";
 import { QuizOptions } from "./quiz-options";
 import { QuizResult } from "./quiz-result";
 import { useQuizPersistence } from "./use-quiz-persistence";
+
+/**
+ * Narrow `problem_metadata` to the fields Code Runner (§34.5 Phase 11) cards
+ * populate. The JSONB payload is open-ended — we read these fields and ignore
+ * the rest. `expected_output` is NEVER surfaced to the browser-side block
+ * (no cheat codes); we only read `starter_code` and optional `hints`.
+ */
+function readCodeExerciseMetadata(
+  metadata: Record<string, unknown> | null | undefined,
+): { starterCode: string; hints: string[] } {
+  if (!metadata) return { starterCode: "", hints: [] };
+  const starterCode =
+    typeof metadata.starter_code === "string" ? metadata.starter_code : "";
+  const rawHints = metadata.hints;
+  const hints = Array.isArray(rawHints)
+    ? rawHints.filter((h): h is string => typeof h === "string")
+    : [];
+  return { starterCode, hints };
+}
 
 interface QuizViewProps {
   courseId: string;
@@ -121,6 +145,65 @@ export function QuizView({
     }
   };
 
+  // Shared side-effects for BOTH paths (MC answer + code_exercise submit).
+  // Keeps score, answered-map, persistence, feature-unlock tracking, and the
+  // wrong_answers block surfacing logic in one place so the code_exercise
+  // dispatch doesn't drift from MC over time.
+  const recordAnswer = useCallback(
+    (problemId: string, rawAnswer: string, res: AnswerResult) => {
+      // Show toast if backend reported warnings (e.g. progress tracking failed)
+      if (res.warnings && res.warnings.length > 0) {
+        toast.warning(t("quiz.progressWarning"));
+      } else if (!res.explanation || (!res.is_correct && !res.correct_answer)) {
+        toast.warning(t("quiz.feedbackWarning"));
+      }
+      const newScore = {
+        correct: score.correct + (res.is_correct ? 1 : 0),
+        total: score.total + 1,
+      };
+      setScore(newScore);
+      const newAnswered = { ...answeredMap, [problemId]: rawAnswer };
+      setAnsweredMap(newAnswered);
+
+      // Persist immediately after answer
+      save({
+        currentIdx,
+        score: newScore,
+        answeredMap: newAnswered,
+        consecutiveWrong: consecutiveWrongRef.current,
+      });
+
+      // Track feature-unlock context
+      const ctx = getUnlockContext(courseId, 0);
+      updateUnlockContext(courseId, {
+        practiceAttempts: ctx.practiceAttempts + 1,
+        hasWrongAnswer: ctx.hasWrongAnswer || !res.is_correct,
+      });
+      // Track consecutive wrong answers to surface wrong_answers block
+      if (!res.is_correct) {
+        consecutiveWrongRef.current += 1;
+        if (consecutiveWrongRef.current >= 3) {
+          const store = useWorkspaceStore.getState();
+          const blocks = store.spaceLayout.blocks;
+          const hasWrongAnswersBlock = blocks.some((b) => b.type === "wrong_answers");
+          if (!hasWrongAnswersBlock) {
+            store.addBlock("wrong_answers", {}, "agent");
+          } else {
+            const wrongFirst = [
+              "wrong_answers",
+              ...blocks.filter((b) => b.type !== "wrong_answers").map((b) => b.type),
+            ];
+            store.reorderBlocks(wrongFirst as BlockType[]);
+          }
+          consecutiveWrongRef.current = 0;
+        }
+      } else {
+        consecutiveWrongRef.current = 0;
+      }
+    },
+    [answeredMap, courseId, currentIdx, save, score.correct, score.total, t],
+  );
+
   const handleOptionClick = async (option: string) => {
     if (result || submitting) return;
 
@@ -136,47 +219,7 @@ export function QuizView({
       const answerTimeMs = Date.now() - questionStartTimeRef.current;
       const res = await submitAnswer(problemId, option, answerTimeMs);
       setResult(res);
-      // Show toast if backend reported warnings (e.g. progress tracking failed)
-      if (res.warnings && res.warnings.length > 0) {
-        toast.warning(t("quiz.progressWarning"));
-      } else if (!res.explanation || (!res.is_correct && !res.correct_answer)) {
-        toast.warning(t("quiz.feedbackWarning"));
-      }
-      const newScore = {
-        correct: score.correct + (res.is_correct ? 1 : 0),
-        total: score.total + 1,
-      };
-      setScore(newScore);
-      const newAnswered = { ...answeredMap, [problemId]: option };
-      setAnsweredMap(newAnswered);
-
-      // Persist immediately after answer
-      save({ currentIdx, score: newScore, answeredMap: newAnswered, consecutiveWrong: consecutiveWrongRef.current });
-
-      // Track feature-unlock context
-      const ctx = getUnlockContext(courseId, 0);
-      updateUnlockContext(courseId, {
-        practiceAttempts: ctx.practiceAttempts + 1,
-        hasWrongAnswer: ctx.hasWrongAnswer || !res.is_correct,
-      });
-      // Track consecutive wrong answers to surface wrong_answers block
-      if (!res.is_correct) {
-        consecutiveWrongRef.current += 1;
-        if (consecutiveWrongRef.current >= 3) {
-          const store = useWorkspaceStore.getState();
-          const blocks = store.spaceLayout.blocks;
-          const hasWrongAnswersBlock = blocks.some(b => b.type === "wrong_answers");
-          if (!hasWrongAnswersBlock) {
-            store.addBlock("wrong_answers", {}, "agent");
-          } else {
-            const wrongFirst = ["wrong_answers", ...blocks.filter(b => b.type !== "wrong_answers").map(b => b.type)];
-            store.reorderBlocks(wrongFirst as BlockType[]);
-          }
-          consecutiveWrongRef.current = 0;
-        }
-      } else {
-        consecutiveWrongRef.current = 0;
-      }
+      recordAnswer(problemId, option, res);
     } catch {
       setSelectedOption(null);
       setSubmitError(t("quiz.submitFailed"));
@@ -184,6 +227,38 @@ export function QuizView({
       setSubmitting(false);
     }
   };
+
+  // Code Runner (§34.5 Phase 11 T4) — adapter between <CodeExerciseBlock>'s
+  // onSubmit contract and the existing /quiz/submit envelope. We stringify
+  // the {code, stdout, stderr, runtime_ms} payload as user_answer; the
+  // backend's code_exercise branch parses it. Errors bubble up so the block
+  // can render its own submit-error state.
+  const handleCodeExerciseSubmit = useCallback(
+    async (
+      problemId: string,
+      payload: CodeExerciseSubmitPayload,
+    ): Promise<CodeExerciseSubmitResult> => {
+      // Idempotency: align with MC path — re-submit after refresh is a no-op.
+      // We signal "already answered" as a benign correct response since the
+      // backend already has the outcome.
+      if (answeredMap[problemId]) {
+        return { is_correct: true };
+      }
+      const answerTimeMs = Date.now() - questionStartTimeRef.current;
+      const serialized = JSON.stringify(payload);
+      const res = await submitAnswer(problemId, serialized, answerTimeMs);
+      recordAnswer(problemId, serialized, res);
+      return {
+        is_correct: res.is_correct,
+        explanation: res.explanation ?? undefined,
+      };
+    },
+    [answeredMap, recordAnswer],
+  );
+
+  const advanceToNext = useCallback(() => {
+    setCurrentIdx((i) => Math.min(i + 1, problems.length - 1));
+  }, [problems.length]);
 
   if (loading) {
     return (
@@ -273,7 +348,34 @@ export function QuizView({
           {problem.question}
         </p>
 
-        {problem.question_type === "coding" ? (
+        {problem.question_type === "code_exercise" ? (
+          (() => {
+            // Narrow the open-ended `problem_metadata` JSONB to the fields the
+            // Code Runner block needs. `expected_output` is intentionally NOT
+            // passed — the block's `expectedOutput` prop reveals the answer
+            // post-grading, and we don't trust the client with that. The
+            // backend's stdout_normalizer is also applied server-side; the
+            // client does no normalization.
+            const { starterCode, hints } = readCodeExerciseMetadata(
+              problem.problem_metadata,
+            );
+            return (
+              <CodeExerciseBlock
+                key={problem.id}
+                problemId={problem.id}
+                starterCode={starterCode}
+                questionText={problem.question}
+                hints={hints}
+                onSubmit={(payload) =>
+                  handleCodeExerciseSubmit(problem.id, payload)
+                }
+                onAdvance={
+                  currentIdx < problems.length - 1 ? advanceToNext : undefined
+                }
+              />
+            );
+          })()
+        ) : problem.question_type === "coding" ? (
           <div className="space-y-2">
             <textarea
               className="w-full rounded-lg border border-border bg-muted/30 font-mono text-sm p-3 min-h-[140px] resize-y focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"

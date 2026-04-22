@@ -8,6 +8,7 @@ vi.mock("@/lib/api", async () => {
     {
       id: "p1",
       question: "What color is the sky?",
+      question_type: "multiple_choice",
       options: { a: "Red", b: "Blue", c: "Green" },
       difficulty_layer: 1,
       problem_metadata: { core_concept: "Atmosphere" },
@@ -15,6 +16,7 @@ vi.mock("@/lib/api", async () => {
     {
       id: "p2",
       question: "2 + 2 = ?",
+      question_type: "multiple_choice",
       options: { a: "3", b: "4", c: "5" },
       difficulty_layer: 1,
       problem_metadata: {},
@@ -30,6 +32,62 @@ vi.mock("@/lib/api", async () => {
       prerequisite_gaps: [],
     }),
   };
+});
+
+// Code Runner (§34.5 Phase 11 T4): stub <CodeExerciseBlock> so dispatch
+// tests don't pull in Monaco/Pyodide (exercised exhaustively in T3 tests).
+// The stub exposes the props we care about asserting + a test-only button
+// that invokes `onSubmit` with a fixed payload, letting us verify the
+// adapter's envelope shape against the real /quiz/submit client.
+vi.mock("@/components/blocks/code-exercise-block", () => {
+  function CodeExerciseBlock(props: {
+    problemId: string;
+    starterCode: string;
+    questionText: string;
+    expectedOutput?: string;
+    hints?: string[];
+    onSubmit: (p: {
+      code: string;
+      stdout: string;
+      stderr: string;
+      runtime_ms: number;
+    }) => Promise<{ is_correct: boolean; explanation?: string }>;
+    onAdvance?: () => void;
+  }) {
+    return (
+      <div data-testid="code-exercise-block-stub">
+        <span data-testid="ceb-problem-id">{props.problemId}</span>
+        <span data-testid="ceb-starter">{props.starterCode}</span>
+        <span data-testid="ceb-question">{props.questionText}</span>
+        <span data-testid="ceb-expected">{props.expectedOutput ?? ""}</span>
+        <span data-testid="ceb-hints">
+          {(props.hints ?? []).join("|")}
+        </span>
+        <button
+          data-testid="ceb-trigger-submit"
+          onClick={() =>
+            void props.onSubmit({
+              code: "print(2)",
+              stdout: "2",
+              stderr: "",
+              runtime_ms: 50,
+            })
+          }
+        >
+          trigger-submit
+        </button>
+        {props.onAdvance ? (
+          <button
+            data-testid="ceb-trigger-advance"
+            onClick={() => props.onAdvance?.()}
+          >
+            trigger-advance
+          </button>
+        ) : null}
+      </div>
+    );
+  }
+  return { CodeExerciseBlock };
 });
 
 vi.mock("@/lib/i18n-context", () => ({
@@ -176,5 +234,172 @@ describe("QuizView", () => {
     render(<QuizView courseId="test" />);
     await waitFor(() => screen.getByText("What color is the sky?"));
     expect(screen.getByText("Atmosphere")).toBeInTheDocument();
+  });
+});
+
+// Code Runner (§34.5 Phase 11 T4) — `code_exercise` dispatch branch.
+// Verifies that:
+//   1. The CodeExerciseBlock replaces MC radios when question_type is
+//      "code_exercise".
+//   2. Starter code + hints are read from `problem_metadata`.
+//   3. `expected_output` from metadata is NOT leaked to the block prop.
+//   4. The onSubmit adapter stringifies the payload into /quiz/submit's
+//      user_answer envelope.
+//   5. Missing `starter_code` falls back to an empty string.
+describe("QuizView — code_exercise dispatch", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  async function renderWithProblems(
+    problems: unknown[],
+    submitResult: {
+      is_correct: boolean;
+      correct_answer: string | null;
+      explanation: string | null;
+    } = {
+      is_correct: true,
+      correct_answer: null,
+      explanation: "Nice — runs.",
+    },
+  ) {
+    const api = await import("@/lib/api");
+    // Use mockResolvedValue (not Once) because QuizView's fetchData effect
+    // may re-fire if dependencies re-identity (e.g. mocked hook returning
+    // fresh closures). We want this problem set to win for the whole test.
+    vi.mocked(api.listProblems).mockResolvedValue(
+      problems as Awaited<ReturnType<typeof api.listProblems>>,
+    );
+    vi.mocked(api.submitAnswer).mockResolvedValue({
+      ...submitResult,
+      prerequisite_gaps: [],
+    });
+    render(<QuizView courseId="test" />);
+    return api;
+  }
+
+  it("renders <CodeExerciseBlock> instead of MC radios for code_exercise", async () => {
+    await renderWithProblems([
+      {
+        id: "ce1",
+        question: "Print the number 2",
+        question_type: "code_exercise",
+        options: null,
+        difficulty_layer: 1,
+        problem_metadata: {
+          starter_code: "# write your code here\n",
+          expected_output: "2",
+          stdout_normalizer: "rstrip",
+          hints: ["use print()", "int literal 2"],
+        },
+      },
+    ]);
+    await waitFor(() =>
+      expect(screen.getByTestId("code-exercise-block-stub")).toBeInTheDocument(),
+    );
+    // MC radios must NOT appear
+    expect(screen.queryByRole("radiogroup")).toBeNull();
+    // Props surfaced correctly
+    expect(screen.getByTestId("ceb-problem-id").textContent).toBe("ce1");
+    expect(screen.getByTestId("ceb-starter").textContent).toBe(
+      "# write your code here\n",
+    );
+    expect(screen.getByTestId("ceb-question").textContent).toBe(
+      "Print the number 2",
+    );
+    expect(screen.getByTestId("ceb-hints").textContent).toBe(
+      "use print()|int literal 2",
+    );
+    // SECURITY: expected_output must NOT be forwarded to the block. The
+    // stub renders the expectedOutput prop verbatim — empty string proves
+    // the parent never passed it.
+    expect(screen.getByTestId("ceb-expected").textContent).toBe("");
+  });
+
+  it("adapter POSTs JSON-stringified payload as user_answer", async () => {
+    const api = await renderWithProblems([
+      {
+        id: "ce1",
+        question: "q",
+        question_type: "code_exercise",
+        options: null,
+        difficulty_layer: 1,
+        problem_metadata: { starter_code: "" },
+      },
+    ]);
+    const trigger = await screen.findByTestId("ceb-trigger-submit");
+    fireEvent.click(trigger);
+    // The stub's onClick fires void props.onSubmit(...) → our
+    // handleCodeExerciseSubmit → submitAnswer(). submitAnswer is a vi.fn
+    // that records the call synchronously; the downstream setScore/
+    // setAnsweredMap run on the next microtask. A single Promise.resolve
+    // flush is enough to see the recorded call.
+    await Promise.resolve();
+    expect(api.submitAnswer).toHaveBeenCalledWith(
+      "ce1",
+      JSON.stringify({
+        code: "print(2)",
+        stdout: "2",
+        stderr: "",
+        runtime_ms: 50,
+      }),
+      expect.any(Number),
+    );
+  });
+
+  it("falls back to empty starter_code when metadata omits it", async () => {
+    await renderWithProblems([
+      {
+        id: "ce2",
+        question: "q",
+        question_type: "code_exercise",
+        options: null,
+        difficulty_layer: 1,
+        problem_metadata: { hints: ["only hints"] }, // no starter_code
+      },
+    ]);
+    await waitFor(() =>
+      expect(screen.getByTestId("code-exercise-block-stub")).toBeInTheDocument(),
+    );
+    expect(screen.getByTestId("ceb-starter").textContent).toBe("");
+    expect(screen.getByTestId("ceb-hints").textContent).toBe("only hints");
+  });
+
+  it("ignores non-string entries in metadata.hints", async () => {
+    await renderWithProblems([
+      {
+        id: "ce3",
+        question: "q",
+        question_type: "code_exercise",
+        options: null,
+        difficulty_layer: 1,
+        problem_metadata: {
+          starter_code: "pass",
+          hints: ["good", 42, null, "also good"], // dirty shape
+        },
+      },
+    ]);
+    await waitFor(() =>
+      expect(screen.getByTestId("code-exercise-block-stub")).toBeInTheDocument(),
+    );
+    // Only string hints survive the narrow
+    expect(screen.getByTestId("ceb-hints").textContent).toBe("good|also good");
+  });
+
+  it("onAdvance is only wired when there IS a next problem", async () => {
+    await renderWithProblems([
+      {
+        id: "only",
+        question: "q",
+        question_type: "code_exercise",
+        options: null,
+        difficulty_layer: 1,
+        problem_metadata: { starter_code: "" },
+      },
+    ]);
+    await waitFor(() =>
+      expect(screen.getByTestId("code-exercise-block-stub")).toBeInTheDocument(),
+    );
+    expect(screen.queryByTestId("ceb-trigger-advance")).toBeNull();
   });
 });

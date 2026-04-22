@@ -1,20 +1,24 @@
 """Quiz submission endpoints: submit answers, list problems, mastery history."""
 
+import json
 import logging
 import uuid
 
 logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query
+from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config import settings
 from database import async_session, get_db
 from models.course import Course
-from models.practice import PracticeProblem, PracticeResult
+from models.practice import CODE_EXERCISE_TYPE, PracticeProblem, PracticeResult
 from models.user import User
 from schemas.quiz import (
     AnswerResponse,
+    CodeExerciseSubmitPayload,
     MasterySnapshotResponse,
     ProblemResponse,
     SubmitAnswerRequest,
@@ -23,7 +27,51 @@ from services.auth.dependency import get_current_user
 from services.course_access import get_course_or_404
 from sqlalchemy.exc import SQLAlchemyError
 
-from libs.exceptions import NotFoundError
+from libs.exceptions import NotFoundError, ValidationError
+
+# §34.5 Phase 11 — stdout normalizers for code-exercise comparison.
+# "rstrip" is the default: strips trailing whitespace/newlines only, matching
+# how `print(x)` typically emits one trailing "\n" the user shouldn't have to
+# reproduce. "strip" is stricter (both ends). "none" is exact-match.
+_STDOUT_NORMALIZERS: dict[str, "callable[[str], str]"] = {
+    "rstrip": lambda s: s.rstrip(),
+    "strip": lambda s: s.strip(),
+    "none": lambda s: s,
+}
+_DEFAULT_STDOUT_NORMALIZER = "rstrip"
+
+# Heuristic traceback detection — any of these substrings in stderr means the
+# user's code raised an unhandled exception (syntax error, runtime error).
+# Per Q5 (2026-04-22 decision): count as wrong; let FSRS schedule a lapse.
+_TRACEBACK_MARKERS = (
+    "Traceback (most recent call last)",
+    "SyntaxError",
+    "IndentationError",
+    "TabError",
+    "NameError",
+    "TypeError",
+    "ValueError",
+    "AttributeError",
+    "KeyError",
+    "IndexError",
+    "ZeroDivisionError",
+    "ImportError",
+    "ModuleNotFoundError",
+    "RecursionError",
+    "OverflowError",
+    "FileNotFoundError",
+)
+
+
+def _looks_like_python_error(stderr: str, stdout: str) -> bool:
+    """Return True if stderr contains a Python traceback/error marker, or if
+    stdout is empty and stderr is non-empty (Pyodide prints uncaught errors
+    to stderr).
+    """
+    if stderr and not stdout:
+        return True
+    return any(marker in (stderr or "") for marker in _TRACEBACK_MARKERS)
+
 
 router = APIRouter()
 
@@ -140,7 +188,48 @@ async def submit_answer(
     warnings: list[str] = []
 
     is_correct = False
-    if problem.question_type == "coding":
+    if problem.question_type == CODE_EXERCISE_TYPE:
+        # §34.5 Phase 11 — Pyodide-executed code exercise.
+        # Feature flag gate: explicit 400 when off so callers don't silently
+        # succeed against code_exercise rows left over from seeded content.
+        if not settings.enable_code_exercises:
+            raise ValidationError(
+                "Code exercises are disabled. Set ENABLE_CODE_EXERCISES=true to enable."
+            )
+
+        metadata = problem.problem_metadata or {}
+        expected_output = metadata.get("expected_output")
+        if expected_output is None:
+            raise ValidationError(
+                "Code exercise problem is missing required 'expected_output' in problem_metadata."
+            )
+
+        # Parse structured payload (code + captured stdout/stderr + runtime).
+        try:
+            raw = json.loads(body.user_answer) if body.user_answer else {}
+            payload = CodeExerciseSubmitPayload.model_validate(raw)
+        except (json.JSONDecodeError, PydanticValidationError) as exc:
+            raise ValidationError(
+                f"Code exercise payload is not valid JSON matching "
+                f"CodeExerciseSubmitPayload: {exc}"
+            ) from exc
+
+        # Pick stdout normalizer (default rstrip — matches typical print() output).
+        normalizer_name = str(metadata.get("stdout_normalizer") or _DEFAULT_STDOUT_NORMALIZER)
+        normalizer = _STDOUT_NORMALIZERS.get(normalizer_name)
+        if normalizer is None:
+            logger.warning(
+                "Unknown stdout_normalizer=%r for problem %s; falling back to %s",
+                normalizer_name, problem.id, _DEFAULT_STDOUT_NORMALIZER,
+            )
+            normalizer = _STDOUT_NORMALIZERS[_DEFAULT_STDOUT_NORMALIZER]
+
+        # Syntax/runtime errors are lapses regardless of stdout match (Q5=A).
+        if _looks_like_python_error(payload.stderr, payload.stdout):
+            is_correct = False
+        else:
+            is_correct = normalizer(payload.stdout) == normalizer(str(expected_output))
+    elif problem.question_type == "coding":
         try:
             from services.diagnosis.coding_grader import grade_coding_answer
             grading_result = await grade_coding_answer(

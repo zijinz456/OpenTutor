@@ -87,6 +87,9 @@ class Settings(BaseSettings):
     enable_experimental_cat: bool = False              # CAT adaptive diagnostic pretest
     enable_experimental_browser: bool = False          # Browser automation (web_search agent tool)
     enable_experimental_vision: bool = False            # Vision/LaTeX OCR service
+    # §34.5 Phase 11 — Pyodide-backed in-browser code exercises. Opt-in.
+    # When False (default), submit_answer rejects question_type="code_exercise".
+    enable_code_exercises: bool = False
     voice_enabled: bool = False
     # §14.5 v2.1 — URL-auto-curriculum: run build_syllabus + persist_syllabus
     # in parallel with auto-generated learning content for source_type=="url".

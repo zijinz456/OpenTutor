@@ -19,8 +19,26 @@ class ExtractRequest(BaseModel):
 
 class SubmitAnswerRequest(BaseModel):
     problem_id: uuid.UUID
-    user_answer: str = Field(..., max_length=5000)
+    user_answer: str = Field(..., max_length=20000)
     answer_time_ms: int | None = None  # Time from question display to answer submission
+
+
+class CodeExerciseSubmitPayload(BaseModel):
+    """Structured payload for code-exercise answers (§34.5 Phase 11).
+
+    When ``question_type == "code_exercise"``, ``SubmitAnswerRequest.user_answer``
+    is expected to be this object serialised as JSON. The router parses it,
+    compares ``stdout`` against the problem's ``expected_output``, and persists
+    the full JSON back into ``PracticeResult.user_answer`` so retrospectives can
+    replay the code the user actually wrote.
+    """
+
+    # Caps are chosen so a worst-case JSON envelope (~12 KB) stays comfortably
+    # under SubmitAnswerRequest.user_answer's 20000-char limit.
+    code: str = Field(..., max_length=5000, description="User's Python source")
+    stdout: str = Field(default="", max_length=3000, description="Captured stdout")
+    stderr: str = Field(default="", max_length=3000, description="Captured stderr")
+    runtime_ms: int = Field(default=0, ge=0, description="Pyodide execution time")
 
 
 class SaveGeneratedRequest(BaseModel):

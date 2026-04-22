@@ -15,7 +15,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError as PydanticValidationError
 
-from models.practice import PracticeProblem
+from models.practice import CODE_EXERCISE_TYPE, PracticeProblem
 
 VALID_QUESTION_TYPES = {
     "mc",
@@ -26,7 +26,47 @@ VALID_QUESTION_TYPES = {
     "select_all",
     "free_response",
     "coding",
+    CODE_EXERCISE_TYPE,
 }
+
+
+# §34.5 Phase 11 — prompt template for generating Python code-exercise cards.
+# Unused in T1 (not wired into services/parser/quiz.py::EXTRACTION_PROMPT yet —
+# that module's mega-prompt + validator requires its own refactor, punted as
+# T1.5 followup). Kept here as the canonical prompt so future wiring lands in
+# one place. Curly braces in the JSON schema are doubled so ``str.format()``
+# leaves them untouched; the only interpolation slot is ``{content}``.
+CODE_EXERCISE_PROMPT = """You are a Python exercise author for a spaced-repetition tutor.
+
+Given a snippet of course content about Python, author ONE small hands-on
+code exercise the learner will solve in an in-browser editor (Pyodide).
+
+Output ONLY a single JSON object with this exact shape, no prose, no fences:
+
+{{
+  "question": "Short prompt describing what the learner should do (<=300 chars).",
+  "starter_code": "Python source the editor loads by default. Must run cleanly on Pyodide. Include any input setup and a placeholder where the learner writes their code.",
+  "expected_output": "Exact string the learner's code must print to stdout to be marked correct.",
+  "hints": ["Short hint 1", "Short hint 2"],
+  "stdout_normalizer": "rstrip"
+}}
+
+Rules:
+- Exercise must be solvable in <=20 lines of Python using ONLY the standard
+  library (no pip, no micropip installs at runtime).
+- `expected_output` is the literal stdout the correct solution prints. If the
+  solution uses `print(x)`, include the single trailing newline only if the
+  normalizer is "none"; otherwise omit it (rstrip default handles this).
+- `stdout_normalizer` is one of "rstrip" | "strip" | "none". Prefer "rstrip".
+- Provide 1-3 hints, ordered from gentlest to most direct.
+- Do NOT include test_cases, stdin, or multi-file setup in this v1 schema.
+- The JSON must parse with Python's json.loads. Do not use trailing commas.
+
+Content to base the exercise on:
+---
+{content}
+---
+"""
 
 VALID_BLOOM_LEVELS = {
     "remember",
