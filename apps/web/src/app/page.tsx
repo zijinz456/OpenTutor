@@ -22,6 +22,7 @@ import {
 import { CourseSpacesSection, DashboardEmptyState } from "./_components/dashboard-spaces";
 import { DailySessionCTA } from "@/components/dashboard/daily-session-cta";
 import { BrutalDrillCTA } from "@/components/dashboard/brutal-drill-cta";
+import { LearningPathsPill } from "@/components/dashboard/LearningPathsPill";
 import { PanicToggle } from "@/components/panic/PanicToggle";
 
 export default function DashboardPage() {
@@ -135,6 +136,11 @@ export default function DashboardPage() {
               alert the way red would.
             */}
             {courses.length > 0 && <BrutalDrillCTA />}
+
+            {/* Phase 16a T4 — Python learning paths entry. Honours
+                `data-panic-hide` internally so the pill hides with the
+                rest of the dashboard when Panic Mode is on. */}
+            {courses.length > 0 && <LearningPathsPill />}
 
             {courses.length > 0 && (
               <div data-panic-hide>

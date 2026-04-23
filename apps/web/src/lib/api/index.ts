@@ -295,3 +295,15 @@ export type {
   InterviewStreamEvent,
   SaveGapsResponse,
 } from "./interview";
+
+export { listPaths, getPathDetail, getRoomDetail, listOrphans } from "./paths";
+export type {
+  PathDifficulty,
+  PathSummary,
+  PathListResponse,
+  RoomSummary,
+  PathDetailResponse,
+  RoomTask,
+  RoomDetailResponse,
+  OrphanListResponse,
+} from "./paths";
