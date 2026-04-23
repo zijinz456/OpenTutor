@@ -132,9 +132,7 @@ user is cramming over the weeks leading up to an interview. Fourteen
 days is the phase-6 contract (§F1 of the plan)."""
 
 
-_CODE_LIKE_QUESTION_TYPES: frozenset[str] = frozenset(
-    {"code_exercise", "lab_exercise"}
-)
+_CODE_LIKE_QUESTION_TYPES: frozenset[str] = frozenset({"code_exercise", "lab_exercise"})
 """Question types the brutal strategy filters out. Code and lab rows
 need their own runner UI — the brutal drill is MC-only by design so the
 countdown clock makes sense and results stay comparable across cards.

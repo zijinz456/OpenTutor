@@ -55,7 +55,7 @@ router = APIRouter()
         "rotation applied inside each tier. Used by the dashboard "
         "daily-session CTA. Any `size` other than 1, 5, or 10 is "
         "rejected with HTTP 422. When the pool is empty the response is "
-        "`{cards: [], size: 0, reason: \"nothing_due\"}` so the UI can "
+        '`{cards: [], size: 0, reason: "nothing_due"}` so the UI can '
         "render the quick-closure screen without a special case."
     ),
 )
@@ -70,7 +70,10 @@ async def get_daily_plan(
     # Validate after Query coercion so query-string '5' → int 5 works.
     if size not in (1, 5, 10):
         from fastapi import HTTPException
-        raise HTTPException(status_code=422, detail=f"size must be 1, 5, or 10 (got {size})")
+
+        raise HTTPException(
+            status_code=422, detail=f"size must be 1, 5, or 10 (got {size})"
+        )
     _: DailySessionSize = size  # type-check only
     """Return the configured user's next daily-session batch.
 
@@ -96,7 +99,7 @@ async def get_daily_plan(
         "→ due today → never-seen with `concept_slug`. Used by the "
         "Brutal Drill dashboard entry (Phase 6). Any `size` other than "
         "20, 30, or 50 is rejected with HTTP 422. The response includes "
-        "`warning=\"pool_small\"` when the pool was non-empty but smaller "
+        '`warning="pool_small"` when the pool was non-empty but smaller '
         "than the requested size — the frontend uses that to raise a "
         "toast instead of silently shrinking the deck."
     ),

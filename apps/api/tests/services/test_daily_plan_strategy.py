@@ -129,16 +129,25 @@ async def test_struggle_first_rank_zero_is_recent_fail() -> None:
 
     # recently-failed: next_review beyond due_horizon (now + 24h) so it
     # skips tier_overdue AND tier_due_today, landing in tier_recent_fail.
-    lp_fail = _progress(course_id=course_id, content_node_id=cn_fail,
-                        next_review_at=_NOW + timedelta(days=5))
-    lp_overdue = _progress(course_id=course_id, content_node_id=cn_overdue,
-                           next_review_at=_NOW - timedelta(days=3))
-    lp_due = _progress(course_id=course_id, content_node_id=cn_due,
-                       next_review_at=_NOW + timedelta(hours=2))
+    lp_fail = _progress(
+        course_id=course_id,
+        content_node_id=cn_fail,
+        next_review_at=_NOW + timedelta(days=5),
+    )
+    lp_overdue = _progress(
+        course_id=course_id,
+        content_node_id=cn_overdue,
+        next_review_at=_NOW - timedelta(days=3),
+    )
+    lp_due = _progress(
+        course_id=course_id,
+        content_node_id=cn_due,
+        next_review_at=_NOW + timedelta(hours=2),
+    )
 
     db = _make_db_mock(
         join_rows=[(p_fail, lp_fail), (p_overdue, lp_overdue), (p_due, lp_due)],
-        failed_ids_in_order=[p_fail.id],   # marks p_fail as recent-fail
+        failed_ids_in_order=[p_fail.id],  # marks p_fail as recent-fail
     )
 
     plan = await select_daily_plan(db, 20, strategy="struggle_first")
@@ -158,17 +167,28 @@ async def test_struggle_first_filters_code_and_lab_types() -> None:
     cn_mc, cn_code, cn_lab = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
 
     p_mc = _problem(course_id=course_id, content_node_id=cn_mc, question_type="mc")
-    p_code = _problem(course_id=course_id, content_node_id=cn_code,
-                      question_type="code_exercise")
-    p_lab = _problem(course_id=course_id, content_node_id=cn_lab,
-                     question_type="lab_exercise")
+    p_code = _problem(
+        course_id=course_id, content_node_id=cn_code, question_type="code_exercise"
+    )
+    p_lab = _problem(
+        course_id=course_id, content_node_id=cn_lab, question_type="lab_exercise"
+    )
 
-    lp_mc = _progress(course_id=course_id, content_node_id=cn_mc,
-                      next_review_at=_NOW - timedelta(hours=1))
-    lp_code = _progress(course_id=course_id, content_node_id=cn_code,
-                        next_review_at=_NOW - timedelta(hours=2))
-    lp_lab = _progress(course_id=course_id, content_node_id=cn_lab,
-                       next_review_at=_NOW - timedelta(hours=3))
+    lp_mc = _progress(
+        course_id=course_id,
+        content_node_id=cn_mc,
+        next_review_at=_NOW - timedelta(hours=1),
+    )
+    lp_code = _progress(
+        course_id=course_id,
+        content_node_id=cn_code,
+        next_review_at=_NOW - timedelta(hours=2),
+    )
+    lp_lab = _progress(
+        course_id=course_id,
+        content_node_id=cn_lab,
+        next_review_at=_NOW - timedelta(hours=3),
+    )
 
     db = _make_db_mock(join_rows=[(p_mc, lp_mc), (p_code, lp_code), (p_lab, lp_lab)])
 
@@ -195,12 +215,19 @@ async def test_adhd_safe_unchanged_regression() -> None:
     course_id = uuid.uuid4()
     cn_mc, cn_code = uuid.uuid4(), uuid.uuid4()
     p_mc = _problem(course_id=course_id, content_node_id=cn_mc, question_type="mc")
-    p_code = _problem(course_id=course_id, content_node_id=cn_code,
-                      question_type="code_exercise")
-    lp_mc = _progress(course_id=course_id, content_node_id=cn_mc,
-                      next_review_at=_NOW - timedelta(hours=1))
-    lp_code = _progress(course_id=course_id, content_node_id=cn_code,
-                        next_review_at=_NOW - timedelta(hours=2))
+    p_code = _problem(
+        course_id=course_id, content_node_id=cn_code, question_type="code_exercise"
+    )
+    lp_mc = _progress(
+        course_id=course_id,
+        content_node_id=cn_mc,
+        next_review_at=_NOW - timedelta(hours=1),
+    )
+    lp_code = _progress(
+        course_id=course_id,
+        content_node_id=cn_code,
+        next_review_at=_NOW - timedelta(hours=2),
+    )
 
     db = _make_db_mock(join_rows=[(p_mc, lp_mc), (p_code, lp_code)])
 
@@ -227,8 +254,11 @@ async def test_brutal_plan_pool_small_warning() -> None:
     course_id = uuid.uuid4()
     cn = uuid.uuid4()
     p = _problem(course_id=course_id, content_node_id=cn)
-    lp = _progress(course_id=course_id, content_node_id=cn,
-                   next_review_at=_NOW - timedelta(hours=1))
+    lp = _progress(
+        course_id=course_id,
+        content_node_id=cn,
+        next_review_at=_NOW - timedelta(hours=1),
+    )
 
     # 1-card pool, requested 20
     db = _make_db_mock(join_rows=[(p, lp)])
@@ -257,8 +287,11 @@ async def test_brutal_plan_full_fill_no_warning() -> None:
     for _ in range(25):
         cn = uuid.uuid4()
         p = _problem(course_id=course_id, content_node_id=cn)
-        lp = _progress(course_id=course_id, content_node_id=cn,
-                       next_review_at=_NOW - timedelta(hours=1))
+        lp = _progress(
+            course_id=course_id,
+            content_node_id=cn,
+            next_review_at=_NOW - timedelta(hours=1),
+        )
         join_rows.append((p, lp))
 
     db = _make_db_mock(join_rows=join_rows)
