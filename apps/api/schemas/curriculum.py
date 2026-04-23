@@ -170,12 +170,19 @@ class SaveCandidatesRequest(BaseModel):
 
     ``spawn_origin`` tags the source of the batch — ``"chat_turn"`` for
     the original tutor-response spawner (§14.5 T5/T6), ``"screenshot"``
-    for the Phase 4 screenshot-to-drill pipeline. Default preserves
+    for the Phase 4 screenshot-to-drill pipeline, ``"interview"`` for
+    the Phase 5 Interviewer "save-gaps" flow. Default preserves
     backward-compatibility with existing clients that don't set it.
+
+    ``interview_session_id`` — only meaningful when
+    ``spawn_origin == "interview"``; the Phase 5 router sets it so the
+    card's ``problem_metadata`` carries the originating interview session
+    for analytics / drill-again UX. ``None`` in all other flows.
     """
 
     candidates: list[CardCandidate] = Field(min_length=1)
-    spawn_origin: Literal["chat_turn", "screenshot"] = "chat_turn"
+    spawn_origin: Literal["chat_turn", "screenshot", "interview"] = "chat_turn"
+    interview_session_id: uuid.UUID | None = None
 
 
 class SaveCandidatesResponse(BaseModel):

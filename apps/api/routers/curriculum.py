@@ -322,6 +322,16 @@ async def save_flashcard_candidates(
             if c.screenshot_hash is not None:
                 problem_metadata["screenshot_hash"] = c.screenshot_hash
 
+            # Phase 5 T5: interview-origin batches carry the originating
+            # session id so downstream analytics / drill-again UX can
+            # link a card back to the mock interview turn that spawned it.
+            # Only added when the caller actually provides it; chat-turn
+            # and screenshot rows stay untouched for backward-compat.
+            if body.interview_session_id is not None:
+                problem_metadata["interview_session_id"] = str(
+                    body.interview_session_id
+                )
+
             # Phase 4 T6: ungrounded = the card's concept_slug didn't
             # resolve to a real KnowledgeNode in this course. Only added
             # for screenshot-origin batches — chat-turn cards keep the

@@ -24,6 +24,7 @@ from models.notification import Notification
 from models.cognitive_baseline import CognitiveBaseline
 from models.usage_event import UsageEvent
 from models.intervention_outcome import InterventionOutcome
+from models.interview import InterviewSession, InterviewTurn
 
 __all__ = [
     "User",
@@ -59,4 +60,6 @@ __all__ = [
     "CognitiveBaseline",
     "UsageEvent",
     "InterventionOutcome",
+    "InterviewSession",
+    "InterviewTurn",
 ]

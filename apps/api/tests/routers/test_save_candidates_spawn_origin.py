@@ -159,6 +159,44 @@ async def test_save_candidates_screenshot_origin() -> None:
     assert asset.metadata_["spawn_origin"] == "screenshot"
 
 
+@pytest.mark.asyncio
+async def test_save_candidates_interview_origin_with_session_id() -> None:
+    """Phase 5 T5: ``spawn_origin="interview"`` + ``interview_session_id``
+    round-trip into BOTH ``problem_metadata`` and ``generated_assets``.
+
+    The interview flow hands its spawned cards to the same
+    ``save_flashcard_candidates`` path that §14.5 and Phase 4 use — the
+    audit fields distinguish them downstream (drill-again analytics,
+    per-session reports).
+    """
+    user = _user()
+    course_id = uuid.uuid4()
+    interview_session_id = uuid.uuid4()
+    course = Course(id=course_id, user_id=user.id, name="C", metadata_=None)
+    db = _make_db_mock(course=course)
+
+    body = SaveCandidatesRequest(
+        candidates=[
+            CardCandidate(
+                front="Revisit: why FAISS flat IP over HNSW?",
+                back="Answer lacked p95 latency numbers and build-time tradeoff.",
+            ),
+        ],
+        spawn_origin="interview",
+        interview_session_id=interview_session_id,
+    )
+
+    await save_flashcard_candidates(course_id=course_id, body=body, user=user, db=db)
+
+    pp = _rows(db, PracticeProblem)[0]
+    assert pp.problem_metadata["spawn_origin"] == "interview"
+    assert pp.problem_metadata["interview_session_id"] == str(interview_session_id)
+
+    asset = _rows(db, GeneratedAsset)[0]
+    assert asset.content["metadata"]["spawn_origin"] == "interview"
+    assert asset.metadata_["spawn_origin"] == "interview"
+
+
 def test_save_candidates_rejects_invalid_spawn_origin() -> None:
     """Unknown ``spawn_origin`` → Pydantic ``ValidationError`` → 422 in HTTP.
 

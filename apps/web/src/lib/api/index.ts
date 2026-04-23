@@ -268,3 +268,25 @@ export type {
   ScreenshotSaveResult,
   CardCandidate as ScreenshotCardCandidate,
 } from "./screenshot";
+
+export {
+  startInterview,
+  getInterviewSession,
+  abandonInterview,
+  saveInterviewGaps,
+  streamInterviewAnswer,
+} from "./interview";
+export type {
+  InterviewMode,
+  InterviewDuration,
+  InterviewStatus,
+  DimensionScore,
+  RubricScores,
+  TurnResponse,
+  SummaryResponse,
+  InterviewSessionState,
+  InterviewStartRequest,
+  InterviewStartResponse,
+  InterviewStreamEvent,
+  SaveGapsResponse,
+} from "./interview";

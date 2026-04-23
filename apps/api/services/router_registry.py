@@ -17,6 +17,7 @@ from routers import (
     flashcards,
     goals,
     health,
+    interview,
     notes,
     notifications,
     onboarding,
@@ -61,6 +62,7 @@ CORE_ROUTERS = (
     (workflows.router, "/api/workflows", ["workflows"]),
     (block_routes.router, "/api/blocks", ["blocks"]),
     (onboarding.router, "/api/onboarding", ["onboarding"]),
+    (interview.router, "/api", ["interview"]),
 )
 
 
