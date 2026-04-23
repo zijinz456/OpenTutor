@@ -186,9 +186,7 @@ async def freeze_card(
     )
     existing = await db.execute(existing_stmt)
     if existing.scalar_one_or_none() is not None:
-        raise ConflictError(
-            "already_frozen", "This card has already been frozen once."
-        )
+        raise ConflictError("already_frozen", "This card has already been frozen once.")
 
     # ── Pre-check 2: weekly quota ──
     used = await _count_freezes_this_week(db, user_id, now=now)

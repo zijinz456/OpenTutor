@@ -11,6 +11,8 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from libs.datetime_utils import as_utc
+
 # ── Date parsing ──
 
 # Month names for regex
@@ -89,7 +91,7 @@ def parse_date_flexible(text: str, prefer_day_first: bool = True) -> datetime | 
     m = ISO_DATE_RE.match(text)
     if m:
         try:
-            return datetime.fromisoformat(text.replace("Z", "+00:00"))
+            return as_utc(datetime.fromisoformat(text.replace("Z", "+00:00")))
         except ValueError:
             try:
                 return datetime.fromisoformat(m.group(1) + "T" + m.group(2)).replace(tzinfo=timezone.utc)

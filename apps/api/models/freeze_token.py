@@ -74,9 +74,7 @@ class FreezeToken(Base):
         # ``problem_id`` alone: the uniqueness constraint already covers
         # the per-problem lookup pattern used by the 409-guard.
         Index("ix_freeze_tokens_user_expires", "user_id", "expires_at"),
-        UniqueConstraint(
-            "user_id", "problem_id", name="uq_freeze_token_user_problem"
-        ),
+        UniqueConstraint("user_id", "problem_id", name="uq_freeze_token_user_problem"),
     )
 
 

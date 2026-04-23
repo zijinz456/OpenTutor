@@ -75,7 +75,5 @@ def downgrade() -> None:
     if "freeze_tokens" in tables:
         indexes = {idx["name"] for idx in inspector.get_indexes("freeze_tokens")}
         if "ix_freeze_tokens_user_expires" in indexes:
-            op.drop_index(
-                "ix_freeze_tokens_user_expires", table_name="freeze_tokens"
-            )
+            op.drop_index("ix_freeze_tokens_user_expires", table_name="freeze_tokens")
         op.drop_table("freeze_tokens")
