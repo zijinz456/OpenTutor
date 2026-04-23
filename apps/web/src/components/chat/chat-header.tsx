@@ -10,6 +10,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Plus } from "lucide-react";
+import { StrictModeToggle } from "./StrictModeToggle";
 
 interface ChatHeaderProps {
   courseId: string;
@@ -69,6 +70,8 @@ export function ChatHeader({ courseId }: ChatHeaderProps) {
           ))}
         </SelectContent>
       </Select>
+
+      <StrictModeToggle />
 
       <Button
         type="button"

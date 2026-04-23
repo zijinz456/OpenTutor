@@ -21,6 +21,19 @@ import { getDismissHistory } from "./workspace-blocks";
 /** TTL for cached chat session lists (per course). */
 const SESSIONS_TTL_MS = 30_000; // 30 seconds
 
+/** localStorage key for persisting the Phase 7 strict-mode toggle per browser tab. */
+const STRICT_MODE_STORAGE_KEY = "guardrails_strict";
+
+/** Safely read the initial strict-mode flag from localStorage (SSR-safe). */
+function readInitialStrictMode(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.localStorage.getItem(STRICT_MODE_STORAGE_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
@@ -103,6 +116,14 @@ interface ChatState {
 
   sendMessage: (courseId: string, content: string, options?: SendMessageOptions) => Promise<void>;
   clearMessages: (courseId?: string) => void;
+
+  /**
+   * Phase 7 guardrails — session-level strict-mode toggle. Persisted in
+   * localStorage (per browser tab). When ON, every `POST /chat` carries
+   * `guardrails_strict: true` forcing retrieval-grounded answers.
+   */
+  strictMode: boolean;
+  setStrictMode: (on: boolean) => void;
 }
 
 let messageCounter = 0;
@@ -162,6 +183,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
   latestWarning: null,
   pendingCards: null,
   clearPendingCards: () => set({ pendingCards: null }),
+
+  strictMode: readInitialStrictMode(),
+  setStrictMode: (on: boolean) => {
+    // Persist first, then update state — if storage fails we still want UI
+    // feedback on this tab, so swallow the error and keep going.
+    if (typeof window !== "undefined") {
+      try {
+        window.localStorage.setItem(STRICT_MODE_STORAGE_KEY, on ? "true" : "false");
+      } catch {
+        // localStorage unavailable (private-browsing quota, etc.) — ignore.
+      }
+    }
+    set({ strictMode: on });
+  },
   abortStream: () => {
     const ctrl = get()._abortController;
     if (ctrl) {
@@ -463,6 +498,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const wsState = useWorkspaceStore.getState();
       let assistantContent = "";
       let receivedFirstToken = false;
+      const strictMode = get().strictMode;
       for await (const event of streamChat({
         courseId,
         message: content,
@@ -476,6 +512,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
         learningMode: wsState.spaceLayout?.mode,
         blockTypes: wsState.spaceLayout?.blocks?.map((b) => b.type),
         dismissedBlockTypes: getDismissHistory(courseId),
+        // Phase 7: only attach the flag when ON — avoids sending false for
+        // users who never touch the toggle (keeps default-mode request bytes
+        // identical to pre-Phase-7).
+        guardrailsStrict: strictMode ? true : undefined,
       })) {
         if (event.type === "content") {
           assistantContent += event.content;

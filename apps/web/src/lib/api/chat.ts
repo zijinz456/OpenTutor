@@ -130,6 +130,32 @@ export interface ChatProvenance {
   scheduler_trigger?: string;
 }
 
+/** Denormalized citation chunk rendered in citation popovers. */
+export interface ChatCitationChunk {
+  id: string;
+  source_file: string;
+  snippet: string;
+}
+
+/**
+ * Guardrails metadata produced by strict-mode turns (Phase 7).
+ *
+ * `citations` are 1-based indices into `citation_chunks`. `refusal_reason` is
+ * set only when the turn was short-circuited by the retrieval gate
+ * (`no_retrieval` / `low_score`) and in that case `answer` will echo the
+ * canned refusal template.
+ */
+export interface ChatGuardrails {
+  strict_mode: boolean;
+  answer: string;
+  confidence: number | null;
+  citations: number[];
+  citation_chunks: ChatCitationChunk[];
+  refusal_reason?: "no_retrieval" | "low_score" | null;
+  top_retrieval_score?: number | null;
+  parse_fallback?: boolean;
+}
+
 export interface ChatMessageMetadata {
   agent?: string;
   intent?: string;
@@ -142,6 +168,8 @@ export interface ChatMessageMetadata {
   task_link?: ChatTaskLink | null;
   /** True when backend used mock LLM fallback (no real API key configured). */
   is_mock?: boolean;
+  /** Phase 7 strict-mode grounding payload (only present when strict was on). */
+  guardrails?: ChatGuardrails | null;
 }
 
 interface PlanStepProgress {
@@ -221,6 +249,8 @@ interface ChatStreamOptions {
   blockTypes?: string[];
   /** Block types the user recently dismissed (last 7 days). */
   dismissedBlockTypes?: string[];
+  /** Phase 7 — force strict grounded-mode for this turn (session toggle). */
+  guardrailsStrict?: boolean;
 }
 
 // ── Chat (SSE streaming) ──
@@ -246,6 +276,9 @@ export async function* streamChat(
         ...(opts.learningMode ? { learning_mode: opts.learningMode } : {}),
         ...(opts.blockTypes?.length ? { block_types: opts.blockTypes } : {}),
         ...(opts.dismissedBlockTypes?.length ? { dismissed_block_types: opts.dismissedBlockTypes } : {}),
+        ...(typeof opts.guardrailsStrict === "boolean"
+          ? { guardrails_strict: opts.guardrailsStrict }
+          : {}),
       }),
       signal: opts.signal,
     }),
@@ -373,6 +406,7 @@ export async function* streamChat(
             task_link: data.task_link,
             reflection: data.reflection,
             is_mock: data.is_mock,
+            guardrails: data.guardrails ?? null,
           },
         };
       } else if (resolvedEvent === "warning") {

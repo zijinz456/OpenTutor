@@ -1,11 +1,91 @@
 "use client";
 
 import Image from "next/image";
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { cn } from "@/lib/utils";
 import type { ChatMessage } from "@/store/chat";
+import type { ChatCitationChunk } from "@/lib/api/chat";
 import { ActionCard } from "@/components/chat/action-card";
 import { Badge } from "@/components/ui/badge";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+
+/** Shorten a citation snippet for the tooltip body. */
+function truncateSnippet(text: string, max = 100): string {
+  const trimmed = text.trim();
+  if (trimmed.length <= max) return trimmed;
+  return `${trimmed.slice(0, max).trimEnd()}...`;
+}
+
+/**
+ * Render a string containing inline `[N]` citation markers as a mix of plain
+ * text segments and interactive citation pills. Invalid/out-of-range indices
+ * are rendered as plain text (same as before) — we trust the backend to drop
+ * them but stay defensive.
+ */
+function renderAnswerWithCitations(
+  answer: string,
+  chunks: ChatCitationChunk[],
+): React.ReactNode[] {
+  const pattern = /\[(\d+)\]/g;
+  const nodes: React.ReactNode[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  let pillKey = 0;
+
+  // biome-ignore lint: iterative regex match is the idiomatic form here.
+  while ((match = pattern.exec(answer)) !== null) {
+    const [raw, numStr] = match;
+    const num = Number.parseInt(numStr, 10);
+    const chunk = chunks[num - 1];
+
+    if (match.index > lastIndex) {
+      nodes.push(answer.slice(lastIndex, match.index));
+    }
+
+    if (chunk) {
+      nodes.push(
+        <TooltipProvider key={`pill-${pillKey++}`} delayDuration={150}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                data-testid={`citation-pill-${num}`}
+                aria-label={`Citation ${num}: ${chunk.source_file}`}
+                className="mx-0.5 inline-flex h-4 min-w-4 items-center justify-center rounded-sm bg-emerald-500/20 px-1 align-baseline text-[10px] font-semibold text-emerald-800 hover:bg-emerald-500/30 dark:text-emerald-200"
+              >
+                {num}
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="max-w-xs">
+              <div className="text-[11px] font-medium">{chunk.source_file}</div>
+              <div className="mt-0.5 text-[10px] opacity-80">
+                {truncateSnippet(chunk.snippet)}
+              </div>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>,
+      );
+    } else {
+      // Out-of-range index — keep the literal `[N]` so the user sees nothing
+      // went missing from the text. Logged server-side as
+      // `guardrails_invalid_citation`.
+      nodes.push(raw);
+    }
+
+    lastIndex = match.index + raw.length;
+  }
+
+  if (lastIndex < answer.length) {
+    nodes.push(answer.slice(lastIndex));
+  }
+
+  return nodes;
+}
 
 interface MessageBubbleProps {
   message: ChatMessage;
@@ -28,8 +108,22 @@ export function MessageBubble({ message }: MessageBubbleProps) {
   const diagnostics = message.metadata?.verifier_diagnostics;
   const contentRefs = message.metadata?.provenance?.content_refs ?? [];
   const evidenceGroups = message.metadata?.provenance?.content_evidence_groups ?? [];
+  const guardrails = message.metadata?.guardrails ?? null;
   const images = message.images;
   const [expandedImage, setExpandedImage] = useState<string | null>(null);
+
+  // Phase 7 derived flags. `isRefusal` short-circuits citation rendering;
+  // low confidence dims the bubble per critic concern #2 (strictly < 3 so the
+  // common "3 = mixed" case is not dimmed).
+  const isRefusal = Boolean(guardrails?.refusal_reason);
+  const citationChunks = guardrails?.citation_chunks ?? [];
+  const hasCitations = !isUser && !isRefusal && citationChunks.length > 0;
+  const isLowConfidence =
+    !isUser &&
+    !isRefusal &&
+    typeof guardrails?.confidence === "number" &&
+    guardrails.confidence < 3;
+  const strictActive = !isUser && guardrails?.strict_mode === true;
 
   const requestCoverage = typeof diagnostics?.request_coverage === "number"
     ? `${Math.round(diagnostics.request_coverage * 100)}%`
@@ -48,11 +142,15 @@ export function MessageBubble({ message }: MessageBubbleProps) {
         data-role={message.role}
       >
         <div
+          data-guardrails-refusal={isRefusal ? "true" : undefined}
+          data-guardrails-low-confidence={isLowConfidence ? "true" : undefined}
+          style={isLowConfidence ? { opacity: 0.7 } : undefined}
           className={cn(
             "max-w-[85%] rounded-2xl px-4 py-2.5 text-sm",
             isUser
               ? "bg-[var(--chat-user-bg,hsl(var(--primary)))] text-[var(--chat-user-fg,hsl(var(--primary-foreground)))] rounded-br-md"
               : "bg-[var(--chat-assistant-bg,hsl(var(--muted)))] text-[var(--chat-assistant-fg,hsl(var(--foreground)))] rounded-bl-md",
+            isRefusal && "border border-destructive/60",
           )}
         >
           {/* Attached images (user messages) */}
@@ -83,10 +181,50 @@ export function MessageBubble({ message }: MessageBubbleProps) {
 
           {/* Message content */}
           {message.content && message.content !== "(image)" ? (
-            <div className="whitespace-pre-wrap break-words">{message.content}</div>
+            <div className="whitespace-pre-wrap break-words">
+              {hasCitations
+                ? renderAnswerWithCitations(message.content, citationChunks).map(
+                    (node, idx) => <Fragment key={idx}>{node}</Fragment>,
+                  )
+                : message.content}
+            </div>
           ) : !images?.length ? (
             <span className="text-xs italic opacity-60">...</span>
           ) : null}
+
+          {/* Phase 7 guardrails badges — refusal, low-confidence, strict pill. */}
+          {!isUser && guardrails && (
+            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+              {isRefusal ? (
+                <Badge
+                  variant="destructive"
+                  className="text-[10px]"
+                  data-testid="guardrails-refusal-badge"
+                >
+                  Refused: no retrieval match
+                </Badge>
+              ) : null}
+              {isLowConfidence ? (
+                <Badge
+                  variant="outline"
+                  className="text-[10px]"
+                  data-testid="guardrails-uncertain-badge"
+                >
+                  uncertain ({guardrails.confidence}/5)
+                </Badge>
+              ) : null}
+              {strictActive && !isRefusal ? (
+                <Badge
+                  variant="outline"
+                  className="border-emerald-500/50 text-[10px] text-emerald-700 dark:text-emerald-300"
+                  data-testid="guardrails-strict-badge"
+                >
+                  Strict · {citationChunks.length} citation
+                  {citationChunks.length === 1 ? "" : "s"}
+                </Badge>
+              ) : null}
+            </div>
+          )}
 
           {/* Action cards from metadata */}
           {!isUser && actions && actions.length > 0 && (
