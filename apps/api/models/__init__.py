@@ -26,6 +26,7 @@ from models.usage_event import UsageEvent
 from models.intervention_outcome import InterventionOutcome
 from models.interview import InterviewSession, InterviewTurn
 from models.freeze_token import FreezeToken
+from models.learning_path import LearningPath, PathRoom
 
 __all__ = [
     "User",
@@ -64,4 +65,6 @@ __all__ = [
     "InterviewSession",
     "InterviewTurn",
     "FreezeToken",
+    "LearningPath",
+    "PathRoom",
 ]

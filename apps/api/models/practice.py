@@ -55,7 +55,11 @@ class PracticeProblem(Base):
     """Practice problems extracted from course content."""
 
     __tablename__ = "practice_problems"
-    __table_args__ = (Index("ix_practice_problem_course", "course_id"),)
+    __table_args__ = (
+        Index("ix_practice_problem_course", "course_id"),
+        # Phase 16a — hot query: "all tasks in this room ordered by task_order".
+        Index("ix_practice_problem_path_room", "path_room_id"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         CompatUUID, primary_key=True, default=uuid.uuid4
@@ -92,6 +96,21 @@ class PracticeProblem(Base):
     parent_problem_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         CompatUUID, ForeignKey("practice_problems.id"), nullable=True
     )
+
+    # Phase 16a — room membership for the TryHackMe-style path UI.
+    # Nullable because most existing cards (and free-roam-only cards) do
+    # not belong to any room. ``SET NULL`` on room delete so deleting a
+    # room via admin never cascades away a problem — the card simply
+    # falls back to "not in any path".
+    path_room_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        CompatUUID,
+        ForeignKey("path_rooms.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    # 0-based task order within the room. Null for orphan cards (no
+    # room) — the seed script populates this for room-mapped cards only.
+    task_order: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
     is_diagnostic: Mapped[bool] = mapped_column(Boolean, default=False)
     # True for simplified "clean" versions generated for diagnostic pairs
     source_batch_id: Mapped[Optional[uuid.UUID]] = mapped_column(
