@@ -17,6 +17,10 @@ from models.course import Course
 from models.practice import (
     CODE_EXERCISE_TYPE,
     LAB_EXERCISE_TYPE,
+    QUESTION_TYPE_APPLY,
+    QUESTION_TYPE_COMPARE,
+    QUESTION_TYPE_REBUILD,
+    QUESTION_TYPE_TRACE,
     PracticeProblem,
     PracticeResult,
 )
@@ -79,10 +83,37 @@ def _looks_like_python_error(stderr: str, stdout: str) -> bool:
     return any(marker in (stderr or "") for marker in _TRACEBACK_MARKERS)
 
 
+def _normalize_rebuild_code(value: str | None) -> str:
+    """Whitespace-tolerant normalizer for ``rebuild`` exact-match grading.
+
+    Rebuild cards blank out ~30% of a code snippet with ``# TODO`` markers and
+    the learner types the missing lines back in. Trailing newlines, leading /
+    trailing whitespace on individual lines, and blank-line padding at either
+    end would fail a strict exact match even when the logic is identical —
+    so we collapse them before comparing. Interior indentation structure IS
+    preserved (stripping per-line only removes trailing whitespace; interior
+    leading whitespace is kept so a user who inverts a block fails the match).
+    """
+    if not value:
+        return ""
+    lines = [line.rstrip() for line in value.replace("\r\n", "\n").split("\n")]
+    # Drop purely blank lines at the extremes; keep interior blanks.
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    return "\n".join(lines)
+
+
 router = APIRouter()
 
 
-@router.get("/{course_id}", response_model=list[ProblemResponse], summary="List practice problems", description="Return paginated practice problems for a course, excluding diagnostics.")
+@router.get(
+    "/{course_id}",
+    response_model=list[ProblemResponse],
+    summary="List practice problems",
+    description="Return paginated practice problems for a course, excluding diagnostics.",
+)
 async def list_problems(
     course_id: uuid.UUID,
     limit: int = Query(default=50, ge=1, le=200),
@@ -105,16 +136,21 @@ async def list_problems(
     return result.scalars().all()
 
 
-async def _auto_derive_diagnostic(wrong_answer_id: uuid.UUID, user_id: uuid.UUID) -> None:
+async def _auto_derive_diagnostic(
+    wrong_answer_id: uuid.UUID, user_id: uuid.UUID
+) -> None:
     """Background task: auto-generate a diagnostic pair for a wrong answer."""
     try:
         async with async_session() as db:
             from models.ingestion import WrongAnswer
             from models.practice import PracticeProblem as PP
+
             result = await db.execute(
                 select(WrongAnswer, PP)
                 .join(PP, WrongAnswer.problem_id == PP.id)
-                .where(WrongAnswer.id == wrong_answer_id, WrongAnswer.user_id == user_id)
+                .where(
+                    WrongAnswer.id == wrong_answer_id, WrongAnswer.user_id == user_id
+                )
             )
             row = result.one_or_none()
             if not row:
@@ -122,17 +158,24 @@ async def _auto_derive_diagnostic(wrong_answer_id: uuid.UUID, user_id: uuid.UUID
             wa, problem = row
             # Skip if diagnostic pair already exists
             existing = await db.execute(
-                select(PP.id).where(PP.parent_problem_id == problem.id, PP.is_diagnostic == True)
+                select(PP.id).where(
+                    PP.parent_problem_id == problem.id, PP.is_diagnostic == True
+                )
             )
             if existing.scalar_one_or_none():
                 return
-            if problem.is_diagnostic or (problem.difficulty_layer and problem.difficulty_layer < 2):
+            if problem.is_diagnostic or (
+                problem.difficulty_layer and problem.difficulty_layer < 2
+            ):
                 return
 
             from services.diagnosis.derive import derive_diagnostic
+
             await derive_diagnostic(db, wa, problem)
             await db.commit()
-            logger.info("Auto-generated diagnostic pair for wrong answer %s", wrong_answer_id)
+            logger.info(
+                "Auto-generated diagnostic pair for wrong answer %s", wrong_answer_id
+            )
     except (SQLAlchemyError, ValueError, KeyError, TypeError):
         logger.exception("Auto-derive diagnostic failed (best-effort)")
 
@@ -144,16 +187,21 @@ async def _check_effective_review(
     try:
         async with async_session() as db:
             prev_wrong = await db.execute(
-                select(PracticeResult.id).where(
+                select(PracticeResult.id)
+                .where(
                     PracticeResult.problem_id == problem_id,
                     PracticeResult.user_id == user_id,
                     PracticeResult.is_correct == False,  # noqa: E712
-                ).limit(1)
+                )
+                .limit(1)
             )
             if prev_wrong.scalar_one_or_none() is None:
                 return  # No prior wrong answer — not an improvement
             from services.block_decision.preference import record_block_event
-            await record_block_event(db, user_id, course_id, "review", "effective_review")
+
+            await record_block_event(
+                db, user_id, course_id, "review", "effective_review"
+            )
             await db.commit()
             logger.info("Recorded effective_review signal for problem %s", problem_id)
     except (SQLAlchemyError, ValueError, ImportError):
@@ -165,13 +213,19 @@ async def _auto_detect_confusion(course_id: uuid.UUID, user_id: uuid.UUID) -> No
     try:
         async with async_session() as db:
             from services.loom_confusion import detect_confusion_pairs
+
             await detect_confusion_pairs(db, course_id, user_id, min_occurrences=1)
             await db.commit()
     except (SQLAlchemyError, ValueError, KeyError):
         logger.exception("Auto confusion detection failed (best-effort)")
 
 
-@router.post("/submit", response_model=AnswerResponse, summary="Submit a quiz answer", description="Grade a practice answer, classify errors, and update mastery tracking.")
+@router.post(
+    "/submit",
+    response_model=AnswerResponse,
+    summary="Submit a quiz answer",
+    description="Grade a practice answer, classify errors, and update mastery tracking.",
+)
 async def submit_answer(
     body: SubmitAnswerRequest,
     background_tasks: BackgroundTasks,
@@ -229,12 +283,16 @@ async def submit_answer(
             ) from exc
 
         # Pick stdout normalizer (default rstrip — matches typical print() output).
-        normalizer_name = str(metadata.get("stdout_normalizer") or _DEFAULT_STDOUT_NORMALIZER)
+        normalizer_name = str(
+            metadata.get("stdout_normalizer") or _DEFAULT_STDOUT_NORMALIZER
+        )
         normalizer = _STDOUT_NORMALIZERS.get(normalizer_name)
         if normalizer is None:
             logger.warning(
                 "Unknown stdout_normalizer=%r for problem %s; falling back to %s",
-                normalizer_name, problem.id, _DEFAULT_STDOUT_NORMALIZER,
+                normalizer_name,
+                problem.id,
+                _DEFAULT_STDOUT_NORMALIZER,
             )
             normalizer = _STDOUT_NORMALIZERS[_DEFAULT_STDOUT_NORMALIZER]
 
@@ -266,6 +324,7 @@ async def submit_answer(
         # Grade via Groq rubric. The grader never raises — it falls back to
         # passed=False / confidence=0.0 / "grader unavailable" on any failure.
         from services.practice.lab_grader import grade_lab_proof
+
         grade_result = await grade_lab_proof(db, problem, lab_payload)
         is_correct = grade_result.passed
 
@@ -290,6 +349,7 @@ async def submit_answer(
     elif problem.question_type == "coding":
         try:
             from services.diagnosis.coding_grader import grade_coding_answer
+
             grading_result = await grade_coding_answer(
                 question=problem.question,
                 reference_answer=problem.correct_answer or "",
@@ -299,8 +359,49 @@ async def submit_answer(
         except (ValueError, KeyError, TypeError, OSError):
             logger.exception("Coding grading failed (best-effort)")
             warnings.append("coding_grading_failed")
+    elif problem.question_type == QUESTION_TYPE_TRACE:
+        # §16.2 drill-style Trace — exact match after strip+lower, same contract
+        # as fill_blank. The correct_answer is the literal expected stdout.
+        if problem.correct_answer:
+            is_correct = (
+                body.user_answer.strip().lower()
+                == problem.correct_answer.strip().lower()
+            )
+    elif problem.question_type == QUESTION_TYPE_REBUILD:
+        # §16.2 drill-style Rebuild — whitespace-tolerant exact match of the
+        # filled code. Trailing newlines / blank padding are ignored; interior
+        # indentation is preserved so a wrong block structure still fails.
+        if problem.correct_answer:
+            is_correct = _normalize_rebuild_code(body.user_answer) == (
+                _normalize_rebuild_code(problem.correct_answer)
+            )
+    elif problem.question_type in (QUESTION_TYPE_APPLY, QUESTION_TYPE_COMPARE):
+        # §16.2 drill-style Apply / Compare — LLM-graded (open-ended enough
+        # that exact-match rejects valid answers with different var names /
+        # alternate-but-sound reasoning). The grader falls back to
+        # passed=False when Groq is unavailable, so a transport failure is a
+        # recorded lapse, not a 500.
+        if problem.correct_answer:
+            try:
+                from services.practice.drill_grader import grade_drill_answer
+
+                grade_result = await grade_drill_answer(
+                    question_type=problem.question_type,
+                    question=problem.question,
+                    reference_answer=problem.correct_answer,
+                    user_answer=body.user_answer,
+                )
+                is_correct = grade_result.passed
+                # Substitute grader's one-liner for ai_explanation — static
+                # problem.explanation is rubric context, not feedback.
+                practice_ai_explanation = grade_result.explanation
+            except (ValueError, RuntimeError):
+                logger.exception("Drill grading failed (best-effort)")
+                warnings.append("drill_grading_failed")
     elif problem.correct_answer:
-        is_correct = body.user_answer.strip().lower() == problem.correct_answer.strip().lower()
+        is_correct = (
+            body.user_answer.strip().lower() == problem.correct_answer.strip().lower()
+        )
 
     pr = PracticeResult(
         problem_id=problem.id,
@@ -325,6 +426,7 @@ async def submit_answer(
     if not is_correct and problem.correct_answer:
         try:
             from services.diagnosis.classifier import classify_error
+
             classification = await classify_error(
                 question=problem.question,
                 correct_answer=problem.correct_answer,
@@ -342,6 +444,7 @@ async def submit_answer(
     wa = None
     if not is_correct:
         from models.ingestion import WrongAnswer
+
         wa = WrongAnswer(
             user_id=user.id,
             problem_id=problem.id,
@@ -357,8 +460,12 @@ async def submit_answer(
 
     try:
         from services.progress.tracker import update_quiz_result
+
         await update_quiz_result(
-            db, user.id, problem.course_id, problem.content_node_id,
+            db,
+            user.id,
+            problem.course_id,
+            problem.content_node_id,
             is_correct=is_correct,
             error_category=error_category,
         )
@@ -369,17 +476,27 @@ async def submit_answer(
     # Normalize knowledge_points to list[str] for consistent handling
     _kp = problem.knowledge_points
     kp_list: list[str] = (
-        [str(x) for x in _kp] if isinstance(_kp, list)
-        else [_kp] if isinstance(_kp, str)
+        [str(x) for x in _kp]
+        if isinstance(_kp, list)
+        else [_kp]
+        if isinstance(_kp, str)
         else []
     )
 
     # Update LOOM concept mastery for each knowledge point
     if kp_list:
         from services.loom_mastery import update_concept_mastery
+
         for kp in kp_list:
             try:
-                await update_concept_mastery(db, user.id, str(kp), problem.course_id, correct=is_correct, question_type=problem.question_type)
+                await update_concept_mastery(
+                    db,
+                    user.id,
+                    str(kp),
+                    problem.course_id,
+                    correct=is_correct,
+                    question_type=problem.question_type,
+                )
             except (SQLAlchemyError, ValueError, KeyError):
                 logger.exception("Concept mastery update failed for '%s'", kp)
                 warnings.append("concept_mastery_update_failed")
@@ -387,6 +504,7 @@ async def submit_answer(
     # Emit analytics event before committing — single transaction for atomicity
     try:
         from services.analytics.events import emit_quiz_answered
+
         await emit_quiz_answered(
             db,
             user_id=user.id,
@@ -419,8 +537,11 @@ async def submit_answer(
     if not is_correct and kp_list:
         try:
             from services.loom_graph import check_prerequisite_gaps
+
             gaps = await check_prerequisite_gaps(
-                db, user.id, problem.course_id,
+                db,
+                user.id,
+                problem.course_id,
                 failed_concept_names=kp_list,
             )
             if gaps:
@@ -441,7 +562,12 @@ async def submit_answer(
 # -- Mastery history time-series endpoint --
 
 
-@router.get("/{course_id}/mastery-history", response_model=list[MasterySnapshotResponse], summary="Get mastery history", description="Return mastery score time-series for analytics charts.")
+@router.get(
+    "/{course_id}/mastery-history",
+    response_model=list[MasterySnapshotResponse],
+    summary="Get mastery history",
+    description="Return mastery score time-series for analytics charts.",
+)
 async def mastery_history(
     course_id: uuid.UUID,
     content_node_id: uuid.UUID | None = None,

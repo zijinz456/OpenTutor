@@ -8,14 +8,20 @@ This module centralizes normalization of question metadata so every source of
 """
 
 from dataclasses import dataclass
-import json
 import re
 import uuid
 from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError as PydanticValidationError
 
-from models.practice import CODE_EXERCISE_TYPE, PracticeProblem
+from models.practice import (
+    CODE_EXERCISE_TYPE,
+    QUESTION_TYPE_APPLY,
+    QUESTION_TYPE_COMPARE,
+    QUESTION_TYPE_REBUILD,
+    QUESTION_TYPE_TRACE,
+    PracticeProblem,
+)
 
 VALID_QUESTION_TYPES = {
     "mc",
@@ -27,6 +33,12 @@ VALID_QUESTION_TYPES = {
     "free_response",
     "coding",
     CODE_EXERCISE_TYPE,
+    # §16.2 Python Depth drill styles. Registered here so annotation /
+    # validation passes don't downgrade generated cards to "mc" by default.
+    QUESTION_TYPE_TRACE,
+    QUESTION_TYPE_APPLY,
+    QUESTION_TYPE_COMPARE,
+    QUESTION_TYPE_REBUILD,
 }
 
 
@@ -68,6 +80,73 @@ Content to base the exercise on:
 ---
 """
 
+# §16.2 + §26 Phase 3 — prompt templates for generating Python Depth drill
+# cards. Unused until the mega-prompt refactor lands (same status as
+# CODE_EXERCISE_PROMPT above — canonical source so future wiring picks them up
+# from one place). Double braces escape JSON for ``str.format()``; only
+# ``{topic}``, ``{concept}``, and ``{target_feature}`` are interpolated.
+TRACE_PROMPT = """You are a Python code-tracing author for a spaced-repetition tutor.
+
+Generate a code-tracing question about {topic}. Provide a short Python snippet
+(<=15 lines) that illustrates {concept}. Ask what the code outputs AND why.
+
+Output ONLY a single JSON object, no prose, no fences:
+
+{{
+  "question_type": "trace",
+  "question": "Snippet + 'What does this print and why?'",
+  "correct_answer": "Exact expected stdout",
+  "explanation": "Why that output — name the semantics (mutation, aliasing, scope, etc.)"
+}}
+"""
+
+APPLY_PROMPT = """You are a Python code-transformation author for a spaced-repetition tutor.
+
+Generate a code-transformation question about {topic}. Provide a starting
+snippet and ask the learner to rewrite it using {target_feature}.
+
+Output ONLY a single JSON object, no prose, no fences:
+
+{{
+  "question_type": "apply",
+  "question": "Instruction + starter code (<=20 lines)",
+  "correct_answer": "Expected transformed code",
+  "explanation": "Why the transformed version is preferable (perf, clarity, idiom)"
+}}
+"""
+
+COMPARE_PROMPT = """You are a Python design-tradeoff author for a spaced-repetition tutor.
+
+Generate a comparison question about {topic}. Name TWO approaches and ask
+which to use for a specific task, plus a 1-line justification.
+
+Output ONLY a single JSON object, no prose, no fences:
+
+{{
+  "question_type": "compare",
+  "question": "Scenario description + option A vs option B",
+  "correct_answer": "Preferred option + 1-line reason",
+  "explanation": "Full tradeoff analysis (3-5 lines, mention when the OTHER option wins)"
+}}
+"""
+
+REBUILD_PROMPT = """You are a Python fill-the-gaps author for a spaced-repetition tutor.
+
+Generate a rebuild question about {topic}. Take a complete code snippet and
+blank out ~30% (3-5 lines or key expressions) with `# TODO` markers. The
+learner must reconstruct the missing code.
+
+Output ONLY a single JSON object, no prose, no fences:
+
+{{
+  "question_type": "rebuild",
+  "question": "Code with # TODO gaps (<=25 lines)",
+  "correct_answer": "Filled complete code",
+  "explanation": "What concepts the gaps cover (why these lines matter)"
+}}
+"""
+
+
 VALID_BLOOM_LEVELS = {
     "remember",
     "understand",
@@ -100,6 +179,11 @@ _DEFAULT_BLOOM_BY_TYPE = {
     "select_all": "analyze",
     "free_response": "apply",
     "coding": "apply",
+    # §16.2 drill styles — map to the Bloom level each style actually exercises.
+    QUESTION_TYPE_TRACE: "understand",
+    QUESTION_TYPE_APPLY: "apply",
+    QUESTION_TYPE_COMPARE: "evaluate",
+    QUESTION_TYPE_REBUILD: "analyze",
 }
 
 _DEFAULT_SKILL_BY_TYPE = {
@@ -111,6 +195,10 @@ _DEFAULT_SKILL_BY_TYPE = {
     "select_all": "discrimination",
     "free_response": "application",
     "coding": "implementation",
+    QUESTION_TYPE_TRACE: "code tracing",
+    QUESTION_TYPE_APPLY: "code transformation",
+    QUESTION_TYPE_COMPARE: "design tradeoff",
+    QUESTION_TYPE_REBUILD: "code reconstruction",
 }
 
 _VALID_BLOOM_BY_DIFFICULTY = {
@@ -162,7 +250,9 @@ def _extract_named_concept(question_text: str) -> str:
         candidate,
         flags=re.IGNORECASE,
     )
-    candidate = re.split(r"\b(?:for|in|when|while|using|during|before|after)\b", candidate, maxsplit=1)[0]
+    candidate = re.split(
+        r"\b(?:for|in|when|while|using|during|before|after)\b", candidate, maxsplit=1
+    )[0]
     return _clean_string(candidate).rstrip(":?.!")
 
 
@@ -302,6 +392,7 @@ def normalize_question_options(value: Any) -> dict[str, str] | None:
 
 def parse_question_array(text: str) -> list[dict[str, Any]]:
     """Extract a JSON array of question objects from raw LLM output."""
+
     def _normalize_question_payload(payload: Any) -> list[dict[str, Any]]:
         if isinstance(payload, list):
             return [item for item in payload if isinstance(item, dict)]
@@ -349,7 +440,9 @@ def normalize_problem_annotation(
     if question_type == "tf":
         normalized_answer = _normalize_tf_answer(question.get("correct_answer"))
     elif question_type in {"mc", "select_all"}:
-        normalized_answer = _normalize_mc_answer(question.get("correct_answer"), normalized_options)
+        normalized_answer = _normalize_mc_answer(
+            question.get("correct_answer"), normalized_options
+        )
     else:
         normalized_answer = _normalize_text_answer(question.get("correct_answer"))
 
@@ -359,14 +452,20 @@ def normalize_problem_annotation(
             title=title,
             question_text=normalized_question,
         ),
-        "bloom_level": _normalize_bloom_level(metadata.get("bloom_level"), question_type),
+        "bloom_level": _normalize_bloom_level(
+            metadata.get("bloom_level"), question_type
+        ),
         "potential_traps": [str(item).strip() for item in traps if str(item).strip()],
         "layer_justification": _normalize_layer_justification(
             metadata.get("layer_justification"),
             difficulty_layer,
         ),
-        "skill_focus": _normalize_skill_focus(metadata.get("skill_focus"), question_type),
-        "source_section": _normalize_source_section(metadata.get("source_section"), title),
+        "skill_focus": _normalize_skill_focus(
+            metadata.get("skill_focus"), question_type
+        ),
+        "source_section": _normalize_source_section(
+            metadata.get("source_section"), title
+        ),
         "question_type": question_type,
     }
     if source:
@@ -423,33 +522,55 @@ def validate_question_payload(
         errors.append("difficulty_layer: must be 1, 2, or 3")
     if metadata.get("bloom_level") not in VALID_BLOOM_LEVELS:
         errors.append("problem_metadata.bloom_level: must be a supported Bloom level")
-    elif metadata.get("bloom_level") not in _VALID_BLOOM_BY_DIFFICULTY.get(normalized["difficulty_layer"], VALID_BLOOM_LEVELS):
-        errors.append("problem_metadata.bloom_level: does not fit the selected difficulty_layer")
+    elif metadata.get("bloom_level") not in _VALID_BLOOM_BY_DIFFICULTY.get(
+        normalized["difficulty_layer"], VALID_BLOOM_LEVELS
+    ):
+        errors.append(
+            "problem_metadata.bloom_level: does not fit the selected difficulty_layer"
+        )
 
     if not explanation or len(explanation) < 6:
         errors.append("explanation: must be present and informative")
 
     if question_type == "mc":
         if not options or len(options) != 4:
-            errors.append("options: multiple-choice questions require exactly 4 options")
+            errors.append(
+                "options: multiple-choice questions require exactly 4 options"
+            )
         elif correct_answer not in options:
-            errors.append("correct_answer: must match one of the multiple-choice option labels")
+            errors.append(
+                "correct_answer: must match one of the multiple-choice option labels"
+            )
     elif question_type == "select_all":
         if not options or len(options) < 4:
             errors.append("options: select-all questions require at least 4 options")
         labels = []
         if isinstance(correct_answer, str):
-            labels = [item.strip().upper() for item in re.split(r"[,/;|]", correct_answer) if item.strip()]
+            labels = [
+                item.strip().upper()
+                for item in re.split(r"[,/;|]", correct_answer)
+                if item.strip()
+            ]
         if len(labels) < 2:
-            errors.append("correct_answer: select-all questions require at least 2 correct labels")
-        elif options and any(label not in {key.upper() for key in options} for label in labels):
-            errors.append("correct_answer: select-all labels must match the provided options")
+            errors.append(
+                "correct_answer: select-all questions require at least 2 correct labels"
+            )
+        elif options and any(
+            label not in {key.upper() for key in options} for label in labels
+        ):
+            errors.append(
+                "correct_answer: select-all labels must match the provided options"
+            )
     elif question_type == "tf":
         if correct_answer not in {"True", "False"}:
-            errors.append("correct_answer: true/false questions must answer True or False")
+            errors.append(
+                "correct_answer: true/false questions must answer True or False"
+            )
     elif question_type == "matching":
         if not options or len(options) < 2:
-            errors.append("options: matching questions require at least 2 pairs or prompts")
+            errors.append(
+                "options: matching questions require at least 2 pairs or prompts"
+            )
         if not correct_answer:
             errors.append("correct_answer: matching questions require an answer key")
     else:
