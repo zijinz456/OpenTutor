@@ -67,11 +67,12 @@ const ALLOWED_TIMEOUTS: ReadonlySet<number> = new Set([15, 30, 60]);
 /** Parse + validate search params. Returns `null` if either axis is
  *  missing / malformed — the page redirects to `/` in that case. */
 function parseConfig(
-  search: URLSearchParams | null,
+  sizeParam: string | null,
+  timeoutParam: string | null,
 ): { size: BrutalSessionSize; timeoutSec: BrutalTimeoutSeconds } | null {
-  if (!search) return null;
-  const sizeRaw = Number(search.get("size"));
-  const timeoutRaw = Number(search.get("timeout"));
+  if (!sizeParam || !timeoutParam) return null;
+  const sizeRaw = Number(sizeParam);
+  const timeoutRaw = Number(timeoutParam);
   if (!ALLOWED_SIZES.has(sizeRaw) || !ALLOWED_TIMEOUTS.has(timeoutRaw)) {
     return null;
   }
@@ -108,7 +109,6 @@ function BrutalSessionInner() {
   const isFinished = useBrutalSessionStore((s) => s.isFinished());
   const answerStore = useBrutalSessionStore((s) => s.answer);
   const startStore = useBrutalSessionStore((s) => s.start);
-  const resetStore = useBrutalSessionStore((s) => s.reset);
 
   const [bootState, setBootState] = useState<
     "loading" | "ready" | "empty" | "error"
@@ -125,8 +125,14 @@ function BrutalSessionInner() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const questionStartRef = useRef(Date.now());
+  const resetEpochRef = useRef(0);
 
-  const config = useMemo(() => parseConfig(searchParams), [searchParams]);
+  const sizeParam = searchParams?.get("size") ?? null;
+  const timeoutParam = searchParams?.get("timeout") ?? null;
+  const config = useMemo(
+    () => parseConfig(sizeParam, timeoutParam),
+    [sizeParam, timeoutParam],
+  );
 
   // Bootstrap — fetch plan once per mount with the parsed config. Empty
   // cards with no warning → "nothing to drill" closure (0/0/0). Pool
@@ -192,12 +198,20 @@ function BrutalSessionInner() {
   }, [currentCardKey]);
 
   // Cleanup: reset the store on unmount so a back-nav doesn't leave
-  // state lingering for the next Brutal session.
+  // state lingering for the next Brutal session. We defer the reset into
+  // a microtask and guard it with an epoch so React StrictMode's dev-only
+  // mount -> cleanup -> remount probe does NOT wipe the freshly seeded
+  // queue between the two mounts.
   useEffect(() => {
+    const resetEpoch = ++resetEpochRef.current;
     return () => {
-      resetStore();
+      queueMicrotask(() => {
+        if (resetEpochRef.current === resetEpoch) {
+          useBrutalSessionStore.getState().reset();
+        }
+      });
     };
-  }, [resetStore]);
+  }, []);
 
   const confirmPoolSmall = useCallback(() => {
     if (!pendingPoolSmall) return;
