@@ -39,6 +39,7 @@ from schemas.sessions import (
 from services.auth.dependency import get_current_user
 from services.brutal_plan import select_brutal_plan
 from services.daily_plan import select_daily_plan
+from services.freeze import active_frozen_problem_ids
 
 logger = logging.getLogger(__name__)
 
@@ -85,8 +86,12 @@ async def get_daily_plan(
     :mod:`services.daily_plan` for the rationale.
     """
 
-    _ = user  # present for auth gate, unused under single-user selection
-    return await select_daily_plan(db, size)
+    # Phase 14 T1: honor active freeze tokens. A frozen problem stays
+    # hidden from the daily-plan selector for 24h without touching
+    # FSRS. ``active_frozen_problem_ids`` returns ``[]`` in the no-tokens
+    # case so the pre-Phase-14 path is untouched.
+    frozen = await active_frozen_problem_ids(db, user.id)
+    return await select_daily_plan(db, size, excluded_ids=frozen)
 
 
 @router.get(
@@ -127,13 +132,17 @@ async def get_brutal_plan(
 
     if size not in (20, 30, 50):
         from fastapi import HTTPException
+
         raise HTTPException(
             status_code=422,
             detail=f"size must be 20, 30, or 50 (got {size})",
         )
     _: BrutalSessionSize = size  # type: ignore[assignment]  # post-validation alias
-    _ = user  # present for auth gate, unused under single-user selection
-    plan, warning = await select_brutal_plan(db, size=size)
+    # Phase 14 T1: brutal plan honors freezes too — a card frozen in an
+    # ADHD-mode session stays hidden from the struggle-first drill for
+    # the same 24h window. Keeps the "❄" invariant across surfaces.
+    frozen = await active_frozen_problem_ids(db, user.id)
+    plan, warning = await select_brutal_plan(db, size=size, excluded_ids=frozen)
     # ``size`` on the response echoes ``len(cards)`` — not the requested
     # size — so the frontend can render "got 12 of 30" without a second
     # comparison. The explicit ``warning`` covers the semantic signal.

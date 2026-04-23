@@ -25,6 +25,7 @@ from models.cognitive_baseline import CognitiveBaseline
 from models.usage_event import UsageEvent
 from models.intervention_outcome import InterventionOutcome
 from models.interview import InterviewSession, InterviewTurn
+from models.freeze_token import FreezeToken
 
 __all__ = [
     "User",
@@ -62,4 +63,5 @@ __all__ = [
     "InterventionOutcome",
     "InterviewSession",
     "InterviewTurn",
+    "FreezeToken",
 ]

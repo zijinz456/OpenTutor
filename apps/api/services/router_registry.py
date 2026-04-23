@@ -15,6 +15,7 @@ from routers import (
     curriculum,
     export,
     flashcards,
+    freeze,
     goals,
     health,
     interview,
@@ -67,6 +68,7 @@ CORE_ROUTERS = (
     (onboarding.router, "/api/onboarding", ["onboarding"]),
     (interview.router, "/api", ["interview"]),
     (voice.router, "/api/voice", ["voice"]),
+    (freeze.router, "/api/freeze", ["freeze"]),
 )
 
 

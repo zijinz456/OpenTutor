@@ -25,6 +25,8 @@ get the same :class:`ValueError` the daily path raises.
 
 from __future__ import annotations
 
+import uuid
+from collections.abc import Iterable
 from typing import Literal
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -41,6 +43,8 @@ lockstep with :class:`schemas.sessions.BrutalPlanResponse`."""
 async def select_brutal_plan(
     db: AsyncSession,
     size: int,
+    *,
+    excluded_ids: Iterable[uuid.UUID] | None = None,
 ) -> tuple[DailyPlan, str | None]:
     """Return the brutal-session batch plus a partial-fill warning.
 
@@ -72,7 +76,12 @@ async def select_brutal_plan(
         ``services.daily_plan`` module docstring for the rationale.
     """
 
-    plan = await select_daily_plan(db, size=size, strategy="struggle_first")
+    plan = await select_daily_plan(
+        db,
+        size=size,
+        strategy="struggle_first",
+        excluded_ids=excluded_ids,
+    )
 
     # Distinguish "empty pool" from "partial fill": the former is the
     # nothing_due signal the frontend already knows how to render, the

@@ -95,6 +95,7 @@ from __future__ import annotations
 
 import uuid
 from collections import defaultdict
+from collections.abc import Iterable
 from datetime import timedelta
 from typing import Literal
 
@@ -148,6 +149,7 @@ async def select_daily_plan(
     size: int,
     *,
     strategy: Strategy = "adhd_safe",
+    excluded_ids: Iterable[uuid.UUID] | None = None,
 ) -> DailyPlan:
     """Return the daily-session batch for the configured user.
 
@@ -170,6 +172,15 @@ async def select_daily_plan(
               brutal UX actively wants serialised struggle, not variety
               — and ``code_exercise`` / ``lab_exercise`` rows are filtered
               out because the brutal UI is MC-only.
+        excluded_ids: Optional iterable of ``PracticeProblem.id`` values
+            to drop before tier classification. Used by Phase 14 T1 to
+            honor active freeze tokens — freezing a card hides it from
+            the daily session for 24h without touching FSRS. Filter runs
+            **after** the DB join (so we still materialise one row per
+            problem) but **before** tier classification (so the freeze
+            never takes priority over another card that would otherwise
+            be excluded for a more important reason). Passing ``None``
+            or an empty iterable is equivalent to the Phase 13 behaviour.
 
     Returns:
         A :class:`schemas.sessions.DailyPlan`. ``cards`` is ordered by
@@ -251,6 +262,25 @@ async def select_daily_plan(
         _, incumbent = existing
         if _progress_more_active(progress, incumbent):
             by_problem_id[problem.id] = (problem, progress)
+
+    # ── Phase 14 T1: drop frozen / caller-excluded problem IDs ──
+    # Runs between the join-collapse and the tier classifier so frozen
+    # cards are invisible at every downstream step (rank assignment, type
+    # rotation, dedup). Copying the iterable to a ``set`` once keeps the
+    # membership check O(1) for the whole pass even if the caller passed
+    # a list.
+    if excluded_ids:
+        excluded_set: set[uuid.UUID] = set(excluded_ids)
+        if excluded_set:
+            by_problem_id = {
+                pid: row
+                for pid, row in by_problem_id.items()
+                if pid not in excluded_set
+            }
+            if not by_problem_id:
+                # Every candidate was frozen/excluded — same contract as
+                # "DB is empty" so the UI renders the quick-closure card.
+                return DailyPlan(cards=[], size=0, reason="nothing_due")
 
     # ── Query 2: recently-failed problem IDs (optional) ──
     # Only executed if tiers 0 + 1 could fail to cover ``size`` — we still
