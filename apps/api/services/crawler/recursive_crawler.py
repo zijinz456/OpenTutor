@@ -19,13 +19,16 @@ params so ``?b=1&a=2`` and ``?a=2&b=1`` hash identically.
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from collections import deque
+from collections import defaultdict, deque
 from typing import AsyncIterator, NamedTuple
 from urllib.parse import parse_qsl, urldefrag, urljoin, urlparse, urlunparse
 
 import httpx
 from bs4 import BeautifulSoup
+
+from services.crawler.robots import is_url_allowed
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +71,8 @@ class CrawledPage(NamedTuple):
                          ``same_origin=True``.
     - ``skip_prefix``  — origin matches but path does not start with
                          ``path_prefix``.
+    - ``skip_robots``  — ``robots.txt`` disallows this URL (or the fetch
+                         failed and we fail-closed). See ``services.crawler.robots``.
     - ``fetch_fail``   — httpx raised or returned non-2xx.
     """
 
@@ -160,6 +165,38 @@ def _extract_links(html: str, base_url: str) -> list[str]:
             continue
         out.append(absolute)
     return out
+
+
+# ── Per-domain rate limiter ─────────────────────────────────────────────────
+#
+# Module-level state intentional: every ``crawl_urls`` invocation shares the
+# same politeness window per domain, so two concurrent crawls of
+# ``docs.python.org`` cannot gang up and exceed 1 req/sec combined. The lock
+# per domain is created lazily via ``defaultdict``; ``asyncio.Lock`` is
+# bound to the running event loop on first await, which is fine because all
+# crawler work runs on the same FastAPI loop.
+
+_DOMAIN_LOCKS: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+_DOMAIN_LAST_FETCH: dict[str, float] = {}
+
+
+async def _rate_limit_for_domain(domain: str, min_delay_s: float = 1.0) -> None:
+    """Sleep until at least ``min_delay_s`` has passed since the last fetch.
+
+    Holds the per-domain lock across the sleep + timestamp-write so that two
+    coroutines racing on the same domain cannot both observe the "old"
+    timestamp and skip the wait. The lock is released before the actual HTTP
+    request runs — concurrency cap for cross-domain crawls is a separate
+    concern (caller's responsibility via ``asyncio.Semaphore`` if wanted).
+    """
+    loop = asyncio.get_event_loop()
+    async with _DOMAIN_LOCKS[domain]:
+        last = _DOMAIN_LAST_FETCH.get(domain)
+        if last is not None:
+            elapsed = loop.time() - last
+            if elapsed < min_delay_s:
+                await asyncio.sleep(min_delay_s - elapsed)
+        _DOMAIN_LAST_FETCH[domain] = loop.time()
 
 
 async def _fetch(client: httpx.AsyncClient, url: str) -> str | None:
@@ -277,6 +314,17 @@ async def crawl_urls(
                     url=canonical, depth=depth, html=None, status="skip_depth"
                 )
                 continue
+
+            # robots.txt compliance gate (T2). Runs before the rate-limit
+            # wait so a disallowed URL does not burn our 1-req/sec budget.
+            if not await is_url_allowed(canonical):
+                yield CrawledPage(
+                    url=canonical, depth=depth, html=None, status="skip_robots"
+                )
+                continue
+
+            # Per-domain politeness: ≥ 1s between fetches to the same host.
+            await _rate_limit_for_domain(urlparse(canonical).netloc)
 
             html = await _fetch(http_client, canonical)
             if html is None:
