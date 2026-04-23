@@ -30,7 +30,9 @@ from routers import (
     upload,
     upload_coursera,
     upload_screenshot,
+    upload_url_recursive,
     usage,
+    voice,
     workflows,
     wrong_answers,
 )
@@ -41,6 +43,7 @@ CORE_ROUTERS = (
     (upload.router, "/api/content", ["content"]),
     (upload_coursera.router, "/api/content", ["content"]),
     (upload_screenshot.router, "/api/content", ["content"]),
+    (upload_url_recursive.router, "/api/content", ["content"]),
     (chat.router, "/api/chat", ["chat"]),
     (courses.router, "/api/courses", ["courses"]),
     (curriculum.router, "/api/courses", ["curriculum"]),
@@ -63,6 +66,7 @@ CORE_ROUTERS = (
     (block_routes.router, "/api/blocks", ["blocks"]),
     (onboarding.router, "/api/onboarding", ["onboarding"]),
     (interview.router, "/api", ["interview"]),
+    (voice.router, "/api/voice", ["voice"]),
 )
 
 
