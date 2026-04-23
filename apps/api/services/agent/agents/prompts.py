@@ -70,6 +70,38 @@ SOCRATIC_GUARDRAILS = """
 8. Use the student's own words and examples when building explanations.
 """
 
+# Phase 7 Guardrails — strict retrieval-required grounding mode.
+# Injected into the tutor prompt only when a session opts in via
+# ChatRequest.guardrails_strict (or settings.guardrails_strict=True globally).
+# Citations use 1-based indices into the numbered retrieval context block
+# (critic concern #3 — opaque chunk UUIDs would defeat the self-check).
+# The refusal JSON example line runs past 88 cols; it's a verbatim prompt
+# literal shown to the LLM, so we don't split it. Per-line noqa on the
+# offending string concat below.
+_REFUSAL_JSON_EXAMPLE = (
+    '  {"answer": "I don\'t have this in your course materials.", "confidence": 1, "citations": []}'  # noqa: E501
+)
+GUARDRAILS_STRICT_DIRECTIVE = (
+    "\n"
+    "You are in STRICT GROUNDING MODE. Rules:\n"
+    "- Answer ONLY using facts from the retrieved context below.\n"
+    "- If the context doesn't cover the question, respond ONLY with JSON:\n"
+    f"{_REFUSAL_JSON_EXAMPLE}\n"
+    "- Otherwise respond ONLY with JSON matching this schema:\n"
+    '  {"answer": "...", "confidence": 1|2|3|4|5, "citations": [int]}\n'
+    '- "citations" is a list of 1-based indices into the numbered context below.\n'
+    "  DO NOT invent indices; DO NOT cite indices that aren't present.\n"
+    '- "confidence" is 1-5 integer, self-reported. Be honest — 5 means\n'
+    '  "every claim is directly supported by cited context".\n'
+)
+
+# Surfaced to the UI when strict mode refuses (no retrieval or parse failure).
+REFUSAL_TEMPLATE = (
+    "I don't have this in your course materials. Options:\n"
+    "- Paste a URL that covers it\n"
+    "- Turn off strict mode for this session"
+)
+
 _QUIZ_INSTRUCTIONS = """
 ## Quiz / Exercise Generation
 When generating practice problems, organize them in 3 difficulty layers:

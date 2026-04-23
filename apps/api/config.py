@@ -102,6 +102,13 @@ class Settings(BaseSettings):
     # Default ON; set ENABLE_URL_ROADMAP=false to disable entirely.
     enable_url_roadmap: bool = True
 
+    # Phase 7 Guardrails — anti-hallucination retrieval-required mode.
+    # Default OFF for backward-compat; per-session toggle via ChatRequest.
+    # Env: GUARDRAILS_STRICT, GUARDRAILS_RETRIEVAL_MIN_SCORE.
+    guardrails_strict: bool = False
+    guardrails_retrieval_min_score: float = 0.62
+    # ^ Placeholder value. T7 calibration eval picks the final number.
+
     # Rate limiting
     rate_limit_mode: str = "simple"  # "simple" | "cost_aware"
     rate_limit_rpm: int = 120  # requests per minute per IP (simple mode)

@@ -42,6 +42,9 @@ class ChatRequest(BaseModel):
     # v4: Block system context — current blocks and recently dismissed types
     block_types: list[str] = Field(default_factory=list)
     dismissed_block_types: list[str] = Field(default_factory=list)
+    # Phase 7 Guardrails — per-session strict grounding override.
+    # None → fallback to settings.guardrails_strict at routing time.
+    guardrails_strict: bool | None = None
 
     @model_validator(mode="after")
     def _validate_tab_context_size(self):
