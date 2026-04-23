@@ -105,7 +105,12 @@ async def get_daily_plan(
     ),
 )
 async def get_brutal_plan(
-    size: BrutalSessionSize = Query(
+    # Pydantic v2 ``Literal[int]`` does not coerce query strings ("20" →
+    # 20) under FastAPI's ``Query`` validator, so ``?size=20`` returns 422
+    # with the Literal binding. Accept raw ``int`` at the HTTP edge and
+    # enforce the closed set manually — the 422 body shape mirrors what
+    # the Literal would have produced.
+    size: int = Query(
         30,
         description="Session size in cards. Must be 20, 30, or 50.",
     ),
@@ -120,6 +125,13 @@ async def get_brutal_plan(
     mode — see :mod:`services.daily_plan` for the rationale.
     """
 
+    if size not in (20, 30, 50):
+        from fastapi import HTTPException
+        raise HTTPException(
+            status_code=422,
+            detail=f"size must be 20, 30, or 50 (got {size})",
+        )
+    _: BrutalSessionSize = size  # type: ignore[assignment]  # post-validation alias
     _ = user  # present for auth gate, unused under single-user selection
     plan, warning = await select_brutal_plan(db, size=size)
     # ``size`` on the response echoes ``len(cards)`` — not the requested

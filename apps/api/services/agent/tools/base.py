@@ -148,6 +148,14 @@ class Tool(ABC):
                 prop["enum"] = param.enum
             if param.default is not None:
                 prop["default"] = param.default
+            # OpenAI strict-function-calling schema rejects array params
+            # without an `items` key (400 Bad Request at tool-registration
+            # time). Fall back to ``items: {type: "object"}`` — the loosest
+            # shape that still satisfies the validator; specific tools can
+            # override by setting `items` on the ToolParameter directly.
+            if json_type == "array":
+                items_spec = getattr(param, "items", None) or {"type": "object"}
+                prop["items"] = items_spec
             properties[param.name] = prop
             if param.required:
                 required.append(param.name)

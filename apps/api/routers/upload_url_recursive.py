@@ -333,10 +333,19 @@ async def _ingest_page(
             course_id=course_id,
             file_bytes=md_bytes,
         )
-        # Tag provenance so downstream analytics can separate recursive
-        # crawls from single-URL uploads and Coursera ZIPs.
-        job.source_type = "url_recursive"
-        job.url = page.url
+        # Tag provenance via raw UPDATE instead of attribute assignment.
+        # The pipeline may detach the returned job from the outer session
+        # (CourseContentTree relationships load lazily during attribute
+        # access, hitting DetachedInstanceError when touched post-commit).
+        # An UPDATE sidesteps ORM-session bookkeeping entirely.
+        from sqlalchemy import update
+        from models.ingestion import IngestionJob
+        job_id = job.id  # primary key is already loaded, safe to read
+        await db.execute(
+            update(IngestionJob)
+            .where(IngestionJob.id == job_id)
+            .values(source_type="url_recursive", url=page.url)
+        )
         await db.commit()
     except Exception:
         # One flaky page must not torpedo a 50-page crawl. Clean up the
@@ -346,7 +355,7 @@ async def _ingest_page(
         logger.exception("recursive_ingest_page_failed url=%s", page.url)
         return None
 
-    return str(job.id)
+    return str(job_id)
 
 
 def _safe_unlink(path: str) -> None:
