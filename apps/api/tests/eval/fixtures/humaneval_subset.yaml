@@ -1,0 +1,55 @@
+# Curated 5-task subset of HumanEval-style coding prompts.
+# We grade on structure (def + return pattern) rather than running the
+# code — that would require a sandbox. The patterns accept any of the
+# common idiomatic implementations.
+
+questions:
+  - id: he_reverse_list
+    category: humaneval
+    prompt: >
+      Write a Python function `reverse_list(lst)` that returns a new list
+      with elements in reverse order. Just the function definition, no
+      explanation.
+    expected: "(?s)def\\s+reverse_list.*return.*(\\[::-1\\]|reversed\\()"
+    grade_mode: regex
+    max_tokens: 200
+
+  - id: he_is_palindrome
+    category: humaneval
+    prompt: >
+      Write a Python function `is_palindrome(s)` that returns True if `s`
+      reads the same forwards and backwards (case-insensitive). Just the
+      function definition, no explanation.
+    expected: "(?s)def\\s+is_palindrome.*return.*(\\[::-1\\]|==.*lower|lower.*==)"
+    grade_mode: regex
+    max_tokens: 200
+
+  - id: he_fizzbuzz
+    category: humaneval
+    prompt: >
+      Write a Python function `fizzbuzz(n)` that returns a list of strings
+      for 1..n following the standard FizzBuzz rules (FizzBuzz / Fizz /
+      Buzz / str(i)). Just the function definition, no explanation.
+    expected: "(?s)def\\s+fizzbuzz.*(FizzBuzz|Fizz.*Buzz).*(%\\s*15|%\\s*3|%\\s*5)"
+    grade_mode: regex
+    max_tokens: 300
+
+  - id: he_gcd
+    category: humaneval
+    prompt: >
+      Write a Python function `gcd(a, b)` that returns the greatest common
+      divisor using Euclid's algorithm. Just the function definition, no
+      explanation.
+    expected: "(?s)def\\s+gcd.*(while\\s+b|math\\.gcd|%\\s*b|b\\s*,\\s*a\\s*%)"
+    grade_mode: regex
+    max_tokens: 200
+
+  - id: he_flatten_list
+    category: humaneval
+    prompt: >
+      Write a Python function `flatten_list(nested)` that flattens one
+      level of nesting in a list of lists and returns a flat list. Just
+      the function definition, no explanation.
+    expected: "(?s)def\\s+flatten_list.*(for.*for|itertools\\.chain|sum\\(|extend)"
+    grade_mode: regex
+    max_tokens: 200

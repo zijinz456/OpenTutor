@@ -1,0 +1,48 @@
+# Small GSM8K-style arithmetic reasoning subset.
+# We only check that the final numeric answer appears in the response —
+# models chain-of-thought freely but the right number has to land.
+
+questions:
+  - id: gsm_apples_1
+    category: gsm8k
+    prompt: >
+      Maria has 18 apples. She gives 3 to each of her 4 friends, then eats
+      2 herself. How many apples does she have left? Answer with just the
+      number.
+    expected: "4"
+    grade_mode: contains
+
+  - id: gsm_pencils_1
+    category: gsm8k
+    prompt: >
+      A box contains 24 pencils. Half are blue, a third of the remainder
+      are red, the rest are black. How many black pencils are in the box?
+      Answer with just the number.
+    expected: "8"
+    grade_mode: contains
+
+  - id: gsm_distance_1
+    category: gsm8k
+    prompt: >
+      A car drives 60 km/h for 2 hours, then 90 km/h for 1 hour. What is
+      the total distance covered in kilometers? Answer with just the
+      number.
+    expected: "210"
+    grade_mode: contains
+
+  - id: gsm_sales_1
+    category: gsm8k
+    prompt: >
+      A shirt costs $40. It is discounted by 25%. How much do you pay, in
+      dollars? Answer with just the number.
+    expected: "30"
+    grade_mode: contains
+
+  - id: gsm_tickets_1
+    category: gsm8k
+    prompt: >
+      A movie theater sells adult tickets for $12 and child tickets for
+      $7. On Saturday it sold 50 adult tickets and 30 child tickets. What
+      was the total revenue in dollars? Answer with just the number.
+    expected: "810"
+    grade_mode: contains

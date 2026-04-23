@@ -1,0 +1,189 @@
+# 30-question regression quiz for the LLM router.
+# Categories: python (10), ai (10), softeng (5), behavioral (5).
+# Keep expected patterns tolerant — we're guarding against gross quality
+# drift, not measuring benchmark-grade accuracy.
+
+questions:
+  # ── python (10) ────────────────────────────────────────────
+  - id: py_gil_1
+    category: python
+    prompt: "In one sentence: what does the Python GIL prevent, and what doesn't it help with?"
+    expected: "(?i)(single.*thread|one thread|serial|cpu-?bound)"
+    grade_mode: regex
+
+  - id: py_async_1
+    category: python
+    prompt: "What keyword do you use inside an async function to wait for a coroutine? Answer with just the keyword."
+    expected: "await"
+    grade_mode: contains
+
+  - id: py_list_comp_1
+    category: python
+    prompt: "Write a Python list comprehension that produces the squares of numbers 0 through 4. Just the expression."
+    expected: "(?i)\\[.*\\*\\*\\s*2.*for.*in.*range\\(5\\)\\]|\\[.*\\*.*for.*in.*range\\(5\\)\\]"
+    grade_mode: regex
+
+  - id: py_dict_get_1
+    category: python
+    prompt: "Name the dict method that returns a default value when a key is missing. Answer with just the method name."
+    expected: "get"
+    grade_mode: contains
+
+  - id: py_decorator_1
+    category: python
+    prompt: "What character precedes a Python decorator name above a function definition?"
+    expected: "@"
+    grade_mode: contains
+
+  - id: py_generator_1
+    category: python
+    prompt: "What keyword makes a Python function a generator? Answer with just the keyword."
+    expected: "yield"
+    grade_mode: contains
+
+  - id: py_venv_1
+    category: python
+    prompt: "Name the built-in Python module that creates isolated virtual environments. One word."
+    expected: "venv"
+    grade_mode: contains
+
+  - id: py_fstring_1
+    category: python
+    prompt: "What prefix character makes a Python string an f-string?"
+    expected: "f"
+    grade_mode: contains
+
+  - id: py_typing_1
+    category: python
+    prompt: "What typing construct marks a value that may be None? Give the standard PEP 484 form for 'maybe int'."
+    expected: "(?i)(optional\\[int\\]|int\\s*\\|\\s*none)"
+    grade_mode: regex
+
+  - id: py_context_1
+    category: python
+    prompt: "Which statement opens a context manager in Python? Just the keyword."
+    expected: "with"
+    grade_mode: contains
+
+  # ── ai / ml (10) ───────────────────────────────────────────
+  - id: ai_rag_1
+    category: ai
+    prompt: "Name the two main stages of a RAG pipeline."
+    expected: "(?i)retriev.*(?:generat|augment)|generat.*retriev"
+    grade_mode: regex
+
+  - id: ai_embedding_1
+    category: ai
+    prompt: "What is a vector embedding, in one sentence?"
+    expected: "(?i)(dense|numeric).*vector|(?i)vector.*represent"
+    grade_mode: regex
+
+  - id: ai_temperature_1
+    category: ai
+    prompt: "In an LLM, what does the 'temperature' parameter control?"
+    expected: "(?i)(randomness|diversity|creativity|stochastic)"
+    grade_mode: regex
+
+  - id: ai_attention_1
+    category: ai
+    prompt: "Which architecture introduced the 'attention is all you need' concept?"
+    expected: "(?i)transformer"
+    grade_mode: regex
+
+  - id: ai_finetune_vs_rag_1
+    category: ai
+    prompt: "In one sentence: when would you prefer RAG over fine-tuning?"
+    expected: "(?i)(fresh|fast-?changing|up-?to-?date|dynamic|new|external|knowledge|doc)"
+    grade_mode: regex
+
+  - id: ai_hallucination_1
+    category: ai
+    prompt: "What is an LLM hallucination?"
+    expected: "(?i)(fabricat|made up|false|incorrect|inaccurate|invent)"
+    grade_mode: regex
+
+  - id: ai_prompt_injection_1
+    category: ai
+    prompt: "What is prompt injection?"
+    expected: "(?i)(override|malicious|inject|manipulat|bypass).*(instruction|prompt|system)"
+    grade_mode: regex
+
+  - id: ai_tokenize_1
+    category: ai
+    prompt: "What does a tokenizer do in an LLM pipeline?"
+    expected: "(?i)(split|break|convert|encod).*(text|string|word).*(token|id|number|integer)"
+    grade_mode: regex
+
+  - id: ai_chunking_1
+    category: ai
+    prompt: "Why do RAG systems chunk documents before embedding?"
+    expected: "(?i)(context|token|window|limit|size|length)"
+    grade_mode: regex
+
+  - id: ai_cosine_sim_1
+    category: ai
+    prompt: "What similarity metric is most commonly used to rank vector-embedding matches?"
+    expected: "(?i)cosine"
+    grade_mode: regex
+
+  # ── software engineering (5) ────────────────────────────────
+  - id: se_http_200_1
+    category: softeng
+    prompt: "What HTTP status code means 'OK'? Just the number."
+    expected: "200"
+    grade_mode: contains
+
+  - id: se_http_404_1
+    category: softeng
+    prompt: "What HTTP status code means 'Not Found'? Just the number."
+    expected: "404"
+    grade_mode: contains
+
+  - id: se_rest_idempotent_1
+    category: softeng
+    prompt: "Which of PUT, POST, and DELETE is NOT idempotent?"
+    expected: "(?i)post"
+    grade_mode: regex
+
+  - id: se_git_rebase_1
+    category: softeng
+    prompt: "In one sentence: what does 'git rebase' do compared to 'git merge'?"
+    expected: "(?i)(linear|replay|reapply|rewrite|move)"
+    grade_mode: regex
+
+  - id: se_sql_join_1
+    category: softeng
+    prompt: "Which SQL JOIN returns only rows with matching keys in both tables?"
+    expected: "(?i)inner"
+    grade_mode: regex
+
+  # ── behavioral framing (5) ──────────────────────────────────
+  - id: be_star_1
+    category: behavioral
+    prompt: "Name the four parts of the STAR framework for behavioral interview answers."
+    expected: "(?i)situation.*task.*action.*result"
+    grade_mode: regex
+
+  - id: be_disagree_1
+    category: behavioral
+    prompt: "Give one sentence on how to structure an answer to 'tell me about a time you disagreed with a teammate'."
+    expected: "(?i)(situation|context|approach|resolution|outcome|compromise|listen)"
+    grade_mode: regex
+
+  - id: be_weakness_1
+    category: behavioral
+    prompt: "What's the key pitfall to avoid when answering 'what is your biggest weakness'?"
+    expected: "(?i)(humbleb|fake|generic|cliche|strength in disguise|avoid.*answer)"
+    grade_mode: regex
+
+  - id: be_why_company_1
+    category: behavioral
+    prompt: "In one sentence: what should you reference when answering 'why this company'?"
+    expected: "(?i)(mission|product|value|specific|research|team|culture)"
+    grade_mode: regex
+
+  - id: be_leadership_1
+    category: behavioral
+    prompt: "Name one concrete signal interviewers look for in a leadership story."
+    expected: "(?i)(influence|decision|initiative|ownership|mentor|drive|outcome|impact|responsib)"
+    grade_mode: regex
