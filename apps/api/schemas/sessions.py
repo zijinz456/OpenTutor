@@ -50,6 +50,21 @@ rejected with HTTP 422 by FastAPI's ``Literal`` validator — see §Q2 in
 ``plan/adhd_ux_phase13.md`` for why we hard-code the trio."""
 
 
+BrutalSessionSize = Literal[20, 30, 50]
+"""Allowed values for the ``size`` query parameter on the Brutal Drill
+endpoint. Phase 6 explicitly targets interview-prep users who want a
+deliberately heavy session — the trio mirrors the struggle-first budget
+defined in ``plan/brutal_drill_mode_phase6.md``. Any other integer is
+rejected with HTTP 422 via the same ``Literal`` mechanism the daily
+endpoint uses."""
+
+
+BrutalTimeoutSeconds = Literal[15, 30, 60]
+"""Per-card timeout values surfaced to the Brutal frontend. Kept next to
+:data:`BrutalSessionSize` because both live behind the same feature flag
+and move together in the UX spec (§F6 of the phase 6 plan)."""
+
+
 class DailyPlanCard(BaseModel):
     """One card in the daily-plan response.
 
@@ -91,4 +106,39 @@ class DailyPlan(BaseModel):
     reason: str | None = None
 
 
-__all__ = ["DailyPlan", "DailyPlanCard", "DailySessionSize"]
+class BrutalPlanResponse(BaseModel):
+    """Response body for ``GET /api/sessions/brutal-plan`` (Phase 6).
+
+    Mirrors :class:`DailyPlan` but narrows the contract in two ways:
+
+    * ``strategy`` is pinned to ``"struggle_first"`` — the only selector
+      the Brutal endpoint exposes. A field rather than a silent default
+      so the frontend can surface the mode in UI copy without a second
+      round-trip.
+    * ``warning`` is an explicit ``"pool_small"`` signal when the pool
+      could not fill the requested size. The daily endpoint squashes
+      that case into ``reason=None`` because an ADHD session happily
+      accepts a partial fill; Brutal users asked for a heavy batch on
+      purpose, so the frontend raises a toast instead of silently
+      shrinking the deck.
+
+    ``cards`` reuses :class:`DailyPlanCard` so the frontend card renderer
+    stays shared between daily and brutal sessions. The MC-only filter
+    and tier-rank inversion are applied in the service — consumers of
+    this schema never see code-exercise / lab-exercise rows.
+    """
+
+    cards: list[DailyPlanCard] = Field(default_factory=list)
+    size: int = Field(ge=0)
+    strategy: Literal["struggle_first"] = "struggle_first"
+    warning: Literal["pool_small"] | None = None
+
+
+__all__ = [
+    "BrutalPlanResponse",
+    "BrutalSessionSize",
+    "BrutalTimeoutSeconds",
+    "DailyPlan",
+    "DailyPlanCard",
+    "DailySessionSize",
+]

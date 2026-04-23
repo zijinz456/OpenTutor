@@ -1,18 +1,22 @@
-"""ADHD daily-session endpoints (Phase 13 T2).
+"""Session-scoped endpoints.
 
-Currently exposes a single route — ``GET /api/sessions/daily-plan`` —
-used by the :func:`DailySessionCTA` dashboard component to fetch a tiny
-curated batch of practice problems for a single ADHD-friendly session.
+Hosts both the Phase 13 ADHD daily-session endpoint
+(``GET /api/sessions/daily-plan``) and the Phase 6 Brutal Drill
+endpoint (``GET /api/sessions/brutal-plan``). Both live on the same
+router per the F1 decision in ``plan/brutal_drill_mode_phase6.md``:
+they share the ``/api/sessions`` mount, the auth dependency, and the
+selection pipeline in :mod:`services.daily_plan` — splitting them into
+two routers would triple the wiring for no ownership gain.
 
 The mount prefix ``/api/sessions`` is registered in
-:mod:`services.router_registry`. The slash-free endpoint path keeps
-``/api/sessions/daily-plan`` readable from curl without a trailing
-redirect.
+:mod:`services.router_registry`. Slash-free endpoint paths keep them
+readable from curl without a trailing redirect.
 
-The selection logic lives in :mod:`services.daily_plan` — the router
-itself is intentionally thin: validate, delegate, return. Auth is handled
-by :func:`services.auth.dependency.get_current_user` so the route stays
-locked behind the same deployment-mode gate as every other API. In
+The selection logic lives in :mod:`services.daily_plan` and
+:mod:`services.brutal_plan` — this router is intentionally thin:
+validate, delegate, return. Auth is handled by
+:func:`services.auth.dependency.get_current_user` so every route stays
+locked behind the same deployment-mode gate as the rest of the API. In
 single-user local mode (the default) that dependency transparently
 returns the one local user.
 """
@@ -26,8 +30,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
 from models.user import User
-from schemas.sessions import DailyPlan, DailySessionSize
+from schemas.sessions import (
+    BrutalPlanResponse,
+    BrutalSessionSize,
+    DailyPlan,
+    DailySessionSize,
+)
 from services.auth.dependency import get_current_user
+from services.brutal_plan import select_brutal_plan
 from services.daily_plan import select_daily_plan
 
 logger = logging.getLogger(__name__)
@@ -74,6 +84,49 @@ async def get_daily_plan(
 
     _ = user  # present for auth gate, unused under single-user selection
     return await select_daily_plan(db, size)
+
+
+@router.get(
+    "/brutal-plan",
+    response_model=BrutalPlanResponse,
+    summary="Get the Brutal Drill session batch",
+    description=(
+        "Return a curated batch of 20 / 30 / 50 MC-only practice cards "
+        "prioritised struggle-first: recent-fail (14d window) → overdue "
+        "→ due today → never-seen with `concept_slug`. Used by the "
+        "Brutal Drill dashboard entry (Phase 6). Any `size` other than "
+        "20, 30, or 50 is rejected with HTTP 422. The response includes "
+        "`warning=\"pool_small\"` when the pool was non-empty but smaller "
+        "than the requested size — the frontend uses that to raise a "
+        "toast instead of silently shrinking the deck."
+    ),
+)
+async def get_brutal_plan(
+    size: BrutalSessionSize = Query(
+        30,
+        description="Session size in cards. Must be 20, 30, or 50.",
+    ),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> BrutalPlanResponse:
+    """Return the configured user's next brutal-drill batch.
+
+    The ``user`` parameter is accepted purely to keep the auth
+    dependency wired in and to match the convention every other API
+    router follows. Selection itself is global under single-user local
+    mode — see :mod:`services.daily_plan` for the rationale.
+    """
+
+    _ = user  # present for auth gate, unused under single-user selection
+    plan, warning = await select_brutal_plan(db, size=size)
+    # ``size`` on the response echoes ``len(cards)`` — not the requested
+    # size — so the frontend can render "got 12 of 30" without a second
+    # comparison. The explicit ``warning`` covers the semantic signal.
+    return BrutalPlanResponse(
+        cards=plan.cards,
+        size=len(plan.cards),
+        warning=warning,  # type: ignore[arg-type]
+    )
 
 
 __all__ = ["router"]

@@ -96,6 +96,7 @@ from __future__ import annotations
 import uuid
 from collections import defaultdict
 from datetime import timedelta
+from typing import Literal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -107,46 +108,107 @@ from schemas.sessions import DailyPlan, DailyPlanCard
 
 
 ALLOWED_SIZES: frozenset[int] = frozenset({1, 5, 10})
-"""Session sizes the endpoint understands. Mirrors
+"""Session sizes the ADHD endpoint understands. Mirrors
 :data:`schemas.sessions.DailySessionSize` — kept here as an explicit
 constant so the service can self-validate when exercised from tests or
 internal callers that bypass the HTTP layer."""
 
+ALLOWED_BRUTAL_SIZES: frozenset[int] = frozenset({20, 30, 50})
+"""Session sizes the Brutal Drill endpoint understands. Mirrors
+:data:`schemas.sessions.BrutalSessionSize`. A brutal session is the
+anti-ADHD case — deliberately heavy, struggle-first, interview-prep —
+so the allowed sizes never overlap with :data:`ALLOWED_SIZES`."""
+
 RECENTLY_FAILED_WINDOW_DAYS: int = 7
-"""How far back ``PracticeResult`` is scanned for rank-2 candidates. Seven
-days keeps the tier fresh (a week-old mistake is usually re-scheduled by
-FSRS anyway) while surviving a long weekend off."""
+"""How far back ``PracticeResult`` is scanned for rank-2 candidates
+under the default ADHD strategy. Seven days keeps the tier fresh
+(a week-old mistake is usually re-scheduled by FSRS anyway) while
+surviving a long weekend off."""
+
+BRUTAL_RECENTLY_FAILED_WINDOW_DAYS: int = 14
+"""Widened recent-fail window for ``strategy="struggle_first"``. The
+brutal mode leads with struggle — a 7-day window is too narrow when the
+user is cramming over the weeks leading up to an interview. Fourteen
+days is the phase-6 contract (§F1 of the plan)."""
 
 
-async def select_daily_plan(db: AsyncSession, size: int) -> DailyPlan:
+_CODE_LIKE_QUESTION_TYPES: frozenset[str] = frozenset(
+    {"code_exercise", "lab_exercise"}
+)
+"""Question types the brutal strategy filters out. Code and lab rows
+need their own runner UI — the brutal drill is MC-only by design so the
+countdown clock makes sense and results stay comparable across cards.
+Kept private because the daily strategy does NOT filter on question type
+(its type-rotation actively wants the variety)."""
+
+
+Strategy = Literal["adhd_safe", "struggle_first"]
+
+
+async def select_daily_plan(
+    db: AsyncSession,
+    size: int,
+    *,
+    strategy: Strategy = "adhd_safe",
+) -> DailyPlan:
     """Return the daily-session batch for the configured user.
 
     Args:
         db: Active async SQLAlchemy session. The caller owns the
             transaction — we do not commit.
-        size: Requested batch size. Must be one of :data:`ALLOWED_SIZES`.
+        size: Requested batch size. Allowed values depend on ``strategy``:
+            :data:`ALLOWED_SIZES` for ``"adhd_safe"`` and
+            :data:`ALLOWED_BRUTAL_SIZES` for ``"struggle_first"``.
+        strategy: Selector profile.
+
+            * ``"adhd_safe"`` (default, Phase 13 behaviour — UNCHANGED):
+              rank 0 overdue → rank 1 due-today → rank 2 recently-failed
+              with a 7-day window, type-rotation applied inside each
+              tier, no question-type filter.
+            * ``"struggle_first"`` (Phase 6 Brutal Drill): tier ranks
+              swapped so **recent-fail comes first** (14-day window),
+              then overdue, then due-today, then rank 3 "never-seen
+              with ``concept_slug``". Type-rotation is disabled — the
+              brutal UX actively wants serialised struggle, not variety
+              — and ``code_exercise`` / ``lab_exercise`` rows are filtered
+              out because the brutal UI is MC-only.
 
     Returns:
         A :class:`schemas.sessions.DailyPlan`. ``cards`` is ordered by
-        priority (see module docstring) with type-rotation applied inside
-        each priority tier. ``reason`` is ``"nothing_due"`` iff the
-        curated pool was empty, otherwise ``None`` (including the case
-        where the pool was smaller than ``size``).
+        priority tier (tier semantics depend on ``strategy``). ``reason``
+        is ``"nothing_due"`` iff the curated pool was empty, otherwise
+        ``None`` (including the case where the pool was smaller than
+        ``size`` — callers that care about partial fill inspect
+        ``len(cards) < size`` directly, see
+        :func:`services.brutal_plan.select_brutal_plan`).
 
     Raises:
-        ValueError: ``size`` is outside :data:`ALLOWED_SIZES`. The HTTP
-            layer rejects bad sizes earlier via ``Literal[1, 5, 10]``;
-            raising here guards against non-HTTP callers.
+        ValueError: ``size`` is outside the allowed set for the chosen
+            strategy. The HTTP layers reject bad sizes earlier via the
+            pydantic ``Literal`` types; raising here guards against
+            non-HTTP callers.
     """
 
-    if size not in ALLOWED_SIZES:
-        raise ValueError(
-            f"size must be one of {sorted(ALLOWED_SIZES)}, got {size!r}"
-        )
+    if strategy == "adhd_safe":
+        if size not in ALLOWED_SIZES:
+            raise ValueError(
+                f"size must be one of {sorted(ALLOWED_SIZES)} for "
+                f"strategy='adhd_safe', got {size!r}"
+            )
+        recent_window_days = RECENTLY_FAILED_WINDOW_DAYS
+    elif strategy == "struggle_first":
+        if size not in ALLOWED_BRUTAL_SIZES:
+            raise ValueError(
+                f"size must be one of {sorted(ALLOWED_BRUTAL_SIZES)} for "
+                f"strategy='struggle_first', got {size!r}"
+            )
+        recent_window_days = BRUTAL_RECENTLY_FAILED_WINDOW_DAYS
+    else:  # pragma: no cover — caught by Literal on the typed call sites
+        raise ValueError(f"unknown strategy {strategy!r}")
 
     now = utcnow()
     due_horizon = now + timedelta(hours=24)
-    recent_failure_floor = now - timedelta(days=RECENTLY_FAILED_WINDOW_DAYS)
+    recent_failure_floor = now - timedelta(days=recent_window_days)
 
     # ── Query 1: problems LEFT JOIN learning_progress ──
     # Join condition matches how tracker.get_or_create_progress keys
@@ -222,10 +284,23 @@ async def select_daily_plan(db: AsyncSession, size: int) -> DailyPlan:
     tier_overdue: list[tuple[PracticeProblem, LearningProgress | None]] = []
     tier_due_today: list[tuple[PracticeProblem, LearningProgress]] = []
     tier_recent_fail: list[tuple[PracticeProblem, LearningProgress | None]] = []
+    # Rank 3 is only populated under ``strategy="struggle_first"`` —
+    # ADHD mode deliberately excludes never-seen cards so the daily
+    # session surfaces debt, not raw backlog.
+    tier_never_seen: list[tuple[PracticeProblem, LearningProgress | None]] = []
 
     recently_failed_set = set(recent_failed_order)
 
     for problem, progress in by_problem_id.values():
+        # Brutal is MC-only — drop code_exercise / lab_exercise rows
+        # before classification so they never land in any tier. ADHD
+        # keeps them (its type-rotation wants the variety).
+        if (
+            strategy == "struggle_first"
+            and problem.question_type in _CODE_LIKE_QUESTION_TYPES
+        ):
+            continue
+
         next_review = progress.next_review_at if progress is not None else None
 
         if next_review is not None and next_review < now:
@@ -252,9 +327,16 @@ async def select_daily_plan(db: AsyncSession, size: int) -> DailyPlan:
             tier_recent_fail.append((problem, progress))
             continue
 
-        # Brand-new, unanswered, not due → out of scope for the daily
-        # session. Rank 3 ("never seen") is intentionally excluded per the
-        # Phase 13 plan: we surface debt, not raw backlog.
+        # Brand-new, unanswered, not due. ADHD mode drops this row
+        # entirely (Phase 13: surface debt, not raw backlog). Brutal
+        # mode keeps it IFF the problem carries a ``concept_slug`` in
+        # its metadata — the brutal closure screen tallies top-3 weakest
+        # concept_slugs, so a never-seen card without a slug is
+        # unaddressable downstream and would just be filler.
+        if strategy == "struggle_first":
+            metadata = problem.problem_metadata or {}
+            if metadata.get("concept_slug"):
+                tier_never_seen.append((problem, progress))
 
     # ── Stable sort inside each tier ──
     # Rank 0 (overdue): earliest next_review_at first; fallback to
@@ -278,8 +360,19 @@ async def select_daily_plan(db: AsyncSession, size: int) -> DailyPlan:
     tier_recent_fail.sort(
         key=lambda pair: (failed_index.get(pair[0].id, 1 << 30), pair[0].id),
     )
+    # Rank 3 (never-seen, brutal-only): oldest-created first so the
+    # selector prefers cards that have been sitting in the backlog
+    # longest — pure deterministic tiebreak on id keeps the test output
+    # reproducible across runs.
+    tier_never_seen.sort(key=lambda pair: (pair[0].created_at, pair[0].id))
 
     # ── Dedup across tiers (lowest rank wins) ──
+    # Dedup order follows the strategy's rank ordering so a problem that
+    # qualifies for multiple tiers is anchored to its highest-priority
+    # tier under that strategy. Keeping this explicit — instead of
+    # relying on the set-side-effect of ``_keep_unseen`` — makes the
+    # Phase 13 regression obvious: the tier order below MUST match the
+    # extend order further down.
     chosen_ids: set[uuid.UUID] = set()
 
     def _keep_unseen(
@@ -293,17 +386,34 @@ async def select_daily_plan(db: AsyncSession, size: int) -> DailyPlan:
             kept.append(problem)
         return kept
 
-    overdue_unique = _keep_unseen(tier_overdue)
-    due_unique = _keep_unseen(
-        [(p, lp) for p, lp in tier_due_today]  # normalise Optional typing
-    )
-    recent_unique = _keep_unseen(tier_recent_fail)
+    if strategy == "adhd_safe":
+        # Phase 13 ordering: overdue → due-today → recently-failed, with
+        # type-rotation inside each tier.
+        overdue_unique = _keep_unseen(tier_overdue)
+        due_unique = _keep_unseen(
+            [(p, lp) for p, lp in tier_due_today]  # normalise Optional typing
+        )
+        recent_unique = _keep_unseen(tier_recent_fail)
 
-    # ── Type-rotation per tier, then concatenate tiers in rank order ──
-    rotated: list[PracticeProblem] = []
-    rotated.extend(_rotate_by_type(overdue_unique))
-    rotated.extend(_rotate_by_type(due_unique))
-    rotated.extend(_rotate_by_type(recent_unique))
+        rotated: list[PracticeProblem] = []
+        rotated.extend(_rotate_by_type(overdue_unique))
+        rotated.extend(_rotate_by_type(due_unique))
+        rotated.extend(_rotate_by_type(recent_unique))
+    else:
+        # Brutal ordering (struggle_first): recent-fail → overdue →
+        # due-today → never-seen-with-concept_slug. No type-rotation —
+        # the brutal UX serialises struggle, so cards flow in strict
+        # tier-priority order without interleaving by question type.
+        recent_unique = _keep_unseen(tier_recent_fail)
+        overdue_unique = _keep_unseen(tier_overdue)
+        due_unique = _keep_unseen([(p, lp) for p, lp in tier_due_today])
+        never_seen_unique = _keep_unseen(tier_never_seen)
+
+        rotated = []
+        rotated.extend(recent_unique)
+        rotated.extend(overdue_unique)
+        rotated.extend(due_unique)
+        rotated.extend(never_seen_unique)
 
     final = rotated[:size]
 
@@ -410,4 +520,11 @@ def _to_card(problem: PracticeProblem) -> DailyPlanCard:
     )
 
 
-__all__ = ["ALLOWED_SIZES", "RECENTLY_FAILED_WINDOW_DAYS", "select_daily_plan"]
+__all__ = [
+    "ALLOWED_BRUTAL_SIZES",
+    "ALLOWED_SIZES",
+    "BRUTAL_RECENTLY_FAILED_WINDOW_DAYS",
+    "RECENTLY_FAILED_WINDOW_DAYS",
+    "Strategy",
+    "select_daily_plan",
+]
