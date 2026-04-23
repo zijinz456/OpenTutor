@@ -21,6 +21,7 @@ import {
 } from "./_components/dashboard-sections";
 import { CourseSpacesSection, DashboardEmptyState } from "./_components/dashboard-spaces";
 import { DailySessionCTA } from "@/components/dashboard/daily-session-cta";
+import { BrutalDrillCTA } from "@/components/dashboard/brutal-drill-cta";
 
 export default function DashboardPage() {
   const { locale } = useLocale();
@@ -108,6 +109,14 @@ export default function DashboardPage() {
               rest of the dashboard stack to avoid an orphaned button.
             */}
             {courses.length > 0 && <DailySessionCTA />}
+
+            {/*
+              Brutal Drill entry (Phase 6). Sits directly below the
+              ADHD daily CTA — amber/yellow treatment flags the opt-in
+              "interview-prep night" posture without reading as an error
+              alert the way red would.
+            */}
+            {courses.length > 0 && <BrutalDrillCTA />}
 
             {courses.length > 0 && (
               <UrgentReviewsSection

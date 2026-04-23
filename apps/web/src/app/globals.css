@@ -368,6 +368,21 @@
   animation: slide-up 0.4s ease-out;
 }
 
+/* Brutal Drill timer ring (Phase 6).
+   Drives stroke-dashoffset from 0 (full ring visible) → 283 (fully
+   hidden = circumference for r=45). `forwards` keeps the final state
+   so the ring stays empty at timeout; `onAnimationEnd` on the circle
+   fires the auto-fail. Duration is parameterised via `--brutal-timeout-ms`
+   so we can render 15s / 30s / 60s sessions without extra classes. */
+@keyframes brutal-timer-shrink {
+  from { stroke-dashoffset: 0; }
+  to   { stroke-dashoffset: 283; }
+}
+
+.brutal-timer-ring-stroke {
+  animation: brutal-timer-shrink var(--brutal-timeout-ms, 30000ms) linear forwards;
+}
+
 /* Glass effect for elevated surfaces */
 .glass {
   background: rgba(255, 255, 255, 0.8);

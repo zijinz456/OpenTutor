@@ -260,6 +260,46 @@ export async function getDailyPlan(size: DailySessionSize): Promise<DailyPlan> {
   return request(`/sessions/daily-plan?size=${size}`);
 }
 
+// ── Brutal Drill (Phase 6) ──
+
+/** Allowed Brutal batch sizes — mirrors `BrutalSessionSize` on the server
+ *  (`schemas/sessions.py`). Interview-prep profile; see
+ *  `plan/brutal_drill_mode_phase6.md` §Architecture. */
+export type BrutalSessionSize = 20 | 30 | 50;
+
+/** Per-card timeout (seconds) surfaced to the CTA picker. Mirrors
+ *  `BrutalTimeoutSeconds` on the server. */
+export type BrutalTimeoutSeconds = 15 | 30 | 60;
+
+/**
+ * Response body for `GET /api/sessions/brutal-plan`.
+ *
+ * Reuses {@link DailyPlanCard} so the same MC renderer handles both
+ * daily and brutal card bodies. Notable differences vs {@link DailyPlan}:
+ *
+ * - `strategy` is pinned to `"struggle_first"` — the only selector the
+ *   brutal endpoint exposes. Present as a field (not a silent default)
+ *   so UI copy can surface the mode without a second round-trip.
+ * - `warning === "pool_small"` fires when the pool couldn't fill the
+ *   requested size. The daily endpoint swallows partial fills because
+ *   ADHD flow accepts short decks; Brutal users opted into a heavy
+ *   batch on purpose, so the frontend surfaces a confirm modal.
+ * - There is NO `reason` field. Empty cards + `warning === null` means
+ *   "nothing to drill" — the frontend renders the closure screen.
+ */
+export interface BrutalPlanResponse {
+  cards: DailyPlanCard[];
+  size: number;
+  strategy: "struggle_first";
+  warning: "pool_small" | null;
+}
+
+export async function getBrutalPlan(
+  size: BrutalSessionSize,
+): Promise<BrutalPlanResponse> {
+  return request(`/sessions/brutal-plan?size=${size}`);
+}
+
 // ── Flashcards ──
 
 interface FlashcardFsrsState {
