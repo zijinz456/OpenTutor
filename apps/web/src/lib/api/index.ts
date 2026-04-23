@@ -7,6 +7,7 @@
  */
 
 export type { JsonObject, NullableDateTime } from "./client";
+export { ApiError } from "./client";
 
 export {
   listCourseOverview,

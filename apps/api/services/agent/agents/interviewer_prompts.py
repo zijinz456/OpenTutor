@@ -120,9 +120,47 @@ SUMMARY_SYSTEM_PROMPT = (
 
 # ── Grounding loader ─────────────────────────────────────────────────
 
-# ``apps/api/services/agent/agents/interviewer_prompts.py`` → parents[6] lands
-# at the repo root (``Learn_Dofamine_project/``); ``content/`` lives there.
-CONTENT_DIR = Path(__file__).resolve().parents[6] / "content"
+# Content lives at the repo root (``Learn_Dofamine_project/content/``), but
+# the directory depth differs between the local dev tree (deeper) and the
+# Docker container (``/app/services/agent/agents/...``, only 4 parents above
+# the module). Resolve in three preference order:
+#   1. ``CONTENT_DIR`` env var (set by docker-compose.override.yml) — wins.
+#   2. Walk up from this file looking for a sibling ``content/`` with
+#      ``star_stories.md`` — works for both layouts without config.
+#   3. Fallback to ``/app/content`` (the docker volume mount default); if
+#      the directory is missing, the grounding loader surfaces a clear
+#      ``FileNotFoundError`` at call time instead of crashing the import.
+import os as _os
+
+
+def _resolve_content_dir() -> Path:
+    """Return the absolute path to the repo's ``content/`` directory.
+
+    Respects ``CONTENT_DIR`` env for deployment override; otherwise walks
+    up from ``__file__`` looking for a matching ``content/star_stories.md``.
+    Never raises — returns a default path even if nothing is found so the
+    crash surfaces at grounding-read time with a clear filename.
+    """
+
+    env_path = _os.environ.get("CONTENT_DIR")
+    if env_path:
+        candidate = Path(env_path)
+        if candidate.is_dir():
+            return candidate
+
+    current = Path(__file__).resolve()
+    for _ in range(10):
+        current = current.parent
+        candidate = current / "content"
+        if candidate.is_dir() and (candidate / "star_stories.md").exists():
+            return candidate
+        if current.parent == current:
+            break
+
+    return Path("/app/content")
+
+
+CONTENT_DIR = _resolve_content_dir()
 
 _STAR_FILE = "star_stories.md"
 _DRILL_FILE = "code_defense_drill.md"

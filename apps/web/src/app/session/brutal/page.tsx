@@ -1,5 +1,12 @@
 "use client";
 
+// Disable Next.js static prerender for this route — BrutalSessionPage uses
+// useSearchParams() at top level (reading ?size=&timeout=), which requires a
+// Suspense boundary OR a dynamic export to survive `next build`. Marking it
+// dynamic is cleaner than a wrapper component and matches the runtime
+// semantics: this page is always client-rendered from live URL params.
+export const dynamic = "force-dynamic";
+
 /**
  * `/session/brutal` — the Brutal Drill runner (Phase 6 T3).
  *
@@ -33,7 +40,7 @@
  * Exit = bare back button, no confirmation (plan §P0.5).
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Flame } from "lucide-react";
 import {
@@ -74,7 +81,18 @@ function parseConfig(
   };
 }
 
+// Split: inner component owns useSearchParams (client-only). The default
+// export wraps it in <Suspense> so Next.js build doesn't bail on the
+// "useSearchParams requires a suspense boundary" rule while still CSR-only.
 export default function BrutalSessionPage() {
+  return (
+    <Suspense fallback={null}>
+      <BrutalSessionInner />
+    </Suspense>
+  );
+}
+
+function BrutalSessionInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
