@@ -18,6 +18,7 @@ downstream DB writers.
 from __future__ import annotations
 
 import uuid
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -117,6 +118,11 @@ class CardCandidate(BaseModel):
     front: str = Field(min_length=1, max_length=200)
     back: str = Field(min_length=1, max_length=500)
     concept_slug: str | None = None
+    # Screenshot-origin audit trail: sha256(image_bytes)[:16].
+    # Populated by Phase 4 screenshot pipeline, persisted into
+    # ``practice_problems.problem_metadata.screenshot_hash`` when present.
+    # Chat-turn candidates leave this as ``None`` (default).
+    screenshot_hash: str | None = None
 
 
 class CardBatch(BaseModel):
@@ -161,9 +167,15 @@ class SaveCandidatesRequest(BaseModel):
     A batch of 1–N :class:`CardCandidate` rows the user picked from the
     tutor-turn toast (§14.5 T6). Empty batches are rejected by the
     endpoint with HTTP 400 — we don't silently "save zero cards".
+
+    ``spawn_origin`` tags the source of the batch — ``"chat_turn"`` for
+    the original tutor-response spawner (§14.5 T5/T6), ``"screenshot"``
+    for the Phase 4 screenshot-to-drill pipeline. Default preserves
+    backward-compatibility with existing clients that don't set it.
     """
 
     candidates: list[CardCandidate] = Field(min_length=1)
+    spawn_origin: Literal["chat_turn", "screenshot"] = "chat_turn"
 
 
 class SaveCandidatesResponse(BaseModel):

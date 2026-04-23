@@ -260,3 +260,11 @@ export type {
 
 export { uploadCoursera, parseCourseraErrorDetail } from "./coursera";
 export type { CourseraUploadResponse, CourseraErrorBody } from "./coursera";
+
+export { uploadScreenshot, saveScreenshotCandidates } from "./screenshot";
+export type {
+  ScreenshotCandidatesResponse,
+  ScreenshotErrorBody,
+  ScreenshotSaveResult,
+  CardCandidate as ScreenshotCardCandidate,
+} from "./screenshot";

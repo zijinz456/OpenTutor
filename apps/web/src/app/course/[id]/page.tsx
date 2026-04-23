@@ -23,6 +23,7 @@ import { useModeEvaluator, useInitPrompt, useGreeting } from "./_components/use-
 import { TemplatePicker } from "./_components/template-picker";
 import { SyncSettingsPanel } from "@/components/course/sync-settings-panel";
 import { CourseraDropZone } from "@/components/CourseraDropZone";
+import { ChatScreenshotDrop } from "@/components/ChatScreenshotDrop";
 
 export default function CoursePage() {
   const params = useParams();
@@ -77,6 +78,7 @@ export default function CoursePage() {
           onIngestionComplete={handleIngestionComplete}
         />
         <CourseraDropZone courseId={courseId} />
+        <ChatScreenshotDrop />
         <RoadmapList courseId={courseId} />
       </div>
 

@@ -279,7 +279,12 @@ async def save_flashcard_candidates(
     # without a slug are skipped here (they stay content_node_id=NULL).
     requested_slugs = {c.concept_slug for c in body.candidates if c.concept_slug}
     slug_to_node_id: dict[str, uuid.UUID] = {}
-    if requested_slugs:
+    # Phase 4 T6: screenshot origin flips an ``ungrounded`` flag per card
+    # whenever the candidate's slug (or lack thereof) doesn't resolve to a
+    # real KnowledgeNode in this course. We always load the course's nodes
+    # for screenshot batches so the resolver sees every slug, even ones
+    # that aren't in ``requested_slugs`` (None-slug cards).
+    if requested_slugs or body.spawn_origin == "screenshot":
         stmt = select(KnowledgeNode).where(KnowledgeNode.course_id == course_id)
         result = await db.execute(stmt)
         for node in result.scalars().all():
@@ -304,6 +309,29 @@ async def save_flashcard_candidates(
     pp_rows: list[PracticeProblem] = []
     try:
         for c in body.candidates:
+            # spawn_origin propagates from the request body (default
+            # "chat_turn" for §14.5 compatibility; "screenshot" for
+            # Phase 4 screenshot-to-drill flow).
+            problem_metadata: dict[str, object] = {
+                "spawn_origin": body.spawn_origin,
+                "concept_slug": c.concept_slug,
+                "asset_id": str(asset_uuid),
+            }
+            # Only record screenshot_hash when the candidate actually
+            # carries one — keeps chat-turn rows' metadata unchanged.
+            if c.screenshot_hash is not None:
+                problem_metadata["screenshot_hash"] = c.screenshot_hash
+
+            # Phase 4 T6: ungrounded = the card's concept_slug didn't
+            # resolve to a real KnowledgeNode in this course. Only added
+            # for screenshot-origin batches — chat-turn cards keep the
+            # original metadata shape (backward-compat with §14.5 tests).
+            # A missing slug is treated as ungrounded by construction.
+            if body.spawn_origin == "screenshot":
+                problem_metadata["ungrounded"] = (
+                    c.concept_slug is None or c.concept_slug not in slug_to_node_id
+                )
+
             pp = PracticeProblem(
                 course_id=course_id,
                 content_node_id=slug_to_node_id.get(c.concept_slug)
@@ -313,11 +341,7 @@ async def save_flashcard_candidates(
                 question=c.front,
                 correct_answer=c.back,
                 source="ai_generated",
-                problem_metadata={
-                    "spawn_origin": "chat_turn",
-                    "concept_slug": c.concept_slug,
-                    "asset_id": str(asset_uuid),
-                },
+                problem_metadata=problem_metadata,
             )
             db.add(pp)
             pp_rows.append(pp)
@@ -361,13 +385,13 @@ async def save_flashcard_candidates(
                 "cards": cards_content,
                 "metadata": {
                     "source": "ai_generated",
-                    "spawn_origin": "chat_turn",
+                    "spawn_origin": body.spawn_origin,
                 },
             },
             metadata_={
                 "count": len(body.candidates),
                 "source": "ai_generated",
-                "spawn_origin": "chat_turn",
+                "spawn_origin": body.spawn_origin,
             },
         )
         db.add(asset)
