@@ -20,8 +20,10 @@ import logging
 import os
 import re
 import uuid
+from collections import Counter
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit
 
 from bs4 import BeautifulSoup
 from fastapi import APIRouter, Depends, HTTPException
@@ -31,6 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config import settings
 from database import async_session, get_db
 from libs.exceptions import ConflictError
+from models.course import Course
 from models.user import User
 from services.auth.dependency import get_current_user
 from services.course_access import get_course_or_404
@@ -58,6 +61,20 @@ _MAX_TOTAL_HTML_BYTES = 500 * 1024 * 1024  # 500 MiB
 # commits the router emitted on the content tree are visible to the syllabus
 # builder's own session.
 _SYLLABUS_DELAY_SECONDS = 2.0
+
+# T6 ADHD clamp — when a single crawl ingests more pages than this, the
+# router restricts the roadmap to the largest "section" (grouped by the
+# first two segments of each URL's path) and pushes every other prefix into
+# ``Course.metadata_["locked_sections"]``. Mirrors Phase 14 Coursera's
+# ``_ADHD_LECTURE_CLAMP_THRESHOLD`` so both ingest paths share the same
+# mental model for the user.
+_ADHD_PAGE_CLAMP_THRESHOLD = 20
+
+# Number of leading URL path segments that define a "section" for the T6
+# clamp. Two segments (e.g. ``/tutorial/intro/``) is the sweet spot: enough
+# to split a docs site into coherent sections, short enough not to fragment
+# a single section into per-page groups.
+_SECTION_PATH_DEPTH = 2
 
 
 class RecursiveUrlRequest(BaseModel):
@@ -134,6 +151,11 @@ async def upload_url_recursive(
     pages_skipped_dedup = 0
     pages_fetch_failed = 0
     job_ids: list[str] = []
+    # Track which "section" (first-two-path-segments prefix) each successful
+    # page belongs to so the T6 ADHD clamp can group them without re-querying
+    # the DB. Ordered list preserves the crawl order — we use it below to
+    # break ties in favour of the seed's section.
+    crawled_section_prefixes: list[str] = []
 
     os.makedirs(settings.upload_dir, exist_ok=True)
 
@@ -171,13 +193,26 @@ async def upload_url_recursive(
             if job_id is not None:
                 pages_crawled += 1
                 job_ids.append(job_id)
+                crawled_section_prefixes.append(_url_section_prefix(page.url))
     finally:
         _ACTIVE_CRAWLS.discard(cid_key)
 
+    # T6: ADHD clamp — when a single crawl ingests > 20 pages, scope the
+    # syllabus to just one "section" (by URL path prefix) and persist the
+    # rest in ``Course.metadata_["locked_sections"]`` for a manual unlock
+    # UX. Mirrors Phase 14 Coursera's ``locked_weeks`` contract exactly.
+    roadmap_scope, locked_sections = _compute_adhd_clamp(
+        seed_url=body.url,
+        section_prefixes=crawled_section_prefixes,
+    )
+    await _persist_locked_sections(db, cid, locked_sections)
+
     # T5: one post-batch syllabus build for the whole crawl, fire-and-forget
-    # on its own session so request teardown does not cancel it.
+    # on its own session so request teardown does not cancel it. T6 forwards
+    # the (possibly-``None``) clamp scope so over-sized courses only roadmap
+    # the first section.
     if job_ids:
-        asyncio.create_task(_post_recursive_syllabus(cid))
+        asyncio.create_task(_post_recursive_syllabus(cid, roadmap_scope=roadmap_scope))
 
     return RecursiveUrlResponse(
         course_id=str(cid),
@@ -212,14 +247,41 @@ def _is_http_url(url: str) -> bool:
     return bool(rest) and not rest.startswith("/")
 
 
+def _url_section_prefix(url: str, depth: int = _SECTION_PATH_DEPTH) -> str:
+    """Return the leading ``depth`` path segments of ``url``, slash-terminated.
+
+    Used as a "section" key for both the synthetic filename (so the T6
+    clamp's ``path_prefix_filter`` can slice the content tree by prefix)
+    and for the ADHD grouping itself. Segments are taken verbatim from the
+    URL path — no lower-casing, no stripping — to preserve the exact string
+    that ``source_file.startswith(prefix)`` will later compare against.
+
+    Empty/root URLs collapse to ``"_root/"`` so the prefix is never empty
+    (an empty ``startswith`` prefix would match every row and silently
+    disable the clamp).
+    """
+    parts = [p for p in urlsplit(url).path.split("/") if p]
+    if not parts:
+        return "_root/"
+    head = parts[:depth]
+    return "/".join(head) + "/"
+
+
 def _synthetic_filename(url: str) -> str:
     """Filename under which a crawled page is stored in the pipeline.
 
     Stable on the canonical URL so re-crawling the same URL dedups via the
     pipeline's ``content_hash`` column rather than creating a second row.
+
+    The filename is prefixed with the URL's first ``_SECTION_PATH_DEPTH``
+    path segments so every ``CourseContentTree.source_file`` stored by the
+    pipeline starts with that prefix. The T6 ADHD clamp filters on that
+    prefix via ``roadmap_scope={"path_prefix_filter": ...}`` — exactly how
+    Phase 14 Coursera uses ``Week-N/`` prefixes.
     """
     digest = hashlib.sha256(url.encode("utf-8")).hexdigest()[:8]
-    return f"page-{digest}.recursive.md"
+    prefix = _url_section_prefix(url)
+    return f"{prefix}page-{digest}.recursive.md"
 
 
 def _html_to_markdown(html: str, url: str) -> str:
@@ -294,13 +356,97 @@ def _safe_unlink(path: str) -> None:
         logger.warning("Failed to remove synthetic markdown: %s", path)
 
 
+def _compute_adhd_clamp(
+    *,
+    seed_url: str,
+    section_prefixes: list[str],
+) -> tuple[dict | None, list[str]]:
+    """Decide whether to clamp the roadmap to a single URL section.
+
+    Returns a ``(roadmap_scope, locked_sections)`` pair:
+
+    - ``roadmap_scope`` — either ``None`` (no clamp, < threshold pages) or
+      ``{"path_prefix_filter": "<first-section-prefix>"}`` ready to hand to
+      ``build_syllabus``.
+    - ``locked_sections`` — list of path prefixes that were pushed out of
+      the initial roadmap; persisted on ``Course.metadata_`` so the UI can
+      render an "Unlock" control against each. Empty when no clamp fired.
+
+    The "first section" is the prefix with the most crawled pages; ties
+    break in favour of the seed URL's own prefix so a user who paste-ed
+    ``/tutorial/intro/`` never wakes up with their roadmap scoped to some
+    other section that happened to contain the same page count.
+    """
+    if len(section_prefixes) <= _ADHD_PAGE_CLAMP_THRESHOLD:
+        return None, []
+
+    counts = Counter(section_prefixes)
+    seed_prefix = _url_section_prefix(seed_url)
+
+    # ``most_common()`` returns an implementation-defined tie-order. Prefer
+    # the seed prefix when it's tied for first place so the user-chosen
+    # entrypoint wins deterministically.
+    max_count = max(counts.values())
+    tied = [prefix for prefix, c in counts.items() if c == max_count]
+    if seed_prefix in tied:
+        first_prefix = seed_prefix
+    else:
+        # Sort for determinism — otherwise different dict orderings across
+        # Python builds could pick different winners from the same crawl.
+        first_prefix = sorted(tied)[0]
+
+    locked = sorted(prefix for prefix in counts if prefix != first_prefix)
+    roadmap_scope: dict | None = {"path_prefix_filter": first_prefix}
+    logger.info(
+        "recursive_adhd_clamp pages=%d first_prefix=%s locked=%s",
+        sum(counts.values()),
+        first_prefix,
+        locked,
+    )
+    return roadmap_scope, locked
+
+
+async def _persist_locked_sections(
+    db: AsyncSession,
+    course_id: uuid.UUID,
+    locked_sections: list[str],
+) -> None:
+    """Write ``Course.metadata_["locked_sections"]`` and commit.
+
+    Always writes the key (possibly an empty list) so the UI can trust its
+    presence; mirrors Phase 14 Coursera which writes ``locked_weeks=[]``
+    under the clamp threshold rather than leaving the key absent.
+    """
+    course = await db.get(Course, course_id)
+    if course is None:
+        # Concurrently-deleted course — nothing to write. The outer handler
+        # will still attempt the syllabus build, which will see no rows and
+        # return ``None`` harmlessly.
+        logger.warning(
+            "recursive_locked_sections_skip reason=course_missing course_id=%s",
+            course_id,
+        )
+        return
+    course.metadata_ = {
+        **(course.metadata_ or {}),
+        "locked_sections": locked_sections,
+    }
+    await db.commit()
+
+
 async def _post_recursive_syllabus(
-    course_id: uuid.UUID, delay: float = _SYLLABUS_DELAY_SECONDS
+    course_id: uuid.UUID,
+    delay: float = _SYLLABUS_DELAY_SECONDS,
+    roadmap_scope: dict | None = None,
 ) -> None:
     """Trigger ``build_syllabus`` once after the crawl batch completes.
 
     Runs on its own DB session so it outlives the request; failures are
     logged and swallowed — the ingest itself already committed every job.
+
+    ``roadmap_scope`` is forwarded to ``build_syllabus`` verbatim; used by
+    the T6 ADHD clamp to restrict the roadmap to a single path prefix when
+    the crawl ingested more than ``_ADHD_PAGE_CLAMP_THRESHOLD`` pages.
     """
     await asyncio.sleep(delay)
     try:
@@ -308,7 +454,9 @@ async def _post_recursive_syllabus(
         from services.curriculum.syllabus_persist import persist_syllabus
 
         async with async_session() as bg_db:
-            syllabus = await build_syllabus(bg_db, course_id)
+            syllabus = await build_syllabus(
+                bg_db, course_id, roadmap_scope=roadmap_scope
+            )
             if syllabus is None:
                 logger.info(
                     "recursive_syllabus_skip reason=builder_returned_none course_id=%s",

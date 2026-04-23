@@ -17,6 +17,7 @@ import { useImageAttachments } from "@/components/chat/use-image-attachments";
 import { ImagePreviewStrip } from "@/components/chat/image-preview-strip";
 import { AttachmentButtons } from "@/components/chat/attachment-buttons";
 import { SendButton } from "@/components/chat/send-button";
+import { VoiceInput } from "@/components/voice/VoiceInput";
 
 interface ChatInputProps {
   courseId: string;
@@ -195,6 +196,16 @@ export function ChatInput({ courseId, disabled }: ChatInputProps) {
             "disabled:cursor-not-allowed disabled:opacity-50",
             "min-h-[32px] max-h-[96px]",
           )}
+        />
+
+        {/* Voice dictation — no language hint, let Whisper auto-detect EN/UA. */}
+        <VoiceInput
+          disabled={isDisabled || isStreaming}
+          onTranscribed={(text) =>
+            setInput((prev) =>
+              prev ? `${prev.replace(/\s+$/, "")} ${text}` : text,
+            )
+          }
         />
 
         <SendButton

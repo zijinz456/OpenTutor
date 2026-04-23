@@ -47,6 +47,7 @@ import type {
 } from "@/lib/api/interview";
 import { RubricPanel } from "@/components/interview/RubricPanel";
 import { SummaryReport } from "@/components/interview/SummaryReport";
+import { VoiceInput } from "@/components/voice/VoiceInput";
 
 /** Sum rubric dim scores for a single turn (missing rubric = +Infinity). */
 function turnScore(turn: TurnResponse): number {
@@ -424,20 +425,32 @@ export default function InterviewSessionPage() {
               className="w-full rounded-lg border border-border bg-card p-3 text-sm text-foreground focus:border-brand focus:outline-none disabled:opacity-60"
               placeholder="Walk me through it..."
             />
-            <button
-              type="button"
-              data-testid="interview-submit-answer"
-              onClick={() => void submitAnswer()}
-              disabled={phase === "submitting" || !answerText.trim()}
-              className="inline-flex h-10 w-fit items-center justify-center gap-2 rounded-lg bg-brand px-4 text-sm font-semibold text-brand-foreground hover:opacity-90 disabled:opacity-50"
-            >
-              {phase === "submitting" ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <Send className="size-4" />
-              )}
-              {phase === "submitting" ? "Grading..." : "Submit answer"}
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                data-testid="interview-submit-answer"
+                onClick={() => void submitAnswer()}
+                disabled={phase === "submitting" || !answerText.trim()}
+                className="inline-flex h-10 w-fit items-center justify-center gap-2 rounded-lg bg-brand px-4 text-sm font-semibold text-brand-foreground hover:opacity-90 disabled:opacity-50"
+              >
+                {phase === "submitting" ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Send className="size-4" />
+                )}
+                {phase === "submitting" ? "Grading..." : "Submit answer"}
+              </button>
+              {/* Interviewer runs in English (§16.1) → force Whisper EN. */}
+              <VoiceInput
+                language="en"
+                disabled={phase === "submitting"}
+                onTranscribed={(text) =>
+                  setAnswerText((prev) =>
+                    prev ? `${prev.replace(/\s+$/, "")} ${text}` : text,
+                  )
+                }
+              />
+            </div>
           </section>
         ) : null}
 

@@ -168,6 +168,12 @@ async def _fetch_eligible_rows(
     whose ``source_file`` starts with that prefix survive. Used by the
     Coursera ADHD clamp (Phase 14 T6) to roadmap just the first week when a
     course ships > 20 lectures.
+
+    ``"path_prefix_filter"`` is the §14.5 v2.5 T6 analog for the recursive
+    URL crawler — same substring-prefix semantics on ``source_file``, but
+    keyed on the URL path's leading segments rather than ``Week-N/``. Both
+    keys may be present; either being a non-empty string excludes rows that
+    don't start with it.
     """
 
     stmt = (
@@ -182,7 +188,9 @@ async def _fetch_eligible_rows(
     result = await db.execute(stmt)
     all_rows = list(result.scalars().all())
 
-    week_prefix = (roadmap_scope or {}).get("week_prefix_filter")
+    scope = roadmap_scope or {}
+    week_prefix = scope.get("week_prefix_filter")
+    path_prefix = scope.get("path_prefix_filter")
 
     eligible: list[CourseContentTree] = []
     for row in all_rows:
@@ -194,6 +202,12 @@ async def _fetch_eligible_rows(
             # Source file may be None for legacy / non-file sources — those
             # can't match a week prefix and are excluded when a filter is set.
             if not row.source_file or not row.source_file.startswith(week_prefix):
+                continue
+        if path_prefix is not None:
+            # Same rule as week_prefix — recursive crawler prefixes every
+            # synthetic filename with the URL's leading path segments so the
+            # clamp can narrow the roadmap to a single "section" of a site.
+            if not row.source_file or not row.source_file.startswith(path_prefix):
                 continue
         eligible.append(row)
     return eligible
@@ -266,8 +280,9 @@ async def build_syllabus(
         roadmap_scope: Optional filter dict. When it contains
             ``"week_prefix_filter"``, only content rows whose
             ``source_file`` starts with that prefix feed the prompt (Phase
-            14 T6 ADHD clamp). ``None`` = existing behaviour (all eligible
-            rows).
+            14 T6 ADHD clamp). ``"path_prefix_filter"`` does the same for
+            §14.5 v2.5 recursive crawls. ``None`` = existing behaviour (all
+            eligible rows).
 
     Returns:
         Validated ``Syllabus`` instance, or ``None`` if ingestion has too

@@ -34,6 +34,7 @@ from sqlalchemy.pool import NullPool
 import database as database_module
 from database import Base, get_db
 from main import app
+from models.course import Course
 from models.ingestion import IngestionJob
 from services.crawler.recursive_crawler import CrawledPage
 
@@ -80,8 +81,9 @@ async def client(monkeypatch):
 
     monkeypatch.setattr(_uur, "async_session", test_session_factory, raising=True)
 
-    # Prevent real syllabus builder runs in CI.
-    async def _noop_syllabus(course_id, delay=0):  # noqa: ARG001
+    # Prevent real syllabus builder runs in CI. Accept ``roadmap_scope`` so
+    # the T6 clamp path can call this spy without a TypeError.
+    async def _noop_syllabus(course_id, delay=0, roadmap_scope=None):  # noqa: ARG001
         return None
 
     monkeypatch.setattr(_uur, "_post_recursive_syllabus", _noop_syllabus)
@@ -369,3 +371,106 @@ async def test_post_recursive_bad_depth_returns_422(client, monkeypatch):
         },
     )
     assert resp.status_code == 422, resp.text
+
+
+# ── 6. T6 ADHD clamp — > 20 pages roadmaps only the first section ──────
+
+
+@pytest.mark.asyncio
+async def test_crawl_over_20_pages_clamps_to_first_section(client, monkeypatch):
+    """25 pages across 3 path prefixes → roadmap scoped to the seed section.
+
+    Assertions:
+    - ``_post_recursive_syllabus`` invoked with a ``roadmap_scope`` kwarg
+      whose ``path_prefix_filter`` matches the seed URL's first two path
+      segments (``tutorial/intro/``).
+    - ``Course.metadata_["locked_sections"]`` carries the other two
+      prefixes (sorted) — these are the sections the UI will lock behind
+      an unlock control.
+    """
+    # 12 pages in the seed section (winner by count AND by seed tie-break),
+    # 8 pages in the "classes" section, 5 in "advanced" — 25 total, > 20.
+    pages: list[CrawledPage] = []
+    for i in range(1, 13):
+        pages.append(
+            CrawledPage(
+                url=f"http://example.com/tutorial/intro/page-{i}",
+                depth=0 if i == 1 else 1,
+                html=f"<p>intro {i}</p>",
+                status="ok",
+            )
+        )
+    for i in range(1, 9):
+        pages.append(
+            CrawledPage(
+                url=f"http://example.com/tutorial/classes/page-{i}",
+                depth=1,
+                html=f"<p>classes {i}</p>",
+                status="ok",
+            )
+        )
+    for i in range(1, 6):
+        pages.append(
+            CrawledPage(
+                url=f"http://example.com/tutorial/advanced/page-{i}",
+                depth=1,
+                html=f"<p>advanced {i}</p>",
+                status="ok",
+            )
+        )
+
+    import routers.upload_url_recursive as _uur
+
+    monkeypatch.setattr(_uur, "crawl_urls", _mk_crawl_mock(pages))
+
+    # Spy on the syllabus trigger to capture the forwarded ``roadmap_scope``.
+    captured: dict[str, object] = {}
+
+    async def _spy_syllabus(course_id, delay=0, roadmap_scope=None):  # noqa: ARG001
+        captured["course_id"] = course_id
+        captured["roadmap_scope"] = roadmap_scope
+
+    monkeypatch.setattr(_uur, "_post_recursive_syllabus", _spy_syllabus)
+
+    course_id = await _create_course(client)
+    resp = await client.post(
+        "/api/content/upload/url/recursive",
+        json={
+            "url": "http://example.com/tutorial/intro/page-1",
+            "course_id": course_id,
+            "max_depth": 2,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    payload = resp.json()
+    assert payload["pages_crawled"] == 25
+    assert len(payload["job_ids"]) == 25
+
+    # Let the scheduled background task fire so ``captured`` populates.
+    await asyncio.sleep(0.1)
+
+    scope = captured.get("roadmap_scope")
+    assert isinstance(scope, dict), f"expected roadmap_scope dict, got {scope!r}"
+    # Access through a ``typing.cast`` instead of ``dict[str, object]`` so
+    # ty's invariance on dict parameters doesn't complain; the runtime
+    # ``isinstance`` above is the actual guard.
+    from typing import cast
+
+    prefix = cast(dict, scope).get("path_prefix_filter")
+    assert prefix == "tutorial/intro/", (
+        f"expected path_prefix_filter='tutorial/intro/', got {prefix!r}"
+    )
+
+    # DB: course.metadata_["locked_sections"] lists the two other prefixes.
+    async with app.state.test_session_factory() as session:
+        row = (
+            await session.execute(
+                select(Course).where(Course.id == uuid.UUID(course_id))
+            )
+        ).scalar_one()
+        await session.refresh(row)
+        locked = (row.metadata_ or {}).get("locked_sections")
+    assert locked == ["tutorial/advanced/", "tutorial/classes/"], (
+        f"expected locked_sections=['tutorial/advanced/','tutorial/classes/'], "
+        f"got {locked!r}"
+    )
