@@ -36,6 +36,7 @@ from schemas.coursera import CourseraUploadResponse
 from services.agent.background_runtime import track_background_task
 from services.auth.dependency import get_current_user
 from services.course_access import get_course_or_404
+from routers.upload_processing import _complete_coursera_embedding_jobs
 from services.ingestion.coursera_adapter import (
     CourseraAdapterError,
     merge_lecture_markdown,
@@ -201,6 +202,17 @@ async def upload_coursera_zip(
         "locked_weeks": locked_weeks,
     }
     await db.commit()
+
+    # Resolve the stuck-forever "embedding/90%/pending" state left by
+    # run_ingestion_pipeline on every child job. Scoped to *this* batch's
+    # job_ids so a concurrent URL upload to the same course isn't
+    # prematurely marked completed by our embed pass. Re-upload of the same
+    # ZIP short-circuits above (line ~101) — any previously-stuck batch will
+    # remain stuck until the course is re-imported fresh.
+    job_uuids = [uuid.UUID(j) for j in job_ids]
+    track_background_task(
+        asyncio.create_task(_complete_coursera_embedding_jobs(cid, job_uuids))
+    )
 
     # T5: schedule ONE syllabus build for the whole batch, regardless of how
     # many child jobs we created. Own DB session (detached fire-and-forget).

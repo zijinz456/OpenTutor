@@ -331,6 +331,91 @@ async def _complete_canvas_embedding_jobs(course_id: uuid.UUID, user_id: uuid.UU
         logger.exception("Canvas embedding completion failed for course %s", course_id)
 
 
+async def _complete_coursera_embedding_jobs(
+    course_id: uuid.UUID, job_ids: list[uuid.UUID]
+) -> None:
+    """Batch-finalize a Coursera ZIP import: embed once, transition each job.
+
+    ``run_ingestion_pipeline`` leaves every child job at
+    ``status="embedding"/progress_percent=90/embedding_status="pending"``.
+    URL/file uploads resolve that via the per-job ``_background_embed``;
+    Coursera has no such per-job trigger because Phase 14 fires one shared
+    background step for the whole batch (same rationale as
+    ``_post_coursera_syllabus``: N lectures would mean N× redundant embed
+    passes).
+
+    Unlike the Canvas helper, the sweep is scoped to the explicit ``job_ids``
+    of this ZIP so a concurrent URL upload against the same course isn't
+    prematurely marked completed by our ``embed_course_content`` pass.
+
+    On embed failure, the same ``job_ids`` are marked ``status="failed"`` so
+    any UI polling ``/api/content/jobs/{course_id}`` resolves the spinner
+    instead of spinning forever.
+    """
+    if not job_ids:
+        return
+    try:
+        from services.embedding.content import embed_course_content
+        from services.embedding.registry import is_noop_provider
+
+        skipped = is_noop_provider()
+        async with async_session() as db:
+            if not skipped:
+                await embed_course_content(db, course_id)
+
+            result = await db.execute(
+                select(IngestionJob).where(
+                    IngestionJob.id.in_(job_ids),
+                    IngestionJob.status == "embedding",
+                )
+            )
+            jobs = result.scalars().all()
+            for job in jobs:
+                _set_job_phase(
+                    job,
+                    status="completed",
+                    progress_percent=100,
+                    embedding_status="skipped" if skipped else "completed",
+                    nodes_created=job.nodes_created,
+                )
+            await db.commit()
+            logger.info(
+                "Coursera embedding complete course=%s marked=%d/%d skipped=%s",
+                course_id,
+                len(jobs),
+                len(job_ids),
+                skipped,
+            )
+    except (SQLAlchemyError, OSError, ValueError, RuntimeError) as e:
+        logger.exception(
+            "Coursera embedding completion failed for course %s", course_id
+        )
+        try:
+            async with async_session() as db:
+                result = await db.execute(
+                    select(IngestionJob).where(
+                        IngestionJob.id.in_(job_ids),
+                        IngestionJob.status == "embedding",
+                    )
+                )
+                stuck_jobs = result.scalars().all()
+                for job in stuck_jobs:
+                    _set_job_phase(
+                        job,
+                        status="failed",
+                        progress_percent=job.progress_percent or 90,
+                        embedding_status="failed",
+                        nodes_created=job.nodes_created,
+                        error_message=str(e)[:500],
+                    )
+                await db.commit()
+        except SQLAlchemyError:
+            logger.exception(
+                "Failed to persist Coursera embedding failure for course %s",
+                course_id,
+            )
+
+
 def start_background_canvas_pipeline(
     *,
     user_id: uuid.UUID,

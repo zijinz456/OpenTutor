@@ -146,6 +146,14 @@ async def client(monkeypatch):
 
     monkeypatch.setattr(_uc, "async_session", test_session_factory, raising=True)
 
+    # ``_complete_coursera_embedding_jobs`` lives in ``upload_processing`` and
+    # takes its own bound reference to ``async_session`` at import time. Patch
+    # it too so the Coursera batch-embed background task opens the per-test
+    # SQLite DB instead of the production one.
+    import routers.upload_processing as _up
+
+    monkeypatch.setattr(_up, "async_session", test_session_factory, raising=True)
+
     # Route uploads to a throwaway dir to avoid polluting settings.upload_dir.
     tmp_upload = tempfile.mkdtemp(prefix="opentutor-coursera-upload-")
     from config import settings as _settings
@@ -464,3 +472,100 @@ async def test_post_coursera_10_lectures_no_clamp(client, monkeypatch):
     assert locked == [], (
         f"expected empty locked_weeks list (not None) under threshold, got {locked!r}"
     )
+
+
+# ── 7. Batch embed completion resolves stuck "embedding/90%/pending" ────
+
+
+async def _wait_for_job_status(
+    session_factory, job_id: uuid.UUID, target: str, timeout: float = 2.0
+) -> IngestionJob | None:
+    """Poll the job row until its ``status`` matches ``target`` or timeout."""
+    deadline = asyncio.get_event_loop().time() + timeout
+    while asyncio.get_event_loop().time() < deadline:
+        async with session_factory() as session:
+            job = await session.get(IngestionJob, job_id)
+            if job and job.status == target:
+                return job
+        await asyncio.sleep(0.05)
+    return None
+
+
+@pytest.mark.asyncio
+async def test_post_coursera_batch_embed_marks_jobs_completed(client, monkeypatch):
+    """After POST, the batch-embed task should flip child jobs to completed/100%.
+
+    Forces the noop provider branch so ``embed_course_content`` isn't invoked
+    and the test asserts the deterministic ``embedding_status="skipped"``
+    terminal state.
+    """
+    import routers.upload_coursera as _uc
+    import services.embedding.registry as _registry
+
+    async def _noop_syllabus(course_id, delay=0, roadmap_scope=None):  # noqa: ARG001
+        return None
+
+    monkeypatch.setattr(_uc, "_post_coursera_syllabus", _noop_syllabus)
+    monkeypatch.setattr(_registry, "is_noop_provider", lambda: True)
+
+    course_id = await _create_course(client)
+    zip_bytes = _make_lectures_zip(2)
+
+    resp = await client.post(
+        "/api/content/upload/coursera",
+        data={"course_id": course_id},
+        files={"file": ("lectures.zip", zip_bytes, "application/zip")},
+    )
+    assert resp.status_code == 200, resp.text
+    job_ids = [uuid.UUID(j) for j in resp.json()["job_ids"]]
+    assert len(job_ids) == 2
+
+    factory = app.state.test_session_factory
+    for jid in job_ids:
+        job = await _wait_for_job_status(factory, jid, "completed")
+        assert job is not None, f"job {jid} never reached status=completed"
+        assert job.progress_percent == 100
+        assert job.embedding_status == "skipped"
+        assert job.error_message is None
+
+
+@pytest.mark.asyncio
+async def test_post_coursera_batch_embed_failure_marks_jobs_failed(client, monkeypatch):
+    """If embed_course_content raises, every batch job should resolve to failed."""
+    import routers.upload_coursera as _uc
+
+    async def _noop_syllabus(course_id, delay=0, roadmap_scope=None):  # noqa: ARG001
+        return None
+
+    monkeypatch.setattr(_uc, "_post_coursera_syllabus", _noop_syllabus)
+
+    # Force the "real provider" branch so embed_course_content is invoked,
+    # then make that invocation explode with a synthetic RuntimeError.
+    import services.embedding.registry as _registry
+    import services.embedding.content as _content
+
+    monkeypatch.setattr(_registry, "is_noop_provider", lambda: False)
+
+    async def _boom(*args, **kwargs):  # noqa: ARG001
+        raise RuntimeError("synthetic embed failure")
+
+    monkeypatch.setattr(_content, "embed_course_content", _boom)
+
+    course_id = await _create_course(client)
+    zip_bytes = _make_lectures_zip(2)
+
+    resp = await client.post(
+        "/api/content/upload/coursera",
+        data={"course_id": course_id},
+        files={"file": ("lectures.zip", zip_bytes, "application/zip")},
+    )
+    assert resp.status_code == 200, resp.text
+    job_ids = [uuid.UUID(j) for j in resp.json()["job_ids"]]
+    assert len(job_ids) == 2
+
+    factory = app.state.test_session_factory
+    for jid in job_ids:
+        job = await _wait_for_job_status(factory, jid, "failed")
+        assert job is not None, f"job {jid} never reached status=failed"
+        assert job.embedding_status == "failed"
+        assert "synthetic embed failure" in (job.error_message or "")
