@@ -35,9 +35,26 @@ Exit code:
 | `fixtures/quiz_30q.yaml` | 30 short-form Python / AI / softeng / behavioral |
 | `fixtures/humaneval_subset.yaml` | 5 small coding tasks (structure-graded) |
 | `fixtures/gsm8k_subset.yaml` | 5 arithmetic word problems |
+| `fixtures/guardrails_smoke.yaml` | 10 Phase 7 questions — 5 in-corpus + 5 out-of-corpus |
 
-Grade modes: `exact`, `contains`, `regex`, `judge`. See
+Grade modes: `exact`, `contains`, `regex`, `judge`, `refusal`. See
 `schemas/eval.py` for the full schema.
+
+## Guardrails eval
+
+Phase 7 ships a retrieval-required mode (`GUARDRAILS_STRICT=true`). The
+`guardrails_smoke` suite regression-tests it — 5 in-corpus questions
+should be answered grounded, 5 out-of-corpus questions should be refused
+with the canned `REFUSAL_TEMPLATE`.
+
+```bash
+# Run guardrails suite in strict mode (sets GUARDRAILS_STRICT=true for
+# the duration of the process).
+python scripts/run_eval.py --strict --suite guardrails_smoke
+```
+
+The `refusal` grade mode matches whenever the answer begins with
+`"I don't have this in your course…"` (case-insensitive).
 
 ## Adding questions
 

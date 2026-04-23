@@ -414,6 +414,7 @@ async def orchestrate_stream(
     learning_mode: str | None = None,
     block_types: list[str] | None = None,
     dismissed_block_types: list[str] | None = None,
+    guardrails_strict: bool | None = None,
 ) -> AsyncIterator[dict]:
     """Main orchestration entry point for streaming responses."""
     ctx = build_agent_context(
@@ -431,6 +432,12 @@ async def orchestrate_stream(
         block_types=block_types,
         dismissed_block_types=dismissed_block_types,
     )
+    # Phase 7 Guardrails T4 — caller (router) has already resolved
+    # request.guardrails_strict vs settings.guardrails_strict. Stamp the
+    # effective value onto ``ctx.metadata`` before ``_apply_guardrails_pre``
+    # runs so TutorAgent / turn_pipeline see a single source of truth.
+    if guardrails_strict is not None:
+        ctx.metadata["guardrails_strict"] = bool(guardrails_strict)
     clarify = _parse_clarify_inputs(message)
     if clarify:
         ctx.clarify_inputs.update(clarify)
@@ -669,9 +676,16 @@ async def orchestrate_stream(
             "data": json.dumps(block_decisions.to_dict()),
         }
 
+    # Phase 7 Guardrails T4 — surface the guardrails blob alongside the
+    # existing envelope so the router can persist it into
+    # ``chat_message_logs.metadata_json``. Absent when strict mode is off;
+    # ``turn_pipeline._apply_guardrails_post`` is the sole writer of the key.
+    done_payload = envelope_payload(ctx)
+    if "guardrails" in ctx.metadata:
+        done_payload["guardrails"] = ctx.metadata.get("guardrails")
     yield {
         "event": "done",
-        "data": json.dumps(envelope_payload(ctx)),
+        "data": json.dumps(done_payload),
     }
 
     bg_ctx = ctx.snapshot_for_postprocess()

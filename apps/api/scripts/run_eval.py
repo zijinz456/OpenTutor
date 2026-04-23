@@ -12,9 +12,15 @@ Usage::
     python scripts/run_eval.py --suite quiz_30q --threshold 0.8
     python scripts/run_eval.py --output-json
     python scripts/run_eval.py --model gpt-4o-mini
+    python scripts/run_eval.py --strict --suite guardrails_smoke
 
 Fixture paths resolve relative to ``apps/api/tests/eval/fixtures`` and
 the ``.yaml`` extension is added if missing.
+
+``--strict`` exports ``GUARDRAILS_STRICT=true`` for the duration of the
+process so the subsequent ``Settings()`` load (and any downstream tutor
+call) picks up retrieval-required mode. Pair with the
+``guardrails_smoke`` fixture to regression-test refusal behavior.
 """
 
 from __future__ import annotations
@@ -148,6 +154,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=5,
         help="Max concurrent LLM calls. Default: 5",
     )
+    p.add_argument(
+        "--strict",
+        action="store_true",
+        help=(
+            "Set GUARDRAILS_STRICT=true for this eval run (Phase 7). "
+            "Forces retrieval-required mode so out-of-corpus questions are "
+            "refused rather than free-styled. Use with --suite guardrails_smoke."
+        ),
+    )
     return p.parse_args(argv)
 
 
@@ -157,6 +172,13 @@ async def _amain(args: argparse.Namespace) -> int:
     # but runner imports it lazily, so setting here is sufficient.
     if args.model:
         os.environ["LLM_MODEL"] = args.model
+
+    # Phase 7: --strict flips GUARDRAILS_STRICT for this process so the
+    # downstream Settings() picks up retrieval-required mode. Must happen
+    # before any config/tutor import (lazy imports in runner make this
+    # ordering sufficient).
+    if args.strict:
+        os.environ["GUARDRAILS_STRICT"] = "true"
 
     suite_names = [s for s in args.suite.split(",") if s.strip()]
     fixture_paths = _resolve_suite_paths(suite_names)

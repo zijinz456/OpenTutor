@@ -12,7 +12,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
-GradeMode = Literal["exact", "regex", "contains", "judge"]
+GradeMode = Literal["exact", "regex", "contains", "judge", "refusal"]
 
 
 class EvalQuestion(BaseModel):

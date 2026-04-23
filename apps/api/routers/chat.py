@@ -161,6 +161,17 @@ async def chat_stream(
     )
     await db.commit()
 
+    # Phase 7 Guardrails T4 — resolve per-request override with env fallback.
+    # ``None`` on the request means "fall back to env"; explicit ``True``/``False``
+    # wins over env so a chat session can opt in or out per turn. The resolved
+    # value is piped to the orchestrator which writes it to ``ctx.metadata``
+    # *before* ``_apply_guardrails_pre`` runs.
+    guardrails_strict_effective = (
+        body.guardrails_strict
+        if body.guardrails_strict is not None
+        else settings.guardrails_strict
+    )
+
     _SSE_TIMEOUT_SECONDS = settings.sse_timeout_seconds
 
     async def event_generator():
@@ -189,6 +200,7 @@ async def chat_stream(
                             learning_mode=body.learning_mode,
                             block_types=body.block_types or None,
                             dismissed_block_types=body.dismissed_block_types or None,
+                            guardrails_strict=guardrails_strict_effective,
                         ):
                             # Stop streaming if client disconnected (saves LLM cost)
                             if await request.is_disconnected():
@@ -218,6 +230,16 @@ async def chat_stream(
                                     "task_link": payload.get("task_link"),
                                     "reflection": payload.get("reflection"),
                                 }
+                                # Phase 7 Guardrails T4 — carry the guardrails
+                                # blob from the orchestrator envelope into
+                                # ``ChatMessageLog.metadata_json`` only when
+                                # strict mode was effective for this turn.
+                                # Off → key absent (backward-compat: existing
+                                # rows/tests unaffected).
+                                if guardrails_strict_effective:
+                                    guardrails_payload = payload.get("guardrails")
+                                    if guardrails_payload is not None:
+                                        assistant_metadata["guardrails"] = guardrails_payload
                             elif event.get("event") == "replace":
                                 try:
                                     payload = json.loads(event["data"])

@@ -1,6 +1,6 @@
 """Answer-grading strategies for the evaluation harness.
 
-Four modes are supported:
+Five modes are supported:
 
 * ``exact``    — case-insensitive string equality after stripping whitespace.
 * ``contains`` — substring membership (case-insensitive).
@@ -9,6 +9,11 @@ Four modes are supported:
   satisfies the expected criterion. Intended for open-ended prompts
   where string matching is too brittle. Falls back to ``contains`` when
   no LLM client is available so unit tests can exercise the path.
+* ``refusal``  — Phase 7 guardrails. Passes when the actual answer begins
+  with the strict-mode refusal template prefix (case-insensitive). Used
+  by ``guardrails_smoke.yaml`` for out-of-corpus questions — ``expected``
+  is the literal sentinel ``"refusal"`` and we check structure rather
+  than content.
 
 All modes return ``bool``; individual regex-compile failures degrade to
 ``False`` rather than raising, so a malformed fixture never crashes the
@@ -23,11 +28,24 @@ from typing import Literal
 
 logger = logging.getLogger(__name__)
 
-GradeMode = Literal["exact", "regex", "contains", "judge"]
+GradeMode = Literal["exact", "regex", "contains", "judge", "refusal"]
+
+# Prefix of services.agent.agents.prompts.REFUSAL_TEMPLATE. Duplicated here
+# as a plain string to keep the grader import-cheap — importing the prompts
+# module pulls in the full agent stack, which tests and the CLI don't need.
+_REFUSAL_PREFIX = "i don't have this in your course"
 
 
 def grade_answer(expected: str, actual: str, mode: GradeMode) -> bool:
-    """Return ``True`` if ``actual`` satisfies ``expected`` under ``mode``."""
+    """Return ``True`` if ``actual`` satisfies ``expected`` under ``mode``.
+
+    ``mode`` selects the matcher:
+
+    - ``exact`` / ``contains`` / ``regex`` / ``judge`` — content-based.
+    - ``refusal`` — structural; ignores ``expected`` content (by convention
+      the fixture sets it to ``"refusal"``) and only checks that ``actual``
+      opens with the strict-mode refusal template prefix.
+    """
     if mode == "exact":
         return expected.strip().lower() == actual.strip().lower()
 
@@ -48,6 +66,13 @@ def grade_answer(expected: str, actual: str, mode: GradeMode) -> bool:
         # import time — keeps the grader cheap to import in tests. The
         # async variant ``grade_answer_judge`` below performs the real call.
         return expected.strip().lower() in actual.lower()
+
+    if mode == "refusal":
+        # Out-of-corpus guardrails: the tutor is expected to decline with
+        # the canned REFUSAL_TEMPLATE. We match on the leading phrase so
+        # trailing copy tweaks ("Options: …", localized suffix, etc.) don't
+        # break the fixture.
+        return actual.strip().lower().startswith(_REFUSAL_PREFIX)
 
     logger.warning("Unknown grade_mode=%r, falling back to contains", mode)
     return expected.strip().lower() in actual.lower()
