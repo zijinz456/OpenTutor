@@ -4,14 +4,23 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import asdict
+from json import JSONDecodeError
 import logging
 import time
 
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from schemas.guardrails import GuardrailsMetadata, GuardrailsOutput
 from services.agent.base import BaseAgent
 from services.agent.marker_parser import MarkerParser
-from services.agent.state import AgentContext, AgentTurnEnvelope, AgentVerificationResult, IntentType, TaskPhase
+from services.agent.state import (
+    AgentContext,
+    AgentTurnEnvelope,
+    AgentVerificationResult,
+    IntentType,
+    TaskPhase,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +35,9 @@ def _record_stream_warning(ctx: AgentContext, warning_type: str, message: str) -
     if not isinstance(warnings, list):
         warnings = []
         ctx.metadata["stream_warnings"] = warnings
-    if any(item.get("type") == warning_type for item in warnings if isinstance(item, dict)):
+    if any(
+        item.get("type") == warning_type for item in warnings if isinstance(item, dict)
+    ):
         return
     warnings.append({"type": warning_type, "message": message})
 
@@ -44,7 +55,15 @@ def _build_content_evidence_groups(content_docs: list[dict]) -> list[dict]:
         facets = [str(item) for item in (doc.get("matched_facets") or []) if item]
         terms = [str(item) for item in (doc.get("matched_terms") or []) if item]
         source_file = str(doc.get("source_file") or "").strip()
-        label = facets[0] if facets else (terms[0] if terms else str(doc.get("title") or "Course evidence").strip())
+        label = (
+            facets[0]
+            if facets
+            else (
+                terms[0]
+                if terms
+                else str(doc.get("title") or "Course evidence").strip()
+            )
+        )
         normalized_label = label.lower()[:120]
         key = f"{source_file}|{normalized_label}"
 
@@ -82,14 +101,16 @@ def _build_content_evidence_groups(content_docs: list[dict]) -> list[dict]:
     for group in groups.values():
         summary_counts = Counter(group.pop("summary_candidates", []))
         summary = summary_counts.most_common(1)[0][0] if summary_counts else ""
-        ranked_groups.append({
-            "label": group["label"],
-            "titles": group["titles"][:3],
-            "matched_terms": group["matched_terms"][:6],
-            "matched_facets": group["matched_facets"][:4],
-            "section_count": group["section_count"],
-            "summary": summary[:320] if summary else None,
-        })
+        ranked_groups.append(
+            {
+                "label": group["label"],
+                "titles": group["titles"][:3],
+                "matched_terms": group["matched_terms"][:6],
+                "matched_facets": group["matched_facets"][:4],
+                "section_count": group["section_count"],
+                "summary": summary[:320] if summary else None,
+            }
+        )
 
     ranked_groups.sort(
         key=lambda item: (
@@ -102,7 +123,9 @@ def _build_content_evidence_groups(content_docs: list[dict]) -> list[dict]:
     return ranked_groups[:3]
 
 
-async def consume_agent_stream(ctx: AgentContext, agent: BaseAgent, db: AsyncSession) -> AgentContext:
+async def consume_agent_stream(
+    ctx: AgentContext, agent: BaseAgent, db: AsyncSession
+) -> AgentContext:
     """Run an agent through its streaming interface and collect normalized output."""
     parser = MarkerParser()
     content_parts: list[str] = []
@@ -128,9 +151,8 @@ def finalize_token_usage(ctx: AgentContext, agent: BaseAgent) -> None:
     """Normalize token accounting for direct-stream and ReAct paths."""
     try:
         client = agent.get_llm_client()
-        should_add_last_usage = (
-            ctx.react_iterations == 0
-            or not hasattr(client, "chat_with_tools")
+        should_add_last_usage = ctx.react_iterations == 0 or not hasattr(
+            client, "chat_with_tools"
         )
         usage = client.get_last_usage()
         if usage and should_add_last_usage:
@@ -162,7 +184,9 @@ def build_provenance(ctx: AgentContext) -> dict:
         ],
         content_count=len(ctx.content_docs),
         memory_count=len(ctx.memories),
-        tool_names=[call.get("tool") for call in ctx.tool_calls[:5] if call.get("tool")],
+        tool_names=[
+            call.get("tool") for call in ctx.tool_calls[:5] if call.get("tool")
+        ],
         action_count=len(ctx.actions),
         generated=True,
         user_input=bool((ctx.user_message or "").strip()),
@@ -171,24 +195,26 @@ def build_provenance(ctx: AgentContext) -> dict:
             "content_evidence_groups": _build_content_evidence_groups(ctx.content_docs),
         },
     )
-    payload.update({
-        "course_count": len(ctx.content_docs),
-        "scene_resolution": ctx.metadata.get("scene_resolution"),
-        "scene_policy": ctx.metadata.get("scene_policy"),
-        "scene_switch": ctx.metadata.get("scene_switch"),
-        "preferences_applied": sorted(ctx.preferences.keys()),
-        "preference_sources": ctx.preference_sources,
-        "preference_details": [
-            {
-                "dimension": key,
-                "value": value,
-                "source": ctx.preference_sources.get(key, "unknown"),
-            }
-            for key, value in sorted(ctx.preferences.items())
-        ],
-        "workflow_count": 1 if ctx.metadata.get("workflow_name") else 0,
-        "generated_count": 1 if ctx.response else 0,
-    })
+    payload.update(
+        {
+            "course_count": len(ctx.content_docs),
+            "scene_resolution": ctx.metadata.get("scene_resolution"),
+            "scene_policy": ctx.metadata.get("scene_policy"),
+            "scene_switch": ctx.metadata.get("scene_switch"),
+            "preferences_applied": sorted(ctx.preferences.keys()),
+            "preference_sources": ctx.preference_sources,
+            "preference_details": [
+                {
+                    "dimension": key,
+                    "value": value,
+                    "source": ctx.preference_sources.get(key, "unknown"),
+                }
+                for key, value in sorted(ctx.preferences.items())
+            ],
+            "workflow_count": 1 if ctx.metadata.get("workflow_name") else 0,
+            "generated_count": 1 if ctx.response else 0,
+        }
+    )
     return payload
 
 
@@ -243,6 +269,94 @@ def envelope_payload(ctx: AgentContext) -> dict:
     }
 
 
+def _apply_guardrails_pre(ctx: AgentContext, settings) -> None:
+    """Phase 7 pre-LLM retrieval gate.
+
+    If ``guardrails_strict`` is toggled on for the turn and retrieval failed
+    (empty ``content_docs`` or top score below
+    ``settings.guardrails_retrieval_min_score``), flip ``skip_tutor_llm`` so
+    the tutor agent emits the canned refusal instead of hallucinating.
+    """
+    strict = ctx.metadata.get("guardrails_strict", False)
+    if not strict:
+        return
+    docs = getattr(ctx, "content_docs", None) or []
+    scores = [
+        float(doc.get("score", 0.0) or 0.0) for doc in docs if isinstance(doc, dict)
+    ]
+    top_score = max(scores) if scores else 0.0
+    ctx.metadata["guardrails_top_score"] = top_score
+    if not docs or top_score < settings.guardrails_retrieval_min_score:
+        ctx.metadata["skip_tutor_llm"] = True
+        ctx.metadata["guardrails_refusal_reason"] = "no_retrieval"
+
+
+def _apply_guardrails_post(ctx: AgentContext) -> None:
+    """Phase 7 post-LLM parse + citation-index validation.
+
+    Parses ``ctx.response`` as ``GuardrailsOutput`` JSON, drops any citation
+    index that doesn't point into ``ctx.content_docs`` (1-based), denormalizes
+    the cited chunks into ``citation_chunks`` for UI rendering, and publishes
+    the full ``GuardrailsMetadata`` blob on ``ctx.metadata['guardrails']``.
+
+    When the pre-gate already short-circuited the turn (``skip_tutor_llm``),
+    the refusal reason propagates without attempting a JSON parse. When parse
+    fails, the raw text is preserved as the answer and ``refusal_reason`` is
+    set to ``parse_fallback``.
+    """
+    strict = ctx.metadata.get("guardrails_strict", False)
+    if not strict:
+        return
+
+    meta = GuardrailsMetadata(
+        strict_mode=True,
+        top_retrieval_score=ctx.metadata.get("guardrails_top_score"),
+    )
+
+    # Short-circuit: pre-gate already refused.
+    if ctx.metadata.get("skip_tutor_llm", False):
+        meta.refusal_reason = ctx.metadata.get("guardrails_refusal_reason")
+        ctx.metadata["guardrails"] = meta.model_dump()
+        return
+
+    try:
+        parsed = GuardrailsOutput.model_validate_json(ctx.response or "")
+    except (ValidationError, JSONDecodeError, ValueError):
+        # Structured-output contract broken — keep the raw text, flag fallback.
+        meta.refusal_reason = "parse_fallback"
+        meta.answer = ctx.response
+        ctx.metadata["guardrails"] = meta.model_dump()
+        logger.warning("guardrails_parse_fallback")
+        return
+
+    docs = getattr(ctx, "content_docs", None) or []
+    valid_indices = set(range(1, len(docs) + 1))
+    valid_citations = [c for c in parsed.citations if c in valid_indices]
+
+    citation_chunks: list[dict] = []
+    for c in valid_citations:
+        doc = docs[c - 1]
+        if not isinstance(doc, dict):
+            citation_chunks.append({"id": "", "source_file": "", "snippet": ""})
+            continue
+        snippet = (doc.get("text", "") or doc.get("content", "") or "")[:200]
+        citation_chunks.append(
+            {
+                "id": str(doc.get("id", "")),
+                "source_file": str(doc.get("source_file", "")),
+                "snippet": snippet,
+            }
+        )
+
+    meta.answer = parsed.answer
+    meta.confidence = parsed.confidence
+    meta.citations = valid_citations
+    meta.citation_chunks = citation_chunks
+    ctx.metadata["guardrails"] = meta.model_dump()
+    # Clients render the plain answer; the structured blob lives in metadata.
+    ctx.response = parsed.answer
+
+
 async def apply_verifier(ctx: AgentContext, agent: BaseAgent) -> AgentContext:
     """Run verifier/repair only for the intents that benefit from it."""
     if ctx.intent not in (IntentType.LEARN, IntentType.PLAN, IntentType.GENERAL):
@@ -284,7 +398,11 @@ async def apply_reflection(ctx: AgentContext) -> AgentContext:
     verifier_status = (ctx.metadata.get("verifier") or {}).get("status")
     if verifier_status == "failed":
         return ctx
-    if not ctx.response or ctx.intent not in (IntentType.LEARN, IntentType.GENERAL) or len(ctx.response) <= 100:
+    if (
+        not ctx.response
+        or ctx.intent not in (IntentType.LEARN, IntentType.GENERAL)
+        or len(ctx.response) <= 100
+    ):
         return ctx
     elapsed = _turn_elapsed_seconds(ctx)
     if elapsed >= _REFLECTION_BUDGET_SECONDS:

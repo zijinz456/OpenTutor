@@ -23,6 +23,8 @@ from services.agent.background_runtime import (
     track_background_task,
 )
 from services.agent.turn_pipeline import (
+    _apply_guardrails_post,
+    _apply_guardrails_pre,
     apply_reflection,
     apply_verifier,
     build_provenance,
@@ -36,7 +38,7 @@ from services.agent.guided_session_handler import handle_guided_session
 
 logger = logging.getLogger(__name__)
 
-_CLARIFY_RE = re.compile(r'^\[CLARIFY:([^:]+):(.+)\]$')
+_CLARIFY_RE = re.compile(r"^\[CLARIFY:([^:]+):(.+)\]$")
 
 _ADAPTATION_WARNING = {
     "type": "adaptation_degraded",
@@ -77,7 +79,11 @@ def _record_stream_warning(ctx: AgentContext, warning: dict[str, str]) -> None:
     if not isinstance(warnings, list):
         warnings = []
         ctx.metadata["stream_warnings"] = warnings
-    if any(existing.get("type") == warning.get("type") for existing in warnings if isinstance(existing, dict)):
+    if any(
+        existing.get("type") == warning.get("type")
+        for existing in warnings
+        if isinstance(existing, dict)
+    ):
         return
     warnings.append(warning)
 
@@ -153,12 +159,16 @@ def _maybe_spawn_card_task(ctx: AgentContext) -> uuid.UUID | None:
 
         try:
             cards = await extract_card_candidates(
-                response_text, chunk_ids, course_id,
+                response_text,
+                chunk_ids,
+                course_id,
             )
         except Exception as exc:  # defensive — spawner promises never to raise
             logger.exception(
                 "card_spawner raised unexpectedly (session=%s msg=%s): %s",
-                session_id, message_id, exc,
+                session_id,
+                message_id,
+                exc,
             )
             cards = []
         card_cache.put(session_id, message_id, cards)
@@ -200,7 +210,13 @@ async def _apply_turn_enrichment(ctx: AgentContext, db: AsyncSession) -> AgentCo
                 )
             except (SQLAlchemyError, ConnectionError, TimeoutError):
                 logger.debug("Failed to persist cognitive load counter")
-    except (SQLAlchemyError, ImportError, ConnectionError, TimeoutError, ValueError) as e:
+    except (
+        SQLAlchemyError,
+        ImportError,
+        ConnectionError,
+        TimeoutError,
+        ValueError,
+    ) as e:
         logger.debug("Cognitive load detection skipped: %s", e)
         _record_stream_warning(ctx, _ADAPTATION_WARNING)
 
@@ -233,7 +249,8 @@ async def _apply_turn_enrichment(ctx: AgentContext, db: AsyncSession) -> AgentCo
             raw_prefs = await compute_block_preferences(db, ctx.user_id, ctx.course_id)
             if raw_prefs:
                 blocked = [
-                    bt for bt, data in raw_prefs.items()
+                    bt
+                    for bt, data in raw_prefs.items()
                     if data.get("dismiss_count", 0) >= 5 or data.get("score", 0) < -5
                 ]
                 block_prefs = {"block_scores": raw_prefs, "blocked": blocked}
@@ -252,7 +269,14 @@ async def _apply_turn_enrichment(ctx: AgentContext, db: AsyncSession) -> AgentCo
             preferences=block_prefs,
         )
         ctx.metadata["block_decisions"] = decisions
-    except (ImportError, SQLAlchemyError, ConnectionError, TimeoutError, ValueError, AttributeError) as e:
+    except (
+        ImportError,
+        SQLAlchemyError,
+        ConnectionError,
+        TimeoutError,
+        ValueError,
+        AttributeError,
+    ) as e:
         logger.debug("Block decision engine skipped: %s", e)
         _record_stream_warning(ctx, _ADAPTATION_WARNING)
 
@@ -276,7 +300,9 @@ def _build_plan_progress(plan_steps: list[dict]) -> list[dict]:
 
 
 async def prepare_agent_turn(
-    ctx: AgentContext, db: AsyncSession, db_factory=None,
+    ctx: AgentContext,
+    db: AsyncSession,
+    db_factory=None,
 ) -> tuple[AgentContext, BaseAgent]:
     """Run shared orchestration steps before agent execution."""
     ctx.transition(TaskPhase.ROUTING)
@@ -319,7 +345,12 @@ async def run_agent_turn(
     if clarify:
         ctx.clarify_inputs.update(clarify)
     ctx, agent = await prepare_agent_turn(ctx, db, db_factory=db_factory)
+    # Phase 7 Guardrails — pre-LLM retrieval gate (no-op unless strict toggled).
+    from config import settings as _settings
+
+    _apply_guardrails_pre(ctx, _settings)
     ctx = await consume_agent_stream(ctx, agent, db)
+    _apply_guardrails_post(ctx)
     finalize_token_usage(ctx, agent)
     ctx = await apply_verifier(ctx, agent)
     ctx = await apply_reflection(ctx)
@@ -331,22 +362,35 @@ async def run_agent_turn(
     return ctx
 
 
-async def orchestrate_simple(user_id, message: str, channel: str = "api", db=None, course_id=None) -> str:
+async def orchestrate_simple(
+    user_id, message: str, channel: str = "api", db=None, course_id=None
+) -> str:
     """Non-streaming orchestration for webhook/channel integrations."""
     from database import async_session
+
     try:
         async with async_session() as session:
             if course_id is None:
                 from sqlalchemy import select
                 from models.course import Course
-                stmt = select(Course.id).where(Course.user_id == user_id).order_by(Course.updated_at.desc()).limit(1)
+
+                stmt = (
+                    select(Course.id)
+                    .where(Course.user_id == user_id)
+                    .order_by(Course.updated_at.desc())
+                    .limit(1)
+                )
                 result = await session.execute(stmt)
                 course_id = result.scalar_one_or_none()
                 if course_id is None:
                     return "You don't have any courses yet. Create one on the web app first."
             ctx = await run_agent_turn(
-                user_id=user_id, course_id=course_id, message=message,
-                db=session, db_factory=async_session, post_process_inline=True,
+                user_id=user_id,
+                course_id=course_id,
+                message=message,
+                db=session,
+                db_factory=async_session,
+                post_process_inline=True,
             )
             return ctx.response or "I couldn't process that. Please try again."
     except Exception as e:
@@ -395,6 +439,7 @@ async def orchestrate_stream(
     try:
         from services.llm.providers.mock_client import MockLLMClient
         from services.llm.router import get_llm_client
+
         primary_client = get_llm_client()
         if isinstance(primary_client, MockLLMClient):
             ctx.metadata["is_mock"] = True
@@ -404,7 +449,8 @@ async def orchestrate_stream(
     # Guided session detection (bypass normal routing)
     _gs_match = re.match(
         r"\[GUIDED_SESSION:(start|resume|pause):([a-f0-9\-]+)\]",
-        message.strip(), re.IGNORECASE,
+        message.strip(),
+        re.IGNORECASE,
     )
     if _gs_match:
         gs_action, gs_task_id = _gs_match.group(1).lower(), _gs_match.group(2)
@@ -413,6 +459,7 @@ async def orchestrate_stream(
         return
 
     from services.agent.extensions import get_extension_registry, ExtensionHook
+
     ext_registry = get_extension_registry()
 
     yield {"event": "status", "data": json.dumps({"phase": "routing"})}
@@ -423,22 +470,30 @@ async def orchestrate_stream(
     ctx = await classify_intent(ctx)
 
     await ext_registry.run_hooks(
-        ExtensionHook.POST_ROUTING, ctx,
-        intent=ctx.intent.value, confidence=ctx.intent_confidence,
+        ExtensionHook.POST_ROUTING,
+        ctx,
+        intent=ctx.intent.value,
+        confidence=ctx.intent_confidence,
         agent_name=get_agent(ctx.intent).name,
     )
 
     yield {
         "event": "status",
-        "data": json.dumps({
-            "phase": "loading",
-            "intent": ctx.intent.value,
-            "confidence": ctx.intent_confidence,
-        }),
+        "data": json.dumps(
+            {
+                "phase": "loading",
+                "intent": ctx.intent.value,
+                "confidence": ctx.intent_confidence,
+            }
+        ),
     }
 
     ctx = await load_context(ctx, db, db_factory=db_factory)
     ctx = await _apply_turn_enrichment(ctx, db)
+    # Phase 7 Guardrails — retrieval gate runs before any agent invocation.
+    from config import settings as _settings
+
+    _apply_guardrails_pre(ctx, _settings)
     emitted_warning_count = 0
     for warning in ctx.metadata.get("stream_warnings", []):
         if isinstance(warning, dict):
@@ -447,7 +502,11 @@ async def orchestrate_stream(
 
     # Complex request contract: emit one `plan_step` then continue normal chat response.
     from services.agent.task_planner import is_complex_request
-    if is_complex_request(ctx.user_message) and ctx.intent in (IntentType.PLAN, IntentType.LEARN):
+
+    if is_complex_request(ctx.user_message) and ctx.intent in (
+        IntentType.PLAN,
+        IntentType.LEARN,
+    ):
         try:
             from services.agent.task_planner import create_plan
             from services.activity.engine import submit_task
@@ -461,33 +520,49 @@ async def orchestrate_stream(
                 course_id=ctx.course_id,
                 source="chat",
                 input_json={"steps": plan_steps, "course_id": str(ctx.course_id)},
-                metadata_json={"plan_progress": initial_plan_progress, "origin_message": ctx.user_message[:300]},
+                metadata_json={
+                    "plan_progress": initial_plan_progress,
+                    "origin_message": ctx.user_message[:300],
+                },
             )
             yield {
                 "event": "plan_step",
-                "data": json.dumps({
-                    "task_id": str(task.id),
-                    "steps": initial_plan_progress,
-                    "message": "I've created a background plan for the detailed steps. Let me also answer your question directly.",
-                }),
+                "data": json.dumps(
+                    {
+                        "task_id": str(task.id),
+                        "steps": initial_plan_progress,
+                        "message": "I've created a background plan for the detailed steps. Let me also answer your question directly.",
+                    }
+                ),
             }
             ctx.metadata["task_link"] = {
                 "task_id": str(task.id),
                 "task_type": task.task_type,
                 "status": task.status,
             }
-        except (SQLAlchemyError, ConnectionError, TimeoutError, ValueError, RuntimeError, ImportError) as e:
-            logger.exception("Multi-step planning failed, falling back to single turn: %s", e)
+        except (
+            SQLAlchemyError,
+            ConnectionError,
+            TimeoutError,
+            ValueError,
+            RuntimeError,
+            ImportError,
+        ) as e:
+            logger.exception(
+                "Multi-step planning failed, falling back to single turn: %s", e
+            )
 
     agent = get_agent(ctx.intent)
     ctx.delegated_agent = agent.name
 
     yield {
         "event": "status",
-        "data": json.dumps({
-            "phase": "generating",
-            "agent": agent.name,
-        }),
+        "data": json.dumps(
+            {
+                "phase": "generating",
+                "agent": agent.name,
+            }
+        ),
     }
 
     await ext_registry.run_hooks(ExtensionHook.PRE_AGENT, ctx, agent_name=agent.name)
@@ -522,7 +597,10 @@ async def orchestrate_stream(
                 yield {"event": "action", "data": json.dumps(ctx.actions[idx])}
 
         while _progress_emitted < len(ctx.tool_progress):
-            yield {"event": "tool_progress", "data": json.dumps(ctx.tool_progress[_progress_emitted])}
+            yield {
+                "event": "tool_progress",
+                "data": json.dumps(ctx.tool_progress[_progress_emitted]),
+            }
             _progress_emitted += 1
 
     remaining = parser.flush()
@@ -538,9 +616,13 @@ async def orchestrate_stream(
 
     finalize_token_usage(ctx, agent)
     await ext_registry.run_hooks(
-        ExtensionHook.POST_AGENT, ctx,
-        agent_name=agent.name, response=ctx.response or "",
+        ExtensionHook.POST_AGENT,
+        ctx,
+        agent_name=agent.name,
+        response=ctx.response or "",
     )
+    # Phase 7 Guardrails — post-LLM parse/validation; may rewrite ctx.response.
+    _apply_guardrails_post(ctx)
     streamed_response = ctx.response
     ctx = await apply_verifier(ctx, agent)
     new_warnings = ctx.metadata.get("stream_warnings", [])[emitted_warning_count:]
@@ -597,6 +679,16 @@ async def orchestrate_stream(
     if bg_ctx.response or bg_ctx.input_tokens or bg_ctx.output_tokens:
         try:
             await enqueue_post_process_task(bg_ctx)
-        except (SQLAlchemyError, ConnectionError, TimeoutError, ValueError, RuntimeError) as exc:
-            logger.exception("Failed to enqueue durable chat post-process task: %s", exc)
-            track_background_task(asyncio.create_task(run_post_process_bundle(bg_ctx, db_factory)))
+        except (
+            SQLAlchemyError,
+            ConnectionError,
+            TimeoutError,
+            ValueError,
+            RuntimeError,
+        ) as exc:
+            logger.exception(
+                "Failed to enqueue durable chat post-process task: %s", exc
+            )
+            track_background_task(
+                asyncio.create_task(run_post_process_bundle(bg_ctx, db_factory))
+            )

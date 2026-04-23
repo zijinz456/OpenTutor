@@ -17,7 +17,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from services.agent.base import BaseAgent
 from services.agent.react_mixin import ReActMixin
 from services.agent.state import AgentContext
-from services.agent.tool_loader import get_all_tools
 
 # Import prompt constants and helpers from split module
 from services.agent.agents.prompts import (  # noqa: F401 — re-exported
@@ -36,6 +35,8 @@ from services.agent.agents.prompts import (  # noqa: F401 — re-exported
     _MOTIVATION_INSTRUCTIONS,
     _COMPREHENSION_PROBING,
     _MODE_INSTRUCTIONS,
+    GUARDRAILS_STRICT_DIRECTIVE,
+    REFUSAL_TEMPLATE,
 )
 
 # Import assessment data builder from split module
@@ -204,6 +205,12 @@ class TutorAgent(ReActMixin, BaseAgent):
         scene_tools = get_scene_tools(scene, include_preference=False)
         parts.append(scene_tools)
 
+        # ── Phase 7 Guardrails — strict grounding mode ──
+        # Appended last so it wins over any earlier teaching/Socratic
+        # instructions that would conflict with "refuse if ungrounded".
+        if ctx.metadata.get("guardrails_strict") is True:
+            parts.append(GUARDRAILS_STRICT_DIRECTIVE)
+
         return "\n".join(parts)
 
     def _build_grounding_context(self, ctx: AgentContext) -> str:
@@ -305,6 +312,14 @@ class TutorAgent(ReActMixin, BaseAgent):
 
     async def execute(self, ctx: AgentContext, db: AsyncSession) -> AgentContext:
         """Generate response using unified prompt with conditional sections."""
+        # Phase 7 Guardrails — bypass the LLM entirely when the turn
+        # pipeline (T3) has determined retrieval is too weak to ground
+        # a strict-mode answer. Checked first so we skip LaTeX OCR,
+        # Socratic load, and code pre-execution for a refusal turn.
+        if ctx.metadata.get("skip_tutor_llm"):
+            ctx.response = REFUSAL_TEMPLATE
+            return ctx
+
         msg = ctx.user_message
 
         # Pre-load assessment data if assessment keywords detected
@@ -341,6 +356,14 @@ class TutorAgent(ReActMixin, BaseAgent):
 
     async def stream(self, ctx: AgentContext, db: AsyncSession) -> AsyncIterator[str]:
         """Pre-load assessment data if needed, then delegate to ReActMixin.stream()."""
+        # Phase 7 Guardrails — bypass LLM/ReAct loop for ungrounded turns.
+        # Emit one chunk with the refusal template so downstream SSE
+        # consumers get a visible message, then return.
+        if ctx.metadata.get("skip_tutor_llm"):
+            ctx.response = REFUSAL_TEMPLATE
+            yield REFUSAL_TEMPLATE
+            return
+
         msg = ctx.user_message
 
         if _ASSESS_RE.search(msg):
