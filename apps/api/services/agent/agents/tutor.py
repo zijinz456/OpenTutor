@@ -62,11 +62,19 @@ class TutorAgent(ReActMixin, BaseAgent):
     )
     model_preference = "large"
     react_tools = [
-        "search_content", "lookup_progress", "get_course_outline",
-        "generate_notes", "web_search", "write_file", "update_workspace",
+        "search_content",
+        "lookup_progress",
+        "get_course_outline",
+        "generate_notes",
+        "web_search",
+        "write_file",
+        "update_workspace",
         # quiz/exercise tools
-        "get_mastery_report", "list_wrong_answers", "generate_flashcards",
-        "generate_quiz", "export_anki",
+        "get_mastery_report",
+        "list_wrong_answers",
+        "generate_flashcards",
+        "generate_quiz",
+        "export_anki",
         # review tools
         "derive_diagnostic",
         # comprehension probing
@@ -74,8 +82,11 @@ class TutorAgent(ReActMixin, BaseAgent):
         # assessment tools
         "list_recent_tasks",
         # planning-adjacent tools
-        "list_study_goals", "list_assignments", "create_study_plan",
-        "export_calendar", "list_files",
+        "list_study_goals",
+        "list_assignments",
+        "create_study_plan",
+        "export_calendar",
+        "list_files",
         # code tools
         "run_code",
         # memory tools
@@ -112,7 +123,9 @@ class TutorAgent(ReActMixin, BaseAgent):
             if error_patterns:
                 lines = ["\n## Student's Recurring Error Patterns"]
                 for ep in error_patterns:
-                    lines.append(f"- {ep['category']}: {ep['count']} errors ({ep['percentage']}%)")
+                    lines.append(
+                        f"- {ep['category']}: {ep['count']} errors ({ep['percentage']}%)"
+                    )
                 parts.append("\n".join(lines))
 
         # ── Conditional section: assessment ──
@@ -158,7 +171,9 @@ class TutorAgent(ReActMixin, BaseAgent):
                     relevant_keys = list(fragments.keys())[:2]
                 else:
                     relevant_keys = relevant_keys[:2]
-                frag_text = "\n\n".join(f"### {k}\n{fragments[k]}" for k in relevant_keys)
+                frag_text = "\n\n".join(
+                    f"### {k}\n{fragments[k]}" for k in relevant_keys
+                )
                 parts.append(f"\n## Teaching Strategies\n{frag_text}\n")
             parts.append(SOCRATIC_GUARDRAILS)
             parts.append(_COMPREHENSION_PROBING)
@@ -179,14 +194,20 @@ class TutorAgent(ReActMixin, BaseAgent):
         cross_patterns = ctx.metadata.get("cross_course_patterns")
         if cross_patterns:
             lines = ["\n## Cross-Course Connections"]
-            lines.append("Point these out when relevant to help the student connect knowledge:")
+            lines.append(
+                "Point these out when relevant to help the student connect knowledge:"
+            )
             for p in cross_patterns[:3]:
-                courses_str = ", ".join(c.get("course_name", "?") for c in p.get("courses", []))
+                courses_str = ", ".join(
+                    c.get("course_name", "?") for c in p.get("courses", [])
+                )
                 mastery_info = ", ".join(
                     f"{c.get('course_name', '?')}: {c.get('mastery', '?')}"
                     for c in p.get("courses", [])
                 )
-                lines.append(f"- '{p.get('topic', '?')}' appears in: {courses_str} (mastery: {mastery_info})")
+                lines.append(
+                    f"- '{p.get('topic', '?')}' appears in: {courses_str} (mastery: {mastery_info})"
+                )
             parts.append("\n".join(lines))
 
         # ── Block layout awareness ──
@@ -201,6 +222,7 @@ class TutorAgent(ReActMixin, BaseAgent):
 
         # Scene-specific tools (only load relevant tools for current context)
         from services.agent.tool_loader import get_scene_tools
+
         scene = ctx.metadata.get("scene") or ctx.scene or ""
         scene_tools = get_scene_tools(scene, include_preference=False)
         parts.append(scene_tools)
@@ -243,11 +265,17 @@ class TutorAgent(ReActMixin, BaseAgent):
             if problem_meta.get("core_concept"):
                 meta_parts.append(f"Core concept: {problem_meta['core_concept']}")
             if problem_meta.get("potential_traps"):
-                meta_parts.append(f"Known traps: {', '.join(problem_meta['potential_traps'])}")
+                meta_parts.append(
+                    f"Known traps: {', '.join(problem_meta['potential_traps'])}"
+                )
             if problem_meta.get("difficulty_layer"):
-                meta_parts.append(f"Difficulty layer: {problem_meta['difficulty_layer']}")
+                meta_parts.append(
+                    f"Difficulty layer: {problem_meta['difficulty_layer']}"
+                )
             if meta_parts:
-                parts.append("## Question Metadata (verified facts)\n" + "\n".join(meta_parts))
+                parts.append(
+                    "## Question Metadata (verified facts)\n" + "\n".join(meta_parts)
+                )
 
         return "\n\n".join(parts)
 
@@ -260,6 +288,7 @@ class TutorAgent(ReActMixin, BaseAgent):
             mastery = 0.5
             try:
                 from models.progress import LearningProgress
+
                 progress_result = await db.execute(
                     select(LearningProgress).where(
                         LearningProgress.user_id == ctx.user_id,
@@ -277,14 +306,22 @@ class TutorAgent(ReActMixin, BaseAgent):
             error_type = ctx.metadata.get("last_error_category")
 
             engine = await load_socratic_engine(
-                db, ctx.user_id, ctx.course_id,
+                db,
+                ctx.user_id,
+                ctx.course_id,
                 mastery=mastery,
                 cognitive_load=cognitive_load,
                 error_type=error_type,
             )
             ctx.metadata["socratic_directive"] = engine.get_prompt_directive()
             ctx.metadata["_socratic_engine"] = engine
-        except (SQLAlchemyError, ConnectionError, TimeoutError, KeyError, ValueError) as e:
+        except (
+            SQLAlchemyError,
+            ConnectionError,
+            TimeoutError,
+            KeyError,
+            ValueError,
+        ) as e:
             logger.debug("Socratic engine loading skipped: %s", e)
 
     async def _save_socratic(self, ctx: AgentContext, db: AsyncSession) -> None:
@@ -294,8 +331,10 @@ class TutorAgent(ReActMixin, BaseAgent):
             return
         try:
             from services.agent.socratic_engine import (
-                classify_response_quality, save_socratic_engine,
+                classify_response_quality,
+                save_socratic_engine,
             )
+
             # Get last tutor message from history for classification context
             history = ctx.metadata.get("history", [])
             last_tutor = ""
@@ -307,7 +346,13 @@ class TutorAgent(ReActMixin, BaseAgent):
                 quality = await classify_response_quality(last_tutor, ctx.user_message)
                 engine.transition(quality)
             await save_socratic_engine(db, ctx.user_id, ctx.course_id, engine)
-        except (SQLAlchemyError, ConnectionError, TimeoutError, KeyError, ValueError) as e:
+        except (
+            SQLAlchemyError,
+            ConnectionError,
+            TimeoutError,
+            KeyError,
+            ValueError,
+        ) as e:
             logger.debug("Socratic state save skipped: %s", e)
 
     async def execute(self, ctx: AgentContext, db: AsyncSession) -> AgentContext:
@@ -333,6 +378,7 @@ class TutorAgent(ReActMixin, BaseAgent):
         if ctx.images:
             try:
                 from services.vision.latex_ocr import try_extract_latex
+
                 latex_results = try_extract_latex(ctx.images)
                 if latex_results:
                     latex_block = "\n".join(f"$$${l}$$$" for l in latex_results)
@@ -347,7 +393,9 @@ class TutorAgent(ReActMixin, BaseAgent):
 
         system_prompt = self.build_system_prompt(ctx)
         client = self.get_llm_client(ctx)
-        ctx.response, _ = await client.chat(system_prompt, ctx.user_message, images=ctx.images or None)
+        ctx.response, _ = await client.chat(
+            system_prompt, ctx.user_message, images=ctx.images or None
+        )
 
         # Save Socratic state after response
         await self._save_socratic(ctx, db)
@@ -375,6 +423,7 @@ class TutorAgent(ReActMixin, BaseAgent):
         if ctx.images:
             try:
                 from services.vision.latex_ocr import try_extract_latex
+
                 latex_results = try_extract_latex(ctx.images)
                 if latex_results:
                     latex_block = "\n".join(f"$$${l}$$$" for l in latex_results)
@@ -395,8 +444,10 @@ class TutorAgent(ReActMixin, BaseAgent):
     async def _pre_execute_code(self, ctx: AgentContext) -> None:
         """Extract and execute code from message before LLM call."""
         import asyncio as _asyncio
+
         try:
             from services.agent.code_execution import CodeExecutionAgent
+
             agent = CodeExecutionAgent()
             code = agent._extract_code(ctx.user_message)
             if code:
@@ -407,7 +458,11 @@ class TutorAgent(ReActMixin, BaseAgent):
                     ctx.metadata["code_snippet"] = code
                     ctx.metadata["sandbox_backend"] = result.get("backend")
                 else:
-                    ctx.metadata["code_result"] = {"success": False, "output": "", "error": reason}
+                    ctx.metadata["code_result"] = {
+                        "success": False,
+                        "output": "",
+                        "error": reason,
+                    }
                     ctx.metadata["code_snippet"] = code
         except (ImportError, OSError, RuntimeError, ValueError) as e:
             logger.debug("Code pre-execution skipped: %s", e)

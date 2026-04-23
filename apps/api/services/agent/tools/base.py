@@ -32,9 +32,10 @@ IDEMPOTENCY_WINDOW_SECONDS = 120
 
 class ToolCategory(str, Enum):
     """Classification of tool side-effect behaviour."""
-    READ = "read"       # No side effects (search, lookup)
-    WRITE = "write"     # Creates / mutates data (generate, save)
-    COMPUTE = "compute" # Pure computation (run_code)
+
+    READ = "read"  # No side effects (search, lookup)
+    WRITE = "write"  # Creates / mutates data (generate, save)
+    COMPUTE = "compute"  # Pure computation (run_code)
 
 
 # ── Data Classes ──
@@ -100,11 +101,19 @@ class Tool(ABC):
         """
         if self.category != ToolCategory.WRITE:
             return None
-        normalized = _json.dumps(
-            {"course_id": str(getattr(ctx, "course_id", "")), "tool": self.name, **parameters},
-            sort_keys=True,
-            default=str,
-        ).lower().strip()
+        normalized = (
+            _json.dumps(
+                {
+                    "course_id": str(getattr(ctx, "course_id", "")),
+                    "tool": self.name,
+                    **parameters,
+                },
+                sort_keys=True,
+                default=str,
+            )
+            .lower()
+            .strip()
+        )
         return hashlib.sha256(normalized.encode()).hexdigest()[:16]
 
     @abstractmethod
@@ -130,8 +139,12 @@ class Tool(ABC):
 
     # Map Python type names to JSON Schema type names.
     _PY_TO_JSON_TYPE: dict[str, str] = {
-        "str": "string", "int": "integer", "float": "number",
-        "bool": "boolean", "list": "array", "dict": "object",
+        "str": "string",
+        "int": "integer",
+        "float": "number",
+        "bool": "boolean",
+        "list": "array",
+        "dict": "object",
     }
 
     def to_openai_schema(self) -> dict:
@@ -216,8 +229,12 @@ def param(
 ) -> ToolParameter:
     """Shorthand constructor for ToolParameter."""
     return ToolParameter(
-        name=name, type=type, description=description,
-        required=required, enum=enum, default=default,
+        name=name,
+        type=type,
+        description=description,
+        required=required,
+        enum=enum,
+        default=default,
     )
 
 
@@ -262,11 +279,17 @@ def tool(
     params: list[ToolParameter] | None = None,
 ):
     """Decorator that wraps an async function into a FunctionTool instance."""
+
     def decorator(fn: Any) -> FunctionTool:
         return FunctionTool(
-            name=name, description=description, domain=domain,
-            category=category, params=params, fn=fn,
+            name=name,
+            description=description,
+            domain=domain,
+            category=category,
+            params=params,
+            fn=fn,
         )
+
     return decorator
 
 

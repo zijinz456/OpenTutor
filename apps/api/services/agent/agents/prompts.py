@@ -7,27 +7,33 @@ from pathlib import Path
 
 _QUIZ_RE = re.compile(
     r"(quiz|exercise|test\s+me|practice|generate\s+(quiz|question|problem)|"
-    r"give\s+me\s+(a\s+)?question|flashcard)", re.IGNORECASE,
+    r"give\s+me\s+(a\s+)?question|flashcard)",
+    re.IGNORECASE,
 )
 _REVIEW_RE = re.compile(
     r"(wrong|mistake|error\s+analysis|review\s+my|what\s+did\s+I\s+get\s+wrong|"
-    r"where\s+did\s+I\s+go\s+wrong|why\s+(is|was)\s+(it|this)\s+wrong)", re.IGNORECASE,
+    r"where\s+did\s+I\s+go\s+wrong|why\s+(is|was)\s+(it|this)\s+wrong)",
+    re.IGNORECASE,
 )
 _ASSESS_RE = re.compile(
     r"(assessment|my\s+progress|progress\s+report|weak\s+area|"
-    r"how\s+am\s+I\s+doing|exam\s+readiness|mastery|learning\s+status)", re.IGNORECASE,
+    r"how\s+am\s+I\s+doing|exam\s+readiness|mastery|learning\s+status)",
+    re.IGNORECASE,
 )
 _CURRICULUM_RE = re.compile(
     r"(course\s+structure|knowledge\s+graph|outline|syllabus|curriculum|"
-    r"prerequisite|topic\s+hierarchy|learning\s+path|dependency)", re.IGNORECASE,
+    r"prerequisite|topic\s+hierarchy|learning\s+path|dependency)",
+    re.IGNORECASE,
 )
 _CODE_RE = re.compile(
     r"(run\s+(this|my|the)\s+code|debug|```python|code\s+execution|"
-    r"write\s+a?\s*program|compile)", re.IGNORECASE,
+    r"write\s+a?\s*program|compile)",
+    re.IGNORECASE,
 )
 _FATIGUE_RE = re.compile(
     r"(don'?t\s+want\s+to\s+study|give\s+up|so\s+tired|can'?t\s+keep\s+going|"
-    r"hate\s+this|can'?t\s+do\s+it|too\s+hard|frustrated|forget\s+it|ugh|whatever)", re.IGNORECASE,
+    r"hate\s+this|can'?t\s+do\s+it|too\s+hard|frustrated|forget\s+it|ugh|whatever)",
+    re.IGNORECASE,
 )
 
 # ── Teaching strategy fragments (loaded once) ──
@@ -78,9 +84,7 @@ SOCRATIC_GUARDRAILS = """
 # The refusal JSON example line runs past 88 cols; it's a verbatim prompt
 # literal shown to the LLM, so we don't split it. Per-line noqa on the
 # offending string concat below.
-_REFUSAL_JSON_EXAMPLE = (
-    '  {"answer": "I don\'t have this in your course materials.", "confidence": 1, "citations": []}'  # noqa: E501
-)
+_REFUSAL_JSON_EXAMPLE = '  {"answer": "I don\'t have this in your course materials.", "confidence": 1, "citations": []}'  # noqa: E501
 GUARDRAILS_STRICT_DIRECTIVE = (
     "\n"
     "You are in STRICT GROUNDING MODE. Rules:\n"

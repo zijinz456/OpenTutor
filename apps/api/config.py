@@ -44,14 +44,14 @@ class Settings(BaseSettings):
     litellm_api_key: str = ""  # Optional API key for LiteLLM proxy
 
     # Model size routing (agent preference hints)
-    llm_model_large: str = ""   # e.g. gpt-4o for teaching/planning agents
-    llm_model_small: str = ""   # e.g. gpt-4o-mini for preference/scene agents
+    llm_model_large: str = ""  # e.g. gpt-4o for teaching/planning agents
+    llm_model_small: str = ""  # e.g. gpt-4o-mini for preference/scene agents
     llm_required: bool = False
 
     # 3-tier model routing (overrides large/small when set)
-    llm_model_fast: str = ""       # e.g. gpt-4o-mini — greetings, preferences
-    llm_model_standard: str = ""   # e.g. gpt-4o — teaching, exercises
-    llm_model_frontier: str = ""   # e.g. o3-mini — planning, code execution
+    llm_model_fast: str = ""  # e.g. gpt-4o-mini — greetings, preferences
+    llm_model_standard: str = ""  # e.g. gpt-4o — teaching, exercises
+    llm_model_frontier: str = ""  # e.g. o3-mini — planning, code execution
 
     # Authentication
     auth_enabled: bool = False
@@ -84,9 +84,11 @@ class Settings(BaseSettings):
     enable_experimental_loom: bool = False
     enable_experimental_lector: bool = False
     enable_experimental_notion_export: bool = False
-    enable_experimental_cat: bool = False              # CAT adaptive diagnostic pretest
-    enable_experimental_browser: bool = False          # Browser automation (web_search agent tool)
-    enable_experimental_vision: bool = False            # Vision/LaTeX OCR service
+    enable_experimental_cat: bool = False  # CAT adaptive diagnostic pretest
+    enable_experimental_browser: bool = (
+        False  # Browser automation (web_search agent tool)
+    )
+    enable_experimental_vision: bool = False  # Vision/LaTeX OCR service
     # §34.5 Phase 11 — Pyodide-backed in-browser code exercises. Opt-in.
     # When False (default), submit_answer rejects question_type="code_exercise".
     enable_code_exercises: bool = False
@@ -114,7 +116,9 @@ class Settings(BaseSettings):
     rate_limit_rpm: int = 120  # requests per minute per IP (simple mode)
     rate_limit_llm_rpm: int = 20  # requests per minute per IP for LLM endpoints
     rate_limit_cost_budget: int = 500  # cost units per minute per IP (cost_aware mode)
-    trust_proxy_headers: bool = False  # Trust X-Forwarded-For header (only enable behind a reverse proxy)
+    trust_proxy_headers: bool = (
+        False  # Trust X-Forwarded-For header (only enable behind a reverse proxy)
+    )
 
     # SSE streaming
     sse_timeout_seconds: int = 300
@@ -134,7 +138,9 @@ class Settings(BaseSettings):
     code_sandbox_backend: str = "auto"  # container | auto | process
     code_sandbox_runtime: str = "docker"  # docker | podman
     code_sandbox_timeout_seconds: int = 5
-    allow_insecure_process_sandbox: bool = False  # Allows raw subprocess sandbox (no container isolation)
+    allow_insecure_process_sandbox: bool = (
+        False  # Allows raw subprocess sandbox (no container isolation)
+    )
 
     # Encryption (Fernet key for at-rest encryption of OAuth tokens etc.)
     # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
@@ -160,41 +166,51 @@ class Settings(BaseSettings):
     cognitive_load_threshold_medium: float = 0.3
 
     # Cognitive load normalization constants
-    cognitive_load_session_messages_norm: float = 40.0     # ~40 messages ≈ 45 min
-    cognitive_load_error_count_norm: float = 5.0           # 5+ unmastered errors = max signal
-    cognitive_load_brevity_length_norm: float = 100.0      # <100 chars = some signal
-    cognitive_load_quiz_accuracy_target: float = 0.7       # Below 70% accuracy = signal
-    cognitive_load_hesitation_min_ms: float = 15000.0      # 15s = no signal
-    cognitive_load_hesitation_range_ms: float = 45000.0    # 60s+ = full signal
+    cognitive_load_session_messages_norm: float = 40.0  # ~40 messages ≈ 45 min
+    cognitive_load_error_count_norm: float = 5.0  # 5+ unmastered errors = max signal
+    cognitive_load_brevity_length_norm: float = 100.0  # <100 chars = some signal
+    cognitive_load_quiz_accuracy_target: float = 0.7  # Below 70% accuracy = signal
+    cognitive_load_hesitation_min_ms: float = 15000.0  # 15s = no signal
+    cognitive_load_hesitation_range_ms: float = 45000.0  # 60s+ = full signal
     cognitive_load_nlp_frustration_weight: float = 0.6
     cognitive_load_nlp_confusion_weight: float = 0.4
     cognitive_load_review_reorder_threshold: float = 0.5
 
     # LECTOR review priority factors
-    lector_factor_low_mastery: float = 0.5       # Multiplier for (0.8 - mastery)
-    lector_factor_never_practiced: float = 0.3   # Bonus for unpracticed concepts
-    lector_factor_time_decay: float = 0.3        # Memory decay weight
-    lector_factor_prerequisite: float = 0.2      # Weak prerequisite boost
-    lector_factor_confusion: float = 0.1         # Confusion pair boost
-    lector_mastery_threshold: float = 0.8        # Below this = needs review
-    lector_prerequisite_threshold: float = 0.5   # Prereq mastery alert level
-    lector_confusion_threshold: float = 0.6      # Confusion pair mastery alert
-    lector_factor_interference: float = 0.15    # Proactive interference matrix weight (LECTOR paper)
+    lector_factor_low_mastery: float = 0.5  # Multiplier for (0.8 - mastery)
+    lector_factor_never_practiced: float = 0.3  # Bonus for unpracticed concepts
+    lector_factor_time_decay: float = 0.3  # Memory decay weight
+    lector_factor_prerequisite: float = 0.2  # Weak prerequisite boost
+    lector_factor_confusion: float = 0.1  # Confusion pair boost
+    lector_mastery_threshold: float = 0.8  # Below this = needs review
+    lector_prerequisite_threshold: float = 0.5  # Prereq mastery alert level
+    lector_confusion_threshold: float = 0.6  # Confusion pair mastery alert
+    lector_factor_interference: float = (
+        0.15  # Proactive interference matrix weight (LECTOR paper)
+    )
 
     # LOOM knowledge graph parameters
     loom_fusion_similarity_threshold: float = 0.85  # Graphusion concept dedup threshold
-    loom_interference_similarity_threshold: float = 0.6  # LECTOR interference matrix threshold
-    loom_interference_top_n: int = 20            # Max interference pairs per course
-    loom_consolidation_threshold: float = 0.85   # All prereqs must exceed this for consolidation
-    loom_consolidation_parent_boost: float = 0.1 # Mastery boost when prereq group mastered
-    loom_consolidation_stability_multiplier: float = 1.5  # Extend stability of mastered prereqs
+    loom_interference_similarity_threshold: float = (
+        0.6  # LECTOR interference matrix threshold
+    )
+    loom_interference_top_n: int = 20  # Max interference pairs per course
+    loom_consolidation_threshold: float = (
+        0.85  # All prereqs must exceed this for consolidation
+    )
+    loom_consolidation_parent_boost: float = (
+        0.1  # Mastery boost when prereq group mastered
+    )
+    loom_consolidation_stability_multiplier: float = (
+        1.5  # Extend stability of mastered prereqs
+    )
 
     # BKT mastery parameters (pyBKT paper)
-    bkt_default_p_learn: float = 0.10            # Learning transition probability
-    bkt_default_slip: float = 0.10               # Default slip probability
+    bkt_default_p_learn: float = 0.10  # Learning transition probability
+    bkt_default_slip: float = 0.10  # Default slip probability
 
     # FIRe bidirectional propagation (GKT paper)
-    fire_doubt_per_depth: float = 0.03           # Doubt propagation per depth on incorrect
+    fire_doubt_per_depth: float = 0.03  # Doubt propagation per depth on incorrect
 
     # Logging
     log_file: str = ""  # Path to log file; empty = stdout only
@@ -225,7 +241,7 @@ class Settings(BaseSettings):
         elif self.database_url.startswith("sqlite"):
             for prefix in ("sqlite+aiosqlite:///", "sqlite:///"):
                 if self.database_url.startswith(prefix):
-                    sqlite_path = self.database_url[len(prefix):]
+                    sqlite_path = self.database_url[len(prefix) :]
                     if sqlite_path.startswith("~"):
                         self.database_url = f"{prefix}{Path(sqlite_path).expanduser()}"
                     break
@@ -245,6 +261,7 @@ class Settings(BaseSettings):
         # (CSRF middleware needs a signing key even when auth is disabled)
         if not self.jwt_secret_key:
             import secrets as _secrets
+
             self.jwt_secret_key = _secrets.token_hex(32)
 
         if self.auth_enabled:
@@ -284,7 +301,7 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "ENCRYPTION_KEY is required in production for at-rest encryption "
                     "of sensitive data (OAuth tokens, etc.). Generate one with: "
-                    "python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
+                    'python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"'
                 )
         return self
 

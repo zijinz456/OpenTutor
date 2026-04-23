@@ -111,8 +111,8 @@ function BrutalSessionInner() {
   const resetStore = useBrutalSessionStore((s) => s.reset);
 
   const [bootState, setBootState] = useState<
-    "idle" | "loading" | "ready" | "empty" | "error"
-  >("idle");
+    "loading" | "ready" | "empty" | "error"
+  >("loading");
   const [plan, setPlan] = useState<BrutalPlanResponse | null>(null);
   const [pendingPoolSmall, setPendingPoolSmall] = useState<{
     plan: BrutalPlanResponse;
@@ -132,13 +132,11 @@ function BrutalSessionInner() {
   // cards with no warning → "nothing to drill" closure (0/0/0). Pool
   // small → stash plan and render confirm modal.
   useEffect(() => {
-    if (bootState !== "idle") return;
     if (!config) {
       router.replace("/");
       return;
     }
     let cancelled = false;
-    setBootState("loading");
     (async () => {
       try {
         const fetched = await getBrutalPlan(config.size);
@@ -168,7 +166,7 @@ function BrutalSessionInner() {
     return () => {
       cancelled = true;
     };
-  }, [bootState, config, router, startStore]);
+  }, [config, router, startStore]);
 
   // Tab-blur pause — single-line contract per the phase plan. We don't
   // pause during the `pendingPoolSmall` confirm because the timer isn't
@@ -263,7 +261,7 @@ function BrutalSessionInner() {
 
   // ── Render branches ──
 
-  if (bootState === "loading" || bootState === "idle") {
+  if (bootState === "loading") {
     return (
       <div
         className="min-h-screen bg-background"

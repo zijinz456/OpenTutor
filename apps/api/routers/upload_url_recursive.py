@@ -340,6 +340,7 @@ async def _ingest_page(
         # An UPDATE sidesteps ORM-session bookkeeping entirely.
         from sqlalchemy import update
         from models.ingestion import IngestionJob
+
         job_id = job.id  # primary key is already loaded, safe to read
         await db.execute(
             update(IngestionJob)
