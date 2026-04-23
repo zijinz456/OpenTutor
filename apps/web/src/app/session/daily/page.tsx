@@ -41,6 +41,10 @@ import {
   type CodeExerciseSubmitPayload,
   type CodeExerciseSubmitResult,
 } from "@/components/blocks/code-exercise-block";
+import { TraceBlock } from "@/components/blocks/trace-block";
+import { ApplyBlock } from "@/components/blocks/apply-block";
+import { CompareBlock } from "@/components/blocks/compare-block";
+import { RebuildBlock } from "@/components/blocks/rebuild-block";
 import {
   LabExerciseBlock,
   type LabExerciseSubmitPayload,
@@ -81,6 +85,14 @@ function readLabMeta(meta: Record<string, unknown> | null | undefined) {
     ? meta.hints.filter((h): h is string => typeof h === "string")
     : [];
   return { target_url, category, difficulty, hints };
+}
+
+function readDrillEditorMeta(meta: Record<string, unknown> | null | undefined) {
+  if (!meta) return { starterCode: "", language: "python" };
+  const starterCode =
+    typeof meta.starter_code === "string" ? meta.starter_code : "";
+  const language = typeof meta.language === "string" ? meta.language : "python";
+  return { starterCode, language };
 }
 
 export default function DailySessionPage() {
@@ -190,6 +202,17 @@ export default function DailySessionPage() {
     [recordAnswer, scheduleAdvance],
   );
 
+  const handleDrillSubmit = useCallback(
+    async (problemId: string, userAnswer: string): Promise<AnswerResult> => {
+      const elapsed = Date.now() - questionStartRef.current;
+      const res = await submitAnswer(problemId, userAnswer, elapsed);
+      recordAnswer(res.is_correct);
+      scheduleAdvance();
+      return res;
+    },
+    [recordAnswer, scheduleAdvance],
+  );
+
   const handleDoOneMore = useCallback(async () => {
     try {
       const plan = await getDailyPlan(1 as DailySessionSize);
@@ -292,6 +315,60 @@ export default function DailySessionPage() {
                   />
                 );
               })()
+            : card.question_type === "trace"
+              ? (
+                  <TraceBlock
+                    key={card.id}
+                    problemId={card.id}
+                    questionText={card.question}
+                    correctAnswer={card.correct_answer}
+                    onSubmit={(answer) => handleDrillSubmit(card.id, answer)}
+                  />
+                )
+              : card.question_type === "apply"
+                ? (() => {
+                    const { starterCode, language } = readDrillEditorMeta(meta);
+                    return (
+                      <ApplyBlock
+                        key={card.id}
+                        problemId={card.id}
+                        questionText={card.question}
+                        starterCode={starterCode}
+                        language={language}
+                        correctAnswer={card.correct_answer}
+                        onSubmit={(answer) => handleDrillSubmit(card.id, answer)}
+                      />
+                    );
+                  })()
+                : card.question_type === "compare"
+                  ? (
+                      <CompareBlock
+                        key={card.id}
+                        problemId={card.id}
+                        questionText={card.question}
+                        options={card.options}
+                        correctAnswer={card.correct_answer}
+                        onSubmit={(answer) => handleDrillSubmit(card.id, answer)}
+                      />
+                    )
+                  : card.question_type === "rebuild"
+                    ? (() => {
+                        const { starterCode, language } =
+                          readDrillEditorMeta(meta);
+                        return (
+                          <RebuildBlock
+                            key={card.id}
+                            problemId={card.id}
+                            questionText={card.question}
+                            starterCode={starterCode}
+                            language={language}
+                            correctAnswer={card.correct_answer}
+                            onSubmit={(answer) =>
+                              handleDrillSubmit(card.id, answer)
+                            }
+                          />
+                        );
+                      })()
             : (
                 <QuizOptions
                   optionKeys={optionKeys}

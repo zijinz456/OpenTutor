@@ -22,6 +22,10 @@ import {
   type CodeExerciseSubmitPayload,
   type CodeExerciseSubmitResult,
 } from "@/components/blocks/code-exercise-block";
+import { TraceBlock } from "@/components/blocks/trace-block";
+import { ApplyBlock } from "@/components/blocks/apply-block";
+import { CompareBlock } from "@/components/blocks/compare-block";
+import { RebuildBlock } from "@/components/blocks/rebuild-block";
 import {
   LabExerciseBlock,
   type LabExerciseSubmitPayload,
@@ -85,6 +89,20 @@ function readLabExerciseMetadata(
     ? rawHints.filter((h): h is string => typeof h === "string")
     : [];
   return { target_url, category, difficulty, hints };
+}
+
+function readDrillEditorMetadata(
+  metadata: Record<string, unknown> | null | undefined,
+): {
+  starterCode: string;
+  language: string;
+} {
+  if (!metadata) return { starterCode: "", language: "python" };
+  const starterCode =
+    typeof metadata.starter_code === "string" ? metadata.starter_code : "";
+  const language =
+    typeof metadata.language === "string" ? metadata.language : "python";
+  return { starterCode, language };
 }
 
 interface QuizViewProps {
@@ -331,6 +349,25 @@ export function QuizView({
     [answeredMap, recordAnswer],
   );
 
+  const handleDrillStyleSubmit = useCallback(
+    async (problemId: string, userAnswer: string): Promise<AnswerResult> => {
+      // Idempotency: align with the other answer paths. We don't restore a
+      // prior verdict client-side, but we also don't double-submit.
+      if (answeredMap[problemId]) {
+        return {
+          is_correct: true,
+          correct_answer: null,
+          explanation: "Already answered.",
+        };
+      }
+      const answerTimeMs = Date.now() - questionStartTimeRef.current;
+      const res = await submitAnswer(problemId, userAnswer, answerTimeMs);
+      recordAnswer(problemId, userAnswer, res);
+      return res;
+    },
+    [answeredMap, recordAnswer],
+  );
+
   const advanceToNext = useCallback(() => {
     setCurrentIdx((i) => Math.min(i + 1, problems.length - 1));
   }, [problems.length]);
@@ -487,6 +524,61 @@ export function QuizView({
                 onSubmit={(payload) =>
                   handleCodeExerciseSubmit(problem.id, payload)
                 }
+                onAdvance={
+                  currentIdx < problems.length - 1 ? advanceToNext : undefined
+                }
+              />
+            );
+          })()
+        ) : problem.question_type === "trace" ? (
+          <TraceBlock
+            key={problem.id}
+            problemId={problem.id}
+            questionText={problem.question}
+            onSubmit={(answer) => handleDrillStyleSubmit(problem.id, answer)}
+            onAdvance={currentIdx < problems.length - 1 ? advanceToNext : undefined}
+          />
+        ) : problem.question_type === "apply" ? (
+          (() => {
+            const { starterCode, language } = readDrillEditorMetadata(
+              problem.problem_metadata,
+            );
+            return (
+              <ApplyBlock
+                key={problem.id}
+                problemId={problem.id}
+                questionText={problem.question}
+                starterCode={starterCode}
+                language={language}
+                onSubmit={(answer) => handleDrillStyleSubmit(problem.id, answer)}
+                onAdvance={
+                  currentIdx < problems.length - 1 ? advanceToNext : undefined
+                }
+              />
+            );
+          })()
+        ) : problem.question_type === "compare" ? (
+          <CompareBlock
+            key={problem.id}
+            problemId={problem.id}
+            questionText={problem.question}
+            options={problem.options}
+            onSubmit={(answer) => handleDrillStyleSubmit(problem.id, answer)}
+            onAdvance={currentIdx < problems.length - 1 ? advanceToNext : undefined}
+          />
+        ) : problem.question_type === "rebuild" ? (
+          (() => {
+            const { starterCode, language } = readDrillEditorMetadata(
+              problem.problem_metadata,
+            );
+            return (
+              <RebuildBlock
+                key={problem.id}
+                problemId={problem.id}
+                questionText={problem.question}
+                starterCode={starterCode}
+                language={language}
+                onSubmit={(answer) => handleDrillStyleSubmit(problem.id, answer)}
                 onAdvance={
                   currentIdx < problems.length - 1 ? advanceToNext : undefined
                 }
