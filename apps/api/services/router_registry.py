@@ -22,6 +22,7 @@ from routers import (
     notes,
     notifications,
     onboarding,
+    paths,
     preferences,
     progress,
     quiz,
@@ -69,6 +70,7 @@ CORE_ROUTERS = (
     (interview.router, "/api", ["interview"]),
     (voice.router, "/api/voice", ["voice"]),
     (freeze.router, "/api/freeze", ["freeze"]),
+    (paths.router, "/api/paths", ["paths"]),
 )
 
 
