@@ -5,6 +5,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { LocaleProvider } from "@/lib/i18n-context";
 import { ConnectionStatus } from "@/components/shared/connection-status";
+import { PanicOverlay } from "@/components/panic/PanicOverlay";
 import "./globals.css";
 
 const spaceGrotesk = Space_Grotesk({
@@ -61,9 +62,11 @@ export default function RootLayout({
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
           <LocaleProvider>
             <TooltipProvider>
-              <main id="main-content">
-                {children}
-              </main>
+              <PanicOverlay>
+                <main id="main-content">
+                  {children}
+                </main>
+              </PanicOverlay>
             </TooltipProvider>
             <Toaster />
           </LocaleProvider>

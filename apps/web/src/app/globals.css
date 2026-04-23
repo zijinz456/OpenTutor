@@ -400,6 +400,20 @@
   border-radius: 4px;
 }
 
+/* ── Panic Mode (Phase 14 T2) ──
+   Toggle set by <PanicOverlay> on <body>. `visibility: hidden` (not
+   display:none) keeps layout + keyboard focus order alive, per critic
+   C10 in plan/adhd_ux_full_phase14.md. `data-panic-dim` is a softer
+   fallback for regions we want present-but-quiet (currently unused by
+   the dashboard but reserved for future wiring). */
+body.panic-mode-active [data-panic-hide] {
+  visibility: hidden;
+}
+body.panic-mode-active [data-panic-dim] {
+  opacity: 0.2;
+  pointer-events: none;
+}
+
 /* Reduce motion for users who prefer it */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
