@@ -39,6 +39,7 @@ Design notes
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -134,6 +135,57 @@ class BrutalPlanResponse(BaseModel):
     warning: Literal["pool_small"] | None = None
 
 
+class WelcomeBackResponse(BaseModel):
+    """Response body for ``GET /api/sessions/welcome-back`` (Phase 14 T4).
+
+    Powers the Story 4 "I-am-back" modal: when the learner re-opens the
+    dashboard after an absence, the frontend greets them calmly instead
+    of leading with the overdue-count red badge.
+
+    Fields:
+        gap_days: Integer days since the learner's last answered
+            problem, computed in UTC. ``None`` when the user has zero
+            :class:`models.practice.PracticeResult` rows — the frontend
+            suppresses the modal for brand-new accounts so onboarding
+            stays in charge.
+        last_practice_at: UTC-aware timestamp of the most recent answer,
+            or ``None`` when there is no history.
+        top_mastered_concepts: Titles of up to three content nodes the
+            learner has most recently answered correctly. Drives the
+            "Review what I last learned" path (Story 4 option c). Empty
+            list when there is no correct-answer history on nodes with
+            a stable ``content_node_id``.
+        overdue_count: Distinct practice problems whose FSRS
+            ``next_review_at`` is strictly in the past. Rendered as a
+            soft footnote in the modal — no red badge, no count
+            inflation.
+    """
+
+    gap_days: int | None = Field(
+        default=None,
+        description=(
+            "Days since last PracticeResult (UTC date arithmetic). "
+            "None when the user has no history."
+        ),
+    )
+    last_practice_at: datetime | None = Field(
+        default=None,
+        description="UTC-aware ISO-8601 timestamp of the most recent answer, or null.",
+    )
+    top_mastered_concepts: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Up to 3 CourseContentTree.title values the user has most "
+            "recently answered correctly, most-recent mastery first."
+        ),
+    )
+    overdue_count: int = Field(
+        default=0,
+        ge=0,
+        description="COUNT(DISTINCT problem_id) where next_review_at < now.",
+    )
+
+
 __all__ = [
     "BrutalPlanResponse",
     "BrutalSessionSize",
@@ -141,4 +193,5 @@ __all__ = [
     "DailyPlan",
     "DailyPlanCard",
     "DailySessionSize",
+    "WelcomeBackResponse",
 ]

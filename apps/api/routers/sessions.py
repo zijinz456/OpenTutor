@@ -35,11 +35,13 @@ from schemas.sessions import (
     BrutalSessionSize,
     DailyPlan,
     DailySessionSize,
+    WelcomeBackResponse,
 )
 from services.auth.dependency import get_current_user
 from services.brutal_plan import select_brutal_plan
 from services.daily_plan import select_daily_plan
 from services.freeze import active_frozen_problem_ids
+from services.welcome_back import compute_welcome_back
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +153,36 @@ async def get_brutal_plan(
         size=len(plan.cards),
         warning=warning,  # type: ignore[arg-type]
     )
+
+
+@router.get(
+    "/welcome-back",
+    response_model=WelcomeBackResponse,
+    summary="Welcome-back payload for the Story 4 I-am-back modal",
+    description=(
+        "Return gap_days, last_practice_at, top_mastered_concepts (up "
+        "to 3 content-node titles the user has most recently answered "
+        "correctly), and overdue_count. Pure compute over "
+        "``practice_results`` + ``learning_progress`` — no writes, no "
+        "LLM calls. For a brand-new account (no history) the response "
+        "is `{gap_days: null, last_practice_at: null, "
+        "top_mastered_concepts: [], overdue_count: 0}`; the frontend "
+        "uses that to suppress the modal in favour of onboarding."
+    ),
+)
+async def get_welcome_back(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> WelcomeBackResponse:
+    """Return the configured user's welcome-back summary.
+
+    Selection + mastery derivation lives entirely in
+    :func:`services.welcome_back.compute_welcome_back`; the router
+    stays thin to match the Phase 13/14 sessions pattern (validate,
+    delegate, return).
+    """
+
+    return await compute_welcome_back(db, user.id)
 
 
 __all__ = ["router"]
