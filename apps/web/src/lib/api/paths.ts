@@ -88,6 +88,9 @@ export interface RoomDetailResponse {
   tasks: RoomTask[];
   task_total: number;
   task_complete: number;
+  /** Up to 3 hardest-task ids the room exposes as one-click capstones.
+   *  Always a list — empty when the room has none, never null. Slice 2. */
+  capstone_problem_ids: string[];
 }
 
 export interface OrphanListResponse {
