@@ -61,9 +61,11 @@ async def dispatch_content(db: AsyncSession, job: IngestionJob) -> dict:
             # 1b. knowledge_points is a legacy scene-system table with no ORM
             #     model; its FK into course_content_tree has no ondelete on
             #     installs that predate the 20260424 hardening migration, so
-            #     nullify explicitly. Wrapped in try/except because the table
-            #     is absent on installs that never ran the scene-system
-            #     migration — a missing table is expected, not an error.
+            #     nullify explicitly. The sqlite3 dbapi can't bind UUID
+            #     directly, so pass string-cast ids — Postgres auto-casts
+            #     them back to its native UUID type. Wrapped in try/except
+            #     because the table is absent on installs that never ran
+            #     the scene-system migration.
             try:
                 await db.execute(
                     sa.text(
@@ -71,7 +73,7 @@ async def dispatch_content(db: AsyncSession, job: IngestionJob) -> dict:
                         "SET source_content_node_id = NULL "
                         "WHERE source_content_node_id IN :ids"
                     ).bindparams(sa.bindparam("ids", expanding=True)),
-                    {"ids": list(old_ids)},
+                    {"ids": [str(i) for i in old_ids]},
                 )
             except (sa.exc.ProgrammingError, sa.exc.OperationalError):
                 pass
