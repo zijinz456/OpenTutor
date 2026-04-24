@@ -29,7 +29,10 @@ export function AddToReviewLink({
   problemId,
   className,
 }: AddToReviewLinkProps) {
-  const href = `/wrong-answers/${encodeURIComponent(courseId)}?problem=${encodeURIComponent(problemId)}`;
+  // Canonical existing route: /course/[id]/wrong-answers (ТЗ §9 line 843
+  // marks /course/* as soft-deprecated but live for deep-links). Server
+  // already creates the WrongAnswer row on miss; this is navigation-only.
+  const href = `/course/${encodeURIComponent(courseId)}/wrong-answers?problem=${encodeURIComponent(problemId)}`;
   return (
     <Link
       href={href}

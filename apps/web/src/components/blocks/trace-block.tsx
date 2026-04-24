@@ -5,11 +5,17 @@ import type { AnswerResult } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { MarkdownRenderer } from "@/components/shared/markdown-renderer";
+import { ExplainStep } from "@/components/practice/explain-step";
+import { MissBanner } from "@/components/practice/miss-banner";
 
 export interface TraceBlockProps {
   problemId: string;
   questionText: string;
   correctAnswer?: string | null;
+  /** Optional course/track id for the "Add to review" link in the
+   *  miss banner. When absent, the link is suppressed but the banner
+   *  + ExplainStep still render (Slice 3 Path B). */
+  courseId?: string;
   className?: string;
   onSubmit: (answer: string) => Promise<AnswerResult>;
   onAdvance?: () => void;
@@ -19,6 +25,7 @@ export function TraceBlock({
   problemId,
   questionText,
   correctAnswer,
+  courseId,
   className,
   onSubmit,
   onAdvance,
@@ -112,57 +119,72 @@ export function TraceBlock({
       </div>
 
       {result ? (
-        <div
-          role="status"
-          aria-live="polite"
-          className={
-            result.is_correct
-              ? "rounded-md border border-success/40 bg-success/10 p-3"
-              : "rounded-md border border-destructive/40 bg-destructive/10 p-3"
-          }
-          data-testid={
-            result.is_correct
-              ? "trace-block-result-correct"
-              : "trace-block-result-wrong"
-          }
-        >
-          <p
-            className={
-              result.is_correct
-                ? "text-sm font-medium text-success"
-                : "text-sm font-medium text-destructive"
-            }
+        result.is_correct ? (
+          <div
+            role="status"
+            aria-live="polite"
+            className="rounded-md border border-success/40 bg-success/10 p-3"
+            data-testid="trace-block-result-correct"
           >
-            {result.is_correct ? "Correct" : "Not quite"}
-          </p>
-          {result.explanation ? (
-            <p className="mt-1 text-xs whitespace-pre-wrap text-muted-foreground">
-              {result.explanation}
-            </p>
-          ) : null}
-          {!result.is_correct && revealedAnswer ? (
-            <div className="mt-2">
-              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                Correct answer
+            <p className="text-sm font-medium text-success">Correct</p>
+            {result.explanation ? (
+              <p className="mt-1 text-xs whitespace-pre-wrap text-muted-foreground">
+                {result.explanation}
               </p>
-              <pre className="mt-1 rounded-md bg-muted/30 px-3 py-2 text-xs font-mono whitespace-pre-wrap">
-                {revealedAnswer}
-              </pre>
-            </div>
-          ) : null}
-          {onAdvance ? (
+            ) : null}
             <div className="mt-3">
-              <Button
-                type="button"
-                size="sm"
-                onClick={onAdvance}
-                data-testid="trace-block-next"
-              >
-                Next
-              </Button>
+              <ExplainStep problemId={problemId} correct={true} />
             </div>
-          ) : null}
-        </div>
+            {onAdvance ? (
+              <div className="mt-3">
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={onAdvance}
+                  data-testid="trace-block-next"
+                >
+                  Next
+                </Button>
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <div data-testid="trace-block-result-wrong">
+            <MissBanner
+              problemId={problemId}
+              courseId={courseId}
+              revealedAnswer={revealedAnswer ?? null}
+            >
+              {result.explanation ? (
+                <p className="text-xs whitespace-pre-wrap text-muted-foreground">
+                  {result.explanation}
+                </p>
+              ) : null}
+              {revealedAnswer ? (
+                <div>
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                    Correct answer
+                  </p>
+                  <pre className="mt-1 rounded-md bg-muted/30 px-3 py-2 text-xs font-mono whitespace-pre-wrap">
+                    {revealedAnswer}
+                  </pre>
+                </div>
+              ) : null}
+            </MissBanner>
+            {onAdvance ? (
+              <div className="mt-3">
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={onAdvance}
+                  data-testid="trace-block-next"
+                >
+                  Next
+                </Button>
+              </div>
+            ) : null}
+          </div>
+        )
       ) : null}
 
       {submitError ? (

@@ -31,6 +31,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTheme } from "next-themes";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { ExplainStep } from "@/components/practice/explain-step";
+import { MissBanner } from "@/components/practice/miss-banner";
 
 // Monaco MUST load client-only — its worker setup touches `window`.
 // Loading spinner matches the theme of the rest of the practice UI.
@@ -63,6 +65,9 @@ export interface CodeExerciseBlockProps {
   questionText: string;
   expectedOutput?: string;
   hints?: string[];
+  /** Optional course/track id for the "Add to review" link in the
+   *  miss banner (Slice 3 Path B). */
+  courseId?: string;
   /** Fixed editor height in pixels. Default 320. */
   height?: number;
   onSubmit: (
@@ -83,6 +88,7 @@ export function CodeExerciseBlock({
   questionText,
   expectedOutput,
   hints,
+  courseId,
   height = 320,
   onSubmit,
   onAdvance,
@@ -283,10 +289,10 @@ export function CodeExerciseBlock({
           variant="outline"
           disabled={running || isLocked}
           onClick={() => void handleRun()}
-          aria-label="Run code"
+          aria-label="Run tests"
           data-testid="code-exercise-run"
         >
-          {running ? "Running..." : "Run"}
+          {running ? "Running..." : "Run tests"}
         </Button>
         <Button
           type="button"
@@ -367,57 +373,72 @@ export function CodeExerciseBlock({
       </section>
 
       {result !== null ? (
-        <div
-          role="status"
-          aria-live="polite"
-          className={
-            result.is_correct
-              ? "rounded-md border border-success/40 bg-success/10 p-3"
-              : "rounded-md border border-destructive/40 bg-destructive/10 p-3"
-          }
-          data-testid={
-            result.is_correct
-              ? "code-exercise-result-correct"
-              : "code-exercise-result-wrong"
-          }
-        >
-          <p
-            className={
-              result.is_correct
-                ? "text-sm font-medium text-success"
-                : "text-sm font-medium text-destructive"
-            }
+        result.is_correct ? (
+          <div
+            role="status"
+            aria-live="polite"
+            className="rounded-md border border-success/40 bg-success/10 p-3"
+            data-testid="code-exercise-result-correct"
           >
-            {result.is_correct ? "Correct" : "Not quite"}
-          </p>
-          {result.explanation ? (
-            <p className="mt-1 text-xs text-muted-foreground whitespace-pre-wrap">
-              {result.explanation}
-            </p>
-          ) : null}
-          {!result.is_correct && expectedOutput ? (
-            <div className="mt-2">
-              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                Expected output
+            <p className="text-sm font-medium text-success">Correct</p>
+            {result.explanation ? (
+              <p className="mt-1 text-xs text-muted-foreground whitespace-pre-wrap">
+                {result.explanation}
               </p>
-              <pre className="mt-1 rounded-md bg-muted/30 px-3 py-2 text-xs font-mono whitespace-pre-wrap">
-                {expectedOutput}
-              </pre>
-            </div>
-          ) : null}
-          {onAdvance ? (
+            ) : null}
             <div className="mt-3">
-              <Button
-                type="button"
-                size="sm"
-                onClick={onAdvance}
-                data-testid="code-exercise-next"
-              >
-                Next
-              </Button>
+              <ExplainStep problemId={problemId} correct={true} />
             </div>
-          ) : null}
-        </div>
+            {onAdvance ? (
+              <div className="mt-3">
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={onAdvance}
+                  data-testid="code-exercise-next"
+                >
+                  Next
+                </Button>
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <div data-testid="code-exercise-result-wrong">
+            <MissBanner
+              problemId={problemId}
+              courseId={courseId}
+              revealedAnswer={expectedOutput ?? null}
+            >
+              {result.explanation ? (
+                <p className="text-xs text-muted-foreground whitespace-pre-wrap">
+                  {result.explanation}
+                </p>
+              ) : null}
+              {expectedOutput ? (
+                <div>
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                    Expected output
+                  </p>
+                  <pre className="mt-1 rounded-md bg-muted/30 px-3 py-2 text-xs font-mono whitespace-pre-wrap">
+                    {expectedOutput}
+                  </pre>
+                </div>
+              ) : null}
+            </MissBanner>
+            {onAdvance ? (
+              <div className="mt-3">
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={onAdvance}
+                  data-testid="code-exercise-next"
+                >
+                  Next
+                </Button>
+              </div>
+            ) : null}
+          </div>
+        )
       ) : null}
 
       {submitError ? (

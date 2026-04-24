@@ -7,6 +7,8 @@ import type { AnswerResult } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { MarkdownRenderer } from "@/components/shared/markdown-renderer";
+import { ExplainStep } from "@/components/practice/explain-step";
+import { MissBanner } from "@/components/practice/miss-banner";
 
 const MonacoEditor = dynamic(() => import("@monaco-editor/react"), {
   ssr: false,
@@ -25,6 +27,9 @@ export interface RebuildBlockProps {
   starterCode?: string;
   language?: string;
   correctAnswer?: string | null;
+  /** Optional course/track id for the "Add to review" link in the
+   *  miss banner (Slice 3 Path B). */
+  courseId?: string;
   className?: string;
   onSubmit: (answer: string) => Promise<AnswerResult>;
   onAdvance?: () => void;
@@ -36,6 +41,7 @@ export function RebuildBlock({
   starterCode = "",
   language = "python",
   correctAnswer,
+  courseId,
   className,
   onSubmit,
   onAdvance,
@@ -151,57 +157,72 @@ export function RebuildBlock({
       </div>
 
       {result ? (
-        <div
-          role="status"
-          aria-live="polite"
-          className={
-            result.is_correct
-              ? "rounded-md border border-success/40 bg-success/10 p-3"
-              : "rounded-md border border-destructive/40 bg-destructive/10 p-3"
-          }
-          data-testid={
-            result.is_correct
-              ? "rebuild-block-result-correct"
-              : "rebuild-block-result-wrong"
-          }
-        >
-          <p
-            className={
-              result.is_correct
-                ? "text-sm font-medium text-success"
-                : "text-sm font-medium text-destructive"
-            }
+        result.is_correct ? (
+          <div
+            role="status"
+            aria-live="polite"
+            className="rounded-md border border-success/40 bg-success/10 p-3"
+            data-testid="rebuild-block-result-correct"
           >
-            {result.is_correct ? "Correct" : "Not quite"}
-          </p>
-          {result.explanation ? (
-            <p className="mt-1 text-xs whitespace-pre-wrap text-muted-foreground">
-              {result.explanation}
-            </p>
-          ) : null}
-          {!result.is_correct && revealedAnswer ? (
-            <details className="mt-2 rounded-md border border-border/60 p-2">
-              <summary className="cursor-pointer text-xs font-medium text-muted-foreground">
-                Reference answer
-              </summary>
-              <pre className="mt-2 whitespace-pre-wrap rounded-md bg-muted/30 px-3 py-2 text-xs font-mono">
-                {revealedAnswer}
-              </pre>
-            </details>
-          ) : null}
-          {onAdvance ? (
+            <p className="text-sm font-medium text-success">Correct</p>
+            {result.explanation ? (
+              <p className="mt-1 text-xs whitespace-pre-wrap text-muted-foreground">
+                {result.explanation}
+              </p>
+            ) : null}
             <div className="mt-3">
-              <Button
-                type="button"
-                size="sm"
-                onClick={onAdvance}
-                data-testid="rebuild-block-next"
-              >
-                Next
-              </Button>
+              <ExplainStep problemId={problemId} correct={true} />
             </div>
-          ) : null}
-        </div>
+            {onAdvance ? (
+              <div className="mt-3">
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={onAdvance}
+                  data-testid="rebuild-block-next"
+                >
+                  Next
+                </Button>
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <div data-testid="rebuild-block-result-wrong">
+            <MissBanner
+              problemId={problemId}
+              courseId={courseId}
+              revealedAnswer={revealedAnswer ?? null}
+            >
+              {result.explanation ? (
+                <p className="text-xs whitespace-pre-wrap text-muted-foreground">
+                  {result.explanation}
+                </p>
+              ) : null}
+              {revealedAnswer ? (
+                <details className="rounded-md border border-border/60 p-2">
+                  <summary className="cursor-pointer text-xs font-medium text-muted-foreground">
+                    Reference answer
+                  </summary>
+                  <pre className="mt-2 whitespace-pre-wrap rounded-md bg-muted/30 px-3 py-2 text-xs font-mono">
+                    {revealedAnswer}
+                  </pre>
+                </details>
+              ) : null}
+            </MissBanner>
+            {onAdvance ? (
+              <div className="mt-3">
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={onAdvance}
+                  data-testid="rebuild-block-next"
+                >
+                  Next
+                </Button>
+              </div>
+            ) : null}
+          </div>
+        )
       ) : null}
 
       {submitError ? (

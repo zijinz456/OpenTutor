@@ -38,6 +38,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { ExplainStep } from "@/components/practice/explain-step";
+import { MissBanner } from "@/components/practice/miss-banner";
 
 /** Localhost URL regex — mirrors apps/api/schemas/quiz.py:_LOCALHOST_URL_RE. */
 const LOCALHOST_URL_RE = /^http:\/\/localhost:\d+(\/|$)/;
@@ -62,6 +64,9 @@ export interface LabExerciseBlockProps {
   category?: string;
   difficulty?: "easy" | "medium" | "hard";
   hints?: string[];
+  /** Optional course/track id for the "Add to review" link in the
+   *  miss banner (Slice 3 Path B). */
+  courseId?: string;
   onSubmit: (
     payload: LabExerciseSubmitPayload,
   ) => Promise<LabExerciseSubmitResult>;
@@ -75,6 +80,7 @@ export function LabExerciseBlock({
   category,
   difficulty,
   hints,
+  courseId,
   onSubmit,
   onAdvance,
 }: LabExerciseBlockProps) {
@@ -290,59 +296,84 @@ export function LabExerciseBlock({
       </div>
 
       {result !== null ? (
-        <div
-          role="status"
-          aria-live="polite"
-          className={
-            result.is_correct
-              ? "rounded-md border border-success/40 bg-success/10 p-3"
-              : "rounded-md border border-destructive/40 bg-destructive/10 p-3"
-          }
-          data-testid={
-            result.is_correct
-              ? "lab-exercise-result-correct"
-              : "lab-exercise-result-wrong"
-          }
-        >
-          <div className="flex items-center gap-2">
-            <p
-              className={
-                result.is_correct
-                  ? "text-sm font-medium text-success"
-                  : "text-sm font-medium text-destructive"
-              }
-            >
-              {result.is_correct ? "Solved" : "Not yet"}
-            </p>
-            {typeof result.confidence === "number" ? (
-              <Badge
-                variant="outline"
-                className="text-[10px]"
-                data-testid="lab-exercise-confidence"
-                title="Grader's self-reported confidence"
-              >
-                confidence {Math.round(result.confidence * 100)}%
-              </Badge>
+        result.is_correct ? (
+          <div
+            role="status"
+            aria-live="polite"
+            className="rounded-md border border-success/40 bg-success/10 p-3"
+            data-testid="lab-exercise-result-correct"
+          >
+            <div className="flex items-center gap-2">
+              <p className="text-sm font-medium text-success">Solved</p>
+              {typeof result.confidence === "number" ? (
+                <Badge
+                  variant="outline"
+                  className="text-[10px]"
+                  data-testid="lab-exercise-confidence"
+                  title="Grader's self-reported confidence"
+                >
+                  confidence {Math.round(result.confidence * 100)}%
+                </Badge>
+              ) : null}
+            </div>
+            {result.explanation ? (
+              <p className="mt-1 text-xs text-muted-foreground whitespace-pre-wrap">
+                {result.explanation}
+              </p>
+            ) : null}
+            <div className="mt-3">
+              <ExplainStep problemId={problemId} correct={true} />
+            </div>
+            {onAdvance ? (
+              <div className="mt-3">
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={onAdvance}
+                  data-testid="lab-exercise-next"
+                >
+                  Next
+                </Button>
+              </div>
             ) : null}
           </div>
-          {result.explanation ? (
-            <p className="mt-1 text-xs text-muted-foreground whitespace-pre-wrap">
-              {result.explanation}
-            </p>
-          ) : null}
-          {onAdvance ? (
-            <div className="mt-3">
-              <Button
-                type="button"
-                size="sm"
-                onClick={onAdvance}
-                data-testid="lab-exercise-next"
-              >
-                Next
-              </Button>
-            </div>
-          ) : null}
-        </div>
+        ) : (
+          <div data-testid="lab-exercise-result-wrong">
+            <MissBanner
+              problemId={problemId}
+              courseId={courseId}
+              revealedAnswer={null}
+            >
+              {typeof result.confidence === "number" ? (
+                <Badge
+                  variant="outline"
+                  className="text-[10px]"
+                  data-testid="lab-exercise-confidence"
+                  title="Grader's self-reported confidence"
+                >
+                  confidence {Math.round(result.confidence * 100)}%
+                </Badge>
+              ) : null}
+              {result.explanation ? (
+                <p className="text-xs text-muted-foreground whitespace-pre-wrap">
+                  {result.explanation}
+                </p>
+              ) : null}
+            </MissBanner>
+            {onAdvance ? (
+              <div className="mt-3">
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={onAdvance}
+                  data-testid="lab-exercise-next"
+                >
+                  Next
+                </Button>
+              </div>
+            ) : null}
+          </div>
+        )
       ) : null}
 
       {submitError ? (

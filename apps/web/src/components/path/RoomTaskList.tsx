@@ -39,6 +39,8 @@ import {
   type AnswerResult,
   type RoomTask,
 } from "@/lib/api";
+import { ExplainStep } from "@/components/practice/explain-step";
+import { MissBanner } from "@/components/practice/miss-banner";
 import {
   CodeExerciseBlock,
   type CodeExerciseSubmitPayload,
@@ -518,17 +520,33 @@ function TextTaskRenderer({
         </p>
       )}
       {result && (
-        <div
-          data-testid={`text-result-${taskId}`}
-          className={`rounded-lg px-3 py-2 text-xs ${
-            result.is_correct
-              ? "bg-emerald-500/10 text-emerald-800"
-              : "bg-destructive/10 text-destructive"
-          }`}
-        >
-          {result.is_correct ? "Correct" : "Incorrect"}
-          {result.explanation ? ` — ${result.explanation}` : ""}
-        </div>
+        result.is_correct ? (
+          <div
+            data-testid={`text-result-${taskId}`}
+            className="rounded-lg bg-emerald-500/10 px-3 py-2 text-xs text-emerald-800"
+          >
+            <p className="font-medium">
+              Correct
+              {result.explanation ? ` — ${result.explanation}` : ""}
+            </p>
+            <div className="mt-2">
+              <ExplainStep problemId={taskId} correct={true} />
+            </div>
+          </div>
+        ) : (
+          <div data-testid={`text-result-${taskId}`}>
+            <MissBanner
+              problemId={taskId}
+              revealedAnswer={result.correct_answer ?? null}
+            >
+              {result.explanation ? (
+                <p className="text-xs text-muted-foreground whitespace-pre-wrap">
+                  {result.explanation}
+                </p>
+              ) : null}
+            </MissBanner>
+          </div>
+        )
       )}
     </div>
   );

@@ -289,10 +289,12 @@ describe("CodeExerciseBlock", () => {
       fireEvent.click(screen.getByTestId("code-exercise-submit"));
     });
     const wrong = await screen.findByTestId("code-exercise-result-wrong");
-    expect(wrong.textContent).toContain("Not quite");
+    // Slice 3 Path B: wrong-state now wraps in <MissBanner> (amber).
+    // Banner renders "Miss. Answer: {expectedOutput}".
+    const banner = await screen.findByTestId("miss-banner-p1");
+    expect(banner).toHaveTextContent(/Miss\. Answer:\s*hi/);
     expect(wrong.textContent).toContain("expected hi");
     expect(wrong.textContent).toContain("hi"); // expectedOutput surfaced
-    expect(wrong.className).toMatch(/border-destructive/);
   });
 
   it("Next button fires onAdvance when provided", async () => {

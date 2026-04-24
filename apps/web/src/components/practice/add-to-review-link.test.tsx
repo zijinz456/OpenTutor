@@ -3,12 +3,12 @@ import { render, screen } from "@testing-library/react";
 import { AddToReviewLink } from "./add-to-review-link";
 
 describe("AddToReviewLink", () => {
-  it("renders an anchor pointing at /wrong-answers/{course}?problem={id}", () => {
+  it("renders an anchor pointing at /course/{id}/wrong-answers?problem={problemId}", () => {
     render(<AddToReviewLink courseId="hacking-foundations" problemId="prob-42" />);
     const link = screen.getByTestId("add-to-review-link-prob-42") as HTMLAnchorElement;
     expect(link.tagName).toBe("A");
     expect(link.getAttribute("href")).toBe(
-      "/wrong-answers/hacking-foundations?problem=prob-42",
+      "/course/hacking-foundations/wrong-answers?problem=prob-42",
     );
     expect(link).toHaveTextContent(/add to review/i);
   });

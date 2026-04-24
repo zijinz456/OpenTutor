@@ -5,12 +5,17 @@ import type { AnswerResult } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { MarkdownRenderer } from "@/components/shared/markdown-renderer";
+import { ExplainStep } from "@/components/practice/explain-step";
+import { MissBanner } from "@/components/practice/miss-banner";
 
 export interface CompareBlockProps {
   problemId: string;
   questionText: string;
   options?: Record<string, string> | null;
   correctAnswer?: string | null;
+  /** Optional course/track id for the "Add to review" link in the
+   *  miss banner (Slice 3 Path B). */
+  courseId?: string;
   className?: string;
   onSubmit: (answer: string) => Promise<AnswerResult>;
   onAdvance?: () => void;
@@ -21,6 +26,7 @@ export function CompareBlock({
   questionText,
   options,
   correctAnswer,
+  courseId,
   className,
   onSubmit,
   onAdvance,
@@ -144,52 +150,62 @@ export function CompareBlock({
       </div>
 
       {result ? (
-        <div
-          role="status"
-          aria-live="polite"
-          className={
-            result.is_correct
-              ? "rounded-md border border-success/40 bg-success/10 p-3"
-              : "rounded-md border border-destructive/40 bg-destructive/10 p-3"
-          }
-          data-testid={
-            result.is_correct
-              ? "compare-block-result-correct"
-              : "compare-block-result-wrong"
-          }
-        >
-          <p
-            className={
-              result.is_correct
-                ? "text-sm font-medium text-success"
-                : "text-sm font-medium text-destructive"
-            }
+        result.is_correct ? (
+          <div
+            role="status"
+            aria-live="polite"
+            className="rounded-md border border-success/40 bg-success/10 p-3"
+            data-testid="compare-block-result-correct"
           >
-            {result.is_correct ? "Correct" : "Not quite"}
-          </p>
-          {result.explanation ? (
-            <p className="mt-1 text-xs whitespace-pre-wrap text-muted-foreground">
-              {result.explanation}
-            </p>
-          ) : null}
-          {!result.is_correct && revealedAnswer ? (
-            <p className="mt-2 text-xs text-muted-foreground whitespace-pre-wrap">
-              Correct answer: {revealedAnswer}
-            </p>
-          ) : null}
-          {onAdvance ? (
+            <p className="text-sm font-medium text-success">Correct</p>
+            {result.explanation ? (
+              <p className="mt-1 text-xs whitespace-pre-wrap text-muted-foreground">
+                {result.explanation}
+              </p>
+            ) : null}
             <div className="mt-3">
-              <Button
-                type="button"
-                size="sm"
-                onClick={onAdvance}
-                data-testid="compare-block-next"
-              >
-                Next
-              </Button>
+              <ExplainStep problemId={problemId} correct={true} />
             </div>
-          ) : null}
-        </div>
+            {onAdvance ? (
+              <div className="mt-3">
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={onAdvance}
+                  data-testid="compare-block-next"
+                >
+                  Next
+                </Button>
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <div data-testid="compare-block-result-wrong">
+            <MissBanner
+              problemId={problemId}
+              courseId={courseId}
+              revealedAnswer={revealedAnswer ?? null}
+            >
+              {result.explanation ? (
+                <p className="text-xs whitespace-pre-wrap text-muted-foreground">
+                  {result.explanation}
+                </p>
+              ) : null}
+            </MissBanner>
+            {onAdvance ? (
+              <div className="mt-3">
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={onAdvance}
+                  data-testid="compare-block-next"
+                >
+                  Next
+                </Button>
+              </div>
+            ) : null}
+          </div>
+        )
       ) : null}
 
       {submitError ? (

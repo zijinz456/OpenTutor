@@ -254,9 +254,12 @@ describe("LabExerciseBlock", () => {
       fireEvent.click(screen.getByTestId("lab-exercise-submit"));
     });
     const wrong = await screen.findByTestId("lab-exercise-result-wrong");
-    expect(wrong.textContent).toContain("Not yet");
+    // Slice 3 Path B: lab block wraps wrong-state in <MissBanner>.
+    // No revealedAnswer for lab labs (rubric-only grading) — banner copy
+    // shows the dash fallback "Miss. Answer: —".
+    const banner = await screen.findByTestId("miss-banner-lab1");
+    expect(banner).toHaveTextContent(/Miss\. Answer:/);
     expect(wrong.textContent).toContain("Flag mismatch");
-    expect(wrong.className).toMatch(/border-destructive/);
   });
 
   it("renders confidence badge when grader returns numeric confidence", async () => {
