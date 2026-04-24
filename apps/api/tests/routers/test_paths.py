@@ -2,8 +2,8 @@
 
 Covers the eight router-level acceptance criteria:
 
-1. ``test_get_paths_returns_all_seeded_paths`` — two seeded paths
-   surface with the correct ``room_total`` each.
+1. ``test_get_paths_returns_python_and_hacking_tracks`` — Python and
+   Hacking paths both surface with distinct ``track_id`` values.
 2. ``test_get_paths_progress_counts_completed_tasks`` — a single
    correct answer bumps ``task_complete`` but leaves ``room_complete``
    at 0 while other tasks remain unanswered.
@@ -226,28 +226,41 @@ async def _seed_correct_result(
 
 
 @pytest.mark.asyncio
-async def test_get_paths_returns_all_seeded_paths(client_with_db) -> None:
-    """Two paths × 2 rooms each → response lists both with room_total=2."""
+async def test_get_paths_returns_python_and_hacking_tracks(client_with_db) -> None:
+    """Python and Hacking paths both surface with distinct track IDs."""
 
     ac, factory = client_with_db
     await _seed_user(factory)
-    p1 = await _seed_path(factory, slug="python-fundamentals", title="Fundamentals")
-    p2 = await _seed_path(factory, slug="python-advanced", title="Advanced")
-    await _seed_room(factory, path_id=p1, slug="intro", room_order=0)
-    await _seed_room(factory, path_id=p1, slug="loops", room_order=1)
-    await _seed_room(factory, path_id=p2, slug="decorators", room_order=0)
-    await _seed_room(factory, path_id=p2, slug="meta", room_order=1)
+    python_path = await _seed_path(
+        factory,
+        slug="python-fundamentals",
+        title="Python Fundamentals",
+        track_id="python_fundamentals",
+    )
+    hacking_path = await _seed_path(
+        factory,
+        slug="hacking-foundations",
+        title="Hacking Foundations",
+        track_id="hacking_foundations",
+    )
+    await _seed_room(factory, path_id=python_path, slug="intro", room_order=0)
+    await _seed_room(factory, path_id=python_path, slug="loops", room_order=1)
+    await _seed_room(factory, path_id=hacking_path, slug="recon", room_order=0)
+    await _seed_room(factory, path_id=hacking_path, slug="juice-shop", room_order=1)
 
     resp = await ac.get("/api/paths")
     assert resp.status_code == 200, resp.text
-    body = resp.json()
-    slugs = {p["slug"] for p in body["paths"]}
-    assert slugs == {"python-fundamentals", "python-advanced"}
-    for p in body["paths"]:
-        assert p["room_total"] == 2
-        assert p["room_complete"] == 0
-        assert p["task_total"] == 0
-        assert p["task_complete"] == 0
+    by_slug = {path["slug"]: path for path in resp.json()["paths"]}
+
+    assert set(by_slug) == {"python-fundamentals", "hacking-foundations"}
+    assert by_slug["python-fundamentals"]["track_id"] == "python_fundamentals"
+    assert by_slug["hacking-foundations"]["track_id"] == "hacking_foundations"
+    assert by_slug["python-fundamentals"]["room_total"] == 2
+    assert by_slug["hacking-foundations"]["room_total"] == 2
+    assert by_slug["python-fundamentals"]["room_complete"] == 0
+    assert by_slug["hacking-foundations"]["room_complete"] == 0
+    assert by_slug["python-fundamentals"]["task_total"] == 0
+    assert by_slug["hacking-foundations"]["task_total"] == 0
 
 
 # ── 2. GET /api/paths — 1/3 correct → task_complete=1, room_complete=0 ─

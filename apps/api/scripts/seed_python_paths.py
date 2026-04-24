@@ -131,6 +131,13 @@ def _matches_any_hint(title: str, hints: set[str]) -> bool:
     return any(h in lower for h in hints if h)
 
 
+def _looks_like_url(value: str) -> bool:
+    """Return True when ``value`` looks like an HTTP(S) URL."""
+
+    parts = urlsplit(value.strip().lower())
+    return parts.scheme in {"http", "https"} and bool(parts.netloc)
+
+
 # ── Upserts ────────────────────────────────────────────────────────────
 
 
@@ -276,9 +283,9 @@ async def _map_cards_to_room(
         # source_file may be the raw URL (legacy ingests) OR the scraped
         # page title (current pipeline). Try URL-key first; fall back to
         # title-hint substring match.
-        matched = _url_match_key(source_file) in module_url_keys or _matches_any_hint(
-            source_file, hints
-        )
+        matched = _url_match_key(source_file) in module_url_keys
+        if not matched and not _looks_like_url(source_file):
+            matched = _matches_any_hint(source_file, hints)
         if matched:
             problem.path_room_id = room_id
             problem.task_order = task_order
