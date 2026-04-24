@@ -1,5 +1,10 @@
 "use client";
 
+// /recap reads ?concepts=... via useSearchParams. Next.js 16 refuses to
+// prerender a client component using useSearchParams unless it's wrapped
+// in a Suspense boundary (force-dynamic alone is not enough). Mirrors
+// /session/brutal's pattern (bef90b6 / d2fd9c2 / 2e7484c).
+
 /**
  * `/recap` — "What you last learned" read-only listing (ADHD Phase 14 T4).
  *
@@ -19,7 +24,7 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useMemo } from "react";
+import { Suspense, useMemo } from "react";
 import { useT } from "@/lib/i18n-context";
 
 const MAX_CONCEPTS = 3;
@@ -40,10 +45,18 @@ function parseConcepts(raw: string | null): string[] {
 }
 
 export default function RecapPage() {
+  return (
+    <Suspense fallback={null}>
+      <RecapInner />
+    </Suspense>
+  );
+}
+
+function RecapInner() {
   const searchParams = useSearchParams();
   const t = useT();
   const concepts = useMemo(
-    () => parseConcepts(searchParams.get("concepts")),
+    () => parseConcepts(searchParams?.get("concepts") ?? null),
     [searchParams],
   );
 
