@@ -929,5 +929,17 @@
   "summary.studyTimeHM": "{h}小时{m}分钟",
   "summary.studyTimeM": "{m}分钟",
   "summary.empty": "暂无数据，继续学习吧！",
-  "summary.loadFailed": "无法加载摘要。"
+  "summary.loadFailed": "无法加载摘要。",
+  "home.welcomeBack.title": "Welcome back — it's been {days} days",
+  "home.welcomeBack.subtitle.short": "It's been a few days. No catch-up required.",
+  "home.welcomeBack.subtitle.medium": "Welcome back. Pick up at your pace.",
+  "home.welcomeBack.subtitle.long": "It's been a while — no pressure at all.",
+  "home.welcomeBack.cta.oneCard": "Just 1 card",
+  "home.welcomeBack.cta.fiveCards": "5 cards catch-up",
+  "home.welcomeBack.cta.review": "Review what I learned",
+  "home.welcomeBack.overdue": "You have {count} reviews waiting.",
+  "home.welcomeBack.dismiss": "Dismiss",
+  "recap.title": "What you last learned",
+  "recap.empty": "No mastered concepts yet.",
+  "recap.back": "Back to dashboard"
 }

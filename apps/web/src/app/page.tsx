@@ -23,6 +23,7 @@ import { CourseSpacesSection, DashboardEmptyState } from "./_components/dashboar
 import { DailySessionCTA } from "@/components/dashboard/daily-session-cta";
 import { BrutalDrillCTA } from "@/components/dashboard/brutal-drill-cta";
 import { LearningPathsPill } from "@/components/dashboard/LearningPathsPill";
+import { WelcomeBackModal } from "@/components/dashboard/welcome-back-modal";
 import { PanicToggle } from "@/components/panic/PanicToggle";
 
 export default function DashboardPage() {
@@ -47,6 +48,10 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-background">
+      {/* ADHD Phase 14 T4 — welcome-back reminder. Always mounted; the
+          component returns `null` when the user has not been away 3+
+          days or has already dismissed today. */}
+      <WelcomeBackModal />
       <div className="flex min-h-screen flex-col md:flex-row">
         <div data-panic-hide>
           <DashboardSidebar health={health} t={t} onNavigate={navigate} />

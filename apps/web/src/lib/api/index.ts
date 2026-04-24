@@ -307,3 +307,6 @@ export type {
   RoomDetailResponse,
   OrphanListResponse,
 } from "./paths";
+
+export { getWelcomeBack } from "./welcome-back";
+export type { WelcomeBackPayload } from "./welcome-back";
