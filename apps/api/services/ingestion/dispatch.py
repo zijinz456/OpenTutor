@@ -58,6 +58,23 @@ async def dispatch_content(db: AsyncSession, job: IngestionJob) -> dict:
                 .where(PracticeProblem.content_node_id.in_(old_ids))
                 .values(content_node_id=None)
             )
+            # 1b. knowledge_points is a legacy scene-system table with no ORM
+            #     model; its FK into course_content_tree has no ondelete on
+            #     installs that predate the 20260424 hardening migration, so
+            #     nullify explicitly. Wrapped in try/except because the table
+            #     is absent on installs that never ran the scene-system
+            #     migration — a missing table is expected, not an error.
+            try:
+                await db.execute(
+                    sa.text(
+                        "UPDATE knowledge_points "
+                        "SET source_content_node_id = NULL "
+                        "WHERE source_content_node_id IN :ids"
+                    ).bindparams(sa.bindparam("ids", expanding=True)),
+                    {"ids": list(old_ids)},
+                )
+            except (sa.exc.ProgrammingError, sa.exc.OperationalError):
+                pass
             # 2. Break self-referential parent_id chain (NO ACTION on delete):
             #    a) NULL out parent_id of the nodes being deleted
             await db.execute(
