@@ -2,6 +2,12 @@
 
 import { useLocale } from "@/lib/i18n-context";
 import { RuntimeAlert } from "@/components/shared/runtime-alert";
+import { ContinueMissionHero } from "@/components/dashboard/continue-mission-hero";
+import { DailySessionCTA } from "@/components/dashboard/daily-session-cta";
+import { BrutalDrillCTA } from "@/components/dashboard/brutal-drill-cta";
+import { LearningPathsPill } from "@/components/dashboard/LearningPathsPill";
+import { DrillCoursesPill } from "@/components/dashboard/DrillCoursesPill";
+import { WelcomeBackModal } from "@/components/dashboard/welcome-back-modal";
 import { useDashboardData } from "./_hooks/use-dashboard-data";
 import { CourseCardsSkeleton } from "./_components/dash-section";
 import { LearningRhythm } from "./_components/digest-fallback";
@@ -18,23 +24,41 @@ import {
   WeeklyStatsSection,
   MasteryOverviewSection,
 } from "./_components/dashboard-sections";
-import { CourseSpacesSection, DashboardEmptyState } from "./_components/dashboard-spaces";
-import { DailySessionCTA } from "@/components/dashboard/daily-session-cta";
-import { BrutalDrillCTA } from "@/components/dashboard/brutal-drill-cta";
-import { LearningPathsPill } from "@/components/dashboard/LearningPathsPill";
-import { DrillCoursesPill } from "@/components/dashboard/DrillCoursesPill";
-import { WelcomeBackModal } from "@/components/dashboard/welcome-back-modal";
+import {
+  CourseSpacesSection,
+  DashboardEmptyState,
+} from "./_components/dashboard-spaces";
 
 export default function DashboardPage() {
   const { locale } = useLocale();
   const {
-    router, t, tf, courses, loading, error, health,
-    reviewSummaries, notifications, pendingTasks, actingTasks,
-    modeRecommendations, actingModeCourses, upcomingDeadlines,
-    dailyDigest, knowledgeDensity, weeklyReport, masteryOverview,
-    flashcardDueByCourse, totalDueFlashcards,
-    totalActiveGoals, totalPendingApprovals, totalRunningTasks, totalUrgentReviews,
-    actOnTask, applyModeRecommendation, dismissModeRecommendation,
+    router,
+    t,
+    tf,
+    courses,
+    loading,
+    error,
+    health,
+    reviewSummaries,
+    notifications,
+    pendingTasks,
+    actingTasks,
+    modeRecommendations,
+    actingModeCourses,
+    upcomingDeadlines,
+    dailyDigest,
+    knowledgeDensity,
+    weeklyReport,
+    masteryOverview,
+    flashcardDueByCourse,
+    totalDueFlashcards,
+    totalActiveGoals,
+    totalPendingApprovals,
+    totalRunningTasks,
+    totalUrgentReviews,
+    actOnTask,
+    applyModeRecommendation,
+    dismissModeRecommendation,
   } = useDashboardData();
 
   const navigate = (path: string) => router.push(path);
@@ -62,119 +86,180 @@ export default function DashboardPage() {
 
         <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
           <div className="flex flex-col gap-1.5">
-            <h1 className="font-display text-2xl font-semibold tracking-tight text-foreground md:text-3xl">{t("dashboard.title")}</h1>
-            <p className="text-sm text-muted-foreground" data-panic-hide>{t("dashboard.subtitle")}</p>
+            <h1 className="font-display text-2xl font-semibold tracking-tight text-foreground md:text-3xl">
+              {t("dashboard.title")}
+            </h1>
+            <p className="text-sm text-muted-foreground" data-panic-hide>
+              {t("dashboard.subtitle")}
+            </p>
           </div>
           <button
             type="button"
             onClick={() => router.push("/new")}
             data-panic-hide
-            className="h-10 px-6 bg-brand text-brand-foreground rounded-full text-sm font-medium hover:opacity-90 transition-all hover:shadow-md shrink-0 self-start sm:self-auto"
+            className="h-10 self-start shrink-0 rounded-full bg-brand px-6 text-sm font-medium text-brand-foreground transition-all hover:opacity-90 hover:shadow-md sm:self-auto"
           >
             + {t("dashboard.create")}
           </button>
         </div>
 
         {courses.length > 0 && (
-          <div data-panic-hide>
-            <OverviewStats
-              totalActiveGoals={totalActiveGoals}
-              totalPendingApprovals={totalPendingApprovals}
-              totalRunningTasks={totalRunningTasks}
-              t={t}
-            />
-          </div>
-        )}
-
-        {courses.length > 0 && <div data-panic-hide><WeeklyStatsSection weeklyReport={weeklyReport} /></div>}
-        {courses.length > 1 && <div data-panic-hide><MasteryOverviewSection masteryOverview={masteryOverview} onNavigate={navigate} /></div>}
-
-        {courses.length > 0 && (
-          <div data-panic-hide>
-            <TodayDigestSection
-              courses={courses} dailyDigest={dailyDigest}
-              reviewSummaries={reviewSummaries} upcomingDeadlines={upcomingDeadlines}
-              t={t} tf={tf}
-            />
-          </div>
+          <section
+            data-testid="dashboard-mission-first"
+            className="flex flex-col gap-4"
+          >
+            <ContinueMissionHero />
+            <div
+              data-testid="dashboard-primary-row"
+              className="grid gap-4 lg:grid-cols-3"
+            >
+              <DailySessionCTA />
+              <LearningPathsPill />
+              <DrillCoursesPill />
+            </div>
+          </section>
         )}
 
         {courses.length > 0 && (
-          <div data-panic-hide>
-            <UpcomingDeadlinesSection
-              upcomingDeadlines={upcomingDeadlines}
-              getDeadlineLabel={getDeadlineLabel}
-              onNavigate={navigate} t={t}
-            />
-          </div>
+          <details
+            data-testid="dashboard-more-tools"
+            className="rounded-2xl border border-border/70 bg-card/60 p-5 card-shadow"
+          >
+            <summary className="cursor-pointer list-none">
+              <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-sm font-semibold text-foreground">
+                    More tools
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Daily review, brutal drills, and the rest of the dashboard.
+                  </p>
+                </div>
+                <span className="text-xs text-muted-foreground">
+                  Open when you want the full board
+                </span>
+              </div>
+            </summary>
+
+            <div className="mt-5 flex flex-col gap-4">
+              <BrutalDrillCTA />
+
+              <div data-panic-hide>
+                <OverviewStats
+                  totalActiveGoals={totalActiveGoals}
+                  totalPendingApprovals={totalPendingApprovals}
+                  totalRunningTasks={totalRunningTasks}
+                  t={t}
+                />
+              </div>
+
+              <div data-panic-hide>
+                <TodayDigestSection
+                  courses={courses}
+                  dailyDigest={dailyDigest}
+                  reviewSummaries={reviewSummaries}
+                  upcomingDeadlines={upcomingDeadlines}
+                  t={t}
+                  tf={tf}
+                />
+              </div>
+
+              <div data-panic-hide>
+                <UpcomingDeadlinesSection
+                  upcomingDeadlines={upcomingDeadlines}
+                  getDeadlineLabel={getDeadlineLabel}
+                  onNavigate={navigate}
+                  t={t}
+                />
+              </div>
+
+              <div data-panic-hide>
+                <UrgentReviewsSection
+                  reviewSummaries={reviewSummaries}
+                  totalUrgentReviews={totalUrgentReviews}
+                  onNavigate={navigate}
+                  t={t}
+                  tf={tf}
+                />
+              </div>
+
+              <div data-panic-hide>
+                <FlashcardsDueSection
+                  flashcardDueByCourse={flashcardDueByCourse}
+                  totalDueFlashcards={totalDueFlashcards}
+                  onNavigate={navigate}
+                  t={t}
+                  tf={tf}
+                />
+              </div>
+
+              <div data-panic-hide>
+                <WeeklyStatsSection weeklyReport={weeklyReport} />
+              </div>
+
+              {courses.length > 1 && (
+                <div data-panic-hide>
+                  <MasteryOverviewSection
+                    masteryOverview={masteryOverview}
+                    onNavigate={navigate}
+                  />
+                </div>
+              )}
+
+              {courses.length > 1 && (
+                <div data-panic-hide>
+                  <KnowledgeDensitySection
+                    knowledgeDensity={knowledgeDensity}
+                    t={t}
+                  />
+                </div>
+              )}
+
+              <div data-panic-hide>
+                <AgentInsightsSection
+                  notifications={notifications}
+                  onNavigate={navigate}
+                  t={t}
+                />
+              </div>
+
+              <div data-panic-hide>
+                <PendingApprovalsSection
+                  pendingTasks={pendingTasks}
+                  actingTasks={actingTasks}
+                  onActOnTask={(id, action) => void actOnTask(id, action)}
+                  t={t}
+                  tf={tf}
+                />
+              </div>
+
+              <div data-panic-hide>
+                <ModeRecommendationsSection
+                  modeRecommendations={modeRecommendations}
+                  actingModeCourses={actingModeCourses}
+                  onApply={(item) => void applyModeRecommendation(item)}
+                  onDismiss={dismissModeRecommendation}
+                  onNavigate={navigate}
+                  t={t}
+                />
+              </div>
+
+              <div data-panic-hide>
+                <LearningRhythm t={t} />
+              </div>
+            </div>
+          </details>
         )}
 
-        {courses.length > 0 && <DailySessionCTA />}
-        {courses.length > 0 && <BrutalDrillCTA />}
-        {courses.length > 0 && <LearningPathsPill />}
-        {/* TODO(ТЗ §3 Slice 1): Dashboard Convergence will relocate this pill
-            into the hero/3-col row or the collapsed <details> block. Leaving
-            here so the dashboard has a working drills entry in the interim. */}
-        {courses.length > 0 && <DrillCoursesPill />}
-
-        {courses.length > 0 && (
-          <div data-panic-hide>
-            <UrgentReviewsSection
-              reviewSummaries={reviewSummaries}
-              totalUrgentReviews={totalUrgentReviews}
-              onNavigate={navigate} t={t} tf={tf}
-            />
-          </div>
-        )}
-
-        {courses.length > 0 && (
-          <div data-panic-hide>
-            <FlashcardsDueSection
-              flashcardDueByCourse={flashcardDueByCourse}
-              totalDueFlashcards={totalDueFlashcards}
-              onNavigate={navigate} t={t} tf={tf}
-            />
-          </div>
-        )}
-
-        {courses.length > 1 && (
-          <div data-panic-hide>
-            <KnowledgeDensitySection knowledgeDensity={knowledgeDensity} t={t} />
-          </div>
-        )}
-
-        {courses.length > 0 && (
-          <div data-panic-hide>
-            <AgentInsightsSection notifications={notifications} onNavigate={navigate} t={t} />
-          </div>
-        )}
-
-        {courses.length > 0 && (
-          <div data-panic-hide>
-            <PendingApprovalsSection
-              pendingTasks={pendingTasks} actingTasks={actingTasks}
-              onActOnTask={(id, action) => void actOnTask(id, action)}
-              t={t} tf={tf}
-            />
-          </div>
-        )}
-
-        {courses.length > 0 && (
-          <div data-panic-hide>
-            <ModeRecommendationsSection
-              modeRecommendations={modeRecommendations} actingModeCourses={actingModeCourses}
-              onApply={(item) => void applyModeRecommendation(item)}
-              onDismiss={dismissModeRecommendation}
-              onNavigate={navigate} t={t}
-            />
-          </div>
-        )}
-
-        {courses.length > 0 && <div data-panic-hide><LearningRhythm t={t} /></div>}
         {loading && <CourseCardsSkeleton />}
         {courses.length > 0 && (
           <div data-panic-hide>
-            <CourseSpacesSection courses={courses} locale={locale} onNavigate={navigate} t={t} />
+            <CourseSpacesSection
+              courses={courses}
+              locale={locale}
+              onNavigate={navigate}
+              t={t}
+            />
           </div>
         )}
         {!loading && courses.length === 0 && (
