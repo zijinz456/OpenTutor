@@ -351,15 +351,11 @@ async def test_pipeline_guard_is_and_not_or() -> None:
     from services.ingestion import dispatch
 
     source = inspect.getsource(dispatch.dispatch_content)
-    # Find the line with our guard and assert it combines both clauses
-    # with ``and`` (not ``or``).
-    guard_lines = [
-        line
-        for line in source.splitlines()
-        if "_settings.enable_url_roadmap" in line and "source_type" in line
-    ]
-    assert guard_lines, "expected one guard line with both clauses"
-    for line in guard_lines:
-        assert " and " in line, (
-            f"guard must use logical AND of flag + source_type, got: {line!r}"
-        )
+    # The guard may span multiple lines after black/ruff reflow, so
+    # collapse whitespace before the substring check. We still catch
+    # an accidental `or` swap — that would break the exact phrase.
+    normalized = " ".join(source.split())
+    assert "_settings.enable_url_roadmap and job.source_type" in normalized, (
+        "guard must use logical AND of flag + source_type (not OR); "
+        f"normalized source: {normalized!r}"
+    )
