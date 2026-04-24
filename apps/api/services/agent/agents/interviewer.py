@@ -49,6 +49,8 @@ from services.agent.agents.interviewer_prompts import (
     MODE_PERSONAS,
     QUESTION_SYSTEM_PROMPT,
     TECHNICAL_DIMS,
+    _grounding_source_hint,
+    _has_meaningful_grounding,
     _load_grounding_excerpt,
 )
 from services.agent.base import BaseAgent
@@ -116,6 +118,11 @@ class InterviewerAgent(BaseAgent):
                 exc,
             )
             grounding_excerpt = ""
+        grounding_source_hint = (
+            _grounding_source_hint(project_focus, question_type)
+            if _has_meaningful_grounding(grounding_excerpt)
+            else None
+        )
 
         persona = MODE_PERSONAS.get(mode, MODE_PERSONAS["mixed"])
         prev_tail = prev_questions[-3:] if prev_questions else []
@@ -136,7 +143,13 @@ class InterviewerAgent(BaseAgent):
             temperature=0.7,
             max_tokens=400,
         )
-        return self._parse_question(raw, project_focus, mode, question_type)
+        return self._parse_question(
+            raw,
+            project_focus,
+            mode,
+            question_type,
+            grounding_source_hint=grounding_source_hint,
+        )
 
     async def grade_answer(
         self,
@@ -276,6 +289,8 @@ class InterviewerAgent(BaseAgent):
         project_focus: str,
         mode: str,
         question_type: str,
+        *,
+        grounding_source_hint: str | None = None,
     ) -> dict[str, Any]:
         """Extract a question dict from raw LLM output. Fallback on any error."""
         fallback_dims = (
@@ -317,11 +332,22 @@ class InterviewerAgent(BaseAgent):
         question = str(parsed.get("question", "")).strip()
         if not question:
             return fallback
+        parsed_grounding_source = str(parsed.get("grounding_source") or "").strip()
+        if grounding_source_hint and parsed_grounding_source in {
+            "",
+            "generic",
+            "fallback",
+        }:
+            grounding_source = grounding_source_hint
+        else:
+            grounding_source = (
+                parsed_grounding_source or grounding_source_hint or "generic"
+            )
 
         return {
             "question": question[:300],
             "question_type": str(parsed.get("question_type") or question_type),
-            "grounding_source": str(parsed.get("grounding_source") or "generic"),
+            "grounding_source": grounding_source,
             "expected_dimensions": list(
                 parsed.get("expected_dimensions") or fallback_dims
             ),

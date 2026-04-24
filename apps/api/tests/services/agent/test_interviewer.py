@@ -127,6 +127,63 @@ async def test_generate_question_parses_valid_json(
 
 
 @pytest.mark.asyncio
+async def test_generate_question_technical_uses_code_defense_grounding_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Real technical grounding overrides a model's lazy `"generic"` source."""
+    agent = InterviewerAgent()
+    monkeypatch.setattr(
+        "services.agent.agents.interviewer._load_grounding_excerpt",
+        lambda *_args, **_kwargs: (
+            "Why OpenTutor base? MIT, FSRS 4.5 built-in, matches local scope."
+        ),
+    )
+    payload = _valid_question_payload()
+    payload["question"] = "Why did you choose OpenTutor as the base?"
+    payload["grounding_source"] = "generic"
+    _install_fake_llm(monkeypatch, agent, [json.dumps(payload)])
+
+    result = await agent.generate_question(
+        _make_ctx(),
+        turn_number=1,
+        total_turns=3,
+        project_focus="LearnDopamine",
+        mode="technical",
+        question_type="technical",
+        prev_questions=[],
+    )
+
+    assert result["grounding_source"] == "code_defense_drill.md#project-3"
+
+
+@pytest.mark.asyncio
+async def test_generate_question_keeps_generic_when_excerpt_is_todo_heavy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TODO-heavy excerpts still allow the model's generic fallback to survive."""
+    agent = InterviewerAgent()
+    monkeypatch.setattr(
+        "services.agent.agents.interviewer._load_grounding_excerpt",
+        lambda *_args, **_kwargs: "_TODO_ _TODO_ _TODO_ _TODO_",
+    )
+    payload = _valid_question_payload()
+    payload["grounding_source"] = "generic"
+    _install_fake_llm(monkeypatch, agent, [json.dumps(payload)])
+
+    result = await agent.generate_question(
+        _make_ctx(),
+        turn_number=1,
+        total_turns=3,
+        project_focus="LearnDopamine",
+        mode="technical",
+        question_type="technical",
+        prev_questions=[],
+    )
+
+    assert result["grounding_source"] == "generic"
+
+
+@pytest.mark.asyncio
 async def test_generate_question_fallback_on_bad_json(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

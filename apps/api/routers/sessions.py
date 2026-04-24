@@ -115,9 +115,7 @@ async def get_daily_plan(
     # straight through to the service, which widens its own Literal to
     # accept ``easy_only`` alongside ``adhd_safe`` / ``struggle_first``.
     frozen = await active_frozen_problem_ids(db, user.id)
-    return await select_daily_plan(
-        db, size, strategy=strategy, excluded_ids=frozen
-    )
+    return await select_daily_plan(db, size, strategy=strategy, excluded_ids=frozen)
 
 
 @router.get(

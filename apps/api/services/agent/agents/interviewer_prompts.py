@@ -278,3 +278,24 @@ def _todo_density(excerpt: str) -> float:
     todo_count = len(_TODO_RE.findall(excerpt))
     total_tokens = len(excerpt.split())
     return todo_count / max(total_tokens, 1)
+
+
+def _slugify_heading(heading: str) -> str:
+    """Convert markdown heading text into a stable lowercase anchor fragment."""
+    slug = re.sub(r"[^a-z0-9]+", "-", heading.lower()).strip("-")
+    return slug or "generic"
+
+
+def _grounding_source_hint(project_focus: str, question_type: str) -> str:
+    """Return the deterministic corpus source for the chosen question type."""
+    if question_type == "behavioral":
+        heading = _STAR_STORY_MAP.get(project_focus, "Story 1")
+        return f"{_STAR_FILE}#{_slugify_heading(heading)}"
+
+    heading = _DRILL_SECTION_MAP.get(project_focus, "Project 1")
+    return f"{_DRILL_FILE}#{_slugify_heading(heading)}"
+
+
+def _has_meaningful_grounding(excerpt: str) -> bool:
+    """Whether the excerpt is real enough to trust over a generic fallback."""
+    return bool(excerpt.strip()) and _todo_density(excerpt) < 0.5

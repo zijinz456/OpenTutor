@@ -25,6 +25,7 @@ import json
 import os
 import tempfile
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 import pytest_asyncio
@@ -36,6 +37,7 @@ import database as database_module
 from database import Base, get_db
 from main import app
 from schemas.interview import DimensionScore, RubricScores
+from services.agent.agents.interviewer import InterviewerAgent
 
 
 # ── Fake corpus text ────────────────────────────────────────────────
@@ -230,6 +232,31 @@ def _install_agent(monkeypatch, agent: _FakeAgent) -> None:
     monkeypatch.setattr(_iv, "_InterviewerAgent", lambda: agent)
 
 
+def _install_fake_llm(
+    monkeypatch: pytest.MonkeyPatch,
+    agent: InterviewerAgent,
+    responses: list[str],
+) -> list[dict[str, Any]]:
+    """Stub ``agent.get_llm_client`` so the real agent returns scripted JSON."""
+
+    calls: list[dict[str, Any]] = []
+    response_iter = iter(responses)
+
+    async def fake_chat(
+        system: str,
+        user: str,
+        images: list[dict[str, str]] | None = None,
+    ) -> tuple[str, dict[str, int]]:
+        calls.append({"system": system, "user": user, "images": images})
+        return next(response_iter), {"input_tokens": 0, "output_tokens": 0}
+
+    fake_client = MagicMock()
+    fake_client.chat = fake_chat
+
+    monkeypatch.setattr(agent, "get_llm_client", lambda _ctx=None: fake_client)
+    return calls
+
+
 # ── 1. Corpus-empty gate ────────────────────────────────────────────
 
 
@@ -284,6 +311,68 @@ async def test_post_start_technical_bypasses_corpus_gate(client, monkeypatch):
     body = resp.json()
     assert body["total_turns"] == 3
     assert body["turn_number"] == 1
+
+
+@pytest.mark.asyncio
+async def test_post_start_technical_uses_code_defense_grounding_source(
+    client, monkeypatch
+):
+    """Technical start stamps the real code-defense source for LearnDopamine."""
+
+    ac, tmp_path = client
+    (tmp_path / "code_defense_drill.md").write_text(
+        """
+### Project 3: LearnDopamine
+
+- Why OpenTutor base? MIT license, FSRS 4.5 already integrated.
+- Why Groq primary? Lower latency for interview turns, OpenAI fallback for reliability.
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    import routers.interview as _iv
+    import services.agent.agents.interviewer_prompts as prompts_module
+
+    prompts_module._GROUNDING_CACHE.clear()
+    monkeypatch.setattr(prompts_module, "CONTENT_DIR", tmp_path)
+
+    agent = InterviewerAgent()
+    _install_fake_llm(
+        monkeypatch,
+        agent,
+        [
+            json.dumps(
+                {
+                    "question": "Why did you choose OpenTutor as the base stack?",
+                    "question_type": "technical",
+                    "grounding_source": "generic",
+                    "expected_dimensions": [
+                        "Correctness",
+                        "Depth",
+                        "Tradeoff",
+                        "Clarity",
+                    ],
+                }
+            )
+        ],
+    )
+    monkeypatch.setattr(_iv, "_InterviewerAgent", lambda: agent)
+    course_id = await _create_course(ac)
+
+    resp = await ac.post(
+        "/api/interview/start",
+        json={
+            "project_focus": "LearnDopamine",
+            "mode": "technical",
+            "duration": "quick",
+            "course_id": course_id,
+        },
+    )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["grounding_source"] == "code_defense_drill.md#project-3"
+    assert "OpenTutor" in body["question"]
 
 
 # ── 1c. Mixed with 2 filled stories — gate opens ────────────────────
