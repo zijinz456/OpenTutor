@@ -1,6 +1,6 @@
 import { StrictMode } from "react";
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import BrutalSessionPage from "./page";
 import { LocaleProvider } from "@/lib/i18n-context";
 import { useBrutalSessionStore } from "@/store/brutal-session";
@@ -109,4 +109,47 @@ describe("/session/brutal page", () => {
     expect(screen.queryByTestId("brutal-session-transition")).toBeNull();
     expect(getBrutalPlanMock).toHaveBeenCalledWith(20);
   });
+
+  it("shows a visible loading label while the boot fetch is in flight", async () => {
+    // Never-resolving promise so the loading branch stays rendered.
+    getBrutalPlanMock.mockImplementation(() => new Promise(() => {}));
+
+    renderWithProvider();
+
+    expect(screen.getByTestId("brutal-session-loading")).toBeInTheDocument();
+    expect(screen.getByText(/Loading drill/i)).toBeInTheDocument();
+  });
+
+  it(
+    "falls over to an error state if the boot fetch hangs past the safety timeout",
+    async () => {
+      // Regression: 2026-04-24 user report — /session/brutal hung on the
+      // blank loading shell for 15s+ while API returned 200. A never-
+      // resolving fetch must surface an actionable error instead of a
+      // silent spinner.
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        getBrutalPlanMock.mockImplementation(() => new Promise(() => {}));
+
+        renderWithProvider();
+
+        expect(
+          screen.getByTestId("brutal-session-loading"),
+        ).toBeInTheDocument();
+
+        // Bootstrap safety timer is 10s. Advance past it.
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(10_100);
+        });
+
+        await waitFor(() =>
+          expect(screen.getByTestId("brutal-session-error")).toBeInTheDocument(),
+        );
+        expect(screen.getByRole("alert")).toHaveTextContent(/too long/i);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+    15_000,
+  );
 });

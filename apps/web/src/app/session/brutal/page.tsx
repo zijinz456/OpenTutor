@@ -133,21 +133,40 @@ function BrutalSessionInner() {
     () => parseConfig(sizeParam, timeoutParam),
     [sizeParam, timeoutParam],
   );
+  const requestedSize = config?.size ?? null;
+  const requestedTimeoutSec = config?.timeoutSec ?? null;
 
   // Bootstrap — fetch plan once per mount with the parsed config. Empty
   // cards with no warning → "nothing to drill" closure (0/0/0). Pool
   // small → stash plan and render confirm modal.
+  //
+  // Safety net: if the fetch never resolves (network stall, backend
+  // wedge), we flip to error state after BOOT_TIMEOUT_MS so the user is
+  // never stuck on a silent loading shell. Real repro: 2026-04-24 user
+  // report of 15s hang on /session/brutal?size=20&timeout=30.
   useEffect(() => {
-    if (!config) {
+    if (!requestedSize || !requestedTimeoutSec) {
       router.replace("/");
       return;
     }
     let cancelled = false;
+    const BOOT_TIMEOUT_MS = 10000;
+    const safetyTimer = setTimeout(() => {
+      if (cancelled) return;
+      console.error(
+        "[brutal] bootstrap timed out after",
+        BOOT_TIMEOUT_MS,
+        "ms",
+      );
+      setErrorMsg("Loading took too long. Reload the page or try again.");
+      setBootState("error");
+    }, BOOT_TIMEOUT_MS);
     (async () => {
       try {
-        const fetched = await getBrutalPlan(config.size);
+        const fetched = await getBrutalPlan(requestedSize);
         if (cancelled) return;
-        const timeoutMsVal = (config.timeoutSec * 1000) as BrutalTimeoutMs;
+        clearTimeout(safetyTimer);
+        const timeoutMsVal = (requestedTimeoutSec * 1000) as BrutalTimeoutMs;
         if (fetched.cards.length === 0) {
           setPlan(fetched);
           setBootState("empty");
@@ -163,6 +182,8 @@ function BrutalSessionInner() {
         setBootState("ready");
       } catch (err) {
         if (cancelled) return;
+        clearTimeout(safetyTimer);
+        console.error("[brutal] bootstrap failed:", err);
         setErrorMsg(
           (err as Error | null)?.message ?? "Could not load the drill.",
         );
@@ -171,8 +192,13 @@ function BrutalSessionInner() {
     })();
     return () => {
       cancelled = true;
+      clearTimeout(safetyTimer);
     };
-  }, [config, router, startStore]);
+    // App Router's `router` object can be render-volatile during hydration.
+    // Boot must key off the URL primitives only, otherwise a harmless
+    // mount-time rerender can cancel a resolved brutal-plan and strand the UI
+    // in the loading shell.
+  }, [requestedSize, requestedTimeoutSec, startStore]);
 
   // Tab-blur pause — single-line contract per the phase plan. We don't
   // pause during the `pendingPoolSmall` confirm because the timer isn't
@@ -278,9 +304,14 @@ function BrutalSessionInner() {
   if (bootState === "loading") {
     return (
       <div
-        className="min-h-screen bg-background"
+        className="min-h-screen bg-background flex items-center justify-center p-4"
         data-testid="brutal-session-loading"
-      />
+      >
+        <div className="flex items-center gap-3 text-sm text-muted-foreground">
+          <Flame className="size-4 animate-pulse text-amber-600" />
+          <span>Loading drill…</span>
+        </div>
+      </div>
     );
   }
 
