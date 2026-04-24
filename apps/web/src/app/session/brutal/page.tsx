@@ -144,6 +144,11 @@ function BrutalSessionInner() {
   // wedge), we flip to error state after BOOT_TIMEOUT_MS so the user is
   // never stuck on a silent loading shell. Real repro: 2026-04-24 user
   // report of 15s hang on /session/brutal?size=20&timeout=30.
+  //
+  // App Router's `router` object can be render-volatile during hydration.
+  // Boot must key off the URL primitives only, otherwise a harmless
+  // mount-time rerender can cancel a resolved brutal-plan and strand the UI
+  // in the loading shell.
   useEffect(() => {
     if (!requestedSize || !requestedTimeoutSec) {
       router.replace("/");
@@ -194,10 +199,6 @@ function BrutalSessionInner() {
       cancelled = true;
       clearTimeout(safetyTimer);
     };
-    // App Router's `router` object can be render-volatile during hydration.
-    // Boot must key off the URL primitives only, otherwise a harmless
-    // mount-time rerender can cancel a resolved brutal-plan and strand the UI
-    // in the loading shell.
   }, [requestedSize, requestedTimeoutSec, startStore]);
 
   // Tab-blur pause — single-line contract per the phase plan. We don't

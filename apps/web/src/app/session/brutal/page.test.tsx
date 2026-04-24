@@ -1,5 +1,5 @@
-import { StrictMode } from "react";
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { StrictMode, useEffect, useState, type ReactNode } from "react";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import BrutalSessionPage from "./page";
 import { LocaleProvider } from "@/lib/i18n-context";
@@ -9,6 +9,7 @@ import type { BrutalPlanResponse, DailyPlanCard } from "@/lib/api";
 const mockPush = vi.fn();
 const mockReplace = vi.fn();
 const mockSearchParams = new URLSearchParams("size=20&timeout=30");
+let useFreshRouterEachRender = false;
 const mockRouter = {
   push: (...args: unknown[]) => mockPush(...args),
   replace: (...args: unknown[]) => mockReplace(...args),
@@ -19,7 +20,7 @@ const mockRouter = {
 };
 
 vi.mock("next/navigation", () => ({
-  useRouter: () => mockRouter,
+  useRouter: () => (useFreshRouterEachRender ? { ...mockRouter } : mockRouter),
   useSearchParams: () => mockSearchParams,
 }));
 
@@ -80,12 +81,21 @@ function renderStrictWithProvider() {
   );
 }
 
+function RerenderHarness({ children }: { children: ReactNode }) {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    setTick((tick) => tick + 1);
+  }, []);
+  return <>{children}</>;
+}
+
 describe("/session/brutal page", () => {
   beforeEach(() => {
     mockPush.mockReset();
     mockReplace.mockReset();
     getBrutalPlanMock.mockReset();
     submitAnswerMock.mockReset();
+    useFreshRouterEachRender = false;
     useBrutalSessionStore.getState().reset();
   });
 
@@ -118,6 +128,48 @@ describe("/session/brutal page", () => {
 
     expect(screen.getByTestId("brutal-session-loading")).toBeInTheDocument();
     expect(screen.getByText(/Loading drill/i)).toBeInTheDocument();
+  });
+
+  it("keeps the first resolved plan through a mount-time rerender", async () => {
+    useFreshRouterEachRender = true;
+
+    let resolveFirstPlan: ((plan: BrutalPlanResponse) => void) | null = null;
+    getBrutalPlanMock
+      .mockImplementationOnce(
+        () =>
+          new Promise<BrutalPlanResponse>((resolve) => {
+            resolveFirstPlan = resolve;
+          }),
+      )
+      .mockImplementationOnce(() => new Promise(() => {}));
+
+    render(
+      <RerenderHarness>
+        <LocaleProvider>
+          <BrutalSessionPage />
+        </LocaleProvider>
+      </RerenderHarness>,
+    );
+
+    expect(screen.getByTestId("brutal-session-loading")).toBeInTheDocument();
+
+    await act(async () => {
+      resolveFirstPlan?.(
+        makePlan([
+          makeCard("b1", "First brutal question?"),
+          makeCard("b2", "Second brutal question?"),
+        ]),
+      );
+      await Promise.resolve();
+    });
+
+    await waitFor(() =>
+      expect(screen.getByTestId("brutal-session-question")).toHaveTextContent(
+        "First brutal question?",
+      ),
+    );
+
+    expect(getBrutalPlanMock).toHaveBeenCalledTimes(1);
   });
 
   it(
