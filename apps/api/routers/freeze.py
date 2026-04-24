@@ -163,26 +163,22 @@ async def get_status(
 # ── Endpoint 3: DELETE /api/freeze/{problem_id} ─────────────────────
 
 
-# NOTE: FastAPI 0.x asserts at decorator-registration time that a 204
-# endpoint has no body. Passing `response_class=Response` is not
-# enough — the type annotation `-> Response` still triggers the check.
-# Workaround: return 200 OK with an empty object. Frontend treats any
-# 2xx as success, so the semantic is preserved.
 @router.delete(
     "/{problem_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
     summary="Unfreeze a card (does NOT refund weekly quota)",
     description=(
         "Remove the freeze row for ``problem_id`` so the card re-enters "
         "the daily-plan queue immediately. **The weekly quota is not "
         "refunded** — critic C8 on ``adhd_ux_full_phase14.md``. Returns "
-        "200 on success, 404 when no active freeze exists."
+        "204 on success, 404 when no active freeze exists."
     ),
 )
 async def delete_freeze(
     problem_id: uuid.UUID,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> dict:
+) -> None:
     """Delete the freeze row; 404 if nothing to delete."""
 
     deleted = await unfreeze_card(db, user.id, problem_id)
@@ -191,8 +187,7 @@ async def delete_freeze(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"error": "no_active_freeze", "problem_id": str(problem_id)},
         )
-    return {"ok": True}
-    # FastAPI returns 204 automatically when the response body is ``None``.
+    return None
 
 
 __all__ = ["router"]
