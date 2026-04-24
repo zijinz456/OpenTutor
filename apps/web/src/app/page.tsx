@@ -22,6 +22,7 @@ import { CourseSpacesSection, DashboardEmptyState } from "./_components/dashboar
 import { DailySessionCTA } from "@/components/dashboard/daily-session-cta";
 import { BrutalDrillCTA } from "@/components/dashboard/brutal-drill-cta";
 import { LearningPathsPill } from "@/components/dashboard/LearningPathsPill";
+import { DrillCoursesPill } from "@/components/dashboard/DrillCoursesPill";
 import { WelcomeBackModal } from "@/components/dashboard/welcome-back-modal";
 
 export default function DashboardPage() {
@@ -111,6 +112,10 @@ export default function DashboardPage() {
         {courses.length > 0 && <DailySessionCTA />}
         {courses.length > 0 && <BrutalDrillCTA />}
         {courses.length > 0 && <LearningPathsPill />}
+        {/* TODO(ТЗ §3 Slice 1): Dashboard Convergence will relocate this pill
+            into the hero/3-col row or the collapsed <details> block. Leaving
+            here so the dashboard has a working drills entry in the interim. */}
+        {courses.length > 0 && <DrillCoursesPill />}
 
         {courses.length > 0 && (
           <div data-panic-hide>

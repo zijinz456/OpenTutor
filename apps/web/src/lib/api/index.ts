@@ -315,3 +315,18 @@ export type { WelcomeBackPayload } from "./welcome-back";
 
 export { getFreezeStatus } from "./freeze";
 export type { FreezeStatusResponse } from "./freeze";
+
+export {
+  listDrillCourses,
+  getDrillCourseTOC,
+  getDrill,
+  submitDrill,
+  getNextDrill,
+} from "./drills";
+export type {
+  DrillOut,
+  DrillModuleTOC,
+  DrillCourseOut,
+  DrillCourseTOC,
+  DrillSubmitResult,
+} from "./drills";
