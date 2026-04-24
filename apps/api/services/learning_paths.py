@@ -23,9 +23,10 @@ from dataclasses import dataclass
 from datetime import datetime
 import uuid
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from models.content import CourseContentTree
 from models.practice import PracticeProblem, PracticeResult
 
 
@@ -193,6 +194,124 @@ async def count_orphan_cards(db: AsyncSession) -> int:
     return int(result.scalar() or 0)
 
 
+def _extract_first_block_text(blocks_json: object) -> str | None:
+    """Best-effort: pull the first paragraph-ish text from a blocks-editor payload.
+
+    ``blocks_json`` is a dict like ``{"blocks": [{"type": "paragraph",
+    "content": "..."}, ...]}`` when present. Legacy rows only populate
+    ``content`` (plain text) and leave ``blocks_json`` null. This helper
+    runs only when ``content`` is null but ``blocks_json`` has data, so
+    we can still surface a real intro instead of the seed placeholder.
+
+    Returns ``None`` when the blob isn't a dict-with-blocks shape or
+    when no block carries a non-empty text payload. Callers treat
+    ``None`` as "no content found; fall back further".
+    """
+
+    if not isinstance(blocks_json, dict):
+        return None
+    blocks = blocks_json.get("blocks")
+    if not isinstance(blocks, list):
+        return None
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        # The editor stores free prose as ``paragraph`` / ``text`` blocks;
+        # headings count too because the first heading of a chapter is
+        # the intro line the user sees. We ignore code/image/list blocks
+        # for the intro excerpt — the excerpt needs to be human-readable
+        # prose, not a fenced code block rendered flat.
+        block_type = block.get("type")
+        if block_type in {"paragraph", "text", "heading", "h1", "h2", "h3"}:
+            text = block.get("content") or block.get("text") or ""
+            if isinstance(text, str) and text.strip():
+                return text.strip()
+    return None
+
+
+def _smart_truncate(text: str, max_chars: int) -> str:
+    """Truncate at ``max_chars`` preserving the last word boundary.
+
+    When the truncation would land mid-word we back up to the previous
+    whitespace so the excerpt doesn't end on "Pyt" when the next char
+    is "hon". If no whitespace exists in the window we take the hard
+    cut — edge-case safety, not the common path.
+    """
+
+    text = text.strip()
+    if len(text) <= max_chars:
+        return text
+    window = text[:max_chars]
+    last_space = window.rfind(" ")
+    if last_space < max_chars * 0.6:
+        # Backing up too far would lose half the window — just hard-cut.
+        return window.rstrip()
+    return window[:last_space].rstrip()
+
+
+async def resolve_room_intro_excerpt(
+    db: AsyncSession,
+    room_id: uuid.UUID,
+    *,
+    placeholder: str | None = None,
+    max_chars: int = 300,
+) -> str | None:
+    """Return the first 300-ish chars of real content for the room, or placeholder.
+
+    Phase 16a seeded ``PathRoom.intro_excerpt`` with a string like
+    ``"Topic: Loops. Grounded in 3 curated sources."`` so the UI never
+    crashed on a null field. Slice 2 upgrades this to real lesson text:
+    the first non-empty ``CourseContentTree.content`` (or first prose
+    block inside ``blocks_json``) referenced by any ``PracticeProblem``
+    mapped to this room.
+
+    Resolution order
+    ----------------
+    1. Any mapped task with a ``content_node_id`` pointing to a content
+       tree node that has non-null ``content`` → first ``max_chars`` of
+       that node's content (word-boundary safe).
+    2. Same join, but ``content`` null and ``blocks_json`` has prose
+       blocks → first prose block's text, truncated.
+    3. Nothing usable → the caller-supplied ``placeholder`` (typically
+       ``room.intro_excerpt`` so the seed string survives).
+    4. Placeholder is ``None`` → return ``None``.
+
+    The SQL filter ``content IS NOT NULL OR blocks_json IS NOT NULL``
+    prevents a room whose first-ordered mapped task points at a legacy
+    "shell" node (metadata only) from resolving to NULL when later nodes
+    have real prose (critic C2).
+    """
+
+    stmt = (
+        select(CourseContentTree.content, CourseContentTree.blocks_json)
+        .join(
+            PracticeProblem,
+            PracticeProblem.content_node_id == CourseContentTree.id,
+        )
+        .where(
+            PracticeProblem.path_room_id == room_id,
+            or_(
+                CourseContentTree.content.is_not(None),
+                CourseContentTree.blocks_json.is_not(None),
+            ),
+        )
+        .order_by(
+            CourseContentTree.order_index.asc(),
+            CourseContentTree.id.asc(),
+        )
+        .limit(5)
+    )
+    rows = (await db.execute(stmt)).all()
+    for content, blocks_json in rows:
+        if isinstance(content, str) and content.strip():
+            return _smart_truncate(content, max_chars)
+        block_text = _extract_first_block_text(blocks_json)
+        if block_text:
+            return _smart_truncate(block_text, max_chars)
+
+    return placeholder
+
+
 async def sample_orphan_cards(db: AsyncSession, limit: int = 10) -> list[dict]:
     """Return up to ``limit`` orphan problems as ``{id, question}`` dicts.
 
@@ -227,6 +346,7 @@ __all__ = [
     "get_room_last_activity",
     "get_room_progress_snapshots",
     "get_room_task_counts",
+    "resolve_room_intro_excerpt",
     "RoomProgressSnapshot",
     "sample_orphan_cards",
 ]

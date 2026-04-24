@@ -43,6 +43,7 @@ from sqlalchemy.pool import NullPool
 import database as database_module
 from database import Base, get_db
 from main import app
+from models.content import CourseContentTree
 from models.course import Course
 from models.learning_path import LearningPath, PathRoom
 from models.practice import PracticeProblem, PracticeResult
@@ -186,6 +187,7 @@ async def _seed_problem(
     question: str = "Q?",
     question_type: str = "mc",
     correct_answer: str = "a",
+    content_node_id: Optional[uuid.UUID] = None,
 ) -> uuid.UUID:
     problem_id = uuid.uuid4()
     async with session_factory() as session:
@@ -199,10 +201,42 @@ async def _seed_problem(
                 correct_answer=correct_answer,
                 path_room_id=room_id,
                 task_order=task_order,
+                content_node_id=content_node_id,
             )
         )
         await session.commit()
     return problem_id
+
+
+async def _seed_content_node(
+    session_factory,
+    *,
+    course_id: uuid.UUID,
+    content: Optional[str],
+    title: str = "Chapter",
+    order_index: int = 0,
+    blocks_json: Optional[dict] = None,
+) -> uuid.UUID:
+    """Seed a ``CourseContentTree`` node so tests can exercise the
+    ``resolve_room_intro_excerpt`` path. ``content`` is the primary
+    payload; ``blocks_json`` covers the fallback path when ``content``
+    is ``None``."""
+
+    node_id = uuid.uuid4()
+    async with session_factory() as session:
+        session.add(
+            CourseContentTree(
+                id=node_id,
+                course_id=course_id,
+                title=title,
+                content=content,
+                level=1,
+                order_index=order_index,
+                blocks_json=blocks_json,
+            )
+        )
+        await session.commit()
+    return node_id
 
 
 async def _seed_correct_result(
@@ -609,3 +643,199 @@ async def test_get_current_mission_picks_most_recent_partial_mission(
     assert body["mission_id"] == str(room_b)
     assert body["path_slug"] == "hacking-foundations"
     assert body["title"] == "Recon"
+
+
+# ── 9. Slice 2 — mission detail intro_excerpt + capstone_problem_ids ─
+
+
+@pytest.mark.asyncio
+async def test_mission_detail_intro_excerpt_real_content(client_with_db) -> None:
+    """When a mapped task points at a content-tree node with prose,
+    ``intro_excerpt`` is the first 300 chars of that prose, not the
+    seeded placeholder."""
+
+    ac, factory = client_with_db
+    user_id = await _seed_user(factory)
+    course_id = await _seed_course(factory, user_id=user_id)
+    path_id = await _seed_path(factory, slug="python-fundamentals")
+    room_id = await _seed_room(
+        factory,
+        path_id=path_id,
+        slug="loops",
+        room_order=0,
+        intro_excerpt="PLACEHOLDER_SHOULD_BE_REPLACED",
+    )
+    long_prose = (
+        "For loops iterate over a sequence, executing the body once per "
+        "element. Python makes this especially painless because any "
+        "iterable - list, tuple, generator, even a file handle - can be "
+        "the target of a for-loop. The loop variable is rebound on each "
+        "pass; break and continue short-circuit the body when the early "
+        "exit or next-iteration path is preferred."
+    )
+    node_id = await _seed_content_node(
+        factory,
+        course_id=course_id,
+        content=long_prose,
+        title="Loops",
+        order_index=0,
+    )
+    await _seed_problem(
+        factory,
+        course_id=course_id,
+        room_id=room_id,
+        task_order=0,
+        content_node_id=node_id,
+    )
+
+    resp = await ac.get(f"/api/paths/python-fundamentals/rooms/{room_id}")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["intro_excerpt"] is not None
+    assert body["intro_excerpt"] != "PLACEHOLDER_SHOULD_BE_REPLACED"
+    # First 300 chars (word-boundary preserved) of the prose.
+    assert body["intro_excerpt"].startswith("For loops iterate over a sequence")
+    assert len(body["intro_excerpt"]) <= 300
+    # Must NOT be suffixed mid-word — last char shouldn't be a letter
+    # followed by something that looks like a cut-off.
+    assert not body["intro_excerpt"].endswith("Pyt")
+
+
+@pytest.mark.asyncio
+async def test_mission_detail_intro_excerpt_falls_back_to_placeholder(
+    client_with_db,
+) -> None:
+    """Room whose mapped tasks have no ``content_node_id`` keeps the
+    placeholder string."""
+
+    ac, factory = client_with_db
+    user_id = await _seed_user(factory)
+    course_id = await _seed_course(factory, user_id=user_id)
+    path_id = await _seed_path(factory, slug="python-fundamentals")
+    room_id = await _seed_room(
+        factory,
+        path_id=path_id,
+        slug="intro",
+        room_order=0,
+        intro_excerpt="Topic: Intro. Grounded in 2 curated sources.",
+    )
+    await _seed_problem(factory, course_id=course_id, room_id=room_id, task_order=0)
+
+    resp = await ac.get(f"/api/paths/python-fundamentals/rooms/{room_id}")
+    assert resp.status_code == 200, resp.text
+    assert (
+        resp.json()["intro_excerpt"] == "Topic: Intro. Grounded in 2 curated sources."
+    )
+
+
+@pytest.mark.asyncio
+async def test_mission_detail_intro_excerpt_skips_null_content_nodes(
+    client_with_db,
+) -> None:
+    """Critic C2 regression: when the first-ordered content node has
+    NULL ``content`` / NULL ``blocks_json``, the resolver must skip it
+    and find the next node with real prose — never return NULL prose."""
+
+    ac, factory = client_with_db
+    user_id = await _seed_user(factory)
+    course_id = await _seed_course(factory, user_id=user_id)
+    path_id = await _seed_path(factory, slug="python-fundamentals")
+    room_id = await _seed_room(
+        factory,
+        path_id=path_id,
+        slug="filter",
+        room_order=0,
+        intro_excerpt="placeholder",
+    )
+
+    # ``order_index=0`` — first by the resolver's ORDER BY — but no prose.
+    shell_node_id = await _seed_content_node(
+        factory,
+        course_id=course_id,
+        content=None,
+        title="Shell",
+        order_index=0,
+    )
+    # ``order_index=1`` — the one with real prose; resolver should pick it.
+    prose_node_id = await _seed_content_node(
+        factory,
+        course_id=course_id,
+        content="Filter patterns are a staple of functional Python.",
+        title="Filter",
+        order_index=1,
+    )
+    await _seed_problem(
+        factory,
+        course_id=course_id,
+        room_id=room_id,
+        task_order=0,
+        content_node_id=shell_node_id,
+    )
+    await _seed_problem(
+        factory,
+        course_id=course_id,
+        room_id=room_id,
+        task_order=1,
+        content_node_id=prose_node_id,
+    )
+
+    resp = await ac.get(f"/api/paths/python-fundamentals/rooms/{room_id}")
+    assert resp.status_code == 200, resp.text
+    excerpt = resp.json()["intro_excerpt"]
+    assert excerpt is not None
+    assert excerpt.startswith("Filter patterns")
+
+
+@pytest.mark.asyncio
+async def test_mission_detail_capstone_empty_when_null(client_with_db) -> None:
+    """Default room (no ``capstone_problem_ids`` set) returns ``[]`` —
+    never ``None`` — so the frontend can iterate without a null check."""
+
+    ac, factory = client_with_db
+    await _seed_user(factory)
+    path_id = await _seed_path(factory, slug="python-fundamentals")
+    room_id = await _seed_room(factory, path_id=path_id, slug="intro", room_order=0)
+
+    resp = await ac.get(f"/api/paths/python-fundamentals/rooms/{room_id}")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["capstone_problem_ids"] == []
+    assert isinstance(body["capstone_problem_ids"], list)
+
+
+@pytest.mark.asyncio
+async def test_mission_detail_capstone_returns_populated_list(
+    client_with_db,
+) -> None:
+    """When the room has ``capstone_problem_ids`` set, the handler
+    round-trips the list as strings (JSON portability)."""
+
+    ac, factory = client_with_db
+    await _seed_user(factory)
+    path_id = await _seed_path(factory, slug="python-fundamentals")
+
+    # Seed directly so we can populate the optional Codex-B column in
+    # one go — ``_seed_room`` doesn't expose it because it's intentionally
+    # treated as optional by the handler (``getattr``-safe).
+    room_id = uuid.uuid4()
+    capstone_ids = [str(uuid.uuid4()) for _ in range(3)]
+    async with factory() as session:
+        session.add(
+            PathRoom(
+                id=room_id,
+                path_id=path_id,
+                slug="capstone-room",
+                title="Capstone",
+                room_order=0,
+                outcome="Complete this mission",
+                difficulty=2,
+                eta_minutes=15,
+                module_label="",
+                capstone_problem_ids=capstone_ids,
+            )
+        )
+        await session.commit()
+
+    resp = await ac.get(f"/api/paths/python-fundamentals/rooms/{room_id}")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["capstone_problem_ids"] == capstone_ids

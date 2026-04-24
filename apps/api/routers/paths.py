@@ -42,6 +42,7 @@ from services.learning_paths import (
     get_completed_task_ids,
     get_room_progress_snapshots,
     get_room_task_counts,
+    resolve_room_intro_excerpt,
     sample_orphan_cards,
 )
 
@@ -128,7 +129,19 @@ class RoomTask(BaseModel):
 
 
 class RoomDetailResponse(BaseModel):
-    """Payload for ``GET /api/paths/{slug}/rooms/{room_id}``."""
+    """Payload for ``GET /api/paths/{slug}/rooms/{room_id}``.
+
+    Slice 2 extensions
+    ------------------
+    * ``intro_excerpt`` is now resolved from real ``CourseContentTree``
+      prose when available (see ``resolve_room_intro_excerpt``), falling
+      back to the column value and finally ``None``.
+    * ``capstone_problem_ids`` exposes the up-to-3 hardest-task ids for
+      the room's checkpoint launcher. Always a list — empty when the
+      column is NULL / missing so frontend consumers can iterate without
+      a null check. Defaults to ``[]`` so older Codex-B-free clients
+      still deserialise without schema drift.
+    """
 
     id: uuid.UUID
     slug: str
@@ -145,6 +158,7 @@ class RoomDetailResponse(BaseModel):
     tasks: list[RoomTask]
     task_total: int = Field(..., ge=0)
     task_complete: int = Field(..., ge=0)
+    capstone_problem_ids: list[str] = Field(default_factory=list)
 
 
 class OrphanSample(BaseModel):
@@ -561,12 +575,29 @@ async def get_room_detail(
     task_total = len(tasks)
     task_complete = sum(1 for t in tasks if t.id in completed_ids)
 
+    # Slice 2: upgrade placeholder intro → first 300 chars of real lesson
+    # prose when any mapped task points at a ``CourseContentTree`` node
+    # with non-null content. Fallback to the seed placeholder so the UI
+    # keeps showing *something* when a room has no mapped tasks yet.
+    intro_excerpt = await resolve_room_intro_excerpt(
+        db, room.id, placeholder=room.intro_excerpt
+    )
+
+    # ``capstone_problem_ids`` is a dirty-worktree column (Codex B track)
+    # — the ORM attribute exists, the SQLite column was added via inline
+    # ALTER, but the Alembic migration is uncommitted. ``getattr`` with a
+    # None fallback keeps this endpoint safe for (a) older test DBs whose
+    # ``create_all`` predates the attribute, (b) any future rollback of
+    # the Codex B column. Always hand the client a list.
+    raw_capstones = getattr(room, "capstone_problem_ids", None) or []
+    capstone_problem_ids = [str(cid) for cid in raw_capstones]
+
     return RoomDetailResponse(
         id=room.id,
         slug=room.slug,
         title=room.title,
         room_order=room.room_order,
-        intro_excerpt=room.intro_excerpt,
+        intro_excerpt=intro_excerpt,
         outcome=room.outcome,
         difficulty=room.difficulty,
         eta_minutes=room.eta_minutes,
@@ -577,6 +608,7 @@ async def get_room_detail(
         tasks=payload,
         task_total=task_total,
         task_complete=task_complete,
+        capstone_problem_ids=capstone_problem_ids,
     )
 
 
