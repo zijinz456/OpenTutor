@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Space_Grotesk } from "next/font/google";
+import { Inter, JetBrains_Mono, Space_Grotesk } from "next/font/google";
 import { ThemeProvider } from "next-themes";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -9,10 +9,29 @@ import { PanicOverlay } from "@/components/panic/PanicOverlay";
 import { PomodoroTimer } from "@/components/pomodoro/PomodoroTimer";
 import "./globals.css";
 
+// Space Grotesk (existing) — display font for large headings.
 const spaceGrotesk = Space_Grotesk({
   subsets: ["latin"],
   display: "swap",
   variable: "--font-space-grotesk",
+});
+
+// Inter — new primary UI typeface per ТЗ §8. Chosen for tabular-nums
+// in timers, progress %, streak counts. Does NOT replace the existing
+// --font-geist-sans yet; coexists as --font-inter so new THM-styled
+// components can opt in via Tailwind's `font-inter` utility.
+const inter = Inter({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-inter",
+});
+
+// JetBrains Mono — new monospace typeface per ТЗ §8. For code panes,
+// level chips (0x1 [ADEPT]), and path fragments.
+const jetbrainsMono = JetBrains_Mono({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-jetbrains-mono",
 });
 
 export const viewport: Viewport = {
@@ -51,7 +70,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning className={spaceGrotesk.variable}>
+    <html
+      lang="en"
+      suppressHydrationWarning
+      className={`${spaceGrotesk.variable} ${inter.variable} ${jetbrainsMono.variable}`}
+    >
       <body className="antialiased">
         <a
           href="#main-content"

@@ -77,12 +77,79 @@
   --duration-fast: 150ms;
   --duration-normal: 250ms;
   --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* ── THM-inspired token bindings (ТЗ §8) ───────────────────────────
+   * Exposed via Tailwind utilities (`bg-thm-base`, `text-thm-primary`,
+   * `font-ui`, `font-mono-code`, `text-track-python` etc.). These map
+   * to the raw CSS vars defined in the second :root block below.
+   * Additive — does NOT touch the existing --primary/--secondary/etc
+   * Scandinavian palette, which remains the default for shipped code.
+   * New THM-styled components opt in per-component by referencing
+   * these utilities instead of the legacy ones. Full migration is
+   * tracked in ТЗ.md Slice 1-4.
+   */
+  --color-thm-base: var(--thm-bg-base);
+  --color-thm-surface: var(--thm-bg-surface);
+  --color-thm-elevated: var(--thm-bg-elevated);
+  --color-thm-surface-hover: var(--thm-surface-hover);
+  --color-thm-surface-pressed: var(--thm-surface-pressed);
+  --color-thm-border-subtle: var(--thm-border-subtle);
+  --color-thm-border-strong: var(--thm-border-strong);
+  --color-thm-text-primary: var(--thm-text-primary);
+  --color-thm-text-secondary: var(--thm-text-secondary);
+  --color-thm-text-muted: var(--thm-text-muted);
+  --color-thm-text-disabled: var(--thm-text-disabled);
+  --color-track-python: var(--thm-track-python);
+  --color-track-english: var(--thm-track-english);
+  --color-track-hacking: var(--thm-track-hacking);
+  --color-thm-accent: var(--thm-accent-primary);
+  --color-thm-accent-hover: var(--thm-accent-primary-hover);
+
+  --font-ui: var(--font-inter), "Segoe UI", system-ui, sans-serif;
+  --font-mono-code: var(--font-jetbrains-mono), "SFMono-Regular", Menlo, Consolas, monospace;
+  --font-display-thm: var(--font-space-grotesk), var(--font-inter), sans-serif;
+
+  /* Motion tokens for THM components (ТЗ §8) */
+  --thm-dur-fast: 120ms;
+  --thm-dur-normal: 200ms;
+  --thm-dur-slow: 320ms;
+  --thm-ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --thm-ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 :root {
   --font-geist-sans: var(--font-space-grotesk), "Avenir Next", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
   --font-geist-mono: "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   --radius: 0.75rem;
+
+  /* ── THM-inspired palette (ТЗ §8) — additive, not replacing ───────
+   * These tokens are consumed by NEW components migrating to the
+   * "late-night terminal that teaches" mood. Existing components keep
+   * using --background / --primary / --card etc. Both coexist. Full
+   * component migration is tracked in ТЗ.md Slices 1-4.
+   */
+  --thm-bg-base: #0B0F14;
+  --thm-bg-surface: #111821;
+  --thm-bg-elevated: #18222E;
+  --thm-surface-hover: #1C2835;
+  --thm-surface-pressed: #223040;
+
+  --thm-border-subtle: rgba(255, 255, 255, 0.06);
+  --thm-border-strong: rgba(255, 255, 255, 0.12);
+  --thm-border-focus: #34D399;
+
+  --thm-text-primary: #E6EDF3;
+  --thm-text-secondary: #A3B1C2;
+  --thm-text-muted: #6B7A8C;
+  --thm-text-disabled: #3F4A58;
+
+  /* Track accents — HSL ~60/~70, tone-matched per ТЗ §8 risk R1 */
+  --thm-track-python: #34D399;   /* emerald-400 */
+  --thm-track-english: #60A5FA;  /* blue-400 */
+  --thm-track-hacking: #F59E0B;  /* amber-500 — not red, THM owns red */
+
+  --thm-accent-primary: #34D399;
+  --thm-accent-primary-hover: #10B981;
 
   /* Warm cream palette — inspired by Scandinavian minimal */
   --background: #FAF8F5;
