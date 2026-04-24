@@ -28,6 +28,7 @@ DB.
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 import os
 import tempfile
 import uuid
@@ -209,6 +210,7 @@ async def _seed_correct_result(
     *,
     user_id: uuid.UUID,
     problem_id: uuid.UUID,
+    answered_at: datetime | None = None,
 ) -> None:
     async with session_factory() as session:
         session.add(
@@ -217,6 +219,7 @@ async def _seed_correct_result(
                 user_id=user_id,
                 user_answer="a",
                 is_correct=True,
+                answered_at=answered_at or datetime.now(timezone.utc),
             )
         )
         await session.commit()
@@ -465,3 +468,144 @@ async def test_get_orphans_returns_count_and_sample(client_with_db) -> None:
     for row in body["sample"]:
         assert "id" in row and "title" in row
         assert row["title"].startswith("Orphan ")
+
+
+@pytest.mark.asyncio
+async def test_get_current_mission_returns_null_when_nothing_started(
+    client_with_db,
+) -> None:
+    """Mapped missions with zero progress should not surface as current."""
+
+    ac, factory = client_with_db
+    user_id = await _seed_user(factory)
+    course_id = await _seed_course(factory, user_id=user_id)
+    path_id = await _seed_path(factory, slug="python-fundamentals")
+    room_id = await _seed_room(factory, path_id=path_id, slug="intro", room_order=0)
+    await _seed_problem(factory, course_id=course_id, room_id=room_id, task_order=0)
+    await _seed_problem(factory, course_id=course_id, room_id=room_id, task_order=1)
+
+    resp = await ac.get("/api/paths/current-mission")
+    assert resp.status_code == 200, resp.text
+    assert resp.json() is None
+
+
+@pytest.mark.asyncio
+async def test_get_current_mission_ignores_completed_missions(client_with_db) -> None:
+    """A fully green mission should not be returned as in-progress."""
+
+    ac, factory = client_with_db
+    user_id = await _seed_user(factory)
+    course_id = await _seed_course(factory, user_id=user_id)
+    path_id = await _seed_path(factory, slug="python-fundamentals")
+    room_id = await _seed_room(factory, path_id=path_id, slug="intro", room_order=0)
+    p1 = await _seed_problem(
+        factory, course_id=course_id, room_id=room_id, task_order=0
+    )
+    p2 = await _seed_problem(
+        factory, course_id=course_id, room_id=room_id, task_order=1
+    )
+    await _seed_correct_result(factory, user_id=user_id, problem_id=p1)
+    await _seed_correct_result(factory, user_id=user_id, problem_id=p2)
+
+    resp = await ac.get("/api/paths/current-mission")
+    assert resp.status_code == 200, resp.text
+    assert resp.json() is None
+
+
+@pytest.mark.asyncio
+async def test_get_current_mission_returns_partial_mission_with_metadata(
+    client_with_db,
+) -> None:
+    """A partially-complete mission should surface with room/path metadata."""
+
+    ac, factory = client_with_db
+    user_id = await _seed_user(factory)
+    course_id = await _seed_course(factory, user_id=user_id)
+    path_id = await _seed_path(
+        factory,
+        slug="python-fundamentals",
+        title="Python Fundamentals",
+    )
+    room_id = await _seed_room(
+        factory,
+        path_id=path_id,
+        slug="loops",
+        title="Loops",
+        room_order=2,
+        intro_excerpt="Start with for-loops.",
+        outcome="Write a loop that filters a list",
+        difficulty=3,
+        eta_minutes=20,
+        module_label="Basics",
+    )
+    p1 = await _seed_problem(
+        factory, course_id=course_id, room_id=room_id, task_order=0
+    )
+    await _seed_problem(factory, course_id=course_id, room_id=room_id, task_order=1)
+    await _seed_problem(factory, course_id=course_id, room_id=room_id, task_order=2)
+    await _seed_correct_result(factory, user_id=user_id, problem_id=p1)
+
+    resp = await ac.get("/api/paths/current-mission")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["mission_id"] == str(room_id)
+    assert body["path_id"] == str(path_id)
+    assert body["path_slug"] == "python-fundamentals"
+    assert body["path_title"] == "Python Fundamentals"
+    assert body["title"] == "Loops"
+    assert body["intro_excerpt"] == "Start with for-loops."
+    assert body["outcome"] == "Write a loop that filters a list"
+    assert body["difficulty"] == 3
+    assert body["eta_minutes"] == 20
+    assert body["module_label"] == "Basics"
+    assert body["task_total"] == 3
+    assert body["task_complete"] == 1
+    assert body["progress_pct"] == 33
+
+
+@pytest.mark.asyncio
+async def test_get_current_mission_picks_most_recent_partial_mission(
+    client_with_db,
+) -> None:
+    """When multiple missions are partial, the freshest activity wins."""
+
+    ac, factory = client_with_db
+    user_id = await _seed_user(factory)
+    course_id = await _seed_course(factory, user_id=user_id)
+    earlier = datetime(2026, 4, 24, 9, 0, tzinfo=timezone.utc)
+    later = earlier + timedelta(hours=2)
+
+    path_a = await _seed_path(factory, slug="python-fundamentals", title="Python")
+    room_a = await _seed_room(
+        factory, path_id=path_a, slug="loops", title="Loops", room_order=0
+    )
+    a1 = await _seed_problem(factory, course_id=course_id, room_id=room_a, task_order=0)
+    await _seed_problem(factory, course_id=course_id, room_id=room_a, task_order=1)
+    await _seed_correct_result(
+        factory,
+        user_id=user_id,
+        problem_id=a1,
+        answered_at=earlier,
+    )
+
+    path_b = await _seed_path(factory, slug="hacking-foundations", title="Hacking")
+    room_b = await _seed_room(
+        factory, path_id=path_b, slug="recon", title="Recon", room_order=0
+    )
+    b1 = await _seed_problem(factory, course_id=course_id, room_id=room_b, task_order=0)
+    await _seed_problem(factory, course_id=course_id, room_id=room_b, task_order=1)
+    await _seed_correct_result(
+        factory,
+        user_id=user_id,
+        problem_id=b1,
+        answered_at=later,
+    )
+
+    resp = await ac.get("/api/paths/current-mission")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["mission_id"] == str(room_b)
+    assert body["path_slug"] == "hacking-foundations"
+    assert body["title"] == "Recon"

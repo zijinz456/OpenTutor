@@ -40,6 +40,7 @@ from services.auth.dependency import get_current_user
 from services.learning_paths import (
     count_orphan_cards,
     get_completed_task_ids,
+    get_room_progress_snapshots,
     get_room_task_counts,
     sample_orphan_cards,
 )
@@ -158,6 +159,24 @@ class OrphanListResponse(BaseModel):
 
     count: int = Field(..., ge=0)
     sample: list[OrphanSample]
+
+
+class CurrentMissionResponse(BaseModel):
+    """Payload for ``GET /api/paths/current-mission``."""
+
+    mission_id: uuid.UUID
+    path_id: uuid.UUID
+    path_slug: str
+    path_title: str
+    title: str
+    intro_excerpt: Optional[str] = None
+    outcome: Optional[str] = None
+    difficulty: Optional[int] = Field(default=None, ge=1, le=5)
+    eta_minutes: Optional[int] = Field(default=None, ge=1)
+    module_label: Optional[str] = None
+    task_total: int = Field(..., ge=0)
+    task_complete: int = Field(..., ge=0)
+    progress_pct: int = Field(..., ge=0, le=100)
 
 
 # ── Endpoint 1: GET /api/paths ──────────────────────────────────────
@@ -289,6 +308,87 @@ async def list_orphans(
 
 
 # ── Endpoint 2: GET /api/paths/{slug} ───────────────────────────────
+
+
+@router.get(
+    "/current-mission",
+    response_model=Optional[CurrentMissionResponse],
+    summary="Return the user's freshest in-progress mission, if any",
+    description=(
+        "Derives the current mission from existing practice data only. "
+        "A mission is eligible when it has at least one mapped task, at "
+        "least one completed task, and is not yet fully complete. When "
+        "multiple partial missions exist, the router returns the one "
+        "with the latest user activity."
+    ),
+)
+async def get_current_mission(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Optional[CurrentMissionResponse]:
+    """Return the freshest in-progress mission or ``None``."""
+
+    rows = list(
+        (
+            await db.execute(
+                select(PathRoom, LearningPath)
+                .join(LearningPath, LearningPath.id == PathRoom.path_id)
+                .order_by(LearningPath.created_at.asc(), PathRoom.room_order.asc())
+            )
+        ).all()
+    )
+    if not rows:
+        return None
+
+    room_ids = [room.id for room, _path in rows]
+    progress_by_room = await get_room_progress_snapshots(db, user.id, room_ids)
+
+    current: tuple[PathRoom, LearningPath, int, int, int] | None = None
+    current_last_activity = None
+
+    for room, path in rows:
+        progress = progress_by_room.get(room.id)
+        if progress is None or progress.task_total <= 0:
+            continue
+        if progress.task_complete <= 0 or progress.task_complete >= progress.task_total:
+            continue
+        if progress.last_activity_at is None:
+            continue
+
+        progress_pct = round((progress.task_complete / progress.task_total) * 100)
+        if (
+            current is None
+            or current_last_activity is None
+            or progress.last_activity_at > current_last_activity
+        ):
+            current = (
+                room,
+                path,
+                progress.task_total,
+                progress.task_complete,
+                progress_pct,
+            )
+            current_last_activity = progress.last_activity_at
+
+    if current is None:
+        return None
+
+    room, path, task_total, task_complete, progress_pct = current
+    return CurrentMissionResponse(
+        mission_id=room.id,
+        path_id=path.id,
+        path_slug=path.slug,
+        path_title=path.title,
+        title=room.title,
+        intro_excerpt=room.intro_excerpt,
+        outcome=room.outcome,
+        difficulty=room.difficulty,
+        eta_minutes=room.eta_minutes,
+        module_label=room.module_label,
+        task_total=task_total,
+        task_complete=task_complete,
+        progress_pct=progress_pct,
+    )
 
 
 @router.get(

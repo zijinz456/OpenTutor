@@ -95,6 +95,24 @@ export interface OrphanListResponse {
   sample: Record<string, unknown>[];
 }
 
+export interface CurrentMission {
+  mission_id: string;
+  path_id: string;
+  path_slug: string;
+  path_title: string;
+  title: string;
+  intro_excerpt: string | null;
+  outcome: string | null;
+  difficulty: number | null;
+  eta_minutes: number | null;
+  module_label: string | null;
+  task_total: number;
+  task_complete: number;
+  progress_pct: number;
+}
+
+export type CurrentMissionResponse = CurrentMission | null;
+
 /** `GET /api/paths` — dashboard list with aggregate progress counters. */
 export async function listPaths(): Promise<PathListResponse> {
   return request("/paths");
@@ -118,4 +136,9 @@ export async function getRoomDetail(
 /** `GET /api/paths/orphans` — count + sample of unmapped cards. */
 export async function listOrphans(): Promise<OrphanListResponse> {
   return request("/paths/orphans");
+}
+
+/** `GET /api/paths/current-mission` — freshest in-progress mission. */
+export async function getCurrentMission(): Promise<CurrentMissionResponse> {
+  return request("/paths/current-mission");
 }
