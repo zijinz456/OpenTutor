@@ -191,10 +191,14 @@ async def test_get_status_returns_remaining(client_with_db) -> None:
 
 @pytest.mark.asyncio
 async def test_delete_freeze_204_no_refund(client_with_db) -> None:
-    """Unfreeze returns 204; the slot stays consumed (no quota refund,
-    critic C8). Implementation sets ``expires_at = now`` so the row
-    remains in the weekly bucket and the lifetime UniqueConstraint
-    still blocks a second freeze on the same card."""
+    """Unfreeze returns 200 ``{"ok": true}``; the slot stays consumed
+    (no quota refund, critic C8). Implementation sets ``expires_at = now``
+    so the row remains in the weekly bucket and the lifetime
+    UniqueConstraint still blocks a second freeze on the same card.
+
+    Status code is 200 not 204: FastAPI asserts no body for 204 endpoints,
+    which conflicts with the ``-> dict`` return annotation. Name kept for
+    history; see SESSION_STATE cheatsheet entry on 204 + return type."""
 
     ac, factory = client_with_db
     user_id = await _seed_user(factory)
@@ -212,7 +216,8 @@ async def test_delete_freeze_204_no_refund(client_with_db) -> None:
 
     # Unfreeze → active list empties BUT weekly_used stays 1 (no refund).
     resp = await ac.delete(f"/api/freeze/{p1}")
-    assert resp.status_code == 204
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True}
 
     after = await ac.get("/api/freeze/status")
     body = after.json()

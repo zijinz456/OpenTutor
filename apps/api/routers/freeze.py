@@ -165,29 +165,27 @@ async def get_status(
 
 @router.delete(
     "/{problem_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
+    status_code=status.HTTP_200_OK,
     summary="Unfreeze a card (does NOT refund weekly quota)",
     description=(
         "Remove the freeze row for ``problem_id`` so the card re-enters "
         "the daily-plan queue immediately. **The weekly quota is not "
         "refunded** — critic C8 on ``adhd_ux_full_phase14.md``. Returns "
-        "204 on success, 404 when no active freeze exists."
+        "200 ``{\"ok\": true}`` on success, 404 when no active freeze exists."
     ),
 )
 async def delete_freeze(
     problem_id: uuid.UUID,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> None:
-    """Delete the freeze row; 404 if nothing to delete."""
-
+) -> dict[str, bool]:
     deleted = await unfreeze_card(db, user.id, problem_id)
     if not deleted:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"error": "no_active_freeze", "problem_id": str(problem_id)},
         )
-    return None
+    return {"ok": True}
 
 
 __all__ = ["router"]
