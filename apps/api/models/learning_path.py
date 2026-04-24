@@ -132,6 +132,22 @@ class PathRoom(Base):
     # Target card count from the yaml module (for the "3/15 tasks" UI
     # label when a room has no mapped tasks yet).
     task_count_target: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Phase 16b generation metadata — NULL for hand-seeded rooms, set by
+    # ``services/rooms/room_factory.py`` for LLM-generated rooms.
+    generated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # e.g. ``"llama-3.3-70b-versatile"`` — model id that produced this room.
+    generator_model: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    # sha256 hex of the canonical prompt inputs; used for idempotence
+    # (same prompt hash → same room_id on re-submit).
+    generation_seed: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    # ``"standard"`` (hand-seeded) or ``"generated"`` (LLM). Plain string
+    # so adding a new room type never needs a migration. ``server_default``
+    # in the migration backfills existing rows to ``"standard"``.
+    room_type: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="standard"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
