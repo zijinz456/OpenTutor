@@ -44,6 +44,10 @@ export interface RoomSummary {
   task_total: number;
   task_complete: number;
   intro_excerpt: string | null;
+  outcome: string | null;
+  difficulty: number | null;
+  eta_minutes: number | null;
+  module_label: string | null;
 }
 
 export interface PathDetailResponse {
@@ -74,6 +78,10 @@ export interface RoomDetailResponse {
   title: string;
   room_order: number;
   intro_excerpt: string | null;
+  outcome: string | null;
+  difficulty: number | null;
+  eta_minutes: number | null;
+  module_label: string | null;
   path_id: string;
   path_slug: string;
   path_title: string;

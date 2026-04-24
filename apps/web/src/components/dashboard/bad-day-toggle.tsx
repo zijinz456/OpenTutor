@@ -26,7 +26,7 @@ export function BadDayToggle() {
           <p className="text-sm font-medium text-foreground">
             {t("home.badDay.toggle")}
           </p>
-          <p className="text-xs text-muted-foreground">UTC auto-reset</p>
+          <p className="text-xs text-muted-foreground">Resets at midnight.</p>
         </div>
         <span
           className={cn(

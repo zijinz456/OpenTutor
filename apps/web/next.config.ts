@@ -36,6 +36,17 @@ const nextConfig: NextConfig = {
   // Without this, POST /api/courses/ gets a 308 before the rewrite runs, and the
   // redirected request may expose the backend origin, which CSP connect-src blocks.
   skipTrailingSlashRedirect: true,
+  async redirects() {
+    return [
+      { source: "/path", destination: "/tracks", permanent: true },
+      { source: "/path/:slug", destination: "/tracks/:slug", permanent: true },
+      {
+        source: "/path/:slug/room/:id",
+        destination: "/tracks/:slug/missions/:id",
+        permanent: true,
+      },
+    ];
+  },
   async headers() {
     return [
       {

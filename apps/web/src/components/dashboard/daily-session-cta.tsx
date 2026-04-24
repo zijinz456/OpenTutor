@@ -23,9 +23,9 @@ interface SessionSizeOption {
 }
 
 const SIZE_OPTIONS: SessionSizeOption[] = [
-  { size: 1, label: "1 card", subLabel: "30 sec" },
-  { size: 5, label: "5 cards", subLabel: "3 min" },
-  { size: 10, label: "10 cards", subLabel: "5 min" },
+  { size: 1, label: "One card", subLabel: "30 sec" },
+  { size: 5, label: "Five cards", subLabel: "3 min" },
+  { size: 10, label: "Ten cards", subLabel: "5 min" },
 ];
 
 export function DailySessionCTA() {
@@ -81,12 +81,14 @@ export function DailySessionCTA() {
           <Sparkles className="mt-0.5 size-5 shrink-0 text-brand" />
           <div className="flex-1">
             <p className="text-sm font-medium text-foreground">
-              {badDayEmpty ? "Nothing easy due. Rest." : "Nothing due. Great job."}
+              {badDayEmpty
+                ? "Nothing easy due today."
+                : "Nothing due today. Come back tomorrow."}
             </p>
             <p className="mt-0.5 text-xs text-muted-foreground">
               {badDayEmpty
-                ? "Try again tomorrow or turn bad-day mode off."
-                : "Come back later."}
+                ? "Turn off Easy mode or come back tomorrow."
+                : "No guilt necessary."}
             </p>
           </div>
         </div>

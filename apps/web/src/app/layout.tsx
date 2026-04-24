@@ -3,6 +3,7 @@ import { Inter, JetBrains_Mono, Space_Grotesk } from "next/font/google";
 import { ThemeProvider } from "next-themes";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { TopBar } from "@/app/_components/top-bar";
 import { LocaleProvider } from "@/lib/i18n-context";
 import { ConnectionStatus } from "@/components/shared/connection-status";
 import { PanicOverlay } from "@/components/panic/PanicOverlay";
@@ -40,20 +41,20 @@ export const viewport: Viewport = {
   maximumScale: 1,
   viewportFit: "cover",
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#ffffff" },
-    { media: "(prefers-color-scheme: dark)", color: "#1a1a1a" },
+    { media: "(prefers-color-scheme: light)", color: "#0B0F14" },
+    { media: "(prefers-color-scheme: dark)", color: "#0B0F14" },
   ],
 };
 
 export const metadata: Metadata = {
-  title: "OpenTutor Zenus — Personalized Learning Agent",
-  description: "Upload any learning material, get a personalized study space with AI notes, quizzes, and chat.",
-  applicationName: "OpenTutor Zenus",
+  title: "LearnDopamine — Personalized Learning Agent",
+  description: "Mission-first learning with AI notes, review rituals, and calmer study flows.",
+  applicationName: "LearnDopamine",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
-    title: "OpenTutor Zenus",
+    title: "LearnDopamine",
   },
   icons: {
     icon: [
@@ -87,7 +88,8 @@ export default function RootLayout({
           <LocaleProvider>
             <TooltipProvider>
               <PanicOverlay>
-                <main id="main-content">
+                <TopBar />
+                <main id="main-content" className="pt-12">
                   {children}
                 </main>
                 <PomodoroTimer />

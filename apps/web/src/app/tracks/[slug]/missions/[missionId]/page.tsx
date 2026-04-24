@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * `/path/[slug]/room/[roomId]` — room detail + inline task runner
+ * `/tracks/[slug]/missions/[missionId]` - mission detail + inline task runner
  * (Phase 16a T4).
  *
  * Pulls the room (with tasks) from the backend on mount, renders an
@@ -24,9 +24,9 @@ import { RoomTaskList } from "@/components/path/RoomTaskList";
 function RoomDetailContent() {
   const params = useParams();
   const slugParam = params?.slug;
-  const roomParam = params?.roomId;
+  const missionParam = params?.missionId;
   const slug = Array.isArray(slugParam) ? slugParam[0] : slugParam;
-  const roomId = Array.isArray(roomParam) ? roomParam[0] : roomParam;
+  const roomId = Array.isArray(missionParam) ? missionParam[0] : missionParam;
 
   const [data, setData] = useState<RoomDetailResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -50,7 +50,7 @@ function RoomDetailContent() {
           setError(
             err instanceof Error
               ? err.message
-              : "Could not load room — try again.",
+              : "Could not load mission - try again.",
           );
       })
       .finally(() => {
@@ -62,7 +62,7 @@ function RoomDetailContent() {
   }, [slug, roomId]);
 
   const handleTaskComplete = (taskId: string) => {
-    // Only bump for tasks that weren't already green — otherwise the
+    // Only bump for tasks that weren't already green - otherwise the
     // counter would double-count a re-submission of an already-mastered
     // card.
     if (!data) return;
@@ -80,11 +80,11 @@ function RoomDetailContent() {
       <div className="mx-auto max-w-3xl space-y-6">
         <div>
           <Link
-            href={slug ? `/path/${slug}` : "/path"}
+            href={slug ? `/tracks/${slug}` : "/tracks"}
             className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
           >
             <ArrowLeft className="size-3.5" />
-            {data ? data.path_title : "Path"}
+            {data ? data.path_title : "Track"}
           </Link>
         </div>
 
@@ -116,7 +116,7 @@ function RoomDetailContent() {
         {!loading && !error && data && (
           <>
             <div>
-              <h1 className="text-2xl font-bold tracking-tight text-foreground">
+              <h1 className="font-display text-2xl font-semibold tracking-tight text-foreground md:text-3xl">
                 {data.title}
               </h1>
               {data.intro_excerpt && (
@@ -133,9 +133,9 @@ function RoomDetailContent() {
             </div>
 
             {data.tasks.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                No tasks in this room yet.
-              </p>
+                <p className="text-sm text-muted-foreground">
+                  No tasks in this mission yet.
+                </p>
             ) : (
               <RoomTaskList
                 tasks={data.tasks}

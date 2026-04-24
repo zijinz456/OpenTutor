@@ -67,7 +67,7 @@ export function PanicOverlay({ children }: { children: React.ReactNode }) {
           data-testid="panic-exit-cta"
           className="fixed top-4 right-4 z-50 rounded-full bg-muted/80 px-3 py-1 text-xs cursor-pointer hover:bg-muted shadow-sm border border-border"
         >
-          Exit panic (Esc)
+          Exit quiet mode · Esc
         </div>
       )}
     </>

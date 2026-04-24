@@ -47,7 +47,7 @@ function makeResponse(
   return { paths, orphan_count: orphanCount };
 }
 
-describe("/path page", () => {
+describe("/tracks page", () => {
   beforeEach(() => {
     listPathsMock.mockReset();
   });

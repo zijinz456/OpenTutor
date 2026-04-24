@@ -312,3 +312,6 @@ export type {
 
 export { getWelcomeBack } from "./welcome-back";
 export type { WelcomeBackPayload } from "./welcome-back";
+
+export { getFreezeStatus } from "./freeze";
+export type { FreezeStatusResponse } from "./freeze";

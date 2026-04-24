@@ -6,7 +6,7 @@
  *
  * Sits directly below `<BrutalDrillCTA>` on the dashboard. Fetches the
  * aggregate path list on mount, sums `room_complete` / `room_total`
- * across all paths, and links out to `/path` for the full list.
+ * across all paths, and links out to `/tracks` for the full list.
  *
  * Loading / error
  * ---------------
@@ -63,7 +63,7 @@ export function LearningPathsPill() {
 
   return (
     <section
-      aria-label="Python Learning Paths"
+      aria-label="Learning tracks"
       data-testid="learning-paths-pill"
       data-panic-hide
       className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-5 card-shadow"
@@ -72,7 +72,7 @@ export function LearningPathsPill() {
         <GraduationCap className="size-5 shrink-0 text-emerald-600 mt-0.5" />
         <div className="flex-1 min-w-0">
           <p className="text-sm font-semibold text-foreground">
-            Python Learning Paths
+            Tracks
           </p>
 
           {loading && (
@@ -97,14 +97,14 @@ export function LearningPathsPill() {
                 data-testid="learning-paths-pill-progress"
                 className="mt-0.5 text-xs text-muted-foreground"
               >
-                {roomComplete}/{roomTotal} rooms mastered
+                {roomComplete}/{roomTotal} missions cleared
               </p>
               {orphanCount > 0 && (
                 <p
                   data-testid="learning-paths-pill-orphans"
                   className="mt-1 text-[11px] text-muted-foreground/80"
                 >
-                  {orphanCount} orphan cards
+                  {orphanCount} cards not yet mapped
                 </p>
               )}
             </>
@@ -112,11 +112,11 @@ export function LearningPathsPill() {
         </div>
 
         <Link
-          href="/path"
+          href="/tracks"
           data-testid="learning-paths-pill-cta"
           className="self-center shrink-0 rounded-full border border-emerald-500/50 bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-500/20 transition-colors"
         >
-          Open paths
+          Browse tracks
         </Link>
       </div>
     </section>

@@ -50,9 +50,9 @@ describe("<PathCard>", () => {
     ).toHaveTextContent("15/40");
   });
 
-  it("links to /path/{slug}", () => {
+  it("links to /tracks/{slug}", () => {
     render(<PathCard summary={makePath({ slug: "oop-essentials" })} />);
     const card = screen.getByTestId("path-card-oop-essentials");
-    expect(card).toHaveAttribute("href", "/path/oop-essentials");
+    expect(card).toHaveAttribute("href", "/tracks/oop-essentials");
   });
 });

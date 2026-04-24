@@ -18,7 +18,7 @@
  *         tab with a sound from a tab the user forgot about).
  *
  * * **Break overlay on drill pages.** When phase is a break AND the URL
- *   path matches a drill route (under /session or under /path/:slug/room), we
+ *   path matches a drill route (under /session or under /tracks/:slug/missions), we
  *   render a dimming overlay with a "Skip break" button. It sits above
  *   the drill UI but below Panic Mode's exit CTA (lower z-index).
  *   Critic C3 is honoured by caller convention: break timing is only
@@ -49,8 +49,8 @@ function formatRemaining(ms: number): string {
 function isDrillPath(pathname: string | null): boolean {
   if (!pathname) return false;
   if (pathname.startsWith("/session/")) return true;
-  // /path/:slug/room/:room
-  if (/^\/path\/[^/]+\/room\//.test(pathname)) return true;
+  // /tracks/:slug/missions/:mission
+  if (/^\/tracks\/[^/]+\/missions\//.test(pathname)) return true;
   return false;
 }
 
@@ -131,7 +131,7 @@ export function PomodoroTimer() {
       <div
         data-testid="pomodoro-pill"
         className={cn(
-          "fixed top-4 right-28 z-40 rounded-full px-3 py-1 text-xs shadow-sm border border-border",
+          "fixed top-16 right-4 z-40 rounded-full border border-border px-3 py-1 text-xs shadow-sm md:right-6",
           "bg-muted/80 backdrop-blur-sm",
         )}
       >

@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * `/path/[slug]` — one path with its rooms (Phase 16a T4).
+ * `/tracks/[slug]` — one track with its missions (Phase 16a T4).
  *
  * Server component pattern would force Next 16 to prerender the slug
  * set at build time; since the path set is user-scoped data we use a
@@ -11,7 +11,7 @@
  * Data flow
  * ---------
  * Mount → `getPathDetail(slug)` → render `<RoomListItem>` list. No
- * mutation on this screen — clicks route to `/path/{slug}/room/{id}`.
+ * mutation on this screen — clicks route to `/tracks/{slug}/missions/{id}`.
  */
 
 import { Suspense, useEffect, useState } from "react";
@@ -43,7 +43,7 @@ function PathDetailContent() {
           setError(
             err instanceof Error
               ? err.message
-              : "Could not load path — try again.",
+              : "Could not load track — try again.",
           );
       })
       .finally(() => {
@@ -59,11 +59,11 @@ function PathDetailContent() {
       <div className="mx-auto max-w-3xl space-y-6">
         <div>
           <Link
-            href="/path"
+            href="/tracks"
             className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
           >
             <ArrowLeft className="size-3.5" />
-            All paths
+            All tracks
           </Link>
         </div>
 
@@ -95,7 +95,7 @@ function PathDetailContent() {
         {!loading && !error && data && (
           <>
             <div>
-              <h1 className="text-2xl font-bold tracking-tight text-foreground">
+              <h1 className="font-display text-2xl font-semibold tracking-tight text-foreground md:text-3xl">
                 {data.title}
               </h1>
               {data.description && (
@@ -107,14 +107,14 @@ function PathDetailContent() {
                 data-testid="path-detail-summary"
                 className="mt-2 text-xs text-muted-foreground"
               >
-                {data.room_complete}/{data.room_total} mastered
+                {data.room_complete}/{data.room_total} missions cleared
               </p>
             </div>
 
             <div className="space-y-3" data-testid="path-detail-rooms">
               {data.rooms.length === 0 ? (
                 <p className="text-sm text-muted-foreground">
-                  No rooms in this path yet.
+                  No missions in this track yet.
                 </p>
               ) : (
                 data.rooms.map((room) => (

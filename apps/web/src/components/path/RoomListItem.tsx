@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * `<RoomListItem>` — one row inside `/path/[slug]` (Phase 16a T4).
+ * `<RoomListItem>` — one row inside `/tracks/[slug]` (Phase 16a T4).
  *
  * Visual state tri-state from `task_complete` vs `task_total`:
  *   - All green → soft green background + checkmark badge.
@@ -56,7 +56,7 @@ export function RoomListItem({ pathSlug, room }: RoomListItemProps) {
 
   return (
     <Link
-      href={`/path/${pathSlug}/room/${room.id}`}
+      href={`/tracks/${pathSlug}/missions/${room.id}`}
       data-testid={`room-item-${room.id}`}
       data-state={state}
       className={`block rounded-xl p-4 card-shadow transition-colors ${wrapperClass}`}

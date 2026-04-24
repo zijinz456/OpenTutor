@@ -36,6 +36,10 @@ function makeRoom(overrides: Partial<RoomSummary> = {}): RoomSummary {
     task_total: 5,
     task_complete: 0,
     intro_excerpt: null,
+    outcome: "Complete this mission",
+    difficulty: 2,
+    eta_minutes: 15,
+    module_label: "",
     ...overrides,
   };
 }
@@ -56,7 +60,7 @@ function makeDetail(rooms: RoomSummary[]): PathDetailResponse {
   };
 }
 
-describe("/path/[slug] page", () => {
+describe("/tracks/[slug] page", () => {
   beforeEach(() => {
     getPathDetailMock.mockReset();
   });
@@ -76,7 +80,7 @@ describe("/path/[slug] page", () => {
     expect(screen.getByText("Room One")).toBeInTheDocument();
     expect(screen.getByText("Room Two")).toBeInTheDocument();
     expect(screen.getByTestId("path-detail-summary")).toHaveTextContent(
-      "0/2 mastered",
+      "0/2 missions cleared",
     );
     // Call was made with the slug from useParams.
     expect(getPathDetailMock).toHaveBeenCalledWith("python-fundamentals");

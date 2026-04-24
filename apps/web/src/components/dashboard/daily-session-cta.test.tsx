@@ -123,7 +123,7 @@ describe("<DailySessionCTA>", () => {
     await waitFor(() => {
       expect(screen.getByText(/nothing easy due/i)).toBeInTheDocument();
     });
-    expect(screen.getByText(/turn bad-day mode off/i)).toBeInTheDocument();
+    expect(screen.getByText(/turn off easy mode/i)).toBeInTheDocument();
     expect(mockPush).not.toHaveBeenCalled();
   });
 });

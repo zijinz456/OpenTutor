@@ -66,7 +66,7 @@ describe("<LearningPathsPill>", () => {
     await waitFor(() => {
       expect(
         screen.getByTestId("learning-paths-pill-progress"),
-      ).toHaveTextContent("7/22 rooms mastered");
+      ).toHaveTextContent("7/22 missions cleared");
     });
   });
 
@@ -84,16 +84,16 @@ describe("<LearningPathsPill>", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("renders a link to /path on the CTA", async () => {
+  it("renders a link to /tracks on the CTA", async () => {
     listPathsMock.mockResolvedValue(makeResponse([makePath()], 5));
     render(<LearningPathsPill />);
 
     await waitFor(() => {
       expect(
         screen.getByTestId("learning-paths-pill-orphans"),
-      ).toHaveTextContent("5 orphan cards");
+      ).toHaveTextContent("5 cards not yet mapped");
     });
     const cta = screen.getByTestId("learning-paths-pill-cta");
-    expect(cta).toHaveAttribute("href", "/path");
+    expect(cta).toHaveAttribute("href", "/tracks");
   });
 });

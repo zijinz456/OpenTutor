@@ -1,12 +1,12 @@
 "use client";
 
 /**
- * `/path` — learning paths list (Phase 16a T4).
+ * `/tracks` — track list (Phase 16a T4).
  *
  * Lists every `LearningPath` the backend returns from `GET /api/paths`,
  * ordered by `track_id` ascending (fundamentals → intermediate →
  * advanced → practical). Each entry is a `<PathCard>` that links to
- * `/path/{slug}`.
+ * `/tracks/{slug}`.
  *
  * Data shape note
  * ---------------
@@ -78,17 +78,17 @@ export default function PathListPage() {
             className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
           >
             <ArrowLeft className="size-3.5" />
-            Dashboard
+            Home
           </Link>
-          <h1 className="mt-2 text-2xl font-bold tracking-tight text-foreground">
-            Learning Paths
+          <h1 className="font-display mt-2 text-2xl font-semibold tracking-tight text-foreground md:text-3xl">
+            Tracks
           </h1>
           {orphanCount > 0 && (
             <p
               data-testid="path-list-orphan-caption"
               className="mt-1 text-xs text-muted-foreground"
             >
-              {orphanCount} orphan cards not yet in any path
+              {orphanCount} cards not yet in a track
             </p>
           )}
         </div>
@@ -118,7 +118,7 @@ export default function PathListPage() {
           <div className="space-y-3" data-testid="path-list">
             {sortedPaths.length === 0 ? (
               <p className="text-sm text-muted-foreground">
-                No learning paths yet.
+                No tracks yet.
               </p>
             ) : (
               sortedPaths.map((summary) => (

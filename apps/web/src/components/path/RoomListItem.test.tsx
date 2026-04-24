@@ -27,6 +27,10 @@ function makeRoom(overrides: Partial<RoomSummary> = {}): RoomSummary {
     task_total: 5,
     task_complete: 0,
     intro_excerpt: "Learn how Python tracks names and values.",
+    outcome: "Complete this mission",
+    difficulty: 2,
+    eta_minutes: 15,
+    module_label: "",
     ...overrides,
   };
 }
@@ -40,7 +44,7 @@ describe("<RoomListItem>", () => {
     );
     expect(screen.getByTestId("room-item-room-1")).toHaveAttribute(
       "href",
-      "/path/python/room/room-1",
+      "/tracks/python/missions/room-1",
     );
   });
 

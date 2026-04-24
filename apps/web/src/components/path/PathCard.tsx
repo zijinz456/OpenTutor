@@ -1,11 +1,11 @@
 "use client";
 
 /**
- * `<PathCard>` — one row on `/path` (Phase 16a T4).
+ * `<PathCard>` — one row on `/tracks` (Phase 16a T4).
  *
  * Presentational — parent fetches `listPaths()` and hands one
  * `PathSummary` per card. The whole card is a clickable `<Link>` so a
- * single tap anywhere routes to `/path/{slug}`.
+ * single tap anywhere routes to `/tracks/{slug}`.
  *
  * Difficulty badge colour
  * -----------------------
@@ -36,7 +36,7 @@ export function PathCard({ summary }: PathCardProps) {
 
   return (
     <Link
-      href={`/path/${summary.slug}`}
+      href={`/tracks/${summary.slug}`}
       data-testid={`path-card-${summary.slug}`}
       className="block rounded-2xl bg-card p-5 card-shadow hover:bg-muted/30 transition-colors"
     >
@@ -60,7 +60,7 @@ export function PathCard({ summary }: PathCardProps) {
 
       <div className="mt-3 space-y-2">
         <ProgressBar
-          label="Rooms"
+          label="Missions"
           current={summary.room_complete}
           total={summary.room_total}
           testId={`path-card-rooms-${summary.slug}`}
