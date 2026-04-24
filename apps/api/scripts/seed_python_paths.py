@@ -381,6 +381,13 @@ async def main(
                 head = re.split(r"[:,()\[\]]", mtitle_lower, maxsplit=1)[0].strip()
                 if head and len(head) >= 4:
                     title_hints.add(head)
+                # Optional ``match_titles:`` yaml override — explicit
+                # substring list for orphans the URL-slug heuristic
+                # misses. Added 2026-04-24 after 411 unmapped cards
+                # surfaced on Python Basics. Empty / missing → no-op.
+                for explicit in module.get("match_titles") or []:
+                    if isinstance(explicit, str) and explicit.strip():
+                        title_hints.add(explicit.strip().lower())
                 cards_target = int(module.get("cards_target", 0) or 0)
 
                 # Placeholder intro — T-later will extract real prose

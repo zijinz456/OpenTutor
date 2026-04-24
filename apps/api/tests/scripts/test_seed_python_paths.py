@@ -295,6 +295,86 @@ async def test_cards_mapped_by_source_file(session_factory, fake_yaml):
     assert sorted(p.task_order for p in mapped) == [0, 1, 2, 3, 4]
 
 
+# ── 3.5. match_titles override ─────────────────────────────────────────
+
+
+@pytest.fixture
+def fake_yaml_with_match_titles(tmp_path: Path) -> Path:
+    """Yaml with a module that declares ``match_titles`` — covers the
+    2026-04-24 orphan fix for cards whose scraped page title doesn't
+    substring-match the module URL slug (e.g. Real Python articles
+    titled "Reading and Writing Files in Python (Guide)" should map
+    to ``py_files`` despite the URL slug being ``read-write-files``).
+    """
+    doc = {
+        "tracks": [
+            {
+                "id": "python_fundamentals",
+                "title": "Python Fundamentals",
+                "difficulty": "beginner",
+                "modules": [
+                    {
+                        "id": "py_files",
+                        "title": "File I/O: read, write, with-statement",
+                        "match_titles": [
+                            "reading and writing files",
+                            "file i/o",
+                        ],
+                        "sources": [
+                            {"url": "https://realpython.com/read-write-files-python/"}
+                        ],
+                    },
+                ],
+            }
+        ]
+    }
+    yaml_path = tmp_path / "content" / "python_full_curriculum.yaml"
+    yaml_path.parent.mkdir(parents=True)
+    yaml_path.write_text(yaml.safe_dump(doc), encoding="utf-8")
+    return yaml_path
+
+
+@pytest.mark.asyncio
+async def test_match_titles_override_maps_orphan_by_page_title(
+    session_factory, fake_yaml_with_match_titles
+):
+    """A card whose parent node's source_file is the scraped page title
+    (not the URL) gets mapped via the module's ``match_titles`` list
+    even when the URL slug doesn't substring-match the title."""
+    problem_id = uuid.uuid4()
+    await _seed_course_with_problems(
+        session_factory,
+        # source_file here is the scraped page title, not the URL —
+        # this is what the current ingest pipeline stores for realpython
+        # articles (see SESSION_STATE quirks on ``source_file``).
+        url_by_problem={
+            problem_id: "Reading and Writing Files in Python (Guide) – Real Python"
+        },
+    )
+
+    rc = await main(
+        dry_run=False,
+        yaml_path_override=fake_yaml_with_match_titles,
+        session_factory=session_factory,
+    )
+    assert rc == 0
+
+    from sqlalchemy import select
+
+    async with session_factory() as db:
+        room = (
+            await db.execute(select(PathRoom).where(PathRoom.slug == "py_files"))
+        ).scalar_one()
+        mapped = (
+            await db.execute(
+                select(PracticeProblem).where(PracticeProblem.id == problem_id)
+            )
+        ).scalar_one()
+
+    assert mapped.path_room_id == room.id
+    assert mapped.task_order == 0
+
+
 # ── 4. Orphans stay orphan ─────────────────────────────────────────────
 
 
