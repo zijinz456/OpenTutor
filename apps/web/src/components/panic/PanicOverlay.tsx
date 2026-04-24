@@ -56,7 +56,7 @@ export function PanicOverlay({ children }: { children: React.ReactNode }) {
         <div
           role="button"
           tabIndex={0}
-          aria-label="Exit panic mode"
+          aria-label="Exit quiet mode"
           onClick={disable}
           onKeyDown={(e) => {
             if (e.key === "Enter" || e.key === " ") {
