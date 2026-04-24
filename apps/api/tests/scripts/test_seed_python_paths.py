@@ -226,6 +226,10 @@ async def test_seed_creates_paths_and_rooms(session_factory, fake_yaml):
     assert [r.room_order for r in fund_rooms] == [0, 1, 2]
     expected_slugs = ["py_intro", "py_controlflow", "py_functions"]
     assert [r.slug for r in fund_rooms] == expected_slugs
+    assert all(r.outcome == "Complete this mission" for r in rooms)
+    assert all(r.difficulty == 2 for r in rooms)
+    assert all(r.eta_minutes == 15 for r in rooms)
+    assert all(r.module_label == "" for r in rooms)
 
 
 # ── 2. Idempotent re-run — no duplicates on second call ────────────────

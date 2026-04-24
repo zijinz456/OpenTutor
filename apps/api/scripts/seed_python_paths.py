@@ -51,6 +51,11 @@ from models.content import CourseContentTree  # noqa: E402
 from models.learning_path import LearningPath, PathRoom  # noqa: E402
 from models.practice import PracticeProblem  # noqa: E402
 
+_DEFAULT_OUTCOME = "Complete this mission"
+_DEFAULT_DIFFICULTY = 2
+_DEFAULT_ETA_MINUTES = 15
+_DEFAULT_MODULE_LABEL = ""
+
 
 # ── URL normalization ──────────────────────────────────────────────────
 
@@ -175,6 +180,10 @@ async def _upsert_room(
     room_order: int,
     intro_excerpt: str | None,
     task_count_target: int,
+    outcome: str = _DEFAULT_OUTCOME,
+    difficulty: int = _DEFAULT_DIFFICULTY,
+    eta_minutes: int = _DEFAULT_ETA_MINUTES,
+    module_label: str = _DEFAULT_MODULE_LABEL,
 ) -> PathRoom:
     """Upsert a ``PathRoom`` keyed by ``(path_id, slug)``."""
 
@@ -191,6 +200,10 @@ async def _upsert_room(
         existing.room_order = room_order
         existing.intro_excerpt = intro_excerpt
         existing.task_count_target = task_count_target
+        existing.outcome = outcome
+        existing.difficulty = difficulty
+        existing.eta_minutes = eta_minutes
+        existing.module_label = module_label
         await db.flush()
         return existing
     row = PathRoom(
@@ -200,6 +213,10 @@ async def _upsert_room(
         title=title,
         room_order=room_order,
         intro_excerpt=intro_excerpt,
+        outcome=outcome,
+        difficulty=difficulty,
+        eta_minutes=eta_minutes,
+        module_label=module_label,
         task_count_target=task_count_target,
     )
     db.add(row)

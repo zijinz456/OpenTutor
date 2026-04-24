@@ -120,6 +120,15 @@ class PathRoom(Base):
     # be long — ``Text`` not ``String`` — and is trimmed to ~4k chars by
     # the service layer (critic C7).
     intro_excerpt: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # One-line practical outcome surfaced on the mission card/hero.
+    outcome: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # 1..5 difficulty scale for later hero + filtering work.
+    difficulty: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # Estimated time in minutes. Nullable at schema level so legacy rows
+    # can migrate in one pass; the seed/migration backfill supplies 15.
+    eta_minutes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # Optional grouping label like "Basics" or "Advanced".
+    module_label: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
     # Target card count from the yaml module (for the "3/15 tasks" UI
     # label when a room has no mapped tasks yet).
     task_count_target: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

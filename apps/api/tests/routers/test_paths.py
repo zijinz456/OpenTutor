@@ -151,6 +151,10 @@ async def _seed_room(
     title: str = "Room",
     room_order: int = 0,
     intro_excerpt: Optional[str] = None,
+    outcome: str = "Complete this mission",
+    difficulty: int = 2,
+    eta_minutes: int = 15,
+    module_label: str = "",
 ) -> uuid.UUID:
     room_id = uuid.uuid4()
     async with session_factory() as session:
@@ -162,6 +166,10 @@ async def _seed_room(
                 title=title,
                 room_order=room_order,
                 intro_excerpt=intro_excerpt,
+                outcome=outcome,
+                difficulty=difficulty,
+                eta_minutes=eta_minutes,
+                module_label=module_label,
             )
         )
         await session.commit()
@@ -324,6 +332,10 @@ async def test_get_path_detail_returns_rooms_ordered(client_with_db) -> None:
     body = resp.json()
     assert [r["room_order"] for r in body["rooms"]] == [0, 1, 2]
     assert [r["slug"] for r in body["rooms"]] == ["first", "second", "third"]
+    assert body["rooms"][0]["outcome"] == "Complete this mission"
+    assert body["rooms"][0]["difficulty"] == 2
+    assert body["rooms"][0]["eta_minutes"] == 15
+    assert body["rooms"][0]["module_label"] == ""
 
 
 # ── 5. GET /api/paths/{slug} — 404 on missing slug ─────────────────
@@ -376,6 +388,10 @@ async def test_get_room_detail_includes_tasks_ordered(client_with_db) -> None:
     assert body["path_slug"] == "python-fundamentals"
     assert body["task_total"] == 5
     assert body["task_complete"] == 0
+    assert body["outcome"] == "Complete this mission"
+    assert body["difficulty"] == 2
+    assert body["eta_minutes"] == 15
+    assert body["module_label"] == ""
 
 
 # ── 7. GET /api/paths/{slug}/rooms/{room_id} — is_complete flag ────

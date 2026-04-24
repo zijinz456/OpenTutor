@@ -88,6 +88,10 @@ class RoomSummary(BaseModel):
     task_total: int = Field(..., ge=0)
     task_complete: int = Field(..., ge=0)
     intro_excerpt: Optional[str] = None
+    outcome: Optional[str] = None
+    difficulty: Optional[int] = Field(default=None, ge=1, le=5)
+    eta_minutes: Optional[int] = Field(default=None, ge=1)
+    module_label: Optional[str] = None
 
 
 class PathDetailResponse(BaseModel):
@@ -130,6 +134,10 @@ class RoomDetailResponse(BaseModel):
     title: str
     room_order: int
     intro_excerpt: Optional[str] = None
+    outcome: Optional[str] = None
+    difficulty: Optional[int] = Field(default=None, ge=1, le=5)
+    eta_minutes: Optional[int] = Field(default=None, ge=1)
+    module_label: Optional[str] = None
     path_id: uuid.UUID
     path_slug: str
     path_title: str
@@ -343,6 +351,10 @@ async def get_path_detail(
             task_total=tasks_per_room.get(r.id, 0),
             task_complete=per_room_complete.get(r.id, 0),
             intro_excerpt=r.intro_excerpt,
+            outcome=r.outcome,
+            difficulty=r.difficulty,
+            eta_minutes=r.eta_minutes,
+            module_label=r.module_label,
         )
         for r in rooms
     ]
@@ -455,6 +467,10 @@ async def get_room_detail(
         title=room.title,
         room_order=room.room_order,
         intro_excerpt=room.intro_excerpt,
+        outcome=room.outcome,
+        difficulty=room.difficulty,
+        eta_minutes=room.eta_minutes,
+        module_label=room.module_label,
         path_id=path.id,
         path_slug=path.slug,
         path_title=path.title,
