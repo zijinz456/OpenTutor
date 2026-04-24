@@ -13,6 +13,7 @@ from routers import (
     chat,
     courses,
     curriculum,
+    drills,
     export,
     flashcards,
     freeze,
@@ -71,6 +72,7 @@ CORE_ROUTERS = (
     (voice.router, "/api/voice", ["voice"]),
     (freeze.router, "/api/freeze", ["freeze"]),
     (paths.router, "/api/paths", ["paths"]),
+    (drills.router, "/api/drills", ["drills"]),
 )
 
 

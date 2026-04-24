@@ -27,6 +27,7 @@ from models.intervention_outcome import InterventionOutcome
 from models.interview import InterviewSession, InterviewTurn
 from models.freeze_token import FreezeToken
 from models.learning_path import LearningPath, PathRoom
+from models.drill import DrillCourse, DrillModule, Drill, DrillAttempt
 
 __all__ = [
     "User",
@@ -67,4 +68,8 @@ __all__ = [
     "FreezeToken",
     "LearningPath",
     "PathRoom",
+    "DrillCourse",
+    "DrillModule",
+    "Drill",
+    "DrillAttempt",
 ]
