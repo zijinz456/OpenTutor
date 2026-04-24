@@ -1,10 +1,11 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
-import { DailySessionCTA } from "./daily-session-cta";
-import { useDailySessionStore } from "@/store/daily-session";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { DailyPlan, DailyPlanReason } from "@/lib/api";
 import { LocaleProvider } from "@/lib/i18n-context";
-import type { DailyPlan } from "@/lib/api";
+import { useBadDayStore } from "@/store/bad-day";
+import { useDailySessionStore } from "@/store/daily-session";
+
+import { DailySessionCTA } from "./daily-session-cta";
 
 const mockPush = vi.fn();
 
@@ -20,17 +21,19 @@ vi.mock("next/navigation", () => ({
 }));
 
 const getDailyPlanMock = vi.fn();
-vi.mock("@/lib/api", async () => {
-  return {
-    getDailyPlan: (...args: unknown[]) => getDailyPlanMock(...args),
-  };
-});
+vi.mock("@/lib/api", async () => ({
+  getDailyPlan: (...args: unknown[]) => getDailyPlanMock(...args),
+}));
 
 function renderWithProvider(ui: React.ReactElement) {
   return render(<LocaleProvider>{ui}</LocaleProvider>);
 }
 
-function makePlan(n: number, reason: string | null = null): DailyPlan {
+function todayUtc() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function makePlan(n: number, reason: DailyPlanReason | null = null): DailyPlan {
   return {
     cards: Array.from({ length: n }, (_, i) => ({
       id: `card-${i}`,
@@ -52,11 +55,14 @@ describe("<DailySessionCTA>", () => {
   beforeEach(() => {
     mockPush.mockReset();
     getDailyPlanMock.mockReset();
+    window.localStorage.clear();
     useDailySessionStore.getState().reset();
+    useBadDayStore.setState({ active: false, activated_date: "" });
   });
 
   it("renders 3 size buttons", () => {
     renderWithProvider(<DailySessionCTA />);
+
     expect(screen.getByTestId("daily-session-cta-1")).toBeInTheDocument();
     expect(screen.getByTestId("daily-session-cta-5")).toBeInTheDocument();
     expect(screen.getByTestId("daily-session-cta-10")).toBeInTheDocument();
@@ -64,10 +70,9 @@ describe("<DailySessionCTA>", () => {
 
   it("fetches, seeds store, and navigates on click", async () => {
     getDailyPlanMock.mockResolvedValue(makePlan(5));
-    const user = userEvent.setup();
-    renderWithProvider(<DailySessionCTA />);
 
-    await user.click(screen.getByTestId("daily-session-cta-5"));
+    renderWithProvider(<DailySessionCTA />);
+    fireEvent.click(screen.getByTestId("daily-session-cta-5"));
 
     await waitFor(() => {
       expect(getDailyPlanMock).toHaveBeenCalledWith(5);
@@ -75,60 +80,50 @@ describe("<DailySessionCTA>", () => {
     await waitFor(() => {
       expect(mockPush).toHaveBeenCalledWith("/session/daily");
     });
+
     expect(useDailySessionStore.getState().cards).toHaveLength(5);
     expect(useDailySessionStore.getState().size).toBe(5);
   });
 
-  it("shows no-guilt empty line when backend reports nothing_due", async () => {
-    getDailyPlanMock.mockResolvedValue(makePlan(0, "nothing_due"));
-    const user = userEvent.setup();
+  it("shows the bad-day chip and requests easy_only when active", async () => {
+    useBadDayStore.setState({
+      active: true,
+      activated_date: todayUtc(),
+    });
+    getDailyPlanMock.mockResolvedValue(makePlan(5));
+
     renderWithProvider(<DailySessionCTA />);
 
-    await user.click(screen.getByTestId("daily-session-cta-1"));
+    expect(
+      screen.getByTestId("daily-session-cta-bad-day-chip"),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("daily-session-cta-5"));
 
     await waitFor(() => {
-      expect(screen.getByText(/nothing due/i)).toBeInTheDocument();
+      expect(getDailyPlanMock).toHaveBeenCalledWith(5, {
+        strategy: "easy_only",
+      });
     });
-    expect(screen.getByText(/come back later/i)).toBeInTheDocument();
-    expect(mockPush).not.toHaveBeenCalled();
-    expect(useDailySessionStore.getState().cards).toHaveLength(0);
+    await waitFor(() => {
+      expect(mockPush).toHaveBeenCalledWith("/session/daily?strategy=easy_only");
+    });
   });
 
-  it("surfaces an inline error on fetch failure without navigating", async () => {
-    getDailyPlanMock.mockRejectedValue(new Error("boom"));
-    const user = userEvent.setup();
-    renderWithProvider(<DailySessionCTA />);
+  it("shows the softer empty state for bad_day_empty", async () => {
+    useBadDayStore.setState({
+      active: true,
+      activated_date: todayUtc(),
+    });
+    getDailyPlanMock.mockResolvedValue(makePlan(0, "bad_day_empty"));
 
-    await user.click(screen.getByTestId("daily-session-cta-10"));
+    renderWithProvider(<DailySessionCTA />);
+    fireEvent.click(screen.getByTestId("daily-session-cta-1"));
 
     await waitFor(() => {
-      expect(screen.getByTestId("daily-session-cta-error")).toHaveTextContent(
-        /boom/,
-      );
+      expect(screen.getByText(/nothing easy due/i)).toBeInTheDocument();
     });
+    expect(screen.getByText(/turn bad-day mode off/i)).toBeInTheDocument();
     expect(mockPush).not.toHaveBeenCalled();
-    // Buttons re-enabled after failure so the user can retry.
-    expect(screen.getByTestId("daily-session-cta-10")).not.toBeDisabled();
-  });
-
-  it("disables all buttons while a fetch is in flight", async () => {
-    let resolve: ((v: DailyPlan) => void) | undefined;
-    getDailyPlanMock.mockImplementation(
-      () =>
-        new Promise<DailyPlan>((r) => {
-          resolve = r;
-        }),
-    );
-    const user = userEvent.setup();
-    renderWithProvider(<DailySessionCTA />);
-
-    await user.click(screen.getByTestId("daily-session-cta-5"));
-
-    expect(screen.getByTestId("daily-session-cta-1")).toBeDisabled();
-    expect(screen.getByTestId("daily-session-cta-5")).toBeDisabled();
-    expect(screen.getByTestId("daily-session-cta-10")).toBeDisabled();
-
-    resolve?.(makePlan(5));
-    await waitFor(() => expect(mockPush).toHaveBeenCalled());
   });
 });

@@ -98,6 +98,8 @@ export type {
   PrerequisiteGap,
   DailyPlan,
   DailyPlanCard,
+  DailyPlanReason,
+  DailyPlanStrategy,
   DailySessionSize,
   BrutalPlanResponse,
   BrutalSessionSize,

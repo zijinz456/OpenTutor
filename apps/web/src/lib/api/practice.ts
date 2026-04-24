@@ -247,17 +247,30 @@ export interface DailyPlanCard {
 
 /** Allowed session sizes — MASTER §12 + plan/adhd_ux_phase13.md §Q2. */
 export type DailySessionSize = 1 | 5 | 10;
+export type DailyPlanStrategy = "adhd_safe" | "easy_only";
+export type DailyPlanReason = "nothing_due" | "bad_day_empty";
 
 export interface DailyPlan {
   cards: DailyPlanCard[];
   size: number;
-  /** `"nothing_due"` when the pool is empty; `null` otherwise (including
-   *  partial fills). The UI renders the quick-closure line on `nothing_due`. */
-  reason: string | null;
+  /** Empty-pool hint for the dashboard CTA. `bad_day_empty` is the
+   *  softer bad-day branch where the filter found no eligible easy cards. */
+  reason: DailyPlanReason | null;
 }
 
-export async function getDailyPlan(size: DailySessionSize): Promise<DailyPlan> {
-  return request(`/sessions/daily-plan?size=${size}`);
+interface GetDailyPlanOptions {
+  strategy?: DailyPlanStrategy;
+}
+
+export async function getDailyPlan(
+  size: DailySessionSize,
+  options?: GetDailyPlanOptions,
+): Promise<DailyPlan> {
+  const params = new URLSearchParams({ size: String(size) });
+  if (options?.strategy) {
+    params.set("strategy", options.strategy);
+  }
+  return request(`/sessions/daily-plan?${params.toString()}`);
 }
 
 // ── Brutal Drill (Phase 6) ──

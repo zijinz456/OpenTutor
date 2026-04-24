@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { ContentNode } from "./api/courses";
 import {
   buildFocusTerms,
   collectContentNodes,
@@ -7,33 +8,31 @@ import {
   findPathToNode,
 } from "./content-tree";
 
-const tree = [
-  {
-    id: "chapter-1",
-    title: "Chapter 1",
-    content: "",
-    children: [
-      {
-        id: "node-a",
-        title: "Binary Search",
-        content: "How binary search works",
-        children: [],
-      },
-      {
-        id: "node-b",
-        title: "Two Pointers",
-        content: "",
-        children: [
-          {
-            id: "node-c",
-            title: "Sliding Window",
-            content: "Window technique notes",
-            children: [],
-          },
-        ],
-      },
-    ],
-  },
+function makeNode(
+  id: string,
+  title: string,
+  content: string,
+  children: ContentNode[] = [],
+): ContentNode {
+  return {
+    id,
+    title,
+    type: "section",
+    content,
+    level: 0,
+    order_index: 0,
+    source_type: "test",
+    children,
+  };
+}
+
+const tree: ContentNode[] = [
+  makeNode("chapter-1", "Chapter 1", "", [
+    makeNode("node-a", "Binary Search", "How binary search works"),
+    makeNode("node-b", "Two Pointers", "", [
+      makeNode("node-c", "Sliding Window", "Window technique notes"),
+    ]),
+  ]),
 ];
 
 describe("content-tree helpers", () => {

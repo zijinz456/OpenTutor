@@ -26,6 +26,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useBadDayStore } from "@/store/bad-day";
 import { useDailySessionStore } from "@/store/daily-session";
 import {
   submitAnswer,
@@ -106,6 +107,7 @@ export default function DailySessionPage() {
   const recordAnswer = useDailySessionStore((s) => s.recordAnswer);
   const advance = useDailySessionStore((s) => s.advance);
   const start = useDailySessionStore((s) => s.start);
+  const badDayActive = useBadDayStore((s) => s.isActiveToday());
 
   const [result, setResult] = useState<AnswerResult | null>(null);
   const [selectedOption, setSelectedOption] = useState<string | null>(null);
@@ -215,7 +217,9 @@ export default function DailySessionPage() {
 
   const handleDoOneMore = useCallback(async () => {
     try {
-      const plan = await getDailyPlan(1 as DailySessionSize);
+      const plan = badDayActive
+        ? await getDailyPlan(1 as DailySessionSize, { strategy: "easy_only" })
+        : await getDailyPlan(1 as DailySessionSize);
       if (plan.cards.length === 0) {
         // Graceful: nothing left — go home instead of spinning.
         router.replace("/");
@@ -226,7 +230,7 @@ export default function DailySessionPage() {
       // Silent fallback — bail home, consistent with direct-nav guard.
       router.replace("/");
     }
-  }, [router, start]);
+  }, [badDayActive, router, start]);
 
   const optionKeys = useMemo(
     () => (card?.options ? Object.keys(card.options).sort() : []),

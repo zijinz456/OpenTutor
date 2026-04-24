@@ -66,6 +66,31 @@ BrutalTimeoutSeconds = Literal[15, 30, 60]
 and move together in the UX spec (§F6 of the phase 6 plan)."""
 
 
+DailyPlanStrategy = Literal["adhd_safe", "easy_only"]
+"""Strategies the ``GET /api/sessions/daily-plan`` endpoint exposes to the
+frontend. ``"adhd_safe"`` is the default (Phase 13 overdue → due-today →
+recently-failed). ``"easy_only"`` is the Phase 14 T5 bad-day opt-in —
+restricts the pool to ``difficulty_layer == 1`` problems minus anything
+the learner has gotten wrong 3+ times lifetime.
+
+The service-level ``Strategy`` literal in :mod:`services.daily_plan` is
+deliberately wider (it also accepts ``"struggle_first"`` for the internal
+Brutal Drill path). Keeping the HTTP surface narrow here means
+``?strategy=struggle_first`` on the daily endpoint is rejected by pydantic
+with HTTP 422 — struggle-first has its own ``/brutal-plan`` endpoint and
+must not be reachable from the ADHD dashboard."""
+
+
+DailyPlanReason = Literal["nothing_due", "bad_day_empty"]
+"""Tag attached to :class:`DailyPlan.reason` when the curated pool is
+empty. ``"nothing_due"`` is the Phase 13 signal — no overdue/due/recent-
+fail cards existed, or every candidate was frozen/excluded.
+``"bad_day_empty"`` is the Phase 14 T5 signal — the user picked bad-day
+mode but no easy-layer cards survived the "≥3 lifetime wrong" filter. The
+frontend distinguishes the two so the bad-day branch can suggest turning
+the toggle off instead of nudging toward onboarding."""
+
+
 class DailyPlanCard(BaseModel):
     """One card in the daily-plan response.
 
@@ -100,11 +125,17 @@ class DailyPlan(BaseModel):
         reason: ``None`` in the happy path (including partial fills).
             ``"nothing_due"`` when the pool is empty — the UI uses this
             to render the quick-closure screen instead of a blank list.
+            ``"bad_day_empty"`` when the ``strategy="easy_only"`` pool
+            filter produced zero cards (Phase 14 T5) — a distinct signal
+            because the UX response is "turn bad-day off" rather than
+            "try a diagnostic", which is what ``"nothing_due"`` nudges
+            toward. Typed as the :data:`DailyPlanReason` literal so
+            FastAPI's response validator catches any drift.
     """
 
     cards: list[DailyPlanCard] = Field(default_factory=list)
     size: int = Field(ge=0)
-    reason: str | None = None
+    reason: DailyPlanReason | None = None
 
 
 class BrutalPlanResponse(BaseModel):
@@ -192,6 +223,8 @@ __all__ = [
     "BrutalTimeoutSeconds",
     "DailyPlan",
     "DailyPlanCard",
+    "DailyPlanReason",
+    "DailyPlanStrategy",
     "DailySessionSize",
     "WelcomeBackResponse",
 ]

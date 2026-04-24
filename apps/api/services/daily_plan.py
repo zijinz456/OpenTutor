@@ -99,13 +99,13 @@ from collections.abc import Iterable
 from datetime import timedelta
 from typing import Literal
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from libs.datetime_utils import utcnow
 from models.practice import PracticeProblem, PracticeResult
 from models.progress import LearningProgress
-from schemas.sessions import DailyPlan, DailyPlanCard
+from schemas.sessions import DailyPlan, DailyPlanCard, DailyPlanReason
 
 
 ALLOWED_SIZES: frozenset[int] = frozenset({1, 5, 10})
@@ -141,7 +141,29 @@ Kept private because the daily strategy does NOT filter on question type
 (its type-rotation actively wants the variety)."""
 
 
-Strategy = Literal["adhd_safe", "struggle_first"]
+_EASY_DIFFICULTY_LAYER: int = 1
+"""VCE-inspired ``PracticeProblem.difficulty_layer`` value that counts as
+"easy" for the bad-day filter. The model docstring pins layer semantics
+as 1=basic concept recall, 2=standard application, 3=trap/edge case;
+Phase 14 T5 Story 5 restricts bad-day to the layer-1 tier exclusively.
+Kept private because the ADHD default strategy has no notion of layer."""
+
+
+_BAD_DAY_STRUGGLE_THRESHOLD: int = 3
+"""Lifetime "wrong answers" count above which a problem is excluded
+from the bad-day pool. Story 5 C4 — if the learner has already failed
+a card three or more times, surfacing it in bad-day mode breaks the
+"easier cards only" contract. Threshold is inclusive (``>= 3``) to
+match the plan literal."""
+
+
+Strategy = Literal["adhd_safe", "struggle_first", "easy_only"]
+"""Service-level strategy set. Kept wider than :data:`schemas.sessions.
+DailyPlanStrategy` on purpose — ``"struggle_first"`` is an internal
+call used by :mod:`services.brutal_plan` and must keep working, but it
+is NOT a valid ``?strategy=`` query on the public daily-plan endpoint
+(the schema-level Literal rejects it at the HTTP edge). Adding a value
+here means also adding it to the size-validation branch below."""
 
 
 async def select_daily_plan(
@@ -172,6 +194,15 @@ async def select_daily_plan(
               brutal UX actively wants serialised struggle, not variety
               — and ``code_exercise`` / ``lab_exercise`` rows are filtered
               out because the brutal UI is MC-only.
+            * ``"easy_only"`` (Phase 14 T5 bad-day): same tier ordering
+              and type-rotation as ``"adhd_safe"``, but the candidate pool
+              is first narrowed to ``difficulty_layer == 1`` AND drops
+              every problem the user has answered incorrectly ≥3 times
+              lifetime. Frontend enables this when the user opts into
+              bad-day mode for the current UTC day. Empty filtered pool
+              returns ``reason="bad_day_empty"`` so the UI distinguishes
+              "you've failed all the easy ones recently" from plain
+              "nothing_due".
         excluded_ids: Optional iterable of ``PracticeProblem.id`` values
             to drop before tier classification. Used by Phase 14 T1 to
             honor active freeze tokens — freezing a card hides it from
@@ -198,7 +229,7 @@ async def select_daily_plan(
             non-HTTP callers.
     """
 
-    if strategy == "adhd_safe":
+    if strategy in {"adhd_safe", "easy_only"}:
         if size not in ALLOWED_SIZES:
             raise ValueError(
                 f"size must be one of {sorted(ALLOWED_SIZES)} for "
@@ -212,6 +243,18 @@ async def select_daily_plan(
                 f"strategy='struggle_first', got {size!r}"
             )
         recent_window_days = BRUTAL_RECENTLY_FAILED_WINDOW_DAYS
+    elif strategy == "easy_only":
+        # Bad-day mode reuses the ADHD size trio — the toggle is exposed
+        # on the same dashboard CTA that ships 1/5/10 buttons, and the
+        # 7-day recent-fail window is the right cadence for a learner
+        # opting into an easier day (we do NOT widen to 14d here, that's
+        # a brutal-mode trait).
+        if size not in ALLOWED_SIZES:
+            raise ValueError(
+                f"size must be one of {sorted(ALLOWED_SIZES)} for "
+                f"strategy='easy_only', got {size!r}"
+            )
+        recent_window_days = RECENTLY_FAILED_WINDOW_DAYS
     else:  # pragma: no cover — caught by Literal on the typed call sites
         raise ValueError(f"unknown strategy {strategy!r}")
 
@@ -241,7 +284,13 @@ async def select_daily_plan(
     )
 
     if not joined_rows:
-        return DailyPlan(cards=[], size=0, reason="nothing_due")
+        # Under ``easy_only`` we tag the empty branch so the bad-day UX
+        # path stays coherent (the frontend prompts "turn bad-day off"
+        # on ``bad_day_empty``; ``nothing_due`` would nudge to onboarding).
+        empty_reason_no_rows: DailyPlanReason = (
+            "bad_day_empty" if strategy == "easy_only" else "nothing_due"
+        )
+        return DailyPlan(cards=[], size=0, reason=empty_reason_no_rows)
 
     # Collapse the LEFT JOIN to one row per problem. A problem with no
     # content_node_id that matches multiple progress rows (shouldn't
@@ -280,7 +329,64 @@ async def select_daily_plan(
             if not by_problem_id:
                 # Every candidate was frozen/excluded — same contract as
                 # "DB is empty" so the UI renders the quick-closure card.
-                return DailyPlan(cards=[], size=0, reason="nothing_due")
+                # Under ``easy_only`` we still emit "bad_day_empty" so
+                # the frontend can steer the learner to turn the toggle
+                # off instead of nudging toward onboarding.
+                empty_reason: DailyPlanReason = (
+                    "bad_day_empty" if strategy == "easy_only" else "nothing_due"
+                )
+                return DailyPlan(cards=[], size=0, reason=empty_reason)
+
+    # ── Phase 14 T5: bad-day pool filter (strategy="easy_only") ──
+    # Narrow the surviving candidates to ``difficulty_layer == 1`` minus
+    # every problem the user has gotten wrong ≥3 times lifetime. Runs
+    # AFTER freeze/excluded_ids so the two filters compose — a frozen
+    # easy card still drops out (critic C8), and a 3-wrong card is gone
+    # regardless of whether the user also tried to freeze it.
+    #
+    # We lift the struggle-count query out of the join above because it
+    # is strategy-specific; the default ADHD path should not pay for a
+    # SQL round-trip it never consumes.
+    if strategy == "easy_only":
+        # Drop any row whose difficulty_layer isn't the easy tier. NULL
+        # layer is treated as "unknown, not safe for bad-day" — the
+        # catalog ingests every new card with a layer value, and the
+        # bad-day contract is "definitely easy", not "probably easy".
+        by_problem_id = {
+            pid: row
+            for pid, row in by_problem_id.items()
+            if row[0].difficulty_layer == _EASY_DIFFICULTY_LAYER
+        }
+
+        if by_problem_id:
+            # Lifetime wrong-count per problem. ``GROUP BY problem_id
+            # HAVING COUNT(*) >= 3`` mirrors the plan SQL; we restrict
+            # to the surviving easy IDs so this never scans the full
+            # practice_results table just to discard most of it.
+            easy_ids = list(by_problem_id.keys())
+            struggle_stmt = (
+                select(PracticeResult.problem_id)
+                .where(
+                    PracticeResult.is_correct.is_(False),
+                    PracticeResult.problem_id.in_(easy_ids),
+                )
+                .group_by(PracticeResult.problem_id)
+                .having(func.count(PracticeResult.id) >= _BAD_DAY_STRUGGLE_THRESHOLD)
+            )
+            struggle_rows = await db.execute(struggle_stmt)
+            struggle_ids: set[uuid.UUID] = {row[0] for row in struggle_rows.all()}
+            if struggle_ids:
+                by_problem_id = {
+                    pid: row
+                    for pid, row in by_problem_id.items()
+                    if pid not in struggle_ids
+                }
+
+        if not by_problem_id:
+            # Empty filtered pool — distinct from "nothing_due" so the
+            # frontend can prompt "turn bad-day off" instead of the
+            # onboarding nudge.
+            return DailyPlan(cards=[], size=0, reason="bad_day_empty")
 
     # ── Query 2: recently-failed problem IDs (optional) ──
     # Only executed if tiers 0 + 1 could fail to cover ``size`` — we still
@@ -414,7 +520,7 @@ async def select_daily_plan(
             kept.append(problem)
         return kept
 
-    if strategy == "adhd_safe":
+    if strategy in {"adhd_safe", "easy_only"}:
         # Phase 13 ordering: overdue → due-today → recently-failed, with
         # type-rotation inside each tier.
         overdue_unique = _keep_unseen(tier_overdue)
@@ -449,7 +555,10 @@ async def select_daily_plan(
         # Non-empty DB but nothing classified — rare but possible (e.g.
         # every problem is fresh-unseen with no failed results). Same
         # contract as empty DB: surface the quick-closure screen.
-        return DailyPlan(cards=[], size=0, reason="nothing_due")
+        empty_reason_unclassified: DailyPlanReason = (
+            "bad_day_empty" if strategy == "easy_only" else "nothing_due"
+        )
+        return DailyPlan(cards=[], size=0, reason=empty_reason_unclassified)
 
     cards = [_to_card(p) for p in final]
     return DailyPlan(cards=cards, size=len(cards), reason=None)

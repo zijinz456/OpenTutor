@@ -34,6 +34,7 @@ from schemas.sessions import (
     BrutalPlanResponse,
     BrutalSessionSize,
     DailyPlan,
+    DailyPlanStrategy,
     DailySessionSize,
     WelcomeBackResponse,
 )
@@ -59,7 +60,11 @@ router = APIRouter()
         "daily-session CTA. Any `size` other than 1, 5, or 10 is "
         "rejected with HTTP 422. When the pool is empty the response is "
         '`{cards: [], size: 0, reason: "nothing_due"}` so the UI can '
-        "render the quick-closure screen without a special case."
+        "render the quick-closure screen without a special case. Pass "
+        "`strategy=easy_only` (Phase 14 T5 bad-day mode) to restrict the "
+        "pool to `difficulty_layer==1` cards minus anything the user has "
+        "answered incorrectly 3+ times lifetime; empty pool under that "
+        'strategy returns `reason="bad_day_empty"`.'
     ),
 )
 async def get_daily_plan(
@@ -67,17 +72,19 @@ async def get_daily_plan(
         ...,
         description="Session size in cards. Must be 1, 5, or 10.",
     ),
+    strategy: DailyPlanStrategy = Query(
+        "adhd_safe",
+        description=(
+            "Pool selection strategy. `adhd_safe` is the default "
+            "overdue→due→recent-fail selector; `easy_only` restricts "
+            "the pool for bad-day mode. Any other value (including the "
+            "internal `struggle_first`) is rejected with HTTP 422 — the "
+            "brutal drill has its own `/brutal-plan` endpoint."
+        ),
+    ),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> DailyPlan:
-    # Validate after Query coercion so query-string '5' → int 5 works.
-    if size not in (1, 5, 10):
-        from fastapi import HTTPException
-
-        raise HTTPException(
-            status_code=422, detail=f"size must be 1, 5, or 10 (got {size})"
-        )
-    _: DailySessionSize = size  # type-check only
     """Return the configured user's next daily-session batch.
 
     The ``user`` parameter is accepted purely to keep the auth dependency
@@ -88,12 +95,29 @@ async def get_daily_plan(
     :mod:`services.daily_plan` for the rationale.
     """
 
+    # Validate after Query coercion so query-string '5' → int 5 works.
+    if size not in (1, 5, 10):
+        from fastapi import HTTPException
+
+        raise HTTPException(
+            status_code=422, detail=f"size must be 1, 5, or 10 (got {size})"
+        )
+    _: DailySessionSize = size  # type-check only
+
     # Phase 14 T1: honor active freeze tokens. A frozen problem stays
     # hidden from the daily-plan selector for 24h without touching
     # FSRS. ``active_frozen_problem_ids`` returns ``[]`` in the no-tokens
     # case so the pre-Phase-14 path is untouched.
+    #
+    # Phase 14 T5: ``strategy`` arrives as a pydantic ``Literal``-typed
+    # query param, so bad values (``invalid``, ``struggle_first``, …)
+    # already tripped pydantic 422 before we get here. The kwarg flows
+    # straight through to the service, which widens its own Literal to
+    # accept ``easy_only`` alongside ``adhd_safe`` / ``struggle_first``.
     frozen = await active_frozen_problem_ids(db, user.id)
-    return await select_daily_plan(db, size, excluded_ids=frozen)
+    return await select_daily_plan(
+        db, size, strategy=strategy, excluded_ids=frozen
+    )
 
 
 @router.get(

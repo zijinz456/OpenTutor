@@ -1,6 +1,7 @@
 "use client";
 
 import { BookOpen, Sparkles, Settings } from "lucide-react";
+import { BadDayToggle } from "@/components/dashboard/bad-day-toggle";
 import type { HealthStatus } from "@/lib/api";
 
 export function DashboardSidebar({
@@ -34,6 +35,9 @@ export function DashboardSidebar({
           {t("nav.settings")}
         </button>
       </nav>
+      <div className="mt-4 md:mt-0">
+        <BadDayToggle />
+      </div>
       {health?.deployment_mode === "single_user" && (
         <span className="mt-3 inline-flex w-fit rounded-full bg-muted px-3 py-1.5 text-center text-[11px] font-medium text-muted-foreground md:mt-auto">
           {t("dashboard.singleUser")}
