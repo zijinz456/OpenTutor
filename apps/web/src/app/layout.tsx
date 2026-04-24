@@ -6,6 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { LocaleProvider } from "@/lib/i18n-context";
 import { ConnectionStatus } from "@/components/shared/connection-status";
 import { PanicOverlay } from "@/components/panic/PanicOverlay";
+import { PomodoroTimer } from "@/components/pomodoro/PomodoroTimer";
 import "./globals.css";
 
 const spaceGrotesk = Space_Grotesk({
@@ -66,6 +67,7 @@ export default function RootLayout({
                 <main id="main-content">
                   {children}
                 </main>
+                <PomodoroTimer />
               </PanicOverlay>
             </TooltipProvider>
             <Toaster />
