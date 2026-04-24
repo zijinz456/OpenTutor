@@ -3,12 +3,14 @@
 import logging
 import re
 import uuid
+from datetime import datetime
 
 import sqlalchemy as sa
 from sqlalchemy import select
 
+from libs.datetime_utils import as_utc, utcnow
 from models.course import Course
-from models.ingestion import IngestionJob, Assignment
+from models.ingestion import Assignment, IngestionJob
 
 logger = logging.getLogger(__name__)
 
@@ -66,8 +68,8 @@ _ASSIGNMENT_SIGNALS: list[tuple[str, float]] = [
     (r"\bmarks?\b", 0.5),
 ]
 
-_SCORE_THRESHOLD_SUGGEST = 5.0   # Add agent_insight suggesting exam_prep
-_SCORE_THRESHOLD_SWITCH = 12.0   # Directly switch mode to exam_prep
+_SCORE_THRESHOLD_SUGGEST = 5.0  # Add agent_insight suggesting exam_prep
+_SCORE_THRESHOLD_SWITCH = 12.0  # Directly switch mode to exam_prep
 
 
 def _score_content(text: str, signals: list[tuple[str, float]]) -> float:
@@ -80,6 +82,13 @@ def _score_content(text: str, signals: list[tuple[str, float]]) -> float:
         matches = re.findall(pattern, text_lower)
         total += len(matches) * weight
     return total
+
+
+def _normalized_due_date(value: datetime | None) -> datetime | None:
+    """Return assignment due dates as aware UTC for safe comparisons."""
+    if value is None:
+        return None
+    return as_utc(value)
 
 
 async def auto_configure_course(
@@ -98,7 +107,6 @@ async def auto_configure_course(
     For lecture slides, analyses the actual text to detect exam-prep signals
     (e.g. study design, hypothesis testing) and adds a mode suggestion block.
     """
-    from datetime import datetime, timezone
     from models.content import CourseContentTree
 
     async with db_factory() as db:
@@ -107,30 +115,31 @@ async def auto_configure_course(
             select(Assignment).where(Assignment.course_id == course_id)
         )
         assignments = assign_result.scalars().all()
-        deadline_count = sum(1 for a in assignments if a.due_date)
+        deadline_count = sum(1 for assignment in assignments if assignment.due_date)
 
         # 2. Check ingestion job content categories + extracted text
         job_result = await db.execute(
-            select(IngestionJob.content_category, IngestionJob.extracted_markdown).where(
+            select(
+                IngestionJob.content_category,
+                IngestionJob.extracted_markdown,
+            ).where(
                 IngestionJob.course_id == course_id,
             )
         )
         job_rows = job_result.all()
-        categories = [r[0] for r in job_rows if r[0]]
-        all_content = "\n".join(r[1] or "" for r in job_rows)
+        categories = [row[0] for row in job_rows if row[0]]
+        all_content = "\n".join(row[1] or "" for row in job_rows)
 
         # 3. Count content nodes
         node_result = await db.execute(
-            select(sa.func.count()).select_from(CourseContentTree).where(
-                CourseContentTree.course_id == course_id
-            )
+            select(sa.func.count())
+            .select_from(CourseContentTree)
+            .where(CourseContentTree.course_id == course_id)
         )
         node_count = node_result.scalar() or 0
 
         # 4. Get course info
-        course_result = await db.execute(
-            select(Course).where(Course.id == course_id)
-        )
+        course_result = await db.execute(select(Course).where(Course.id == course_id))
         course = course_result.scalar_one_or_none()
         if not course:
             return None
@@ -142,73 +151,80 @@ async def auto_configure_course(
         # Also score categories
         hard_exam_cats = {"exam_schedule", "exam"}
         hard_assign_cats = {"assignment"}
-        exam_cat_count = sum(1 for c in categories if c in hard_exam_cats)
-        assign_cat_count = sum(1 for c in categories if c in hard_assign_cats)
+        exam_cat_count = sum(1 for category in categories if category in hard_exam_cats)
+        assign_cat_count = sum(
+            1 for category in categories if category in hard_assign_cats
+        )
 
         # --- Determine mode intent ---
-        # Priority: hard category signals > deadline count > content scoring
-        # NOTE: exam_prep mode is never auto-switched — only suggested via agent_insight.
-        # The user must manually enable exam_prep from the frontend.
+        # Priority: hard category signals > deadline count > content scoring.
+        # Exam-prep mode is never auto-switched; it is only suggested.
         if assign_cat_count >= 1 or deadline_count >= 3:
-            mode_intent = "assignment"        # switch to assignment/plan mode
+            mode_intent = "assignment"  # switch to assignment/plan mode
         elif (
             exam_cat_count >= 1
             or (deadline_count >= 1 and exam_signal_score >= 3.0)
             or exam_signal_score >= _SCORE_THRESHOLD_SWITCH
             or exam_signal_score >= _SCORE_THRESHOLD_SUGGEST
         ):
-            mode_intent = "exam_prep_suggest" # suggest via agent_insight (needs user approval)
+            mode_intent = "exam_prep_suggest"
         else:
-            mode_intent = "no_change"         # keep cold-start layout as-is
+            mode_intent = "no_change"
 
         # --- Update spaceLayout (new format, actually read by frontend) ---
-        now = datetime.now(timezone.utc)
+        now = utcnow()
         metadata = dict(course.metadata_ or {})
         space_layout = dict(metadata.get("spaceLayout") or {})
 
         if mode_intent == "assignment":
-            space_layout["mode"] = "self_paced"  # assignment content uses self-paced with plan block
-            # Ensure plan block is present
+            # Assignment-heavy content uses self-paced mode with a plan block.
+            space_layout["mode"] = "self_paced"
             blocks = list(space_layout.get("blocks", []))
-            block_types = [b.get("type") for b in blocks]
+            block_types = [block.get("type") for block in blocks]
             if "plan" not in block_types:
                 blocks.append({"type": "plan", "size": "medium", "source": "template"})
             space_layout["blocks"] = blocks
 
         elif mode_intent == "exam_prep_suggest":
-            # Add an agent_insight block suggesting exam_prep mode (needs user approval)
+            # Add an agent_insight block suggesting exam-prep mode.
             blocks = list(space_layout.get("blocks", []))
-            # Don't add duplicate suggestion insights
             existing_suggestions = [
-                b for b in blocks
-                if b.get("type") == "agent_insight"
-                and b.get("config", {}).get("insightType") == "mode_suggestion"
+                block
+                for block in blocks
+                if block.get("type") == "agent_insight"
+                and block.get("config", {}).get("insightType") == "mode_suggestion"
             ]
             if not existing_suggestions:
                 insight_id = f"blk-autoconf-{int(now.timestamp())}"
-                blocks.insert(0, {
-                    "id": insight_id,
-                    "type": "agent_insight",
-                    "position": 0,
-                    "size": "full",
-                    "config": {
-                        "insightType": "mode_suggestion",
-                        "suggestedMode": "exam_prep",
-                        "reason": (
-                            "This material covers exam-relevant concepts "
-                            "(e.g. study design, hypothesis testing, statistical methods). "
-                            "Switch to Exam Prep mode to focus on practice and weak areas."
-                        ),
+                blocks.insert(
+                    0,
+                    {
+                        "id": insight_id,
+                        "type": "agent_insight",
+                        "position": 0,
+                        "size": "full",
+                        "config": {
+                            "insightType": "mode_suggestion",
+                            "suggestedMode": "exam_prep",
+                            "reason": (
+                                "This material covers exam-relevant concepts "
+                                "(e.g. study design, hypothesis testing, "
+                                "statistical methods). Switch to Exam Prep "
+                                "mode to focus on practice and weak areas."
+                            ),
+                        },
+                        "visible": True,
+                        "source": "agent",
+                        "agentMeta": {
+                            "reason": (
+                                "Content analysis detected exam-prep relevant topics."
+                            ),
+                            "needsApproval": True,
+                            "dismissible": True,
+                            "approvalCta": "Switch to Exam Prep",
+                        },
                     },
-                    "visible": True,
-                    "source": "agent",
-                    "agentMeta": {
-                        "reason": "Content analysis detected exam-prep relevant topics.",
-                        "needsApproval": True,
-                        "dismissible": True,
-                        "approvalCta": "Switch to Exam Prep",
-                    },
-                })
+                )
                 space_layout["blocks"] = blocks
 
         if space_layout:
@@ -228,18 +244,24 @@ async def auto_configure_course(
         errors = prep_summary.get("errors", {})
         if errors:
             failed_steps = ", ".join(errors.keys())
-            parts.append(f"- ⚠ Some auto-generation steps had issues ({failed_steps}). You can retry by asking me.")
+            parts.append(
+                f"- WARNING Some auto-generation steps had issues "
+                f"({failed_steps}). You can retry by asking me."
+            )
 
         if deadline_count > 0:
             upcoming = [
-                a for a in assignments
-                if a.due_date and a.due_date > now
+                (assignment, normalized_due)
+                for assignment in assignments
+                if (normalized_due := _normalized_due_date(assignment.due_date))
+                is not None
+                and normalized_due > now
             ]
-            upcoming.sort(key=lambda a: a.due_date)
+            upcoming.sort(key=lambda item: item[1])
             parts.append(f"- **{deadline_count}** deadlines detected")
             if upcoming:
-                next_due = upcoming[0]
-                days_left = (next_due.due_date - now).days
+                next_due, next_due_at = upcoming[0]
+                days_left = (next_due_at - now).days
                 parts.append(
                     f"- Next deadline: **{next_due.title}** in **{days_left} days**"
                 )
@@ -248,19 +270,21 @@ async def auto_configure_course(
 
         if mode_intent == "assignment":
             parts.append(
-                "I've switched to **Self-Paced mode** and added a study plan block "
-                "since I detected assignment deadlines. You can switch modes anytime by asking me."
+                "I've switched to **Self-Paced mode** and added a study plan "
+                "block since I detected assignment deadlines. You can switch "
+                "modes anytime by asking me."
             )
         elif mode_intent == "exam_prep_suggest":
             parts.append(
-                "Your workspace is ready. I noticed this material covers exam-relevant topics "
-                "(study design, statistical methods). I've added a suggestion to switch to "
-                "**Exam Prep mode** — approve it above or ask me to switch anytime."
+                "Your workspace is ready. I noticed this material covers "
+                "exam-relevant topics (study design, statistical methods). "
+                "I've added a suggestion to switch to **Exam Prep mode** - "
+                "approve it above or ask me to switch anytime."
             )
         else:
             parts.append(
-                "Your workspace is ready. "
-                "Ask me anything about your materials — I'll explain, quiz you, or help you review."
+                "Your workspace is ready. Ask me anything about your "
+                "materials - I'll explain, quiz you, or help you review."
             )
 
         welcome_message = "\n".join(parts)
@@ -278,7 +302,12 @@ async def auto_configure_course(
         await db.commit()
 
         logger.info(
-            "Auto-configured course %s: mode_intent=%s, exam_score=%.1f, nodes=%d, deadlines=%d",
-            course_id, mode_intent, exam_signal_score, node_count, deadline_count,
+            "Auto-configured course %s: mode_intent=%s, exam_score=%.1f, "
+            "nodes=%d, deadlines=%d",
+            course_id,
+            mode_intent,
+            exam_signal_score,
+            node_count,
+            deadline_count,
         )
         return {"mode_intent": mode_intent, "welcome_message": welcome_message}

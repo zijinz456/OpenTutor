@@ -259,9 +259,8 @@ async def _map_cards_to_room(
         # source_file may be the raw URL (legacy ingests) OR the scraped
         # page title (current pipeline). Try URL-key first; fall back to
         # title-hint substring match.
-        matched = (
-            _url_match_key(source_file) in module_url_keys
-            or _matches_any_hint(source_file, hints)
+        matched = _url_match_key(source_file) in module_url_keys or _matches_any_hint(
+            source_file, hints
         )
         if matched:
             problem.path_room_id = room_id
