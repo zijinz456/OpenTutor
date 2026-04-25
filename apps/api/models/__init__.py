@@ -29,6 +29,7 @@ from models.freeze_token import FreezeToken
 from models.learning_path import LearningPath, PathRoom
 from models.drill import DrillCourse, DrillModule, Drill, DrillAttempt
 from models.xp_event import XpEvent
+from models.user_badge import UserBadge
 
 __all__ = [
     "User",
@@ -74,4 +75,5 @@ __all__ = [
     "Drill",
     "DrillAttempt",
     "XpEvent",
+    "UserBadge",
 ]
