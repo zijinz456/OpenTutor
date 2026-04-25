@@ -206,7 +206,13 @@ async def _validate_at_load(
     from services.drill_runner import run_drill
 
     _ = starter_code  # reserved for future "starter must fail" checks
-    result = await run_drill(reference_solution, hidden_tests, timeout_s=10.0)
+    # 30s validation timeout — pytest cold-start in the container can be
+    # 8-18s before the test itself runs (CPython + pytest collection +
+    # plugin import). 10s was too tight; trivial drills timed out at
+    # bootstrap. 30s leaves headroom for any reasonable canonical solution
+    # while still flagging genuine infinite-loop refsols. Runtime drill
+    # submission stays at the runner's default (no caller bump).
+    result = await run_drill(reference_solution, hidden_tests, timeout_s=30.0)
     if not result.passed:
         raise ValueError(
             "reference_solution does not pass its own hidden_tests — "
@@ -371,6 +377,17 @@ async def load_course(
         module = await _upsert_module(db, course.id, module_doc)
         for drill_doc in module_doc["drills"]:
             await _upsert_drill(db, module.id, drill_doc)
+
+    # Eagerly hydrate ``course.modules`` (and each module's ``drills``)
+    # before returning so callers can access the relationship in plain
+    # async code without triggering a lazy SQL load. Without this the
+    # seed script — which counts ``len(course.modules)`` after this
+    # function returns — hits MissingGreenlet because the lazy SELECT
+    # is no longer inside an awaited DB call. Selectin-style refresh
+    # is safe for SQLite + Postgres parity.
+    await db.refresh(course, attribute_names=["modules"])
+    for module in course.modules:
+        await db.refresh(module, attribute_names=["drills"])
 
     # Note: caller (seed script / test) is responsible for commit. Load
     # behaves like a bulk-upsert helper, not a self-contained side
