@@ -68,4 +68,23 @@ describe("/tracks page", () => {
     expect(screen.getByText("Path A")).toBeInTheDocument();
     expect(screen.getByText("Path B")).toBeInTheDocument();
   });
+
+  it("exposes the visual-shell testids (tracks-shell + tracks-grid)", async () => {
+    listPathsMock.mockResolvedValue(
+      makeResponse([makePath({ id: "a", slug: "a", title: "Path A" })]),
+    );
+    render(<PathListPage />);
+
+    // Outer shell is present immediately (also wraps the loading
+    // skeleton), so we don't have to wait on the data.
+    expect(screen.getByTestId("tracks-shell")).toBeInTheDocument();
+
+    // Grid only appears once data has resolved with at least one path.
+    await waitFor(() => {
+      expect(screen.getByTestId("tracks-grid")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("tracks-grid")).toContainElement(
+      screen.getByTestId("path-card-a"),
+    );
+  });
 });

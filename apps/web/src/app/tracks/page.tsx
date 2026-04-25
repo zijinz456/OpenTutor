@@ -1,12 +1,21 @@
 "use client";
 
 /**
- * `/tracks` — track list (Phase 16a T4).
+ * `/tracks` — track list (Visual Shell V1).
  *
  * Lists every `LearningPath` the backend returns from `GET /api/paths`,
  * ordered by `track_id` ascending (fundamentals → intermediate →
- * advanced → practical). Each entry is a `<PathCard>` that links to
- * `/tracks/{slug}`.
+ * advanced → practical). Each entry is a `<PathCard>` rendered into a
+ * responsive grid (1 col mobile, 2 md, 3 xl, 4 2xl). Tapping anywhere
+ * on a card routes to `/tracks/{slug}`.
+ *
+ * Layout note (Visual Shell V1)
+ * -----------------------------
+ * Outer container uses the shared shell contract agreed with the main
+ * agent + Subagent A: `mx-auto w-full max-w-[1600px] px-4 md:px-6
+ * xl:px-10`. The previous `max-w-3xl` single-column layout was
+ * replaced because, on a 1440-px monitor, it left ~70% of the
+ * viewport empty (ТЗ Visual Shell V1 §A).
  *
  * Data shape note
  * ---------------
@@ -70,64 +79,71 @@ export default function PathListPage() {
   const orphanCount = data?.orphan_count ?? 0;
 
   return (
-    <div className="min-h-screen bg-background py-8 px-4">
-      <div className="mx-auto max-w-3xl space-y-6">
-        <div>
-          <Link
-            href="/"
-            className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+    <main
+      data-testid="tracks-shell"
+      className="mx-auto w-full max-w-[1600px] px-4 md:px-6 xl:px-10 pb-24 pt-8"
+    >
+      <header className="mb-8">
+        <Link
+          href="/"
+          className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <ArrowLeft className="size-3.5" />
+          Home
+        </Link>
+        <h1 className="font-display mt-2 text-2xl font-semibold tracking-tight text-foreground md:text-3xl">
+          Tracks
+        </h1>
+        {orphanCount > 0 && (
+          <p
+            data-testid="path-list-orphan-caption"
+            className="mt-1 text-xs text-muted-foreground"
           >
-            <ArrowLeft className="size-3.5" />
-            Home
-          </Link>
-          <h1 className="font-display mt-2 text-2xl font-semibold tracking-tight text-foreground md:text-3xl">
-            Tracks
-          </h1>
-          {orphanCount > 0 && (
-            <p
-              data-testid="path-list-orphan-caption"
-              className="mt-1 text-xs text-muted-foreground"
+            {orphanCount} cards not yet in a track
+          </p>
+        )}
+      </header>
+
+      {loading && (
+        <div
+          className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-6"
+          data-testid="path-list-loading"
+        >
+          {[0, 1, 2, 3].map((i) => (
+            <div
+              key={i}
+              className="h-44 rounded-2xl bg-muted/40 animate-pulse"
+            />
+          ))}
+        </div>
+      )}
+
+      {!loading && error && (
+        <div
+          role="alert"
+          data-testid="path-list-error"
+          className="rounded-2xl bg-destructive/5 px-5 py-4 text-sm text-destructive card-shadow"
+        >
+          {error}
+        </div>
+      )}
+
+      {!loading && !error && data && (
+        <div data-testid="path-list">
+          {sortedPaths.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No tracks yet.</p>
+          ) : (
+            <div
+              data-testid="tracks-grid"
+              className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-6"
             >
-              {orphanCount} cards not yet in a track
-            </p>
+              {sortedPaths.map((summary) => (
+                <PathCard key={summary.id} summary={summary} />
+              ))}
+            </div>
           )}
         </div>
-
-        {loading && (
-          <div className="space-y-3" data-testid="path-list-loading">
-            {[0, 1, 2, 3].map((i) => (
-              <div
-                key={i}
-                className="h-28 rounded-2xl bg-muted/40 animate-pulse"
-              />
-            ))}
-          </div>
-        )}
-
-        {!loading && error && (
-          <div
-            role="alert"
-            data-testid="path-list-error"
-            className="rounded-2xl bg-destructive/5 px-5 py-4 text-sm text-destructive card-shadow"
-          >
-            {error}
-          </div>
-        )}
-
-        {!loading && !error && data && (
-          <div className="space-y-3" data-testid="path-list">
-            {sortedPaths.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                No tracks yet.
-              </p>
-            ) : (
-              sortedPaths.map((summary) => (
-                <PathCard key={summary.id} summary={summary} />
-              ))
-            )}
-          </div>
-        )}
-      </div>
-    </div>
+      )}
+    </main>
   );
 }

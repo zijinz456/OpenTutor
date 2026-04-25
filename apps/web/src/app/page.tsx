@@ -1,13 +1,21 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useLocale } from "@/lib/i18n-context";
 import { RuntimeAlert } from "@/components/shared/runtime-alert";
 import { ContinueMissionHero } from "@/components/dashboard/continue-mission-hero";
+import { TodayPlanCard } from "@/components/dashboard/today-plan-card";
 import { DailySessionCTA } from "@/components/dashboard/daily-session-cta";
 import { BrutalDrillCTA } from "@/components/dashboard/brutal-drill-cta";
 import { LearningPathsPill } from "@/components/dashboard/LearningPathsPill";
 import { DrillCoursesPill } from "@/components/dashboard/DrillCoursesPill";
+import { GamificationWidget } from "@/components/gamification/gamification-widget";
 import { WelcomeBackModal } from "@/components/dashboard/welcome-back-modal";
+import { GenerateRoomCTA } from "@/components/dashboard/generate-room-cta";
+import {
+  getCurrentMission,
+  type CurrentMissionResponse,
+} from "@/lib/api/paths";
 import { useDashboardData } from "./_hooks/use-dashboard-data";
 import { CourseCardsSkeleton } from "./_components/dash-section";
 import { LearningRhythm } from "./_components/digest-fallback";
@@ -61,6 +69,35 @@ export default function DashboardPage() {
     dismissModeRecommendation,
   } = useDashboardData();
 
+  // Visual Shell V2 — single mission fetch shared by the hero, the
+  // TodayPlanCard, and the GenerateRoomCTA slot. `undefined` while the
+  // request is in flight so the hero renders its skeleton; the API
+  // resolves to either a mission object or `null`.
+  //
+  // Phase 16b Bundle B — the GenerateRoomCTA also needs a (path_id,
+  // path_slug, course_id) trio. The dashboard payload doesn't expose a
+  // course_id mapping yet, so for MVL we hide the CTA unless we can pair
+  // the mission's path with a course from the user's dashboard.
+  const [currentMission, setCurrentMission] = useState<
+    CurrentMissionResponse | undefined
+  >(undefined);
+  useEffect(() => {
+    let cancelled = false;
+    getCurrentMission()
+      .then((mission) => {
+        if (!cancelled) setCurrentMission(mission);
+      })
+      .catch(() => {
+        if (!cancelled) setCurrentMission(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const generateCourseId =
+    courses.length > 0 ? (courses[0] as { id: string }).id : null;
+  const reviewGate = totalDueFlashcards > 0;
+
   const navigate = (path: string) => router.push(path);
 
   const getDeadlineLabel = (daysUntil: number): string => {
@@ -75,7 +112,15 @@ export default function DashboardPage() {
           component returns `null` when the user has not been away 3+
           days or has already dismissed today. */}
       <WelcomeBackModal />
-      <main className="mx-auto flex max-w-6xl flex-col gap-6 px-4 py-8 sm:px-6 md:px-10 md:py-12">
+      {/* Visual Shell V1 — Slice 1 (Dashboard).
+          Outer container is the shared shell wrapper agreed with main agent
+          + Subagent B: max-w-[1600px] with responsive horizontal padding.
+          Above-the-fold = 2-col grid (main + 380px support rail) at xl+.
+          Below xl, single column — rail items stack under hero. */}
+      <main
+        data-testid="dashboard-shell"
+        className="mx-auto w-full max-w-[1600px] px-4 md:px-6 xl:px-10 pb-24 pt-8 md:pt-12 flex flex-col gap-6"
+      >
         <RuntimeAlert health={health} />
 
         {error && (
@@ -105,18 +150,43 @@ export default function DashboardPage() {
 
         {courses.length > 0 && (
           <section
-            data-testid="dashboard-mission-first"
-            className="flex flex-col gap-4"
+            data-testid="dashboard-main-grid"
+            className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_380px] gap-6"
           >
-            <ContinueMissionHero />
             <div
-              data-testid="dashboard-primary-row"
-              className="grid gap-4 lg:grid-cols-3"
+              data-testid="dashboard-mission-first"
+              className="space-y-6 min-w-0"
+            >
+              <TodayPlanCard
+                totalDueFlashcards={totalDueFlashcards}
+                mission={currentMission}
+              />
+              <ContinueMissionHero
+                mission={currentMission}
+                gate={reviewGate}
+                dueCardCount={totalDueFlashcards}
+              />
+              {currentMission && generateCourseId && (
+                <div data-testid="dashboard-generate-room-slot">
+                  <GenerateRoomCTA
+                    pathId={currentMission.path_id}
+                    courseId={generateCourseId}
+                    pathSlug={currentMission.path_slug}
+                  />
+                </div>
+              )}
+            </div>
+            <aside
+              data-testid="dashboard-support-rail"
+              className="space-y-4 min-w-0 xl:sticky xl:top-20 xl:self-start"
             >
               <DailySessionCTA />
               <LearningPathsPill />
               <DrillCoursesPill />
-            </div>
+              {/* Phase 16c Bundle C — passive status widget at the
+                  bottom of the rail (status, not action). */}
+              <GamificationWidget />
+            </aside>
           </section>
         )}
 
