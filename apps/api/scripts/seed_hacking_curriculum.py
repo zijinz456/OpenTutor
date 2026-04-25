@@ -2,7 +2,7 @@
 
 The script:
 1. Loads ``content/hacking/curriculum.yaml``.
-2. Upserts one learning path plus 6 path rooms.
+2. Upserts one learning path plus 10 path rooms.
 3. Runs each curated URL through ``run_ingestion_pipeline()`` inline.
 4. Waits for detached card-generation tasks to finish.
 5. Reuses ``_map_cards_to_room()`` from ``seed_python_paths.py`` to attach
@@ -45,6 +45,7 @@ from models.learning_path import PathRoom  # noqa: E402
 from models.practice import LAB_EXERCISE_TYPE, PracticeProblem  # noqa: E402
 from models.user import User  # noqa: E402
 from routers.upload_processing import _derive_filename, _normalize_scrape_url  # noqa: E402
+from scripts.path_capstones import backfill_room_capstones  # noqa: E402
 from scripts.seed_python_paths import (  # noqa: E402
     _map_cards_to_room,
     _upsert_path,
@@ -134,8 +135,8 @@ def _load_curriculum(yaml_path: Path) -> tuple[dict[str, Any], list[dict[str, An
         raise ValueError("curriculum.yaml must define a top-level 'modules' list")
     if path_doc.get("slug") != "hacking-foundations":
         raise ValueError("path.slug must be 'hacking-foundations'")
-    if len(modules) != 6:
-        raise ValueError(f"Expected 6 modules, found {len(modules)}")
+    if len(modules) != 10:
+        raise ValueError(f"Expected 10 modules, found {len(modules)}")
 
     python_url_keys = _load_python_url_keys()
     seen_module_slugs: set[str] = set()
@@ -313,6 +314,31 @@ async def _count_room_cards(
     return int(result.scalar_one() or 0)
 
 
+async def _reset_course_room_mappings(
+    db: AsyncSession,
+    *,
+    course_id: uuid.UUID,
+) -> int:
+    rows = (
+        (
+            await db.execute(
+                select(PracticeProblem).where(PracticeProblem.course_id == course_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    reset = 0
+    for problem in rows:
+        if problem.path_room_id is None and problem.task_order is None:
+            continue
+        problem.path_room_id = None
+        problem.task_order = None
+        reset += 1
+    return reset
+
+
 async def _has_successful_ingestion(
     db: AsyncSession,
     *,
@@ -350,6 +376,21 @@ def _module_title_hints(module: dict[str, Any]) -> set[str]:
         if isinstance(explicit, str) and explicit.strip():
             hints.add(explicit.strip().lower())
     return hints
+
+
+def _mapping_priority(module: dict[str, Any]) -> tuple[int, int, int, str]:
+    hints = _module_title_hints(module)
+    if not hints:
+        return (0, 0, 0, str(module.get("slug") or ""))
+    max_words = max(hint.count(" ") + 1 for hint in hints)
+    max_len = max(len(hint) for hint in hints)
+    total_len = sum(len(hint) for hint in hints)
+    return (
+        max_words,
+        max_len,
+        total_len,
+        str(module.get("slug") or ""),
+    )
 
 
 async def _ingest_url_inline(
@@ -561,8 +602,15 @@ async def main(
                 if sleep_seconds > 0:
                     await asyncio.sleep(sleep_seconds)
 
+        reset_mappings = await _reset_course_room_mappings(db, course_id=course.id)
+
         mapped_by_urls = 0
-        for module in modules:
+        modules_for_mapping = sorted(
+            modules,
+            key=_mapping_priority,
+            reverse=True,
+        )
+        for module in modules_for_mapping:
             room = room_by_slug[module["slug"]]
             module_url_keys = {
                 _url_match_key(url) for url in module.get("urls", []) or []
@@ -572,6 +620,7 @@ async def main(
                 room_id=room.id,
                 module_url_keys=module_url_keys,
                 module_title_hints=_module_title_hints(module),
+                course_id=course.id,
             )
 
         juice_room = room_by_slug.get("juice-shop-practice")
@@ -585,6 +634,10 @@ async def main(
         for room in room_by_slug.values():
             await _renumber_room_tasks(db, room_id=room.id)
 
+        capstone_updates = await backfill_room_capstones(
+            db,
+            room_ids=[room.id for room in room_by_slug.values()],
+        )
         await db.commit()
 
         cards_after = await _count_course_cards(db, course_id=course.id)
@@ -609,6 +662,10 @@ async def main(
             f"Room mapping: {mapped_by_urls} cards from URL ingests, "
             f"{mapped_existing_labs} existing Juice Shop lab cards"
         )
+    if reset_mappings:
+        print(f"Reset {reset_mappings} stale room mappings before remap")
+    if capstone_updates:
+        print(f"Capstones updated for {capstone_updates} room(s)")
     if failures:
         print("URL failures:")
         for url, error in failures:

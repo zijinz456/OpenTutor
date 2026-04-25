@@ -18,18 +18,24 @@ assignments.
 
 Usage::
 
-    python apps/api/scripts/seed_python_paths.py [--dry-run]
+    python apps/api/scripts/seed_python_paths.py [--dry-run] [--report-json PATH]
 
 ``--dry-run`` reports what *would* happen and rolls back. The non-dry
 path prints the same per-module report and commits.
+
+``--report-json`` writes the structured ``SeedSummary`` to the given
+file path as JSON for downstream tooling (CI dashboards, the orphan
+pill caption, etc.) without re-parsing console output.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import re
 import sys
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from urllib.parse import urlsplit
 from uuid import uuid4
@@ -50,11 +56,40 @@ from database import async_session  # noqa: E402
 from models.content import CourseContentTree  # noqa: E402
 from models.learning_path import LearningPath, PathRoom  # noqa: E402
 from models.practice import PracticeProblem  # noqa: E402
+from scripts.path_capstones import backfill_room_capstones  # noqa: E402
 
 _DEFAULT_OUTCOME = "Complete this mission"
 _DEFAULT_DIFFICULTY = 2
 _DEFAULT_ETA_MINUTES = 15
 _DEFAULT_MODULE_LABEL = ""
+
+
+# ── Structured summary ─────────────────────────────────────────────────
+
+
+@dataclass
+class SeedSummary:
+    """Structured report of a single seed run.
+
+    Returned by ``main`` so tests + tooling can assert exact counts
+    instead of grepping console output. The same dataclass is dumped
+    to JSON when ``--report-json`` is given.
+
+    ``exit_code`` is 0 on success and non-zero when the run was aborted
+    before any DB work — currently 2 means the curriculum yaml was not
+    found. On non-zero exit codes the count fields stay at their zero
+    defaults; do not interpret them as "0 paths upserted".
+    """
+
+    paths_upserted: int = 0
+    rooms_upserted: int = 0
+    cards_mapped: int = 0
+    capstone_updates: int = 0
+    orphan_count: int = 0
+    per_room_mapped: dict[str, int] = field(default_factory=dict)
+    dry_run: bool = False
+    yaml_path: str | None = None
+    exit_code: int = 0
 
 
 # ── URL normalization ──────────────────────────────────────────────────
@@ -240,6 +275,7 @@ async def _map_cards_to_room(
     room_id,
     module_url_keys: set[str],
     module_title_hints: set[str] | None = None,
+    course_id=None,
 ) -> int:
     """Assign ``path_room_id`` on every orphan problem whose parent
     content-tree node's ``source_file`` matches one of ``module_url_keys``.
@@ -260,6 +296,13 @@ async def _map_cards_to_room(
     # Join problems → content_tree so we can read ``source_file``
     # without a separate round-trip per row. Filter to problems that
     # don't already belong to a room.
+    filters = [
+        PracticeProblem.path_room_id.is_(None),
+        CourseContentTree.source_file.is_not(None),
+    ]
+    if course_id is not None:
+        filters.append(PracticeProblem.course_id == course_id)
+
     rows = (
         await db.execute(
             select(PracticeProblem, CourseContentTree.source_file)
@@ -267,10 +310,7 @@ async def _map_cards_to_room(
                 CourseContentTree,
                 PracticeProblem.content_node_id == CourseContentTree.id,
             )
-            .where(
-                PracticeProblem.path_room_id.is_(None),
-                CourseContentTree.source_file.is_not(None),
-            )
+            .where(*filters)
         )
     ).all()
 
@@ -324,7 +364,7 @@ async def main(
     *,
     yaml_path_override: Path | None = None,
     session_factory=async_session,
-) -> int:
+) -> SeedSummary:
     """Seed paths + rooms + card mappings from the curriculum yaml.
 
     ``yaml_path_override`` is a test-only hook so unit tests can feed a
@@ -332,23 +372,25 @@ async def main(
     ``session_factory`` is injected for the same reason — tests swap
     in a SQLite async sessionmaker.
 
-    Returns an exit code: 0 success, 2 curriculum yaml missing.
+    Returns a :class:`SeedSummary` with deterministic counts. The
+    summary's ``exit_code`` is 0 on success and 2 when the curriculum
+    yaml is missing.
     """
+
+    summary = SeedSummary(dry_run=dry_run)
 
     yaml_path = yaml_path_override or _locate_curriculum_yaml()
     if yaml_path is None or not yaml_path.is_file():
         print("ERROR: python_full_curriculum.yaml not found (walked 8 levels up)")
-        return 2
+        summary.exit_code = 2
+        return summary
+    summary.yaml_path = str(yaml_path)
     print(f"Reading curriculum from: {yaml_path}")
 
     with yaml_path.open(encoding="utf-8") as fh:
         doc = yaml.safe_load(fh) or {}
 
     async with session_factory() as db:
-        total_paths = 0
-        total_rooms = 0
-        total_mapped = 0
-
         for track in doc.get("tracks", []) or []:
             track_id = track.get("id") or "unknown_track"
             modules = track.get("modules", []) or []
@@ -363,7 +405,7 @@ async def main(
                 description=track.get("why"),
                 room_count_target=len(modules),
             )
-            total_paths += 1
+            summary.paths_upserted += 1
 
             for idx, module in enumerate(modules):
                 module_id = module.get("id") or f"module_{idx}"
@@ -415,7 +457,7 @@ async def main(
                     intro_excerpt=intro_placeholder,
                     task_count_target=cards_target,
                 )
-                total_rooms += 1
+                summary.rooms_upserted += 1
 
                 mapped = await _map_cards_to_room(
                     db,
@@ -423,25 +465,38 @@ async def main(
                     module_url_keys=url_keys,
                     module_title_hints=title_hints,
                 )
-                total_mapped += mapped
+                summary.cards_mapped += mapped
+                # Per-room counter keyed by room slug. Slugs are unique
+                # within a path but not across paths in principle; in
+                # practice the curriculum yaml uses globally-unique
+                # module ids (``py_intro``, ``hk_recon`` etc.) so a flat
+                # dict is fine. If that ever changes, switch to
+                # ``f"{track_id}/{module_id}"`` keys.
+                summary.per_room_mapped[module_id] = mapped
                 print(f"  {track_id[:22]:<22} / {module_id:<28} cards mapped +{mapped}")
 
         if dry_run:
             await db.rollback()
             print(
-                f"\n[DRY RUN] Would upsert: {total_paths} paths, "
-                f"{total_rooms} rooms, {total_mapped} card mappings. "
+                f"\n[DRY RUN] Would upsert: {summary.paths_upserted} paths, "
+                f"{summary.rooms_upserted} rooms, "
+                f"{summary.cards_mapped} card mappings. "
                 f"Rolled back."
             )
         else:
+            summary.capstone_updates = await backfill_room_capstones(db)
             await db.commit()
             print(
-                f"\nCommitted: {total_paths} paths, {total_rooms} rooms, "
-                f"{total_mapped} card→room mappings"
+                f"\nCommitted: {summary.paths_upserted} paths, "
+                f"{summary.rooms_upserted} rooms, "
+                f"{summary.cards_mapped} card→room mappings, "
+                f"{summary.capstone_updates} capstone updates"
             )
 
         # Informational orphan count — the dashboard pill caption uses
         # the same number (critic C2) so Юрій sees unmapped cards exist.
+        # On dry_run the rollback above means newly-mapped cards revert
+        # to NULL, so the count reflects real persisted orphan state.
         orphans = (
             (
                 await db.execute(
@@ -453,9 +508,24 @@ async def main(
             .scalars()
             .all()
         )
-        print(f"Orphan cards (no path_room_id): {len(orphans)}")
+        summary.orphan_count = len(orphans)
+        print(f"Orphan cards (no path_room_id): {summary.orphan_count}")
 
-    return 0
+    return summary
+
+
+def _write_report_json(summary: SeedSummary, report_path: Path) -> None:
+    """Serialize ``summary`` to ``report_path`` as pretty-printed JSON.
+
+    Created here (not on the dataclass) so callers control file I/O
+    timing — the function is a no-op outside the CLI entry point.
+    """
+
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = asdict(summary)
+    report_path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8"
+    )
 
 
 if __name__ == "__main__":
@@ -466,5 +536,15 @@ if __name__ == "__main__":
         action="store_true",
         help="Print what would happen and roll back without committing.",
     )
+    parser.add_argument(
+        "--report-json",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help="Write the SeedSummary as JSON to PATH (creates parent dirs).",
+    )
     args = parser.parse_args()
-    sys.exit(asyncio.run(main(dry_run=args.dry_run)))
+    seed_summary = asyncio.run(main(dry_run=args.dry_run))
+    if args.report_json is not None:
+        _write_report_json(seed_summary, args.report_json)
+    sys.exit(seed_summary.exit_code)

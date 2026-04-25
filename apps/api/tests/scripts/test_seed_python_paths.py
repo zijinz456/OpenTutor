@@ -12,7 +12,9 @@ Covers the five T2 merge-criteria:
 5. ``dry_run=True`` rolls back — no paths / rooms / mappings persist.
 
 Plus URL-normalization unit tests for ``_url_match_key`` (trailing
-slash, http vs https, query string, fragment, ``www.`` prefix).
+slash, http vs https, query string, fragment, ``www.`` prefix), and
+Phase 12 Slice 1 Part A coverage of the structured ``SeedSummary``
+dataclass + the ``--report-json`` JSON serializer helper.
 
 Uses an async SQLite engine via the app's own ``Base.metadata`` so the
 tests exercise the exact schema. The script's ``session_factory``
@@ -22,7 +24,9 @@ argument is the injection seam — no monkeypatch of the global
 
 from __future__ import annotations
 
+import json
 import uuid
+from dataclasses import asdict
 from pathlib import Path
 
 import pytest
@@ -36,7 +40,12 @@ from models.course import Course
 from models.learning_path import LearningPath, PathRoom
 from models.practice import PracticeProblem
 from models.user import User
-from scripts.seed_python_paths import _url_match_key, main
+from scripts.seed_python_paths import (
+    SeedSummary,
+    _url_match_key,
+    _write_report_json,
+    main,
+)
 
 
 # ── fixtures ───────────────────────────────────────────────────────────
@@ -205,10 +214,11 @@ async def _seed_course_with_problems(
 @pytest.mark.asyncio
 async def test_seed_creates_paths_and_rooms(session_factory, fake_yaml):
     """A fresh DB + fixture yaml produces exactly N paths and N*M rooms."""
-    rc = await main(
+    summary = await main(
         dry_run=False, yaml_path_override=fake_yaml, session_factory=session_factory
     )
-    assert rc == 0
+    assert isinstance(summary, SeedSummary)
+    assert summary.exit_code == 0
 
     async with session_factory() as db:
         paths = (await db.execute(__import___select_paths())).scalars().all()
@@ -239,12 +249,12 @@ async def test_seed_creates_paths_and_rooms(session_factory, fake_yaml):
 async def test_seed_is_idempotent(session_factory, fake_yaml):
     """Running the seed twice yields the same paths + rooms counts."""
     for _ in range(2):
-        rc = await main(
+        summary = await main(
             dry_run=False,
             yaml_path_override=fake_yaml,
             session_factory=session_factory,
         )
-        assert rc == 0
+        assert summary.exit_code == 0
 
     async with session_factory() as db:
         paths = (await db.execute(__import___select_paths())).scalars().all()
@@ -270,10 +280,10 @@ async def test_cards_mapped_by_source_file(session_factory, fake_yaml):
         },
     )
 
-    rc = await main(
+    summary = await main(
         dry_run=False, yaml_path_override=fake_yaml, session_factory=session_factory
     )
-    assert rc == 0
+    assert summary.exit_code == 0
 
     from sqlalchemy import select
 
@@ -352,12 +362,12 @@ async def test_match_titles_override_maps_orphan_by_page_title(
         },
     )
 
-    rc = await main(
+    summary = await main(
         dry_run=False,
         yaml_path_override=fake_yaml_with_match_titles,
         session_factory=session_factory,
     )
-    assert rc == 0
+    assert summary.exit_code == 0
 
     from sqlalchemy import select
 
@@ -392,10 +402,10 @@ async def test_orphan_cards_stay_unmapped(session_factory, fake_yaml):
         },
     )
 
-    rc = await main(
+    summary = await main(
         dry_run=False, yaml_path_override=fake_yaml, session_factory=session_factory
     )
-    assert rc == 0
+    assert summary.exit_code == 0
 
     from sqlalchemy import select
 
@@ -422,10 +432,11 @@ async def test_orphan_cards_stay_unmapped(session_factory, fake_yaml):
 @pytest.mark.asyncio
 async def test_dry_run_rolls_back(session_factory, fake_yaml):
     """``dry_run=True`` must not leave any paths or rooms in the DB."""
-    rc = await main(
+    summary = await main(
         dry_run=True, yaml_path_override=fake_yaml, session_factory=session_factory
     )
-    assert rc == 0
+    assert summary.exit_code == 0
+    assert summary.dry_run is True
 
     async with session_factory() as db:
         paths = (await db.execute(__import___select_paths())).scalars().all()
@@ -433,6 +444,120 @@ async def test_dry_run_rolls_back(session_factory, fake_yaml):
 
     assert paths == []
     assert rooms == []
+
+
+# ── 6. SeedSummary structured report (Phase 12 Slice 1 Part A) ─────────
+
+
+@pytest.mark.asyncio
+async def test_seed_summary_counts_match_db_state(session_factory, fake_yaml):
+    """SeedSummary fields equal the DB rowcounts after a non-dry run.
+
+    The fixture yaml has 2 tracks × 3 modules = 6 rooms. We pre-seed
+    5 problems pointing at ``py_intro`` and 2 at ``py_classes`` so the
+    cards-mapped counter and the per-room map can be asserted exactly.
+    """
+    intro_ids = [uuid.uuid4() for _ in range(5)]
+    classes_ids = [uuid.uuid4() for _ in range(2)]
+    orphan_ids = [uuid.uuid4() for _ in range(3)]
+    url_by_problem: dict[uuid.UUID, str | None] = {}
+    for pid in intro_ids:
+        url_by_problem[pid] = "https://docs.python.org/3/tutorial/introduction.html"
+    for pid in classes_ids:
+        url_by_problem[pid] = (
+            "https://realpython.com/python3-object-oriented-programming/"
+        )
+    for pid in orphan_ids:
+        url_by_problem[pid] = "https://random.example.com/never-matched"
+
+    await _seed_course_with_problems(session_factory, url_by_problem=url_by_problem)
+
+    summary = await main(
+        dry_run=False, yaml_path_override=fake_yaml, session_factory=session_factory
+    )
+
+    assert summary.exit_code == 0
+    assert summary.dry_run is False
+    assert summary.paths_upserted == 2
+    assert summary.rooms_upserted == 6
+    assert summary.cards_mapped == 7  # 5 intro + 2 classes
+    # Per-room map covers every module and matches the per-room counts.
+    assert summary.per_room_mapped["py_intro"] == 5
+    assert summary.per_room_mapped["py_classes"] == 2
+    # Modules with no matching problems still appear with a 0 entry —
+    # the loop writes the key for every module it processes.
+    assert summary.per_room_mapped["py_controlflow"] == 0
+    assert summary.per_room_mapped["py_functions"] == 0
+    assert summary.per_room_mapped["py_decorators"] == 0
+    assert summary.per_room_mapped["py_context_managers"] == 0
+    assert sum(summary.per_room_mapped.values()) == summary.cards_mapped
+    # Orphan count reflects the 3 unrelated-URL problems — we do NOT
+    # assert "reduced from N to M"; brief explicitly forbids invented
+    # orphan-reduction claims, just count what actually happened.
+    assert summary.orphan_count == 3
+    # capstone_updates should fire for the 2 rooms that received cards.
+    assert summary.capstone_updates == 2
+    assert summary.yaml_path == str(fake_yaml)
+
+
+@pytest.mark.asyncio
+async def test_seed_summary_dry_run_does_not_count_capstones(
+    session_factory, fake_yaml
+):
+    """On dry-run we skip capstone backfill, so its counter stays 0."""
+    summary = await main(
+        dry_run=True, yaml_path_override=fake_yaml, session_factory=session_factory
+    )
+
+    assert summary.exit_code == 0
+    assert summary.dry_run is True
+    assert summary.paths_upserted == 2
+    assert summary.rooms_upserted == 6
+    # No problems pre-seeded → cards_mapped == 0 and per-room all zeros.
+    assert summary.cards_mapped == 0
+    assert all(v == 0 for v in summary.per_room_mapped.values())
+    # Capstone backfill is gated behind the non-dry branch.
+    assert summary.capstone_updates == 0
+
+
+@pytest.mark.asyncio
+async def test_seed_summary_missing_yaml_returns_exit_2(session_factory, tmp_path):
+    """When the curriculum yaml is absent, summary.exit_code == 2 and
+    no DB writes happen — counts stay at their zero defaults."""
+    missing = tmp_path / "does-not-exist.yaml"
+    summary = await main(
+        dry_run=False, yaml_path_override=missing, session_factory=session_factory
+    )
+
+    assert summary.exit_code == 2
+    assert summary.paths_upserted == 0
+    assert summary.rooms_upserted == 0
+    assert summary.cards_mapped == 0
+    assert summary.per_room_mapped == {}
+    assert summary.yaml_path is None
+
+
+def test_write_report_json_serializes_summary(tmp_path):
+    """``_write_report_json`` produces valid JSON containing every
+    SeedSummary field via ``dataclasses.asdict``."""
+    summary = SeedSummary(
+        paths_upserted=2,
+        rooms_upserted=6,
+        cards_mapped=7,
+        capstone_updates=2,
+        orphan_count=3,
+        per_room_mapped={"py_intro": 5, "py_classes": 2},
+        dry_run=False,
+        yaml_path="/tmp/curriculum.yaml",
+        exit_code=0,
+    )
+    report_path = tmp_path / "nested" / "report.json"
+    _write_report_json(summary, report_path)
+
+    assert report_path.is_file()
+    payload = json.loads(report_path.read_text(encoding="utf-8"))
+    # Every dataclass field is round-tripped — keys identical to asdict.
+    assert payload == asdict(summary)
 
 
 # ── URL normalization unit tests ───────────────────────────────────────

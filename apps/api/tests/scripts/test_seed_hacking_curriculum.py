@@ -78,7 +78,7 @@ def fake_yaml(tmp_path: Path) -> Path:
                 "outcome": (
                     "Collect host info on systems you have permission to test."
                 ),
-                "match_titles": ["bash"],
+                "match_titles": ["bash", "shell"],
                 "urls": [
                     "https://linuxcommand.org/lc3_learning_the_shell.php",
                 ],
@@ -92,7 +92,14 @@ def fake_yaml(tmp_path: Path) -> Path:
                 "outcome": (
                     "Recognise common web bugs on systems you have permission to test."
                 ),
-                "match_titles": ["owasp"],
+                "match_titles": [
+                    "owasp",
+                    "authentication",
+                    "xss",
+                    "sql injection",
+                    "csrf",
+                    "access control",
+                ],
                 "urls": [
                     "https://owasp.org/www-project-top-ten/",
                 ],
@@ -106,7 +113,12 @@ def fake_yaml(tmp_path: Path) -> Path:
                 "outcome": (
                     "Map exposed services on systems you have permission to test."
                 ),
-                "match_titles": ["nmap"],
+                "match_titles": [
+                    "nmap",
+                    "reconnaissance",
+                    "scanning",
+                    "host discovery",
+                ],
                 "urls": [
                     "https://nmap.org/book/man.html",
                 ],
@@ -135,6 +147,70 @@ def fake_yaml(tmp_path: Path) -> Path:
                 "match_titles": ["juice shop"],
                 "urls": [
                     "https://pwning.owasp-juice.shop/",
+                ],
+            },
+            {
+                "slug": "advanced-web-auth",
+                "title": "Advanced web auth and session bypass",
+                "difficulty": 3,
+                "eta_minutes": 45,
+                "module_label": "Web attacks",
+                "outcome": (
+                    "Bypass weak auth and session logic on systems you have "
+                    "permission to test."
+                ),
+                "match_titles": ["authentication", "password-based login", "jwt"],
+                "urls": [
+                    "https://portswigger.net/web-security/authentication",
+                ],
+            },
+            {
+                "slug": "recon-deep-dive",
+                "title": "Recon deep dive",
+                "difficulty": 3,
+                "eta_minutes": 45,
+                "module_label": "Tools",
+                "outcome": (
+                    "Tune scanning depth and output on systems you have "
+                    "permission to test."
+                ),
+                "match_titles": ["host discovery", "port scanning"],
+                "urls": [
+                    "https://nmap.org/book/host-discovery-techniques.html",
+                ],
+            },
+            {
+                "slug": "idor-and-access-control",
+                "title": "IDOR and broken access control",
+                "difficulty": 3,
+                "eta_minutes": 35,
+                "module_label": "Intermediate",
+                "outcome": (
+                    "Identify IDOR patterns on systems you have permission to test."
+                ),
+                "match_titles": [
+                    "idor",
+                    "insecure direct object reference",
+                    "broken access control",
+                ],
+                "urls": [
+                    "https://portswigger.net/web-security/access-control/idor",
+                ],
+            },
+            {
+                "slug": "file-upload-and-path-traversal",
+                "title": "File upload and path traversal",
+                "difficulty": 3,
+                "eta_minutes": 35,
+                "module_label": "Intermediate",
+                "outcome": ("Probe upload handlers against Juice Shop on :3100 only."),
+                "match_titles": [
+                    "file upload",
+                    "path traversal",
+                    "directory traversal",
+                ],
+                "urls": [
+                    "https://portswigger.net/web-security/file-upload",
                 ],
             },
         ],
@@ -171,6 +247,8 @@ async def _fake_ingest_url(
     db.add(job)
     await db.flush()
 
+    source_file = _fake_source_file_for_url(url)
+
     for index in range(3):
         node = CourseContentTree(
             id=uuid.uuid4(),
@@ -179,7 +257,7 @@ async def _fake_ingest_url(
             content=f"Fake content for {url}",
             level=0,
             order_index=index,
-            source_file=url,
+            source_file=source_file,
             source_type="url",
             content_category="knowledge",
         )
@@ -203,6 +281,32 @@ async def _fake_ingest_url(
     return job
 
 
+def _fake_source_file_for_url(url: str) -> str:
+    if "web/http/overview" in url.lower():
+        return "Overview of HTTP - HTTP | MDN"
+    if "web/http/messages" in url.lower():
+        return "HTTP messages - HTTP | MDN"
+    if "learning_the_shell" in url.lower():
+        return "Learning the Shell - LinuxCommand.org"
+    if "top-ten" in url.lower():
+        return "OWASP Top Ten"
+    if "book/man.html" in url.lower():
+        return "Chapter 15. Nmap Reference Guide | Nmap Network Scanning"
+    if "burp/documentation/desktop/getting-started" in url.lower():
+        return "Getting started with Burp Suite Professional"
+    if "juice.shop" in url.lower():
+        return "Pwning OWASP Juice Shop"
+    if "portswigger.net/web-security/authentication" in url.lower():
+        return "Vulnerabilities in password-based login | Web Security Academy"
+    if "host-discovery-techniques" in url.lower():
+        return "Host Discovery Techniques | Nmap Network Scanning"
+    if "access-control/idor" in url.lower():
+        return "IDOR vulnerabilities | Web Security Academy"
+    if "web-security/file-upload" in url.lower():
+        return "File upload vulnerabilities | Web Security Academy"
+    return url
+
+
 @pytest.mark.asyncio
 async def test_seed_creates_path_room_and_maps_cards(session_factory, fake_yaml):
     rc = await main(
@@ -218,7 +322,8 @@ async def test_seed_creates_path_room_and_maps_cards(session_factory, fake_yaml)
     async with session_factory() as db:
         paths = (await db.execute(select(LearningPath))).scalars().all()
         rooms = (await db.execute(select(PathRoom))).scalars().all()
-        room = next(room for room in rooms if room.slug == "network-basics")
+        rooms_by_slug = {room.slug: room for room in rooms}
+        room = rooms_by_slug["network-basics"]
         mapped_count = (
             await db.execute(
                 select(func.count(PracticeProblem.id)).where(
@@ -226,11 +331,29 @@ async def test_seed_creates_path_room_and_maps_cards(session_factory, fake_yaml)
                 )
             )
         ).scalar_one()
+        idor_room = rooms_by_slug["idor-and-access-control"]
+        upload_room = rooms_by_slug["file-upload-and-path-traversal"]
+        idor_mapped = (
+            await db.execute(
+                select(func.count(PracticeProblem.id)).where(
+                    PracticeProblem.path_room_id == idor_room.id
+                )
+            )
+        ).scalar_one()
+        upload_mapped = (
+            await db.execute(
+                select(func.count(PracticeProblem.id)).where(
+                    PracticeProblem.path_room_id == upload_room.id
+                )
+            )
+        ).scalar_one()
 
     assert len(paths) == 1
     assert paths[0].slug == "hacking-foundations"
     assert paths[0].track_id == "hacking_foundations"
-    assert len(rooms) == 6
+    assert len(rooms) == 10
+    assert "idor-and-access-control" in rooms_by_slug
+    assert "file-upload-and-path-traversal" in rooms_by_slug
     assert (
         room.outcome == "Explain HTTP requests on systems you have permission to test."
     )
@@ -238,6 +361,23 @@ async def test_seed_creates_path_room_and_maps_cards(session_factory, fake_yaml)
     assert room.eta_minutes == 25
     assert room.module_label == "Basics"
     assert mapped_count == 6
+
+    assert idor_room.difficulty == 3
+    assert idor_room.eta_minutes == 35
+    assert idor_room.module_label == "Intermediate"
+    assert (
+        idor_room.outcome
+        == "Identify IDOR patterns on systems you have permission to test."
+    )
+    assert idor_mapped >= 1
+
+    assert upload_room.difficulty == 3
+    assert upload_room.eta_minutes == 35
+    assert upload_room.module_label == "Intermediate"
+    assert (
+        upload_room.outcome == "Probe upload handlers against Juice Shop on :3100 only."
+    )
+    assert upload_mapped >= 1
 
 
 @pytest.mark.asyncio
@@ -271,7 +411,45 @@ async def test_seed_is_idempotent_on_rerun(session_factory, fake_yaml):
         ).scalar_one()
 
     assert path_count == 1
-    assert room_count == 6
-    assert job_count == 7
-    assert problem_count == 21
-    assert mapped_count == 21
+    assert room_count == 10
+    assert job_count == 11
+    assert problem_count == 33
+    assert mapped_count == 33
+
+
+@pytest.mark.asyncio
+async def test_seed_maps_specific_titles_before_broad_room_hints(
+    session_factory, fake_yaml
+):
+    rc = await main(
+        dry_run=False,
+        yaml_path_override=fake_yaml,
+        session_factory=session_factory,
+        ingest_url_func=_fake_ingest_url,
+        sleep_seconds=0,
+        timeout_seconds=1,
+    )
+    assert rc == 0
+
+    async with session_factory() as db:
+        rooms = {
+            room.slug: room
+            for room in (await db.execute(select(PathRoom))).scalars().all()
+        }
+        advanced_count = (
+            await db.execute(
+                select(func.count(PracticeProblem.id)).where(
+                    PracticeProblem.path_room_id == rooms["advanced-web-auth"].id
+                )
+            )
+        ).scalar_one()
+        recon_deep_count = (
+            await db.execute(
+                select(func.count(PracticeProblem.id)).where(
+                    PracticeProblem.path_room_id == rooms["recon-deep-dive"].id
+                )
+            )
+        ).scalar_one()
+
+    assert advanced_count == 3
+    assert recon_deep_count == 3
