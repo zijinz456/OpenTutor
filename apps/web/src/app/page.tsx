@@ -10,12 +10,20 @@ import { BrutalDrillCTA } from "@/components/dashboard/brutal-drill-cta";
 import { LearningPathsPill } from "@/components/dashboard/LearningPathsPill";
 import { DrillCoursesPill } from "@/components/dashboard/DrillCoursesPill";
 import { GamificationWidget } from "@/components/gamification/gamification-widget";
+import { LevelRingCard } from "@/components/dashboard/level-ring-card";
+import { StreakCard } from "@/components/dashboard/streak-card";
+import { HeatmapCard } from "@/components/dashboard/heatmap-card";
+import { DailyGoalCard } from "@/components/dashboard/daily-goal-card";
 import { WelcomeBackModal } from "@/components/dashboard/welcome-back-modal";
 import { GenerateRoomCTA } from "@/components/dashboard/generate-room-cta";
 import {
   getCurrentMission,
   type CurrentMissionResponse,
 } from "@/lib/api/paths";
+import {
+  getGamificationDashboard,
+  type GamificationDashboard,
+} from "@/lib/api/gamification";
 import { useDashboardData } from "./_hooks/use-dashboard-data";
 import { CourseCardsSkeleton } from "./_components/dash-section";
 import { LearningRhythm } from "./_components/digest-fallback";
@@ -89,6 +97,29 @@ export default function DashboardPage() {
       })
       .catch(() => {
         if (!cancelled) setCurrentMission(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Phase 16c Bundle B — single fetch shared by the 4-card gamification
+  // block inside the More-tools details. The legacy <GamificationWidget>
+  // in the support rail keeps its own internal fetch (different layout
+  // context, different lifecycle) — see spec note. `null` here means we
+  // failed to load and fall through to omitting the cards rather than
+  // showing an error banner.
+  const [gamification, setGamification] = useState<
+    GamificationDashboard | null
+  >(null);
+  useEffect(() => {
+    let cancelled = false;
+    getGamificationDashboard()
+      .then((data) => {
+        if (!cancelled) setGamification(data);
+      })
+      .catch(() => {
+        if (!cancelled) setGamification(null);
       });
     return () => {
       cancelled = true;
@@ -212,6 +243,38 @@ export default function DashboardPage() {
             </summary>
 
             <div className="mt-5 flex flex-col gap-4">
+              {/* Phase 16c Bundle B — 4-card gamification block at the
+                  top of More-tools content (per spec C.2). The rail-level
+                  <GamificationWidget> stays — it serves a different
+                  layout context (always visible, narrow column). */}
+              {gamification && (
+                <div
+                  data-testid="dashboard-gamification-cards"
+                  className="grid grid-cols-1 md:grid-cols-2 gap-4"
+                >
+                  <LevelRingCard
+                    xpTotal={gamification.xp_total}
+                    levelTier={gamification.level_tier}
+                    levelName={gamification.level_name}
+                    levelProgressPct={gamification.level_progress_pct}
+                    xpToNextLevel={gamification.xp_to_next_level}
+                  />
+                  <StreakCard
+                    streakDays={gamification.streak_days}
+                    freezesLeft={gamification.streak_freezes_left}
+                  />
+                  <HeatmapCard
+                    tiles={gamification.heatmap}
+                    className="md:col-span-2"
+                  />
+                  <DailyGoalCard
+                    dailyGoalXp={gamification.daily_goal_xp}
+                    dailyXpEarned={gamification.daily_xp_earned}
+                    className="md:col-span-2"
+                  />
+                </div>
+              )}
+
               <BrutalDrillCTA />
 
               <div data-panic-hide>

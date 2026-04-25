@@ -30,6 +30,7 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass, field
+from datetime import date as date_cls
 from datetime import datetime, time, timedelta, timezone
 from typing import Iterable
 
@@ -45,12 +46,15 @@ from models.preference import UserPreference
 from models.user import User
 from schemas.gamification import (
     ActivePathSummary,
+    BadgeOut,
+    BadgesResponse,
     GamificationDashboard,
     HeatmapTile,
 )
 from services import freeze as freeze_service
 from services import streak_service, xp_service
 from services.auth.dependency import get_current_user
+from services.gamification import badge_service
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +68,35 @@ _HEATMAP_WINDOW_DAYS: int = 365
 
 # Story 1 AC: cap dashboard's active-paths list at 5 most-recent.
 _ACTIVE_PATHS_CAP: int = 5
+
+# Lower bound of each tier band — mirrors ``services.xp_service.LEVEL_BANDS``
+# (Bronze 0, Silver 500, Gold 2000, Platinum 5000, Diamond 10000). Kept
+# inline (not imported) so this router does not depend on the private
+# ``LEVEL_BANDS`` symbol; the band table changes ~never and a hard-coded
+# duplicate is cheaper than an export. The Diamond band is open-ended,
+# hence the trailing ``None`` — there is no next tier to reach.
+_NEXT_BAND_THRESHOLDS: tuple[int, ...] = (500, 2000, 5000, 10000)
+
+
+def _xp_to_next_level(xp_total: int) -> int:
+    """Return XP needed to reach the next tier's lower bound.
+
+    Spec (Phase 16c Bundle B Part A line 142): ``xp_to_next_level``.
+    Bronze (0..499)  → 500 - xp
+    Silver (500..1999) → 2000 - xp
+    Gold (2000..4999)  → 5000 - xp
+    Platinum (5000..9999) → 10000 - xp
+    Diamond (10000+) → 0 (no next band)
+
+    Negative ``xp_total`` is clamped to 0 (defensive against any
+    upstream subtraction overshoot, mirroring ``xp_service``).
+    """
+
+    xp = max(0, xp_total)
+    for threshold in _NEXT_BAND_THRESHOLDS:
+        if xp < threshold:
+            return threshold - xp
+    return 0
 
 
 router = APIRouter(prefix="/api/gamification", tags=["gamification"])
@@ -111,16 +144,19 @@ async def _resolve_daily_goal_xp(db: AsyncSession, user: User) -> int:
     return parsed if parsed > 0 else _DAILY_GOAL_DEFAULT
 
 
-def _aggregate_heatmap(events: Iterable[object]) -> list[HeatmapTile]:
-    """Group XP events by UTC date and emit sparse :class:`HeatmapTile` rows.
+def _aggregate_heatmap(
+    events: Iterable[object], *, today: date_cls
+) -> list[HeatmapTile]:
+    """Build a dense 365-day heatmap ending at ``today`` (inclusive).
 
-    Sparse contract per Story 1 AC #2: only days with positive earned
-    XP appear; the frontend fills missing days with empty tiles. The
-    result is sorted ascending by date so client-side grid renderers
-    can iterate left-to-right without an extra sort.
+    Spec (Phase 16c Bundle B line 148): "exactly 365 day rows, today
+    inclusive". Days with no XP carry ``xp=0``; days with multiple
+    events get summed. Result is ordered oldest → newest so the
+    frontend grid iterates left-to-right with no extra sort.
+
+    ``today`` is injected (rather than re-read from the clock) so the
+    caller controls the UTC reference and tests are deterministic.
     """
-
-    from datetime import date as date_cls
 
     bucket: dict[date_cls, int] = {}
     for event in events:
@@ -132,9 +168,15 @@ def _aggregate_heatmap(events: Iterable[object]) -> list[HeatmapTile]:
             continue
         day = as_utc(earned_at).date()
         bucket[day] = bucket.get(day, 0) + int(amount)
-    # Stable ordering (oldest first) — easier for snapshot tests.
-    tiles = [HeatmapTile(date=day, xp=xp) for day, xp in bucket.items()]
-    tiles.sort(key=lambda t: t.date)
+
+    # Walk the 365-day window from oldest to today (inclusive), filling
+    # zero-XP tiles for quiet days. ``range(364, -1, -1)`` yields 364
+    # down to 0, so ``today - timedelta(days=364)`` is the first tile
+    # and ``today`` is the last — exactly 365 entries.
+    tiles: list[HeatmapTile] = []
+    for offset in range(_HEATMAP_WINDOW_DAYS - 1, -1, -1):
+        day = today - timedelta(days=offset)
+        tiles.append(HeatmapTile(date=day, xp=bucket.get(day, 0)))
     return tiles
 
 
@@ -325,7 +367,7 @@ async def get_dashboard(
     heatmap_events = await xp_service.get_xp_events_in_range(
         db, user_id=user.id, start_utc=heatmap_start_dt, end_utc=heatmap_end_dt
     )
-    heatmap = _aggregate_heatmap(heatmap_events)
+    heatmap = _aggregate_heatmap(heatmap_events, today=today)
 
     # ── Active paths ────────────────────────────────────────────────
     active_paths = await _build_active_paths(db, user_id=user.id)
@@ -342,6 +384,7 @@ async def get_dashboard(
         level_tier=tier_label,
         level_name=level_name,
         level_progress_pct=level_progress_pct,
+        xp_to_next_level=_xp_to_next_level(xp_total),
         streak_days=streak_result.streak_days,
         streak_freezes_left=freezes_left,
         daily_goal_xp=daily_goal,
@@ -349,6 +392,81 @@ async def get_dashboard(
         heatmap=heatmap,
         active_paths=active_paths,
     )
+
+
+@router.get(
+    "/badges",
+    response_model=BadgesResponse,
+    summary="Badge catalog with per-user unlock state",
+    description=(
+        "Returns the full Bundle C badge catalog split into "
+        "``unlocked`` (with ``unlocked_at`` timestamps) and ``locked`` "
+        "(with hint copy for the locked-state UI). Always 200 — a new "
+        "account comes back with all ten badges in ``locked``. The "
+        "service awards happen elsewhere (quiz_submission, "
+        "room_completion); this endpoint is read-only."
+    ),
+)
+async def get_badges(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> BadgesResponse:
+    """Compose the badges payload from the catalog and the user's unlocks.
+
+    Implementation notes:
+
+    * Order of ``unlocked`` mirrors the service's
+      ``ORDER BY unlocked_at DESC`` — newest unlock first so the shelf
+      surfaces fresh wins prominently.
+    * Order of ``locked`` mirrors :data:`badge_service.CATALOG`
+      definition order — the canonical "introduce easy badges first"
+      order from the Bundle C spec. The frontend can re-sort if it
+      wants alphabetical / progress-based ordering.
+    """
+
+    unlocked_rows = await badge_service.list_unlocked(db, user_id=user.id)
+    unlocked_map = {row.badge_key: row for row in unlocked_rows}
+    catalog = badge_service.catalog()
+
+    unlocked: list[BadgeOut] = []
+    locked: list[BadgeOut] = []
+
+    # First pass: build the unlocked list in service order
+    # (``unlocked_at DESC``). Iterate the rows themselves so the
+    # ordering propagates from the SQL.
+    for row in unlocked_rows:
+        badge = next((b for b in catalog if b.key == row.badge_key), None)
+        if badge is None:
+            # Row references a key no longer in the catalog. Skip
+            # silently — surfacing it would just confuse the shelf.
+            continue
+        unlocked.append(
+            BadgeOut(
+                key=badge.key,
+                title=badge.title,
+                description=badge.description,
+                hint=badge.hint,
+                unlocked=True,
+                unlocked_at=row.unlocked_at,
+            )
+        )
+
+    # Second pass: locked badges in catalog order.
+    for badge in catalog:
+        if badge.key in unlocked_map:
+            continue
+        locked.append(
+            BadgeOut(
+                key=badge.key,
+                title=badge.title,
+                description=badge.description,
+                hint=badge.hint,
+                unlocked=False,
+                unlocked_at=None,
+            )
+        )
+
+    return BadgesResponse(unlocked=unlocked, locked=locked)
 
 
 __all__ = ["router"]

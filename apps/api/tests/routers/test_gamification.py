@@ -1,13 +1,13 @@
-"""Integration tests for ``/api/gamification/*`` (Phase 16c Subagent B).
+"""Integration tests for ``/api/gamification/*`` (Phase 16c Subagents A+B).
 
-Six router-level acceptance criteria from Story 1:
+Router-level acceptance criteria from Story 1 + Bundle B Part A delta:
 
 1. ``test_dashboard_new_account_returns_zeros`` — empty user → all
    zeros, empty arrays, ``level_tier == "Bronze I"``.
 2. ``test_dashboard_xp_total_picks_silver_tier`` — 600 XP → Silver
    band, ``level_progress_pct > 0``.
-3. ``test_dashboard_heatmap_is_sparse`` — only days with positive XP
-   appear in ``heatmap``; the array is not 365 entries long.
+3. ``test_dashboard_heatmap_has_exactly_365_days`` — heatmap is dense:
+   exactly 365 tiles, today inclusive, quiet days carry ``xp=0``.
 4. ``test_dashboard_streak_days_reflects_compute_streak`` — three
    consecutive XP days (today + 2 prior) → ``streak_days == 3``.
 5. ``test_dashboard_active_paths_lists_user_paths`` — a user with one
@@ -15,6 +15,14 @@ Six router-level acceptance criteria from Story 1:
    ``active_paths``.
 6. ``test_dashboard_daily_goal_default_is_ten`` — no preference row →
    ``daily_goal_xp == 10``.
+7. ``test_dashboard_daily_goal_picks_up_user_preference`` — configured
+   ``daily_goal_xp=20`` overrides the default.
+8. ``test_dashboard_daily_goal_preference_override`` — Bundle B
+   regression covering the same override at a different XP amount.
+9. ``test_dashboard_includes_xp_to_next_level`` — field present and
+   non-negative on a fresh dashboard.
+10. ``test_xp_to_next_level_at_band_boundaries`` — pure-helper
+    boundaries (Bronze=0→500, Silver=500→1500, Diamond=10000→0).
 
 Harness mirrors :mod:`tests.routers.test_paths` — temp SQLite, override
 ``get_db``, patch ``database.async_session`` so any background helpers
@@ -310,7 +318,11 @@ async def _seed_daily_goal_pref(
 
 @pytest.mark.asyncio
 async def test_dashboard_new_account_returns_zeros(client_with_db) -> None:
-    """A fresh user gets all zeros and the Bronze I starter tier."""
+    """A fresh user gets all zeros and the Bronze I starter tier.
+
+    Heatmap is dense (Bundle B spec line 148): 365 tiles every one
+    carrying ``xp=0`` — fresh accounts don't get an empty list.
+    """
 
     ac, factory = client_with_db
     await _seed_user(factory)
@@ -322,11 +334,14 @@ async def test_dashboard_new_account_returns_zeros(client_with_db) -> None:
     assert body["level_tier"] == "Bronze I"
     assert body["level_name"] == "Bronze"
     assert body["level_progress_pct"] == 0
+    assert body["xp_to_next_level"] == 500  # Bronze → Silver
     assert body["streak_days"] == 0
     assert body["streak_freezes_left"] == 3  # Phase 14 default quota
     assert body["daily_goal_xp"] == 10  # default fallback
     assert body["daily_xp_earned"] == 0
-    assert body["heatmap"] == []
+    # Dense heatmap: 365 tiles, every day zero on a fresh account.
+    assert len(body["heatmap"]) == 365
+    assert all(tile["xp"] == 0 for tile in body["heatmap"])
     assert body["active_paths"] == []
 
 
@@ -362,35 +377,49 @@ async def test_dashboard_xp_total_picks_silver_tier(client_with_db) -> None:
     assert body["level_progress_pct"] > 0
 
 
-# ── 3. Heatmap returns sparse XP-positive days ─────────────────────
+# ── 3. Heatmap is dense — exactly 365 day rows, today inclusive ────
 
 
 @pytest.mark.asyncio
-async def test_dashboard_heatmap_is_sparse(client_with_db) -> None:
-    """Only days with positive XP appear; payload length matches activity."""
+async def test_dashboard_heatmap_has_exactly_365_days(client_with_db) -> None:
+    """Bundle B spec line 148: dense 365-element heatmap, today last.
+
+    Activity on three days seeds three positive tiles; the remaining
+    362 tiles ship with ``xp=0``. Dates are strictly increasing and
+    the last tile is today.
+    """
 
     ac, factory = client_with_db
     user_id = await _seed_user(factory)
 
-    today = datetime.now(timezone.utc)
+    today_dt = datetime.now(timezone.utc)
+    today_iso = today_dt.date().isoformat()
     # Three distinct days of activity.
     for offset in (0, 2, 5):
         await _seed_xp_event(
             factory,
             user_id=user_id,
             amount=12,
-            earned_at=today - timedelta(days=offset),
+            earned_at=today_dt - timedelta(days=offset),
         )
 
     resp = await ac.get("/api/gamification/dashboard")
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    # Sparse: exactly three tiles, never 365.
-    assert len(body["heatmap"]) == 3
-    # Each tile carries a positive XP number.
-    assert all(tile["xp"] > 0 for tile in body["heatmap"])
-    # Dates are ISO YYYY-MM-DD strings (pydantic default for ``date``).
-    for tile in body["heatmap"]:
+    heatmap = body["heatmap"]
+    # Dense: exactly 365 tiles every time, regardless of activity.
+    assert len(heatmap) == 365
+    # Last tile is today.
+    assert heatmap[-1]["date"] == today_iso
+    # Strictly increasing dates so the frontend can iterate left → right.
+    dates = [tile["date"] for tile in heatmap]
+    assert dates == sorted(dates)
+    # Three positive tiles for the three seeded days; the rest are 0.
+    positive = [tile for tile in heatmap if tile["xp"] > 0]
+    assert len(positive) == 3
+    assert all(tile["xp"] == 12 for tile in positive)
+    # ISO date format check on every tile.
+    for tile in heatmap:
         assert len(tile["date"]) == 10 and tile["date"][4] == "-"
 
 
@@ -478,3 +507,81 @@ async def test_dashboard_daily_goal_picks_up_user_preference(
     resp = await ac.get("/api/gamification/dashboard")
     assert resp.status_code == 200, resp.text
     assert resp.json()["daily_goal_xp"] == 20
+
+
+# ── 7. Bundle B regression: daily goal preference override ─────────
+
+
+@pytest.mark.asyncio
+async def test_dashboard_daily_goal_preference_override(
+    client_with_db,
+) -> None:
+    """Bundle B spec line 149-151: configured override beats default.
+
+    Same shape as the prior test but spelled with the spec's exact
+    label so a Part-D test-coverage audit lands on a single grep hit
+    (``daily_goal_preference_override``).
+    """
+
+    ac, factory = client_with_db
+    user_id = await _seed_user(factory)
+    await _seed_daily_goal_pref(factory, user_id=user_id, goal_xp=20)
+
+    resp = await ac.get("/api/gamification/dashboard")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["daily_goal_xp"] == 20
+
+
+# ── 8. xp_to_next_level present in dashboard payload ──────────────
+
+
+@pytest.mark.asyncio
+async def test_dashboard_includes_xp_to_next_level(client_with_db) -> None:
+    """Bundle B spec line 142: response carries ``xp_to_next_level``.
+
+    Fresh account is in Bronze, so the delta to Silver (500) is 500.
+    The smoke check is "field present and ≥ 0"; the exact value
+    boundary cases live in
+    :func:`test_xp_to_next_level_at_band_boundaries`.
+    """
+
+    ac, factory = client_with_db
+    await _seed_user(factory)
+
+    resp = await ac.get("/api/gamification/dashboard")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert "xp_to_next_level" in body
+    assert body["xp_to_next_level"] >= 0
+    # Fresh account: 0 XP, Bronze band, 500 XP to Silver.
+    assert body["xp_to_next_level"] == 500
+
+
+# ── 9. xp_to_next_level pure helper at band boundaries ────────────
+
+
+def test_xp_to_next_level_at_band_boundaries() -> None:
+    """Bundle B Part D: helper boundary table.
+
+    Spec-mandated cases: Bronze=0 → 500, Silver=500 → 1500,
+    Diamond=10000 → 0. Pure unit test against the private helper in
+    :mod:`routers.gamification`. Not a router roundtrip — the
+    contract is "given an XP total, return the XP delta to the next
+    band's lower bound", and the helper is the one place that math
+    lives.
+    """
+
+    from routers.gamification import _xp_to_next_level
+
+    # Spec-mandated triple.
+    assert _xp_to_next_level(0) == 500  # Bronze → Silver (500)
+    assert _xp_to_next_level(500) == 1500  # Silver → Gold (2000)
+    assert _xp_to_next_level(10000) == 0  # Diamond — no next band
+
+    # Defensive corners that the helper still has to get right.
+    assert _xp_to_next_level(-50) == 500  # negative clamps to 0
+    assert _xp_to_next_level(499) == 1  # one XP from Silver
+    assert _xp_to_next_level(1999) == 1  # one XP from Gold
+    assert _xp_to_next_level(2000) == 3000  # Gold → Platinum (5000)
+    assert _xp_to_next_level(5000) == 5000  # Platinum → Diamond (10000)
+    assert _xp_to_next_level(50_000) == 0  # deep in open Diamond band

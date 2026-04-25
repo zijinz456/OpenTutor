@@ -30,6 +30,12 @@ export interface GamificationDashboard {
   level_tier: string;
   level_name: string;
   level_progress_pct: number;
+  /**
+   * XP needed to reach the next tier (0 when at the cap).
+   * Phase 16c Bundle B — Subagent B added the field for the dashboard
+   * level-ring card; backend (Subagent A) emits it on every payload.
+   */
+  xp_to_next_level: number;
   streak_days: number;
   streak_freezes_left: number;
   daily_goal_xp: number;
@@ -74,6 +80,58 @@ export async function getGamificationDashboard(): Promise<GamificationDashboard>
 
   if (res.ok) {
     return (await res.json()) as GamificationDashboard;
+  }
+
+  let body: ErrorBodyShape = {};
+  try {
+    body = (await res.json()) as ErrorBodyShape;
+  } catch {
+    // Response had no JSON body — keep default {}.
+  }
+  const fallback = res.statusText || `HTTP ${res.status}`;
+  const err: GamificationApiError = {
+    status: res.status,
+    message: describeError(body, fallback),
+  };
+  throw err;
+}
+
+/**
+ * Badge catalog entry returned by `GET /api/gamification/badges`
+ * (Phase 16c Bundle C — Subagent A backend, Subagent B frontend).
+ *
+ * Locked badges still surface `key/title/description/hint` so the UI
+ * can render a muted preview tile without round-tripping a separate
+ * "definition" endpoint. `unlocked_at` is `null` for locked badges
+ * and ISO-8601 UTC for unlocked ones.
+ */
+export interface BadgeOut {
+  key: string;
+  title: string;
+  description: string;
+  hint: string;
+  unlocked: boolean;
+  unlocked_at: string | null;
+}
+
+/** Response shape for `GET /api/gamification/badges`. */
+export interface BadgesResponse {
+  unlocked: BadgeOut[];
+  locked: BadgeOut[];
+}
+
+/**
+ * `GET /api/gamification/badges` — full badge catalog split into
+ * unlocked / locked buckets. Same passive-fetch posture as
+ * `getGamificationDashboard`: bypass the global toast wrapper so a
+ * transient 5xx renders inline instead of firing a global error.
+ */
+export async function getBadges(): Promise<BadgesResponse> {
+  const init = buildSecureRequestInit({ method: "GET" });
+  const res = await fetch(`${API_BASE}/gamification/badges`, init);
+
+  if (res.ok) {
+    return (await res.json()) as BadgesResponse;
   }
 
   let body: ErrorBodyShape = {};

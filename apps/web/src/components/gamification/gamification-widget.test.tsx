@@ -45,6 +45,8 @@ function makeDashboard(
     level_tier: "Silver II",
     level_name: "Silver",
     level_progress_pct: 40,
+    // Phase 16c Bundle B — required field added to the type by Subagent B.
+    xp_to_next_level: 300,
     streak_days: 5,
     streak_freezes_left: 2,
     daily_goal_xp: 30,

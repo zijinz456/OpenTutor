@@ -4,6 +4,7 @@ import DashboardPage from "./page";
 
 const useDashboardDataMock = vi.fn();
 const getCurrentMissionMock = vi.fn();
+const getGamificationDashboardMock = vi.fn();
 
 vi.mock("@/lib/i18n-context", () => ({
   useLocale: () => ({ locale: "en" }),
@@ -75,6 +76,40 @@ vi.mock("@/components/dashboard/DrillCoursesPill", () => ({
 
 vi.mock("@/components/gamification/gamification-widget", () => ({
   GamificationWidget: () => <div data-testid="gamification-widget" />,
+}));
+
+vi.mock("@/components/dashboard/level-ring-card", () => ({
+  LevelRingCard: (props: { xpTotal: number; levelName: string }) => (
+    <div
+      data-testid="level-ring-card"
+      data-xp-total={String(props.xpTotal)}
+      data-level-name={props.levelName}
+    />
+  ),
+}));
+
+vi.mock("@/components/dashboard/streak-card", () => ({
+  StreakCard: (props: { streakDays: number }) => (
+    <div data-testid="streak-card" data-days={String(props.streakDays)} />
+  ),
+}));
+
+vi.mock("@/components/dashboard/heatmap-card", () => ({
+  HeatmapCard: () => <div data-testid="heatmap-card" />,
+}));
+
+vi.mock("@/components/dashboard/daily-goal-card", () => ({
+  DailyGoalCard: (props: { dailyGoalXp: number; dailyXpEarned: number }) => (
+    <div
+      data-testid="daily-goal-card"
+      data-goal={String(props.dailyGoalXp)}
+      data-earned={String(props.dailyXpEarned)}
+    />
+  ),
+}));
+
+vi.mock("@/lib/api/gamification", () => ({
+  getGamificationDashboard: () => getGamificationDashboardMock(),
 }));
 
 vi.mock("@/components/dashboard/brutal-drill-cta", () => ({
@@ -169,11 +204,32 @@ function makeDashboardData(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function makeGamificationDashboard(overrides: Record<string, unknown> = {}) {
+  return {
+    xp_total: 2450,
+    level_tier: "Silver II",
+    level_name: "Silver",
+    level_progress_pct: 45,
+    xp_to_next_level: 550,
+    streak_days: 7,
+    streak_freezes_left: 2,
+    daily_goal_xp: 200,
+    daily_xp_earned: 90,
+    heatmap: [],
+    active_paths: [],
+    ...overrides,
+  };
+}
+
 describe("/ page", () => {
   beforeEach(() => {
     useDashboardDataMock.mockReset();
     getCurrentMissionMock.mockReset();
     getCurrentMissionMock.mockResolvedValue(null);
+    getGamificationDashboardMock.mockReset();
+    // Default: gamification fetch resolves to a populated payload so the
+    // 4-card block renders. Tests that need a different state override.
+    getGamificationDashboardMock.mockResolvedValue(makeGamificationDashboard());
   });
 
   it("renders the visual shell, hero in main column, and rail with 3 widgets", () => {
@@ -292,5 +348,65 @@ describe("/ page", () => {
     // Allow the effect microtask to flush.
     await Promise.resolve();
     expect(screen.queryByTestId("generate-room-cta")).not.toBeInTheDocument();
+  });
+
+  it("mounts the 4-card gamification block inside More tools once data resolves", async () => {
+    useDashboardDataMock.mockReturnValue(makeDashboardData());
+    getGamificationDashboardMock.mockResolvedValue(
+      makeGamificationDashboard({
+        xp_total: 1234,
+        streak_days: 3,
+        daily_goal_xp: 100,
+        daily_xp_earned: 50,
+      }),
+    );
+
+    render(<DashboardPage />);
+
+    const cards = await waitFor(() =>
+      screen.getByTestId("dashboard-gamification-cards"),
+    );
+    const moreTools = screen.getByTestId("dashboard-more-tools");
+    expect(moreTools).toContainElement(cards);
+
+    // All four card stubs must mount inside the block.
+    expect(within(cards).getByTestId("level-ring-card")).toBeInTheDocument();
+    expect(within(cards).getByTestId("streak-card")).toBeInTheDocument();
+    expect(within(cards).getByTestId("heatmap-card")).toBeInTheDocument();
+    expect(within(cards).getByTestId("daily-goal-card")).toBeInTheDocument();
+
+    // Props get forwarded from the gamification fetch.
+    expect(within(cards).getByTestId("level-ring-card")).toHaveAttribute(
+      "data-xp-total",
+      "1234",
+    );
+    expect(within(cards).getByTestId("streak-card")).toHaveAttribute(
+      "data-days",
+      "3",
+    );
+    expect(within(cards).getByTestId("daily-goal-card")).toHaveAttribute(
+      "data-goal",
+      "100",
+    );
+    expect(within(cards).getByTestId("daily-goal-card")).toHaveAttribute(
+      "data-earned",
+      "50",
+    );
+  });
+
+  it("omits the 4-card block when the gamification fetch fails", async () => {
+    useDashboardDataMock.mockReturnValue(makeDashboardData());
+    getGamificationDashboardMock.mockRejectedValue(new Error("boom"));
+
+    render(<DashboardPage />);
+
+    // Allow the effect's catch handler to run.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(
+      screen.queryByTestId("dashboard-gamification-cards"),
+    ).not.toBeInTheDocument();
+    // The rail-level gamification widget is unaffected by the failure.
+    expect(screen.getByTestId("gamification-widget")).toBeInTheDocument();
   });
 });

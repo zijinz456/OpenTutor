@@ -25,6 +25,7 @@ function fullDashboard(): GamificationDashboard {
     level_tier: "Silver II",
     level_name: "Silver",
     level_progress_pct: 45,
+    xp_to_next_level: 550,
     streak_days: 7,
     streak_freezes_left: 2,
     daily_goal_xp: 200,
@@ -51,6 +52,7 @@ function emptyDashboard(): GamificationDashboard {
     level_tier: "Bronze I",
     level_name: "Bronze",
     level_progress_pct: 0,
+    xp_to_next_level: 100,
     streak_days: 0,
     streak_freezes_left: 0,
     daily_goal_xp: 0,
@@ -80,6 +82,8 @@ describe("getGamificationDashboard", () => {
     const result = await getGamificationDashboard();
 
     expect(result).toEqual(payload);
+    // Phase 16c Bundle B — xp_to_next_level must round-trip in the type.
+    expect(result.xp_to_next_level).toBe(550);
     expect(mockFetch).toHaveBeenCalledTimes(1);
     const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
     expect(url).toContain("/gamification/dashboard");
@@ -100,6 +104,9 @@ describe("getGamificationDashboard", () => {
     expect(result.streak_freezes_left).toBe(0);
     expect(result.heatmap).toEqual([]);
     expect(result.active_paths).toEqual([]);
+    // Phase 16c Bundle B — xp_to_next_level is non-zero even on empty
+    // accounts (it represents the gap to the first promotion).
+    expect(result.xp_to_next_level).toBe(100);
   });
 
   it("throws GamificationApiError preserving the HTTP status on non-2xx", async () => {
