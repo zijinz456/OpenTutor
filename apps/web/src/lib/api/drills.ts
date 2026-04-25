@@ -55,6 +55,16 @@ export interface DrillCourseOut {
   description: string | null;
   estimated_hours: number | null;
   module_count: number;
+  /**
+   * Total drills across all modules in the course. Used by the
+   * dashboard pill's "X / Y passed" aggregate.
+   */
+  drill_count: number;
+  /**
+   * Drills the requesting user has already passed. Distinct per drill
+   * — re-passing the same drill does not double-count.
+   */
+  passed_count: number;
 }
 
 export interface DrillCourseTOC extends DrillCourseOut {

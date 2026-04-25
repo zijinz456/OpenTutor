@@ -43,6 +43,8 @@ function makeTOC(): DrillCourseTOC {
     description: "Compiled Python drills.",
     estimated_hours: 8,
     module_count: 2,
+    drill_count: 0,
+    passed_count: 0,
     modules: [
       {
         id: "m1",

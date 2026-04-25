@@ -38,6 +38,8 @@ function makeCourse(overrides: Partial<DrillCourseOut> = {}): DrillCourseOut {
     description: "Short, checked Python drills.",
     estimated_hours: 8,
     module_count: 3,
+    drill_count: 30,
+    passed_count: 0,
     ...overrides,
   };
 }

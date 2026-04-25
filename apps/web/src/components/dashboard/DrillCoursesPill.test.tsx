@@ -35,6 +35,8 @@ function makeCourse(overrides: Partial<DrillCourseOut> = {}): DrillCourseOut {
     description: null,
     estimated_hours: 8,
     module_count: 3,
+    drill_count: 30,
+    passed_count: 0,
     ...overrides,
   };
 }
@@ -91,5 +93,51 @@ describe("<DrillCoursesPill>", () => {
     });
     const cta = screen.getByTestId("drill-courses-pill-cta");
     expect(cta).toHaveAttribute("href", "/courses");
+  });
+
+  it("renders ADHD-safe kick-off copy when nothing is passed yet", async () => {
+    // Phase 16c B2 — zero-progress state reads as invitation, not deficit.
+    listDrillCoursesMock.mockResolvedValue([
+      makeCourse({ slug: "cs50p", drill_count: 30, passed_count: 0 }),
+      makeCourse({ id: "b", slug: "py4e", drill_count: 131, passed_count: 0 }),
+    ]);
+    render(<DrillCoursesPill />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("drill-courses-pill-passed")).toHaveTextContent(
+        "пройдено: 0 / 161 — почни з будь-якого",
+      );
+    });
+  });
+
+  it("renders the 'X / Y' aggregate once the learner has passed a drill", async () => {
+    // Once at least one drill is passed, drop the coaching tail and
+    // show just the running tally — the numbers become the motivator.
+    listDrillCoursesMock.mockResolvedValue([
+      makeCourse({ slug: "cs50p", drill_count: 30, passed_count: 5 }),
+      makeCourse({ id: "b", slug: "py4e", drill_count: 131, passed_count: 7 }),
+    ]);
+    render(<DrillCoursesPill />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("drill-courses-pill-passed")).toHaveTextContent(
+        "пройдено: 12 / 161",
+      );
+    });
+  });
+
+  it("hides the passed-count line entirely when no drills are seeded", async () => {
+    // No courses → no progress line. Prevents a confusing "пройдено: 0 / 0".
+    listDrillCoursesMock.mockResolvedValue([]);
+    render(<DrillCoursesPill />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("drill-courses-pill-progress"),
+      ).toBeInTheDocument();
+    });
+    expect(
+      screen.queryByTestId("drill-courses-pill-passed"),
+    ).not.toBeInTheDocument();
   });
 });

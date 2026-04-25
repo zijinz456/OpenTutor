@@ -176,6 +176,85 @@ async def test_list_courses_empty_when_no_seed(client_with_db):
     assert resp.json() == []
 
 
+@pytest.mark.asyncio
+async def test_list_courses_returns_passed_count(client_with_db):
+    """``/courses`` reports per-course drill_count + passed_count.
+
+    Phase 16c B2 contract — dashboard pill sums these to render
+    ``пройдено X / Y``. Verified by seeding 3 drills in one course,
+    passing 2 of them, and asserting the payload numbers.
+    ``DISTINCT(drill_id)`` means resubmitting a passed drill must NOT
+    inflate the count — a second passing attempt on the same drill
+    still counts as one.
+    """
+
+    client, factory = client_with_db
+    user_id = await _seed_user(factory)
+    _, drill_ids = await _seed_course(
+        factory, slug="cs50p", modules=1, drills_per_module=3
+    )
+
+    # Pass drill 0 twice (resubmit) and drill 1 once. Drill 2 is
+    # untouched. Expected passed_count = 2 (distinct drill ids), not 3.
+    async with factory() as s:
+        for _ in range(2):
+            s.add(
+                DrillAttempt(
+                    user_id=user_id,
+                    drill_id=drill_ids[0],
+                    passed=True,
+                    submitted_code=_CORRECT,
+                )
+            )
+        s.add(
+            DrillAttempt(
+                user_id=user_id,
+                drill_id=drill_ids[1],
+                passed=True,
+                submitted_code=_CORRECT,
+            )
+        )
+        # A failing attempt should not count as passed.
+        s.add(
+            DrillAttempt(
+                user_id=user_id,
+                drill_id=drill_ids[2],
+                passed=False,
+                submitted_code=_WRONG,
+            )
+        )
+        await s.commit()
+
+    resp = await client.get("/api/drills/courses")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body) == 1
+    assert body[0]["slug"] == "cs50p"
+    assert body[0]["drill_count"] == 3
+    assert body[0]["passed_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_list_courses_passed_count_zero_for_new_learner(client_with_db):
+    """A fresh user with no attempts still gets a well-formed ``0``.
+
+    Protects against the "field missing" regression — the frontend
+    sums ``passed_count`` across courses, so ``undefined`` would break
+    the ``пройдено 0 / 161`` rendering.
+    """
+
+    client, factory = client_with_db
+    await _seed_user(factory)
+    await _seed_course(factory, slug="cs50p", modules=1, drills_per_module=2)
+
+    resp = await client.get("/api/drills/courses")
+
+    body = resp.json()
+    assert body[0]["drill_count"] == 2
+    assert body[0]["passed_count"] == 0
+
+
 # ── Endpoint 2: GET /api/drills/courses/{slug} ──────────────────────
 
 

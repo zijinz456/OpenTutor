@@ -46,7 +46,14 @@ class DrillModuleTOC(DrillModuleOut):
 
 
 class DrillCourseOut(BaseModel):
-    """Course metadata without embedded modules."""
+    """Course metadata without embedded modules.
+
+    ``drill_count`` is the number of drills across all modules.
+    ``passed_count`` is how many of them the requesting user has already
+    passed (zero when there are no attempts); computed via a single
+    grouped query in the router. The ADHD-safe dashboard copy uses these
+    two numbers to render ``пройдено X / Y``.
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -58,6 +65,8 @@ class DrillCourseOut(BaseModel):
     description: str | None = None
     estimated_hours: int | None = None
     module_count: int
+    drill_count: int = 0
+    passed_count: int = 0
 
 
 class DrillCourseTOC(DrillCourseOut):

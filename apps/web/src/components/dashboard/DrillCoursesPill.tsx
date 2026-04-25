@@ -47,6 +47,14 @@ export function DrillCoursesPill() {
   const courseCount = data?.length ?? 0;
   const moduleTotal =
     data?.reduce((sum, c) => sum + (c.module_count ?? 0), 0) ?? 0;
+  // Phase 16c B2: show aggregate per-user progress. We render
+  // "пройдено X / Y" ADHD-safely — not "X з Y" (which reads like a
+  // deficit framing). When Y is zero we fall back to the module-count
+  // copy; a course with no drills shouldn't advertise "0 / 0" progress.
+  const drillTotal =
+    data?.reduce((sum, c) => sum + (c.drill_count ?? 0), 0) ?? 0;
+  const passedTotal =
+    data?.reduce((sum, c) => sum + (c.passed_count ?? 0), 0) ?? 0;
 
   return (
     <section
@@ -79,14 +87,26 @@ export function DrillCoursesPill() {
           )}
 
           {!loading && !error && data && (
-            <p
-              data-testid="drill-courses-pill-progress"
-              className="mt-0.5 text-xs text-muted-foreground"
-            >
-              {courseCount > 0
-                ? `${moduleTotal} модулів у ${courseCount} курсах`
-                : "Курси ще не засіяні — запусти scripts/transpile_drills.py"}
-            </p>
+            <>
+              <p
+                data-testid="drill-courses-pill-progress"
+                className="mt-0.5 text-xs text-muted-foreground"
+              >
+                {courseCount > 0
+                  ? `${moduleTotal} модулів у ${courseCount} курсах`
+                  : "Курси ще не засіяні — запусти scripts/transpile_drills.py"}
+              </p>
+              {drillTotal > 0 && (
+                <p
+                  data-testid="drill-courses-pill-passed"
+                  className="mt-0.5 text-xs font-medium text-sky-700"
+                >
+                  {passedTotal === 0
+                    ? `пройдено: 0 / ${drillTotal} — почни з будь-якого`
+                    : `пройдено: ${passedTotal} / ${drillTotal}`}
+                </p>
+              )}
+            </>
           )}
         </div>
 

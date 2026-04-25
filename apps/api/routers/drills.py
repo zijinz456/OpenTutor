@@ -31,7 +31,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
-from models.drill import Drill, DrillCourse, DrillModule
+from models.drill import Drill, DrillAttempt, DrillCourse, DrillModule
 from models.user import User
 from schemas.drills import (
     DrillCourseOut,
@@ -91,10 +91,17 @@ def _drill_to_out(drill: Drill) -> DrillOut:
     ),
 )
 async def list_courses(
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[DrillCourseOut]:
-    """Return every course with its module count."""
+    """Return every course with its module count + per-user progress.
+
+    Three grouped queries keyed by ``course_id`` — no N+1. Per the dashboard
+    spec (§Phase 16c B2), the pill renders ``пройдено X / Y`` where X is
+    ``passed_count`` summed across all courses and Y is ``drill_count``
+    summed across all courses, so both fields are necessary in the same
+    payload.
+    """
 
     courses = list(
         (await db.execute(select(DrillCourse).order_by(DrillCourse.created_at.asc())))
@@ -104,12 +111,44 @@ async def list_courses(
     if not courses:
         return []
 
-    counts = await db.execute(
+    course_ids = [c.id for c in courses]
+
+    module_counts = await db.execute(
         select(DrillModule.course_id, func.count(DrillModule.id))
-        .where(DrillModule.course_id.in_([c.id for c in courses]))
+        .where(DrillModule.course_id.in_(course_ids))
         .group_by(DrillModule.course_id)
     )
-    count_by_course = {row[0]: row[1] for row in counts.all()}
+    module_count_by_course = {row[0]: row[1] for row in module_counts.all()}
+
+    # Total drills per course via Drill ⨝ DrillModule. Using a single
+    # grouped join keeps this at one query regardless of how many
+    # courses exist.
+    drill_counts = await db.execute(
+        select(DrillModule.course_id, func.count(Drill.id))
+        .join(DrillModule, DrillModule.id == Drill.module_id)
+        .where(DrillModule.course_id.in_(course_ids))
+        .group_by(DrillModule.course_id)
+    )
+    drill_count_by_course = {row[0]: row[1] for row in drill_counts.all()}
+
+    # Per-user passed drills per course. ``DISTINCT(drill_id)`` so a
+    # learner who submitted the same drill twice (both passing) only
+    # counts once — resubmits shouldn't inflate progress.
+    passed_counts = await db.execute(
+        select(
+            DrillModule.course_id,
+            func.count(func.distinct(DrillAttempt.drill_id)),
+        )
+        .join(Drill, Drill.id == DrillAttempt.drill_id)
+        .join(DrillModule, DrillModule.id == Drill.module_id)
+        .where(
+            DrillModule.course_id.in_(course_ids),
+            DrillAttempt.user_id == user.id,
+            DrillAttempt.passed.is_(True),
+        )
+        .group_by(DrillModule.course_id)
+    )
+    passed_count_by_course = {row[0]: row[1] for row in passed_counts.all()}
 
     return [
         DrillCourseOut(
@@ -120,7 +159,9 @@ async def list_courses(
             version=c.version,
             description=c.description,
             estimated_hours=c.estimated_hours,
-            module_count=count_by_course.get(c.id, 0),
+            module_count=module_count_by_course.get(c.id, 0),
+            drill_count=drill_count_by_course.get(c.id, 0),
+            passed_count=passed_count_by_course.get(c.id, 0),
         )
         for c in courses
     ]
