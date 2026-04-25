@@ -8,12 +8,14 @@ test is hermetic and needs no external DB:
 1. A ``PathRoom`` created **without** setting any generation field
    defaults to ``room_type = "standard"`` and leaves the three
    nullable fields (``generated_at`` / ``generator_model`` /
-   ``generation_seed``) at ``None`` after SELECT — matching what a
-   pre-seeded hand-authored room looks like.
+   ``generation_seed``) plus ``capstone_problem_ids`` at ``None``
+   after SELECT — matching what a pre-seeded hand-authored room
+   looks like.
 2. A ``PathRoom`` created **with** all four fields populated
    round-trips cleanly — tz-aware ``datetime``, model string,
-   sha256-length seed, and ``room_type="generated"`` all come back
-   intact after a fresh-session SELECT (not the identity-map).
+   sha256-length seed, ``room_type="generated"``, and JSON capstone
+   ids all come back intact after a fresh-session SELECT (not the
+   identity-map).
 
 The engine + session setup mirrors
 ``apps/api/tests/services/ingestion/test_reingest_foreign_key.py``:
@@ -142,6 +144,7 @@ async def test_path_room_generation_fields_default_to_standard(engine):
     assert row.generated_at is None
     assert row.generator_model is None
     assert row.generation_seed is None
+    assert row.capstone_problem_ids is None
 
 
 @pytest.mark.asyncio
@@ -166,6 +169,7 @@ async def test_path_room_generation_fields_round_trip(engine):
                 generator_model="llama-3.3-70b-versatile",
                 generation_seed=seed_hex,
                 room_type="generated",
+                capstone_problem_ids=["capstone-a", "capstone-b", "capstone-c"],
             )
         )
         await db.commit()
@@ -178,6 +182,7 @@ async def test_path_room_generation_fields_round_trip(engine):
     assert row.room_type == "generated"
     assert row.generator_model == "llama-3.3-70b-versatile"
     assert row.generation_seed == seed_hex
+    assert row.capstone_problem_ids == ["capstone-a", "capstone-b", "capstone-c"]
     assert row.generated_at is not None
     # SQLite strips tz on read in some driver setups — assert the wall
     # clock value, which is the contract the factory + SSE consumer care
