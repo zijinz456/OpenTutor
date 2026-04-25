@@ -485,6 +485,23 @@ async def submit_answer(
                 exc_info=True,
             )
 
+    # Phase 16c Bundle C — evaluate badge predicates after XP wiring so any
+    # threshold-crossing event (100_xp, first_card, first_room_completed…)
+    # unlocks immediately on the same submit. Same defensive posture as the
+    # XP awarders: lazy import, swallow-and-log so a bug in a predicate
+    # NEVER breaks the submit transaction. ``award_all_eligible`` is
+    # idempotent (relies on the (user_id, badge_key) UNIQUE index).
+    try:
+        from services.gamification.badge_service import award_all_eligible
+
+        await award_all_eligible(db, user_id=user.id)
+    except Exception:  # noqa: BLE001 — defensive: NEVER fail submit on badge error.
+        logger.warning(
+            "badge_service.award_all_eligible failed (non-blocking) for user %s",
+            user.id,
+            exc_info=True,
+        )
+
     wa = None
     if not is_correct:
         from models.ingestion import WrongAnswer

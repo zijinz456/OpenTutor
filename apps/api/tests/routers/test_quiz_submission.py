@@ -42,6 +42,7 @@ from database import Base
 from models.course import Course
 from models.practice import PracticeProblem, PracticeResult
 from models.user import User
+from models.user_badge import UserBadge  # noqa: F401 — register user_badges
 from models.xp_event import XpEvent  # noqa: F401  — register table on Base.metadata
 from schemas.quiz import SubmitAnswerRequest
 
@@ -284,3 +285,81 @@ async def test_submit_succeeds_when_award_card_xp_raises(
             .all()
         )
         assert len(prs) == 1, "PracticeResult must persist when awarder raises"
+
+
+# ── Bundle C: badge wiring ───────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_correct_answer_unlocks_first_card_badge(session_factory, seeded) -> None:
+    """Bundle C wiring — submitting any correct card fires
+    ``award_all_eligible`` and unlocks the ``first_card`` badge.
+
+    The predicate is True iff the user has any ``practice_result`` XP
+    event; the first correct submit creates exactly that, so a row in
+    ``user_badges`` with ``badge_key='first_card'`` must exist after
+    the submit completes.
+    """
+    user, _, problem_id = seeded
+
+    async with session_factory() as db:
+        response = await _call_submit(
+            db=db, user=user, problem_id=problem_id, user_answer="4"
+        )
+
+    assert response.is_correct is True
+
+    async with session_factory() as s:
+        unlocks = (
+            (await s.execute(sa.select(UserBadge).where(UserBadge.user_id == user.id)))
+            .scalars()
+            .all()
+        )
+        keys = {row.badge_key for row in unlocks}
+        assert "first_card" in keys, (
+            f"expected 'first_card' to unlock on first correct submit, got {keys}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_submit_succeeds_when_award_all_eligible_raises(
+    session_factory, seeded, monkeypatch
+) -> None:
+    """Bundle C wiring — defensive: if the badge awarder ever raises,
+    the submit still returns 200 and the ``PracticeResult`` is still
+    persisted. The badge unlock is the only thing missing."""
+    user, _, problem_id = seeded
+
+    async def _boom(*_args, **_kwargs):
+        raise RuntimeError("simulated badge_service failure")
+
+    import services.gamification.badge_service as badge_module
+
+    monkeypatch.setattr(badge_module, "award_all_eligible", _boom)
+
+    async with session_factory() as db:
+        response = await _call_submit(
+            db=db, user=user, problem_id=problem_id, user_answer="4"
+        )
+
+    assert response.is_correct is True
+
+    # PracticeResult must persist even though badge service exploded.
+    async with session_factory() as s:
+        prs = (
+            (
+                await s.execute(
+                    sa.select(PracticeResult).where(PracticeResult.user_id == user.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(prs) == 1, "PracticeResult must persist when badge awarder raises"
+
+        unlocks = (
+            (await s.execute(sa.select(UserBadge).where(UserBadge.user_id == user.id)))
+            .scalars()
+            .all()
+        )
+        assert unlocks == [], "no badges should land when awarder raises"

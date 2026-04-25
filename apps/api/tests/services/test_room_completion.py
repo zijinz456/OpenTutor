@@ -32,6 +32,7 @@ from models.course import Course
 from models.learning_path import LearningPath, PathRoom
 from models.practice import PracticeProblem, PracticeResult
 from models.user import User
+from models.user_badge import UserBadge  # noqa: F401 — register user_badges
 from models.xp_event import XpEvent  # noqa: F401 — register table on Base
 from services.room_completion import (
     is_room_complete,
@@ -349,3 +350,86 @@ async def test_maybe_award_room_completion_xp_hacking_multiplier(session_factory
     assert evt.amount == expected
     assert evt.source == "hacking_room_complete"
     assert evt.source_id == room_id
+
+
+# ── 3. Bundle C: badge wiring ────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_room_completion_unlocks_first_room_badge(session_factory):
+    """Bundle C wiring — completing a room fires ``award_all_eligible``
+    and unlocks the ``first_room_completed`` badge in the same tx.
+
+    The predicate is True iff the user has any ``room_complete`` /
+    ``hacking_room_complete`` xp event; the awarder writes exactly that
+    on the success path, so a ``user_badges`` row with
+    ``badge_key='first_room_completed'`` must exist after the call.
+    """
+    user_id, _course_id, room_id, pids = await _seed_path_and_room(
+        session_factory, n_problems=2
+    )
+    for pid in pids:
+        await _record_result(
+            session_factory, problem_id=pid, user_id=user_id, is_correct=True
+        )
+
+    async with session_factory() as db:
+        evt = await maybe_award_room_completion_xp(
+            db, user_id=user_id, path_room_id=room_id
+        )
+        await db.commit()
+        assert evt is not None
+
+    async with session_factory() as db:
+        unlocks = (
+            (await db.execute(sa.select(UserBadge).where(UserBadge.user_id == user_id)))
+            .scalars()
+            .all()
+        )
+        keys = {row.badge_key for row in unlocks}
+        assert "first_room_completed" in keys, (
+            f"expected 'first_room_completed' to unlock on room completion, got {keys}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_room_completion_returns_event_when_award_all_eligible_raises(
+    session_factory, monkeypatch
+):
+    """Bundle C wiring — defensive: a bug in the badge awarder must NOT
+    swallow the room-complete XpEvent. The awarder runs after we already
+    have the event in hand; on raise we log and still return ``evt``."""
+    user_id, _course_id, room_id, pids = await _seed_path_and_room(
+        session_factory, n_problems=2
+    )
+    for pid in pids:
+        await _record_result(
+            session_factory, problem_id=pid, user_id=user_id, is_correct=True
+        )
+
+    async def _boom(*_args, **_kwargs):
+        raise RuntimeError("simulated badge_service failure")
+
+    import services.gamification.badge_service as badge_module
+
+    monkeypatch.setattr(badge_module, "award_all_eligible", _boom)
+
+    async with session_factory() as db:
+        evt = await maybe_award_room_completion_xp(
+            db, user_id=user_id, path_room_id=room_id
+        )
+        await db.commit()
+
+    # XpEvent still surfaced — badge failure is non-blocking.
+    assert evt is not None
+    assert evt.source == "room_complete"
+    assert evt.source_id == room_id
+
+    # And no badges landed because the awarder exploded.
+    async with session_factory() as db:
+        unlocks = (
+            (await db.execute(sa.select(UserBadge).where(UserBadge.user_id == user_id)))
+            .scalars()
+            .all()
+        )
+        assert unlocks == [], "no badges should land when awarder raises"

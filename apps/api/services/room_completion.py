@@ -130,7 +130,7 @@ async def maybe_award_room_completion_xp(
     is_hacking = bool(path and path.track_id and "hacking" in path.track_id.lower())
 
     try:
-        return await award_room_xp(
+        evt = await award_room_xp(
             db,
             user_id=user_id,
             room_id=path_room_id,
@@ -146,3 +146,25 @@ async def maybe_award_room_completion_xp(
             exc,
         )
         return None
+
+    # Phase 16c Bundle C — fire badge evaluator on the SAME event so
+    # ``first_room_completed`` / ``python_fluent`` / ``hacker_novice`` /
+    # track-XP-threshold badges unlock right at room-completion time
+    # (rather than waiting for the next card submit). Lazy import +
+    # swallow-and-log keeps the awarder strictly non-blocking — a bug in
+    # any predicate must NEVER swallow the XP event we just awarded.
+    if evt is not None:
+        try:
+            from services.gamification.badge_service import award_all_eligible
+
+            await award_all_eligible(db, user_id=user_id)
+        except Exception as exc:  # noqa: BLE001 — never fail caller
+            _log.warning(
+                "room_completion: award_all_eligible raised; swallowing "
+                "user_id=%s room_id=%s err=%s",
+                user_id,
+                path_room_id,
+                exc,
+            )
+
+    return evt

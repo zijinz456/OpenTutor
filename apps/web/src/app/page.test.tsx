@@ -5,6 +5,7 @@ import DashboardPage from "./page";
 const useDashboardDataMock = vi.fn();
 const getCurrentMissionMock = vi.fn();
 const getGamificationDashboardMock = vi.fn();
+const getBadgesMock = vi.fn();
 
 vi.mock("@/lib/i18n-context", () => ({
   useLocale: () => ({ locale: "en" }),
@@ -110,10 +111,24 @@ vi.mock("@/components/dashboard/daily-goal-card", () => ({
 
 vi.mock("@/lib/api/gamification", () => ({
   getGamificationDashboard: () => getGamificationDashboardMock(),
+  getBadges: () => getBadgesMock(),
 }));
 
 vi.mock("@/components/dashboard/brutal-drill-cta", () => ({
   BrutalDrillCTA: () => <div data-testid="brutal-drill-cta" />,
+}));
+
+vi.mock("@/components/dashboard/badge-shelf", () => ({
+  BadgeShelf: () => <div data-testid="badge-shelf" />,
+}));
+
+vi.mock("@/components/dashboard/badge-unlock-toast", () => ({
+  BadgeUnlockToast: (props: { badge: { key: string } | null }) => (
+    <div
+      data-testid="badge-unlock-toast-host"
+      data-badge-key={props.badge ? props.badge.key : "null"}
+    />
+  ),
 }));
 
 vi.mock("@/components/dashboard/generate-room-cta", () => ({
@@ -230,6 +245,10 @@ describe("/ page", () => {
     // Default: gamification fetch resolves to a populated payload so the
     // 4-card block renders. Tests that need a different state override.
     getGamificationDashboardMock.mockResolvedValue(makeGamificationDashboard());
+    getBadgesMock.mockReset();
+    // Default: empty badge fetch — keeps the toast trigger silent so
+    // existing tests don't have to opt in.
+    getBadgesMock.mockResolvedValue({ unlocked: [], locked: [] });
   });
 
   it("renders the visual shell, hero in main column, and rail with 3 widgets", () => {
@@ -408,5 +427,25 @@ describe("/ page", () => {
     ).not.toBeInTheDocument();
     // The rail-level gamification widget is unaffected by the failure.
     expect(screen.getByTestId("gamification-widget")).toBeInTheDocument();
+  });
+
+  it("mounts BadgeShelf inside More tools", () => {
+    useDashboardDataMock.mockReturnValue(makeDashboardData());
+    render(<DashboardPage />);
+
+    const moreTools = screen.getByTestId("dashboard-more-tools");
+    const shelf = within(moreTools).getByTestId("badge-shelf");
+    expect(shelf).toBeInTheDocument();
+  });
+
+  it("mounts BadgeUnlockToast at page level with null badge by default", () => {
+    useDashboardDataMock.mockReturnValue(makeDashboardData());
+    render(<DashboardPage />);
+
+    // Toast host is always mounted; default `badge` is `null` so the
+    // component itself renders nothing user-facing.
+    const host = screen.getByTestId("badge-unlock-toast-host");
+    expect(host).toBeInTheDocument();
+    expect(host).toHaveAttribute("data-badge-key", "null");
   });
 });

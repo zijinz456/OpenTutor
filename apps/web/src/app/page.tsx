@@ -16,12 +16,16 @@ import { HeatmapCard } from "@/components/dashboard/heatmap-card";
 import { DailyGoalCard } from "@/components/dashboard/daily-goal-card";
 import { WelcomeBackModal } from "@/components/dashboard/welcome-back-modal";
 import { GenerateRoomCTA } from "@/components/dashboard/generate-room-cta";
+import { BadgeShelf } from "@/components/dashboard/badge-shelf";
+import { BadgeUnlockToast } from "@/components/dashboard/badge-unlock-toast";
 import {
   getCurrentMission,
   type CurrentMissionResponse,
 } from "@/lib/api/paths";
 import {
+  getBadges,
   getGamificationDashboard,
+  type BadgeOut,
   type GamificationDashboard,
 } from "@/lib/api/gamification";
 import { useDashboardData } from "./_hooks/use-dashboard-data";
@@ -125,6 +129,66 @@ export default function DashboardPage() {
       cancelled = true;
     };
   }, []);
+
+  // Phase 16c Bundle C — page-level badge unlock toast. Strategy:
+  // on mount fetch /api/gamification/badges and snapshot the unlocked
+  // count; whenever the window regains focus refetch and diff. If the
+  // count grew, surface the newest-by-`unlocked_at` badge as a toast.
+  // Why focus + not polling: cheaper, plays nicely with browser
+  // tab-switch ergonomics, and matches the rest of the dashboard's
+  // refresh posture. The shelf component owns its own fetch; this
+  // hook is purely the toast trigger.
+  const [unlockedBadge, setUnlockedBadge] = useState<BadgeOut | null>(null);
+  const [seenUnlockedKeys, setSeenUnlockedKeys] = useState<Set<string> | null>(
+    null,
+  );
+  useEffect(() => {
+    let cancelled = false;
+
+    function pickNewest(badges: BadgeOut[]): BadgeOut | null {
+      const dated = badges.filter((b) => b.unlocked_at !== null);
+      if (dated.length === 0) return null;
+      return dated.reduce((acc, b) =>
+        (b.unlocked_at ?? "") > (acc.unlocked_at ?? "") ? b : acc,
+      );
+    }
+
+    async function refresh(initial: boolean) {
+      try {
+        const data = await getBadges();
+        if (cancelled) return;
+        const keys = new Set(data.unlocked.map((b) => b.key));
+        if (initial || seenUnlockedKeys === null) {
+          // First snapshot — record baseline silently, no toast.
+          setSeenUnlockedKeys(keys);
+          return;
+        }
+        const newKeys = [...keys].filter((k) => !seenUnlockedKeys.has(k));
+        if (newKeys.length > 0) {
+          const fresh = data.unlocked.filter((b) => newKeys.includes(b.key));
+          const newest = pickNewest(fresh);
+          if (newest) setUnlockedBadge(newest);
+        }
+        setSeenUnlockedKeys(keys);
+      } catch {
+        // Swallow — toast is best-effort; shelf surfaces its own errors.
+      }
+    }
+
+    void refresh(true);
+
+    const onFocus = () => {
+      void refresh(false);
+    };
+    window.addEventListener("focus", onFocus);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", onFocus);
+    };
+    // We intentionally re-bind on every `seenUnlockedKeys` change so the
+    // diff inside `refresh` always reads the current baseline.
+  }, [seenUnlockedKeys]);
+  const dismissUnlock = () => setUnlockedBadge(null);
   const generateCourseId =
     courses.length > 0 ? (courses[0] as { id: string }).id : null;
   const reviewGate = totalDueFlashcards > 0;
@@ -143,6 +207,10 @@ export default function DashboardPage() {
           component returns `null` when the user has not been away 3+
           days or has already dismissed today. */}
       <WelcomeBackModal />
+      {/* Phase 16c Bundle C — page-level badge unlock toast. Mounts
+          unconditionally; renders nothing while `unlockedBadge === null`
+          (the common case). Driven by the focus-refetch hook above. */}
+      <BadgeUnlockToast badge={unlockedBadge} onDismiss={dismissUnlock} />
       {/* Visual Shell V1 — Slice 1 (Dashboard).
           Outer container is the shared shell wrapper agreed with main agent
           + Subagent B: max-w-[1600px] with responsive horizontal padding.
@@ -274,6 +342,10 @@ export default function DashboardPage() {
                   />
                 </div>
               )}
+
+              {/* Phase 16c Bundle C — Badge collectible shelf. Self-fetches
+                  on mount; renders skeleton/error/grid internally. */}
+              <BadgeShelf />
 
               <BrutalDrillCTA />
 
