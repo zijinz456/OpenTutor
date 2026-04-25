@@ -17,6 +17,7 @@ from routers import (
     export,
     flashcards,
     freeze,
+    gamification,
     goals,
     health,
     interview,
@@ -73,6 +74,7 @@ CORE_ROUTERS = (
     (freeze.router, "/api/freeze", ["freeze"]),
     (paths.router, "/api/paths", ["paths"]),
     (drills.router, "/api/drills", ["drills"]),
+    (gamification.router, None, None),
 )
 
 

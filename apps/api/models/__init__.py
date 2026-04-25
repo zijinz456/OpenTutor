@@ -28,6 +28,7 @@ from models.interview import InterviewSession, InterviewTurn
 from models.freeze_token import FreezeToken
 from models.learning_path import LearningPath, PathRoom
 from models.drill import DrillCourse, DrillModule, Drill, DrillAttempt
+from models.xp_event import XpEvent
 
 __all__ = [
     "User",
@@ -72,4 +73,5 @@ __all__ = [
     "DrillModule",
     "Drill",
     "DrillAttempt",
+    "XpEvent",
 ]

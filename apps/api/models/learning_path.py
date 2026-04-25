@@ -44,7 +44,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
-from models.compat import CompatUUID
+from models.compat import CompatJSONB, CompatUUID
 
 
 class LearningPath(Base):
@@ -147,6 +147,13 @@ class PathRoom(Base):
     # in the migration backfills existing rows to ``"standard"``.
     room_type: Mapped[str] = mapped_column(
         String(20), nullable=False, default="standard"
+    )
+    # Slice 2 capstone launcher metadata. Stores up to 3 practice-problem
+    # ids (as strings for JSON portability) ranked as the room's hardest
+    # tasks so later UI/gating work can surface one-click capstones
+    # without recomputing the selection on every request.
+    capstone_problem_ids: Mapped[Optional[list[str]]] = mapped_column(
+        CompatJSONB, nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
