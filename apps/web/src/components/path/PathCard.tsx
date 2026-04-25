@@ -1,11 +1,20 @@
 "use client";
 
 /**
- * `<PathCard>` — one row on `/tracks` (Phase 16a T4).
+ * `<PathCard>` — one cell on `/tracks` (Visual Shell V1).
  *
  * Presentational — parent fetches `listPaths()` and hands one
  * `PathSummary` per card. The whole card is a clickable `<Link>` so a
  * single tap anywhere routes to `/tracks/{slug}`.
+ *
+ * Layout note (Visual Shell V1)
+ * -----------------------------
+ * The tracks page now lays cards out in a responsive grid (1/2/3/4
+ * columns), so each card needs to be full-height and keep its
+ * progress bars pinned to the bottom regardless of description
+ * length. We use `h-full flex flex-col` + `mt-auto` on the progress
+ * footer so cells in the same row stay visually aligned even when
+ * one description wraps to three lines and another wraps to one.
  *
  * Difficulty badge colour
  * -----------------------
@@ -38,7 +47,7 @@ export function PathCard({ summary }: PathCardProps) {
     <Link
       href={`/tracks/${summary.slug}`}
       data-testid={`path-card-${summary.slug}`}
-      className="block rounded-2xl bg-card p-5 card-shadow hover:bg-muted/30 transition-colors"
+      className="flex h-full flex-col rounded-2xl border border-border bg-card p-5 card-shadow hover:bg-muted/30 transition-colors"
     >
       <div className="flex items-start justify-between gap-3">
         <h2 className="text-base font-semibold text-foreground">
@@ -53,12 +62,15 @@ export function PathCard({ summary }: PathCardProps) {
       </div>
 
       {summary.description && (
-        <p className="mt-1 text-sm text-muted-foreground line-clamp-2">
+        <p className="mt-2 text-sm text-muted-foreground line-clamp-3">
           {summary.description}
         </p>
       )}
 
-      <div className="mt-3 space-y-2">
+      {/* Progress footer pinned to bottom via `mt-auto` — keeps the
+          progress bars on a shared baseline across the row even when
+          adjacent cards have descriptions of different lengths. */}
+      <div className="mt-auto space-y-2 pt-4">
         <ProgressBar
           label="Missions"
           current={summary.room_complete}

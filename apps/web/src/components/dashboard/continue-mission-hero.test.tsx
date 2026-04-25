@@ -1,13 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { describe, it, expect, vi } from "vitest";
+import { render, screen } from "@testing-library/react";
 import { ContinueMissionHero } from "./continue-mission-hero";
 import type { CurrentMission } from "@/lib/api/paths";
-
-const getCurrentMissionMock = vi.fn();
-
-vi.mock("@/lib/api/paths", async () => ({
-  getCurrentMission: (...args: unknown[]) => getCurrentMissionMock(...args),
-}));
 
 vi.mock("next/link", () => ({
   default: ({
@@ -44,28 +38,24 @@ function makeMission(overrides: Partial<CurrentMission> = {}): CurrentMission {
 }
 
 describe("<ContinueMissionHero>", () => {
-  beforeEach(() => {
-    getCurrentMissionMock.mockReset();
-  });
-
-  it("shows a skeleton while the request is in flight", () => {
-    getCurrentMissionMock.mockReturnValue(new Promise(() => undefined));
-    render(<ContinueMissionHero />);
+  it("shows a skeleton while mission prop is undefined", () => {
+    render(
+      <ContinueMissionHero mission={undefined} gate={false} dueCardCount={0} />,
+    );
 
     expect(
       screen.getByTestId("continue-mission-hero-skeleton"),
     ).toBeInTheDocument();
   });
 
-  it("renders the empty state when there is no mission in progress", async () => {
-    getCurrentMissionMock.mockResolvedValue(null);
-    render(<ContinueMissionHero />);
+  it("renders the empty state when mission prop is null", () => {
+    render(
+      <ContinueMissionHero mission={null} gate={false} dueCardCount={0} />,
+    );
 
-    await waitFor(() => {
-      expect(
-        screen.getByTestId("continue-mission-hero-empty"),
-      ).toBeInTheDocument();
-    });
+    expect(
+      screen.getByTestId("continue-mission-hero-empty"),
+    ).toBeInTheDocument();
     expect(screen.getByText("Pick your next mission.")).toBeInTheDocument();
     expect(screen.getByTestId("continue-mission-hero-browse")).toHaveAttribute(
       "href",
@@ -73,13 +63,16 @@ describe("<ContinueMissionHero>", () => {
     );
   });
 
-  it("renders the in-progress mission state with deep links", async () => {
-    getCurrentMissionMock.mockResolvedValue(makeMission());
-    render(<ContinueMissionHero />);
+  it("renders the in-progress mission state with the mission deep link when gate=false", () => {
+    render(
+      <ContinueMissionHero
+        mission={makeMission()}
+        gate={false}
+        dueCardCount={0}
+      />,
+    );
 
-    await waitFor(() => {
-      expect(screen.getByTestId("continue-mission-hero")).toBeInTheDocument();
-    });
+    expect(screen.getByTestId("continue-mission-hero")).toBeInTheDocument();
     expect(screen.getByTestId("continue-mission-hero-title")).toHaveTextContent(
       "Loops",
     );
@@ -89,9 +82,86 @@ describe("<ContinueMissionHero>", () => {
       "href",
       "/tracks/python-fundamentals/missions/room-1",
     );
+    expect(screen.getByTestId("continue-mission-hero-open")).toHaveTextContent(
+      "Pick up where you left off",
+    );
     expect(screen.getByTestId("continue-mission-hero-track")).toHaveAttribute(
       "href",
       "/tracks/python-fundamentals",
+    );
+  });
+
+  it("does not show the gate helper when gate=false", () => {
+    render(
+      <ContinueMissionHero
+        mission={makeMission()}
+        gate={false}
+        dueCardCount={0}
+      />,
+    );
+
+    expect(
+      screen.queryByTestId("continue-mission-hero-gate"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("routes the primary CTA to /session/daily and shows gate helper when gate=true", () => {
+    render(
+      <ContinueMissionHero
+        mission={makeMission()}
+        gate={true}
+        dueCardCount={4}
+      />,
+    );
+
+    const open = screen.getByTestId("continue-mission-hero-open");
+    expect(open).toHaveAttribute("href", "/session/daily");
+    expect(open).toHaveTextContent("Start after review");
+
+    const gate = screen.getByTestId("continue-mission-hero-gate");
+    expect(gate).toBeInTheDocument();
+    expect(gate).toHaveTextContent("Review first: 4 cards due");
+  });
+
+  it("renders why-now and outcome instructional rows from mission text", () => {
+    render(
+      <ContinueMissionHero
+        mission={makeMission({
+          intro_excerpt: "Loops are the workhorse of Python.",
+          outcome: "Filter a list with a for-loop.",
+        })}
+        gate={false}
+        dueCardCount={0}
+      />,
+    );
+
+    const why = screen.getByTestId("continue-mission-hero-why-now");
+    expect(why).toHaveTextContent("Why this now:");
+    expect(why).toHaveTextContent("Loops are the workhorse of Python.");
+
+    const outcome = screen.getByTestId("continue-mission-hero-outcome");
+    expect(outcome).toHaveTextContent("By the end:");
+    expect(outcome).toHaveTextContent("Filter a list with a for-loop.");
+  });
+
+  it("falls back to safe defaults when mission text is null", () => {
+    render(
+      <ContinueMissionHero
+        mission={makeMission({ intro_excerpt: null, outcome: null })}
+        gate={false}
+        dueCardCount={0}
+      />,
+    );
+
+    expect(
+      screen.getByTestId("continue-mission-hero-why-now"),
+    ).toHaveTextContent(
+      "Picking up an in-progress mission keeps your context warm.",
+    );
+    expect(
+      screen.getByTestId("continue-mission-hero-outcome"),
+    ).toHaveTextContent(
+      "You can apply this skill on a fresh task without help.",
     );
   });
 });

@@ -62,7 +62,8 @@ describe("<RoomListItem>", () => {
     );
   });
 
-  it("advertises the right data-state for the three progress tiers", () => {
+  it("advertises the right data-state for the three progress tiers (count-based fallback)", () => {
+    // Backwards-compat path: no `routeState` prop → infer from counts.
     const { rerender } = render(
       <RoomListItem
         pathSlug="python"
@@ -95,5 +96,87 @@ describe("<RoomListItem>", () => {
       "data-state",
       "complete",
     );
+  });
+
+  describe("explicit route state", () => {
+    it("renders a Done chip when routeState='done'", () => {
+      render(
+        <RoomListItem
+          pathSlug="python"
+          room={makeRoom({ task_total: 3, task_complete: 3 })}
+          routeState="done"
+        />,
+      );
+      const row = screen.getByTestId("room-item-room-1");
+      expect(row).toHaveAttribute("data-route-state", "done");
+      const chip = screen.getByTestId("room-item-check-room-1");
+      expect(chip).toHaveTextContent(/done/i);
+    });
+
+    it("renders an Active chip with amber emphasis when routeState='active'", () => {
+      render(
+        <RoomListItem
+          pathSlug="python"
+          room={makeRoom({ task_total: 5, task_complete: 2 })}
+          routeState="active"
+        />,
+      );
+      const row = screen.getByTestId("room-item-room-1");
+      expect(row).toHaveAttribute("data-route-state", "active");
+      // Legacy data-state stays in sync for any older selector.
+      expect(row).toHaveAttribute("data-state", "in_progress");
+      const chip = screen.getByTestId("room-item-chip-room-1");
+      expect(chip).toHaveTextContent(/active/i);
+      expect(chip.className).toMatch(/amber/);
+    });
+
+    it("renders a 'Ready now' chip when routeState='ready'", () => {
+      render(
+        <RoomListItem
+          pathSlug="python"
+          room={makeRoom({ task_total: 5, task_complete: 0 })}
+          routeState="ready"
+        />,
+      );
+      const row = screen.getByTestId("room-item-room-1");
+      expect(row).toHaveAttribute("data-route-state", "ready");
+      const chip = screen.getByTestId("room-item-chip-room-1");
+      expect(chip).toHaveTextContent(/ready now/i);
+    });
+
+    it("renders a Locked chip plus the helper line when routeState='locked'", () => {
+      render(
+        <RoomListItem
+          pathSlug="python"
+          room={makeRoom({ task_total: 5, task_complete: 0 })}
+          routeState="locked"
+        />,
+      );
+      const row = screen.getByTestId("room-item-room-1");
+      expect(row).toHaveAttribute("data-route-state", "locked");
+      const chip = screen.getByTestId("room-item-chip-room-1");
+      expect(chip).toHaveTextContent(/locked/i);
+      expect(
+        screen.getByTestId("room-item-locked-helper-room-1"),
+      ).toHaveTextContent(/locked until this mission is done/i);
+    });
+
+    it("explicit routeState overrides the count-based fallback", () => {
+      // Counts say "done" (5/5) but parent forces ready — parent wins.
+      render(
+        <RoomListItem
+          pathSlug="python"
+          room={makeRoom({ task_total: 5, task_complete: 5 })}
+          routeState="ready"
+        />,
+      );
+      expect(screen.getByTestId("room-item-room-1")).toHaveAttribute(
+        "data-route-state",
+        "ready",
+      );
+      expect(
+        screen.queryByTestId("room-item-check-room-1"),
+      ).not.toBeInTheDocument();
+    });
   });
 });
