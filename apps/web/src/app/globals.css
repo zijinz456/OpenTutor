@@ -403,14 +403,28 @@
   border-radius: 4px;
 }
 
-/* ── Panic Mode (Phase 14 T2) ──
-   Toggle set by <PanicOverlay> on <body>. `visibility: hidden` (not
-   display:none) keeps layout + keyboard focus order alive, per critic
-   C10 in plan/adhd_ux_full_phase14.md. `data-panic-dim` is a softer
-   fallback for regions we want present-but-quiet (currently unused by
-   the dashboard but reserved for future wiring). */
+/* ── Quiet Mode (Phase 14 T2; renamed from "Panic Mode" per ТЗ §10) ──
+   Toggle set by <PanicOverlay> on <body>. Layout + keyboard focus
+   order stay alive (per critic C10 in plan/adhd_ux_full_phase14.md);
+   we use opacity + visibility-with-transition rather than the old
+   instant `visibility: hidden` so the overlay fades calmly per RP1
+   §A.12 polish spec. `data-panic-dim` is a softer fallback for
+   regions we want present-but-quiet. */
+[data-panic-hide] {
+  transition:
+    opacity var(--thm-dur-fast) var(--thm-ease-out),
+    visibility 0s linear var(--thm-dur-fast);
+}
 body.panic-mode-active [data-panic-hide] {
+  opacity: 0;
   visibility: hidden;
+  transition:
+    opacity var(--thm-dur-fast) var(--thm-ease-out),
+    visibility 0s linear 0s;
+}
+[data-panic-dim] {
+  transition:
+    opacity var(--thm-dur-fast) var(--thm-ease-out);
 }
 body.panic-mode-active [data-panic-dim] {
   opacity: 0.2;
