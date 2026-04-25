@@ -441,6 +441,50 @@ async def submit_answer(
 
     db.add(pr)
 
+    # Phase 16c Story 2 #4 — award card XP in the same transaction as the
+    # PracticeResult write. ``award_card_xp`` is contractually safe: returns
+    # None on same-day dedup, swallows the IntegrityError internally via a
+    # SAVEPOINT so the parent tx stays clean. The try/except is a defensive
+    # outer guard — if the awarder ever raises (programmer error, schema
+    # drift, etc.), we log and let the submit succeed.
+    try:
+        from services.xp_service import award_card_xp
+
+        await award_card_xp(
+            db,
+            user_id=user.id,
+            problem_id=problem.id,
+            difficulty_layer=problem.difficulty_layer or 1,
+            correctness=1.0 if is_correct else 0.0,
+            hints_used=0,  # Submission schema has no hints_used field today.
+            answer_time_ms=body.answer_time_ms,
+        )
+    except Exception:  # noqa: BLE001 — defensive: NEVER fail the submit on XP error.
+        logger.warning(
+            "xp_service.award_card_xp failed (non-blocking) for problem %s",
+            problem.id,
+            exc_info=True,
+        )
+
+    # Phase 16c Story 2 — room completion XP. No-op when the room is not yet
+    # fully done; idempotent (UNIQUE constraint + SAVEPOINT inside awarder).
+    if is_correct and problem.path_room_id is not None:
+        try:
+            from services.room_completion import maybe_award_room_completion_xp
+
+            await maybe_award_room_completion_xp(
+                db,
+                user_id=user.id,
+                path_room_id=problem.path_room_id,
+            )
+        except Exception:  # noqa: BLE001 — defensive: NEVER fail submit on XP error.
+            logger.warning(
+                "room_completion.maybe_award_room_completion_xp failed "
+                "(non-blocking) for room %s",
+                problem.path_room_id,
+                exc_info=True,
+            )
+
     wa = None
     if not is_correct:
         from models.ingestion import WrongAnswer

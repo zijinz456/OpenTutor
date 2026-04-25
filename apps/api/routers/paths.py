@@ -24,18 +24,29 @@ literal path, not a slug. Re-ordering the decorators would break
 
 from __future__ import annotations
 
+import asyncio
+import json
+import logging
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sse_starlette.sse import EventSourceResponse
 
-from database import get_db
+from database import async_session, get_db
+from models.course import Course
 from models.learning_path import LearningPath, PathRoom
 from models.practice import PracticeProblem
 from models.user import User
+from schemas.path_generation import (
+    GenerateRoomRequest,
+    validate_topic,
+)
 from services.auth.dependency import get_current_user
 from services.learning_paths import (
     count_orphan_cards,
@@ -45,6 +56,27 @@ from services.learning_paths import (
     resolve_room_intro_excerpt,
     sample_orphan_cards,
 )
+
+# Phase 16b factory + job store live in the service layer (Subagent A
+# scope). The factory's ``generate_and_persist_room`` is the public
+# entry point for both stages of generation; ``compute_generation_seed``
+# is reused at the router level so we can short-circuit on idempotent
+# reuse before touching the LLM. The job store is exposed as a set of
+# module-level coroutines (``create_job`` / ``update_status`` /
+# ``subscribe`` / ``get``) — no singleton class.
+from services import path_room_job_store as job_store
+from services.path_room_factory import (
+    IDEMPOTENCE_WINDOW,
+    compute_generation_seed,
+    generate_and_persist_room,
+)
+
+logger = logging.getLogger(__name__)
+
+# Daily generation cap (Part E of the spec). Single-user local-first
+# posture means we count generated PathRoom rows directly rather than
+# adding a new quota table.
+_DAILY_GENERATION_CAP: int = 5
 
 router = APIRouter()
 
@@ -610,6 +642,322 @@ async def get_room_detail(
         task_complete=task_complete,
         capstone_problem_ids=capstone_problem_ids,
     )
+
+
+# ── Endpoint 5: POST /api/paths/generate-room (Phase 16b) ──────────
+
+
+def _topic_guard_400(error_code: str = "topic_guard") -> HTTPException:
+    """Stable 400 envelope for topic-guard rejections."""
+
+    return HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail={"error": error_code},
+    )
+
+
+async def _count_generated_rooms_today(db: AsyncSession) -> int:
+    """Return how many ``room_type='generated'`` rooms exist for today (UTC).
+
+    Spec Part E: derive the per-day cap from existing ``path_rooms``
+    rows so we don't introduce a new quota table for the single-user
+    posture. ``generated_at`` is timezone-aware in Postgres and naive-
+    UTC in SQLite (the engine's UTC adapter — see ``database.py``); we
+    bracket the day with ``[start, end)`` and let SQLAlchemy compare
+    against either flavour without a backend-specific date function.
+    """
+
+    today_utc = datetime.now(timezone.utc).date()
+    day_start = datetime.combine(today_utc, datetime.min.time(), tzinfo=timezone.utc)
+    day_end = day_start + timedelta(days=1)
+
+    result = await db.execute(
+        select(func.count(PathRoom.id)).where(
+            PathRoom.room_type == "generated",
+            PathRoom.generated_at.is_not(None),
+            PathRoom.generated_at >= day_start,
+            PathRoom.generated_at < day_end,
+        )
+    )
+    return int(result.scalar() or 0)
+
+
+@router.post(
+    "/generate-room",
+    summary="Schedule a standard-room generation (or reuse a recent one)",
+    description=(
+        "Validates the request, enforces topic guard + ownership + the "
+        "path/course coherence constraint, and either:\n\n"
+        "* returns ``200 {reused: true, room_id, path_id}`` when a "
+        "generated room with the same ``generation_seed`` was created "
+        "in the last hour, **or**\n"
+        "* schedules a background generation job and returns ``202 "
+        "{job_id, reused: false}``.\n\n"
+        "Progress events for the 202 path are streamed at "
+        "``GET /api/paths/generate-room/stream/{job_id}``."
+    ),
+)
+async def generate_room(
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Validate + (reuse or schedule) a standard-room generation."""
+
+    # Parse the body manually so the topic-guard rejection comes back
+    # as a 400 with a stable ``error`` code instead of Pydantic's
+    # default 422 envelope. ``GenerateRoomRequest`` still runs Pydantic
+    # validation for the rest of the body (uuids, difficulty literal,
+    # task_count range, extra="forbid").
+    try:
+        raw = await request.json()
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": "invalid_json"},
+        ) from exc
+
+    if isinstance(raw, dict) and "topic" in raw:
+        try:
+            validate_topic(raw["topic"]) if isinstance(raw["topic"], str) else None
+        except ValueError as exc:
+            raise _topic_guard_400(str(exc)) from exc
+
+    try:
+        body = GenerateRoomRequest.model_validate(raw)
+    except ValidationError as exc:
+        # Map a topic-validator failure (which Pydantic raises as a
+        # ValidationError wrapping our ValueError) to the same 400
+        # envelope the explicit pre-check uses, so callers see one
+        # consistent shape regardless of which path tripped the guard.
+        for err in exc.errors():
+            if err.get("loc") and err["loc"][0] == "topic":
+                raise _topic_guard_400("topic_guard") from exc
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=exc.errors(),
+        ) from exc
+
+    # ── Resolve the path ──
+    path = (
+        await db.execute(select(LearningPath).where(LearningPath.id == body.path_id))
+    ).scalar_one_or_none()
+    if path is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": "path_not_found", "path_id": str(body.path_id)},
+        )
+
+    # ── Resolve the course (must be owned by current user) ──
+    course = (
+        await db.execute(
+            select(Course).where(
+                Course.id == body.course_id,
+                Course.user_id == user.id,
+            )
+        )
+    ).scalar_one_or_none()
+    if course is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": "course_not_found", "course_id": str(body.course_id)},
+        )
+
+    # ── Coherence: path × course must already share at least one task.
+    # ``LearningPath`` has no direct ``course_id`` column, so we prove
+    # the link via an existing ``PracticeProblem`` row. This rejects
+    # the "owned course but unrelated path" combination instead of
+    # silently persisting orphan tasks.
+    coherence = (
+        await db.execute(
+            select(PracticeProblem.id)
+            .join(PathRoom, PathRoom.id == PracticeProblem.path_room_id)
+            .where(
+                PathRoom.path_id == body.path_id,
+                PracticeProblem.course_id == body.course_id,
+            )
+            .limit(1)
+        )
+    ).first()
+    if coherence is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": "path_course_mismatch"},
+        )
+
+    # ── Daily cap (Part E) ──
+    generated_today = await _count_generated_rooms_today(db)
+    if generated_today >= _DAILY_GENERATION_CAP:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={"error": "daily_generation_cap_exceeded"},
+        )
+
+    # ── Idempotence: reuse a recent generated room with the same seed ──
+    # Subagent A's factory has the same logic in ``_find_existing_by_seed``,
+    # but we must perform the check here BEFORE calling ``create_job`` so
+    # the reuse path returns 200 without scheduling a worker. Mirroring
+    # the factory's lookup keeps the canonical-form rules in one place
+    # (``compute_generation_seed`` + ``IDEMPOTENCE_WINDOW``).
+    seed = compute_generation_seed(
+        user_id=user.id,
+        path_id=body.path_id,
+        course_id=body.course_id,
+        topic=body.topic,
+        difficulty=body.difficulty,
+        task_count=body.task_count,
+    )
+    cutoff = datetime.now(timezone.utc) - IDEMPOTENCE_WINDOW
+    existing_rows = (
+        (
+            await db.execute(
+                select(PathRoom).where(
+                    PathRoom.path_id == body.path_id,
+                    PathRoom.generation_seed == seed,
+                    PathRoom.generated_at.is_not(None),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    fresh: list[PathRoom] = []
+    for room in existing_rows:
+        generated_at = room.generated_at
+        if generated_at is None:
+            continue
+        # SQLite + aiosqlite returns naive datetimes; treat them as UTC
+        # so the cutoff comparison matches the factory's behaviour.
+        if generated_at.tzinfo is None:
+            generated_at = generated_at.replace(tzinfo=timezone.utc)
+        if generated_at >= cutoff:
+            fresh.append(room)
+    if fresh:
+        # Newest first — same tie-break as the factory.
+        fresh.sort(
+            key=lambda r: (
+                (
+                    r.generated_at.replace(tzinfo=timezone.utc)
+                    if r.generated_at is not None and r.generated_at.tzinfo is None
+                    else r.generated_at
+                )
+                or datetime.min.replace(tzinfo=timezone.utc)
+            ),
+            reverse=True,
+        )
+        existing = fresh[0]
+        return {
+            "job_id": None,
+            "reused": True,
+            "room_id": str(existing.id),
+            "path_id": str(existing.path_id),
+        }
+
+    # ── Schedule a fresh background job ──
+    request_summary = {
+        "user_id": str(user.id),
+        "path_id": str(body.path_id),
+        "course_id": str(body.course_id),
+        "topic": body.topic,
+        "difficulty": body.difficulty,
+        "task_count": body.task_count,
+        "generation_seed": seed,
+    }
+    job_record = await job_store.create_job(request_summary)
+    job_id = job_record.job_id
+
+    factory = getattr(request.app.state, "test_session_factory", None) or async_session
+    user_id = user.id
+    payload_path_id = body.path_id
+    payload_course_id = body.course_id
+    payload_topic = body.topic
+    payload_difficulty = body.difficulty
+    payload_task_count = body.task_count
+
+    async def _run() -> None:
+        """Run generation in a fresh DB session.
+
+        We never reuse the request's ``db`` session here — by the time
+        this coroutine starts, FastAPI has already closed it. Mirrors
+        the chat router's ``session_factory`` pattern.
+        """
+
+        try:
+            await job_store.update_status(job_id, "outline")
+            async with factory() as bg_db:
+                try:
+                    room = await generate_and_persist_room(
+                        bg_db,
+                        user_id=user_id,
+                        path_id=payload_path_id,
+                        course_id=payload_course_id,
+                        topic=payload_topic,
+                        difficulty=payload_difficulty,
+                        task_count=payload_task_count,
+                    )
+                except Exception:
+                    # The factory rolls back internally on failure, but
+                    # belt-and-braces in case a different error path
+                    # leaves the session dirty.
+                    await bg_db.rollback()
+                    raise
+            await job_store.update_status(
+                job_id,
+                "completed",
+                room_id=room.id,
+                path_id=room.path_id,
+            )
+        except Exception as exc:  # noqa: BLE001 — surface every failure
+            logger.exception("generate_room job %s failed", job_id)
+            await job_store.update_status(
+                job_id,
+                "error",
+                error_code=type(exc).__name__,
+                error_message=str(exc)[:500],
+            )
+
+    asyncio.create_task(_run())
+
+    return JSONResponse(
+        status_code=status.HTTP_202_ACCEPTED,
+        content={"job_id": job_id, "reused": False},
+    )
+
+
+# ── Endpoint 6: GET /api/paths/generate-room/stream/{job_id} ──────
+
+
+@router.get(
+    "/generate-room/stream/{job_id}",
+    summary="SSE progress stream for a scheduled room-generation job",
+    description=(
+        "Streams ordered status events for the given ``job_id`` until "
+        "the job reaches ``completed`` (final payload includes "
+        "``room_id`` + ``path_id``) or ``error`` (final payload "
+        "includes ``error_code``)."
+    ),
+)
+async def generate_room_stream(
+    job_id: str,
+    _user: User = Depends(get_current_user),
+):
+    """SSE stream of generation progress events for one job."""
+
+    job = await job_store.get(job_id)
+    if job is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": "job_not_found", "job_id": job_id},
+        )
+
+    async def _event_generator():
+        async for event in job_store.subscribe(job_id):
+            status_value = event.get("status")
+            yield {"event": "message", "data": json.dumps(event)}
+            if status_value in {"completed", "error"}:
+                break
+
+    return EventSourceResponse(_event_generator())
 
 
 __all__ = ["router"]
