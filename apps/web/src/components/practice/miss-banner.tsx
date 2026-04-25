@@ -21,7 +21,7 @@
  * No new palette colors are introduced.
  */
 
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { AddToReviewLink } from "./add-to-review-link";
 import { ExplainStep } from "./explain-step";
 
@@ -51,14 +51,23 @@ export function MissBanner({
   const answerText =
     revealedAnswer && revealedAnswer.trim().length > 0 ? revealedAnswer : "—";
 
+  // A.3 motion polish — slide in from below on mount. `mounted` flips
+  // true after the first effect tick so the banner enters with a
+  // translate+fade rather than popping. The reduced-motion media query
+  // in globals.css zeroes the transition for users who opt out.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   return (
     <div
       role="status"
       aria-live="polite"
       data-testid={`miss-banner-${problemId}`}
-      className={`rounded-md border border-warning/40 bg-warning/10 p-3 ${
-        className ?? ""
-      }`.trim()}
+      className={`rounded-md border border-warning/40 bg-warning/10 p-3 transition-all duration-[var(--thm-dur-fast)] ease-[var(--thm-ease-out)] ${
+        mounted ? "translate-y-0 opacity-100" : "translate-y-2 opacity-0"
+      } ${className ?? ""}`.trim()}
     >
       <p
         className="text-sm font-medium text-warning whitespace-pre-wrap"

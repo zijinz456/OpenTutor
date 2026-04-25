@@ -185,7 +185,7 @@ function OnboardingModal({
           Focused Mode, not soft-mode
         </h2>
         <p className="text-sm text-muted-foreground leading-relaxed">
-          No skip. No pause. Wrong answers come back. This is the mode for
+          No skip. No pause. Misses come back. This is the mode for
           the night before an interview.
         </p>
         <label className="flex items-center gap-2 text-xs text-muted-foreground">

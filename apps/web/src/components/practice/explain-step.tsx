@@ -112,14 +112,23 @@ export function ExplainStep({ problemId, correct, className }: ExplainStepProps)
             <span className="text-xs font-medium text-muted-foreground">
               In your own words — what did you do?
             </span>
-            <textarea
-              ref={textareaRef}
-              data-testid={`explain-step-textarea-${problemId}`}
-              className="min-h-[80px] w-full resize-y rounded-md border border-border bg-muted/30 p-2 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
-              placeholder="In your own words — what did you do?"
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-            />
+            {/* A.4 motion polish — container holds the height transition
+                so user-resize / scrollHeight-driven growth animates smoothly
+                rather than snapping. `transition-[height]` keeps it scoped
+                so unrelated layout (color, opacity) is not animated. */}
+            <div
+              data-testid={`explain-step-textarea-wrap-${problemId}`}
+              className="overflow-hidden transition-[height] duration-[var(--thm-dur-normal)] ease-[var(--thm-ease-in-out)]"
+            >
+              <textarea
+                ref={textareaRef}
+                data-testid={`explain-step-textarea-${problemId}`}
+                className="min-h-[80px] w-full resize-y rounded-md border border-border bg-muted/30 p-2 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
+                placeholder="In your own words — what did you do?"
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+              />
+            </div>
           </label>
           <div className="flex items-center gap-2">
             <Button

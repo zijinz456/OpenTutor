@@ -58,7 +58,8 @@ export function TodayPlanCard({
       <ol className="mt-4 flex flex-col gap-4">
         <li
           data-testid="today-plan-step-review"
-          className="flex gap-3"
+          className="flex gap-3 motion-safe:animate-slide-up"
+          style={{ animationDelay: "0ms" }}
         >
           <span className="shrink-0 text-sm font-semibold text-muted-foreground">
             1.
@@ -67,13 +68,14 @@ export function TodayPlanCard({
             <p className="text-sm font-semibold text-foreground">
               {reviewTitle}
             </p>
-            <p className="text-xs text-muted-foreground">{reviewSubline}</p>
+            <p className="text-xs text-muted-foreground tabular-nums">{reviewSubline}</p>
           </div>
         </li>
 
         <li
           data-testid="today-plan-step-mission"
-          className="flex gap-3"
+          className="flex gap-3 motion-safe:animate-slide-up"
+          style={{ animationDelay: "60ms" }}
         >
           <span className="shrink-0 text-sm font-semibold text-muted-foreground">
             2.
@@ -82,13 +84,14 @@ export function TodayPlanCard({
             <p className="text-sm font-semibold text-foreground">
               {missionTitle}
             </p>
-            <p className="text-xs text-muted-foreground">{missionSubline}</p>
+            <p className="text-xs text-muted-foreground tabular-nums">{missionSubline}</p>
           </div>
         </li>
 
         <li
           data-testid="today-plan-step-recap"
-          className="flex gap-3"
+          className="flex gap-3 motion-safe:animate-slide-up"
+          style={{ animationDelay: "120ms" }}
         >
           <span className="shrink-0 text-sm font-semibold text-muted-foreground">
             3.

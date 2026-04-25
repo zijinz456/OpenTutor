@@ -73,7 +73,7 @@ export function ApplyBlock({
       setResult(res);
     } catch (err) {
       setSubmitError(
-        err instanceof Error ? err.message : "Submit failed — try again",
+        err instanceof Error ? err.message : "Couldn't submit. Retry?",
       );
     } finally {
       setSubmitting(false);

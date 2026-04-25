@@ -229,7 +229,7 @@ function PathDetailContent() {
           setError(
             err instanceof Error
               ? err.message
-              : "Could not load track — try again.",
+              : "Couldn't load track. Retry?",
           );
       })
       .finally(() => {

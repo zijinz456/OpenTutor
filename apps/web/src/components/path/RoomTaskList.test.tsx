@@ -118,7 +118,7 @@ describe("<RoomTaskList>", () => {
     );
   });
 
-  it("shows the Room mastered banner once every task is complete", () => {
+  it("shows the Room done banner once every task is complete", () => {
     render(
       <RoomTaskList
         tasks={[
@@ -128,7 +128,7 @@ describe("<RoomTaskList>", () => {
       />,
     );
     expect(screen.getByTestId("room-task-list-banner")).toHaveTextContent(
-      /mastered/i,
+      /done/i,
     );
   });
 });

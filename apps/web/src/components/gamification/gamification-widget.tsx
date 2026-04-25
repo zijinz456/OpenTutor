@@ -74,7 +74,7 @@ export function GamificationWidget() {
           className="flex flex-col gap-2"
         >
           <p className="text-xs text-muted-foreground">
-            Stats unavailable. Refresh to retry.
+            Couldn't load progress. Retry?
           </p>
           <button
             type="button"

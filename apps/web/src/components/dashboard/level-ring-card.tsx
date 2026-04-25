@@ -1,3 +1,5 @@
+"use client";
+
 /**
  * `<LevelRingCard>` — dashboard card showing tier, total XP, and a
  * circular progress ring (Phase 16c Bundle B — Subagent B).
@@ -11,6 +13,7 @@
  * `xpToNextLevel === 0` means the user is at the cap; we render
  * "Maxed" copy instead of an XP delta.
  */
+import { useEffect, useState } from "react";
 import { clsx } from "clsx";
 
 const LEVEL_NAMES = [
@@ -67,9 +70,18 @@ export function LevelRingCard({
 }: LevelRingCardProps) {
   const prefix = hexPrefix(levelName);
   const pct = clampPct(levelProgressPct);
-  // Stroke offset = full circumference when 0%, 0 when 100%.
-  const dashOffset = RING_CIRCUMFERENCE * (1 - pct / 100);
   const isMaxed = xpToNextLevel <= 0;
+
+  // A.6 motion polish — animate the ring fill from 0 → real % on mount
+  // and on subsequent prop changes. `displayPct` starts at 0 so the
+  // ring renders empty for the first paint, then flips to the real
+  // value in an effect. The CSS transition on the SVG circle below
+  // catches that delta and sweeps the stroke-dashoffset.
+  const [displayPct, setDisplayPct] = useState(0);
+  useEffect(() => {
+    setDisplayPct(pct);
+  }, [pct]);
+  const dashOffset = RING_CIRCUMFERENCE * (1 - displayPct / 100);
 
   return (
     <section
@@ -118,7 +130,11 @@ export function LevelRingCard({
             strokeDasharray={RING_CIRCUMFERENCE}
             strokeDashoffset={dashOffset}
             transform={`rotate(-90 ${RING_SIZE / 2} ${RING_SIZE / 2})`}
-            className="stroke-emerald-500 transition-[stroke-dashoffset]"
+            className="stroke-emerald-500"
+            style={{
+              transition:
+                "stroke-dashoffset var(--thm-dur-slow) var(--thm-ease-out)",
+            }}
           />
         </svg>
 

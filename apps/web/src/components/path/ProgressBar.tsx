@@ -31,7 +31,7 @@ export function ProgressBar({
     <div className="flex flex-col gap-1" data-testid={testId}>
       <div className="flex items-baseline justify-between text-[11px] text-muted-foreground">
         <span>{label}</span>
-        <span>
+        <span className="tabular-nums">
           {current}/{total}
         </span>
       </div>

@@ -1,3 +1,5 @@
+"use client";
+
 /**
  * `<DailyGoalCard>` — dashboard card showing today's XP goal progress
  * (Phase 16c Bundle B — Subagent B).
@@ -10,6 +12,7 @@
  * Per ТЗ §11 there is no shaming language — both not-yet-met and met
  * states stay calm. Only emerald + muted/border/card tokens are used.
  */
+import { useEffect, useState } from "react";
 import { clsx } from "clsx";
 
 export interface DailyGoalCardProps {
@@ -39,6 +42,17 @@ export function DailyGoalCard({
   const isStarter =
     dailyGoalXp === 10 && dailyXpEarned === 0 && !met;
   const pct = fillPct(dailyXpEarned, dailyGoalXp);
+
+  // A.7 motion polish — animate the bar from 0 → real % on first paint.
+  // `displayPct` starts at 0 and flips to the real value after the
+  // first effect tick. The CSS `transition-[width]` on the bar below
+  // catches that delta and sweeps the fill in. Effect runs synchronously
+  // inside React Testing Library's `act()` wrapper, so existing tests
+  // asserting `bar.style.width === "50%"` continue to pass.
+  const [displayPct, setDisplayPct] = useState(0);
+  useEffect(() => {
+    setDisplayPct(pct);
+  }, [pct]);
 
   return (
     <section
@@ -82,8 +96,8 @@ export function DailyGoalCard({
       >
         <div
           data-testid="daily-goal-card-bar"
-          className="h-full rounded-full bg-emerald-500 transition-[width]"
-          style={{ width: `${pct}%` }}
+          className="h-full rounded-full bg-emerald-500 transition-[width] duration-[var(--thm-dur-slow)] ease-[var(--thm-ease-out)]"
+          style={{ width: `${displayPct}%` }}
         />
       </div>
     </section>

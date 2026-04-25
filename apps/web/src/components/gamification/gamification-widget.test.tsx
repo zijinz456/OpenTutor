@@ -118,7 +118,7 @@ describe("<GamificationWidget>", () => {
     });
     expect(
       screen.getByTestId("gamification-widget-error"),
-    ).toHaveTextContent("Stats unavailable");
+    ).toHaveTextContent("Couldn't load progress");
     expect(
       screen.getByTestId("gamification-widget-retry"),
     ).toBeInTheDocument();

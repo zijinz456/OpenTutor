@@ -62,7 +62,7 @@ export function DailySessionCTA() {
     } catch (err) {
       setError(
         (err as Error | null)?.message ??
-          "Could not start session. Please try again.",
+          "Couldn't start session. Retry?",
       );
       setPendingSize(null);
     }

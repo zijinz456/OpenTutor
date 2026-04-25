@@ -23,6 +23,7 @@
  * UI guidance only — the gate does not hard-lock the mission route.
  */
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ArrowRight, Compass, Flag, Timer } from "lucide-react";
 import type { CurrentMissionResponse } from "@/lib/api/paths";
@@ -38,12 +39,22 @@ export function ContinueMissionHero({
   gate,
   dueCardCount,
 }: ContinueMissionHeroProps) {
+  // A.1 motion polish — fade-in on first paint. Initial opacity-0 flips to
+  // opacity-100 after the first effect tick so the hero/empty/skeleton
+  // state cross-fades in smoothly. `prefers-reduced-motion` kills the
+  // transition duration to ~0 globally (globals.css §reduce-motion), so
+  // no extra branching is needed.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   if (mission === undefined) {
     return (
       <section
         aria-label="Continue mission"
         data-testid="continue-mission-hero-skeleton"
-        className="overflow-hidden rounded-[2rem] border border-border/70 bg-card p-6 card-shadow md:p-8"
+        className={`overflow-hidden rounded-[2rem] border border-border/70 bg-card p-6 card-shadow md:p-8 transition-opacity duration-[var(--thm-dur-fast)] ease-[var(--thm-ease-out)] ${mounted ? "opacity-100" : "opacity-0"}`}
       >
         <div className="h-3 w-28 animate-pulse rounded bg-muted/60" />
         <div className="mt-4 h-10 w-72 max-w-full animate-pulse rounded bg-muted/50" />
@@ -62,7 +73,7 @@ export function ContinueMissionHero({
       <section
         aria-label="Continue mission"
         data-testid="continue-mission-hero-empty"
-        className="overflow-hidden rounded-[2rem] border border-border/70 bg-card p-6 card-shadow md:p-8"
+        className={`overflow-hidden rounded-[2rem] border border-border/70 bg-card p-6 card-shadow md:p-8 transition-opacity duration-[var(--thm-dur-normal)] ease-[var(--thm-ease-out)] ${mounted ? "opacity-100" : "opacity-0"}`}
       >
         <div className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-muted/30 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
           <Compass className="size-3.5" />
@@ -116,7 +127,7 @@ export function ContinueMissionHero({
     <section
       aria-label="Continue mission"
       data-testid="continue-mission-hero"
-      className="overflow-hidden rounded-[2rem] border border-brand/20 bg-[radial-gradient(circle_at_top_left,rgba(52,211,153,0.18),transparent_40%),linear-gradient(135deg,rgba(17,24,33,0.95),rgba(11,15,20,0.98))] p-6 card-shadow md:p-8"
+      className={`overflow-hidden rounded-[2rem] border border-brand/20 bg-[radial-gradient(circle_at_top_left,rgba(52,211,153,0.18),transparent_40%),linear-gradient(135deg,rgba(17,24,33,0.95),rgba(11,15,20,0.98))] p-6 card-shadow md:p-8 transition-opacity duration-[var(--thm-dur-normal)] ease-[var(--thm-ease-out)] ${mounted ? "opacity-100" : "opacity-0"}`}
     >
       <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
         <div className="max-w-3xl">
@@ -155,7 +166,7 @@ export function ContinueMissionHero({
               {metaChips.map((chip) => (
                 <span
                   key={chip}
-                  className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-emerald-50/85"
+                  className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-emerald-50/85 tabular-nums"
                 >
                   {chip}
                 </span>
@@ -166,10 +177,10 @@ export function ContinueMissionHero({
 
         <div className="min-w-[240px] rounded-2xl border border-white/10 bg-black/15 p-4 backdrop-blur-sm">
           <div className="flex items-center justify-between text-xs text-emerald-50/70">
-            <span>
+            <span className="tabular-nums">
               {mission.task_complete}/{mission.task_total} tasks done
             </span>
-            <span className="inline-flex items-center gap-1">
+            <span className="inline-flex items-center gap-1 tabular-nums">
               <Timer className="size-3.5" />
               {mission.progress_pct}% through
             </span>
@@ -177,8 +188,8 @@ export function ContinueMissionHero({
           <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/10">
             <div
               data-testid="continue-mission-hero-progress-bar"
-              className="h-full rounded-full bg-brand transition-[width] duration-300"
-              style={{ width: `${mission.progress_pct}%` }}
+              className="h-full rounded-full bg-brand transition-[width] duration-[var(--thm-dur-slow)] ease-[var(--thm-ease-out)]"
+              style={{ width: `${mounted ? mission.progress_pct : 0}%` }}
             />
           </div>
 
@@ -186,7 +197,7 @@ export function ContinueMissionHero({
           {gate ? (
             <p
               data-testid="continue-mission-hero-gate"
-              className="mt-3 text-xs text-emerald-50/70"
+              className="mt-3 text-xs text-emerald-50/70 tabular-nums"
             >
               Review first: {dueCardCount} cards due
             </p>

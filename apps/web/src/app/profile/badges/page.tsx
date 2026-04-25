@@ -116,7 +116,7 @@ export default function ProfileBadgesPage() {
         if (!cancelled) setData(res);
       })
       .catch(() => {
-        if (!cancelled) setError("Couldn't load badges. Refresh to retry.");
+        if (!cancelled) setError("Couldn't load badges. Retry?");
       })
       .finally(() => {
         if (!cancelled) setLoading(false);

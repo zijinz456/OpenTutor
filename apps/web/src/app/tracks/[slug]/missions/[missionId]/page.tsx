@@ -82,7 +82,7 @@ function MissionPageContent() {
           setError(
             err instanceof Error
               ? err.message
-              : "Could not load mission. Retry?",
+              : "Couldn't load mission. Retry?",
           );
       })
       .finally(() => {

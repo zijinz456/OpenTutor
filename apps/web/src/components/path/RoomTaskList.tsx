@@ -119,7 +119,7 @@ export function RoomTaskList({ tasks, onTaskComplete }: RoomTaskListProps) {
           className="rounded-2xl border border-emerald-500/40 bg-emerald-500/10 p-5 text-center card-shadow"
         >
           <p className="text-sm font-semibold text-emerald-800">
-            Room mastered 🎉
+            Room done 🎉
           </p>
         </div>
       )}
@@ -403,7 +403,7 @@ function McTaskRenderer({ taskId, options, onSubmit }: McTaskRendererProps) {
       setResult(res);
     } catch (err) {
       setSelected(null);
-      setError(err instanceof Error ? err.message : "Could not submit answer.");
+      setError(err instanceof Error ? err.message : "Couldn't submit. Retry?");
     } finally {
       setSubmitting(false);
     }
@@ -482,7 +482,7 @@ function TextTaskRenderer({
       const res = await onSubmit(answer);
       setResult(res);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not submit answer.");
+      setError(err instanceof Error ? err.message : "Couldn't submit. Retry?");
     } finally {
       setSubmitting(false);
     }

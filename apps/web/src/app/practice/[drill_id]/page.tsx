@@ -321,7 +321,7 @@ function PracticeContent() {
                             href={`/practice/${result.next_drill_id}`}
                             className="inline-block rounded-full border border-emerald-500/50 bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-500/20 transition-colors"
                           >
-                            Наступний дрил →
+                            Наступний дрил
                           </Link>
                         ) : (
                           <div className="flex flex-col gap-1">

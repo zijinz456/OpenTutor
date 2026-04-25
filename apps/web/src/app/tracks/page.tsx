@@ -56,7 +56,7 @@ export default function PathListPage() {
           setError(
             err instanceof Error
               ? err.message
-              : "Could not load paths — try again.",
+              : "Couldn't load paths. Retry?",
           );
       })
       .finally(() => {

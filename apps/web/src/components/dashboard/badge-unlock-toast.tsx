@@ -15,7 +15,7 @@
  *   - One toast at a time — caller is responsible for sequencing.
  */
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { clsx } from "clsx";
 import type { BadgeOut } from "@/lib/api/gamification";
 
@@ -33,11 +33,22 @@ export function BadgeUnlockToast({
   onDismiss,
   autoDismissMs = 5000,
 }: BadgeUnlockToastProps) {
+  // A.5 motion polish — enter slide-from-right + fade-in via the
+  // `entered` flag set after first paint. Exit is handled implicitly:
+  // when `badge` flips to null the component unmounts; the
+  // `transition-all duration-normal` class on the wrapper keeps the
+  // disappearing frame calm rather than abrupt.
+  const [entered, setEntered] = useState(false);
   useEffect(() => {
-    if (!badge) return;
+    if (!badge) {
+      setEntered(false);
+      return;
+    }
     const id = setTimeout(() => {
       onDismiss();
     }, autoDismissMs);
+    // Trigger enter transition once the effect runs (post-mount).
+    setEntered(true);
     return () => {
       clearTimeout(id);
     };
@@ -54,9 +65,10 @@ export function BadgeUnlockToast({
       aria-live="polite"
       className={clsx(
         "fixed right-4 top-4 z-50 max-w-xs rounded-2xl border border-border",
-        "bg-card p-4 card-shadow text-foreground transition-opacity",
+        "bg-card p-4 card-shadow text-foreground",
+        "transition-all duration-[var(--thm-dur-normal)] ease-[var(--thm-ease-out)]",
+        entered ? "translate-x-0 opacity-100" : "translate-x-4 opacity-0",
       )}
-      style={{ transitionDuration: "var(--dur-normal, 200ms)" }}
     >
       <div className="flex items-start gap-3">
         <span
