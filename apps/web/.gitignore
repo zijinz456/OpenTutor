@@ -39,3 +39,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# codex local dev logs (untracked tail buffers)
+.codex-dev.err.log
+.codex-dev.out.log
