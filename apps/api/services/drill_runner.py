@@ -118,7 +118,7 @@ async def run_drill(
     submitted_code: str,
     hidden_tests: str,
     *,
-    timeout_s: float = 5.0,
+    timeout_s: float = 12.0,
 ) -> RunResult:
     """Run ``submitted_code`` against ``hidden_tests`` in a sandboxed subprocess.
 
@@ -128,10 +128,14 @@ async def run_drill(
             Never echoed back in the return value beyond what pytest
             itself prints on a failing assertion (pytest shows the
             failing line, which is the intended learner feedback).
-        timeout_s: Wall-clock limit. Default 5s is tight enough to kill
-            infinite loops quickly while leaving headroom for
-            legitimate CPU-bound drills (list comprehensions over a few
-            thousand items, small numpy-less algo work).
+        timeout_s: Wall-clock limit. Default 12s — pytest cold-start in
+            the ``opentutor-api`` container measures ~7.6s (collection +
+            plugin loading dominates), so a 5s budget could never let a
+            *correct* solution pass on this stack (cs50p drill smoke
+            2026-04-26 receipt). 12s gives ~4s headroom for transient
+            slowness while still killing genuinely runaway code (the
+            assertions themselves run in ~0.02s — anything beyond
+            cold-start is suspicious).
 
     Returns:
         :class:`RunResult` with the verdict, captured combined stdout +
