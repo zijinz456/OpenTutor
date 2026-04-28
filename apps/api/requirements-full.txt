@@ -7,7 +7,7 @@ redis==5.2.1
 apscheduler>=3.10.0
 
 # Heavier extraction and browser automation
-crawl4ai==0.4.0
+crawl4ai==0.8.6
 python-magic==0.4.27
 scrapling>=0.2
 playwright>=1.49.0
@@ -33,7 +33,7 @@ notion-client>=2.0.0
 # Advanced multimodal / experimentation
 pix2tex>=0.1.2
 # pyBKT 1.4.2 currently publishes a wheel/version metadata mismatch that fails on pip>=26 in CI.
-pyBKT==1.4.1
+pyBKT==1.4.2
 
 # Testing support used in CI
 pytest-asyncio>=0.23.0
