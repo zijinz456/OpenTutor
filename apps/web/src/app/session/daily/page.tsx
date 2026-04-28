@@ -237,6 +237,43 @@ export default function DailySessionPage() {
     [card],
   );
 
+  // Phase B blocker (Юрій 2026-04-28): recall-style cards (short_answer,
+  // free_response, fill_blank, tf, …) come from the API with no `options`
+  // payload, so the previous fallback to <QuizOptions> rendered an empty
+  // radiogroup — user saw the question text and the Exit button only.
+  // Local state for the click-to-reveal flow lives here so it resets on
+  // every card advance via the existing `currentIdx` effect above.
+  const [recallRevealed, setRecallRevealed] = useState(false);
+  useEffect(() => {
+    setRecallRevealed(false);
+  }, [currentIdx]);
+
+  const handleRecallSubmit = useCallback(
+    async (didKnow: boolean) => {
+      if (!card || submitting || result) return;
+      setSubmitting(true);
+      setSubmitError(null);
+      try {
+        const elapsed = Date.now() - questionStartRef.current;
+        // Backend exact-match grader (quiz_submission.py:401-404) decides
+        // correctness from the user's answer string. Submit the canonical
+        // correct_answer when the user self-rates "I knew it"; submit a
+        // sentinel empty string when they didn't, which the grader marks
+        // wrong. Keeps the existing /submit-answer contract intact.
+        const userAnswer = didKnow ? (card.correct_answer ?? "") : "";
+        const res = await submitAnswer(card.id, userAnswer, elapsed);
+        setResult(res);
+        recordAnswer(res.is_correct);
+        scheduleAdvance();
+      } catch {
+        setSubmitError("Could not submit your answer. Please try again.");
+      } finally {
+        setSubmitting(false);
+      }
+    },
+    [card, recordAnswer, result, scheduleAdvance, submitting],
+  );
+
   // Closure screen wins whenever the session is done, even before the
   // advance timer runs — §8: user sees closure as soon as they've done N.
   if (finished) {
@@ -373,16 +410,64 @@ export default function DailySessionPage() {
                           />
                         );
                       })()
-            : (
-                <QuizOptions
-                  optionKeys={optionKeys}
-                  options={(card.options ?? {}) as Record<string, string>}
-                  selectedOption={selectedOption}
-                  result={result}
-                  submitting={submitting}
-                  onOptionClick={(key) => void handleMcSubmit(key)}
-                />
-              )}
+            : optionKeys.length === 0
+              ? (
+                  // Recall-style card (no options) — click to reveal answer,
+                  // then user self-rates "I knew it" / "I didn't". See
+                  // handleRecallSubmit above for the API contract.
+                  <div className="space-y-3" data-testid="daily-session-recall">
+                    {!recallRevealed ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={() => setRecallRevealed(true)}
+                        data-testid="daily-session-recall-reveal"
+                      >
+                        Show answer
+                      </Button>
+                    ) : (
+                      <>
+                        <div
+                          className="rounded-xl border border-border/60 bg-muted/40 p-3 text-sm"
+                          data-testid="daily-session-recall-answer"
+                        >
+                          {card.correct_answer ?? "(no answer recorded)"}
+                        </div>
+                        <div className="flex gap-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => void handleRecallSubmit(false)}
+                            disabled={submitting || !!result}
+                            data-testid="daily-session-recall-no"
+                          >
+                            I didn&rsquo;t know
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={() => void handleRecallSubmit(true)}
+                            disabled={submitting || !!result}
+                            data-testid="daily-session-recall-yes"
+                          >
+                            I knew it
+                          </Button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )
+              : (
+                  <QuizOptions
+                    optionKeys={optionKeys}
+                    options={(card.options ?? {}) as Record<string, string>}
+                    selectedOption={selectedOption}
+                    result={result}
+                    submitting={submitting}
+                    onOptionClick={(key) => void handleMcSubmit(key)}
+                  />
+                )}
 
         {submitError && (
           <p role="alert" className="text-xs text-destructive">
