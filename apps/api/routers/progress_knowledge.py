@@ -301,6 +301,8 @@ def _format_review_item(item: "ReviewItem") -> dict:
         "last_reviewed": item.last_practiced_at,
         "content_node_id": item.content_node_id,
         "cluster": item.related_concepts[0] if item.related_concepts else None,
+        "recall_question": item.recall_question,
+        "recall_answer": item.recall_answer,
     }
 
 

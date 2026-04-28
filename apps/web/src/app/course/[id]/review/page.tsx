@@ -258,12 +258,34 @@ export default function ReviewPage() {
                   {t("review.showDetails")}
                 </button>
               ) : (
-                <div className="mt-4 space-y-2 text-sm text-muted-foreground">
-                  <p>{tf("review.retrievability", { value: Math.round(current.retrievability * 100) })}</p>
-                  {current.cluster && <p>{tf("review.cluster", { value: current.cluster })}</p>}
-                  {current.last_reviewed && (
-                    <p>{tf("review.lastReviewed", { value: new Date(current.last_reviewed).toLocaleDateString() })}</p>
+                <div className="mt-4 space-y-3 text-sm">
+                  {current.recall_question && (
+                    <div className="space-y-1 text-left">
+                      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                        {t("review.recallQuestion")}
+                      </p>
+                      <div className="whitespace-pre-wrap break-words max-h-40 overflow-auto rounded-md bg-muted/40 px-3 py-2 text-foreground">
+                        {current.recall_question}
+                      </div>
+                    </div>
                   )}
+                  {current.recall_answer && (
+                    <div className="space-y-1 text-left">
+                      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                        {t("review.recallAnswer")}
+                      </p>
+                      <div className="whitespace-pre-wrap break-words max-h-40 overflow-auto rounded-md bg-success-muted/40 px-3 py-2 text-foreground">
+                        {current.recall_answer}
+                      </div>
+                    </div>
+                  )}
+                  <div className="space-y-2 text-muted-foreground">
+                    <p>{tf("review.retrievability", { value: Math.round(current.retrievability * 100) })}</p>
+                    {current.cluster && <p>{tf("review.cluster", { value: current.cluster })}</p>}
+                    {current.last_reviewed && (
+                      <p>{tf("review.lastReviewed", { value: new Date(current.last_reviewed).toLocaleDateString() })}</p>
+                    )}
+                  </div>
                 </div>
               )}
             </div>

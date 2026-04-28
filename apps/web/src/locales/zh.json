@@ -798,6 +798,8 @@
   "review.retrievability": "可检索性：{value}%",
   "review.cluster": "集群：{value}",
   "review.lastReviewed": "上次复习：{value}",
+  "review.recallQuestion": "题目",
+  "review.recallAnswer": "答案",
   "review.again": "再来",
   "review.hard": "困难",
   "review.good": "良好",
