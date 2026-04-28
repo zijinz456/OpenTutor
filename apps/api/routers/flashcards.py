@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 
 from database import get_db
 from models.user import User
@@ -92,6 +93,12 @@ async def review_flashcard_endpoint(
                 cards[body.card_index]["fsrs"] = updated_card.get("fsrs", {})
                 # SQLAlchemy needs the JSON column reassigned to detect the mutation
                 asset.content = {**asset.content, "cards": cards}
+                # CompatJSONB is plain JSON without MutableDict.as_mutable wrapping,
+                # so the spread above (which shares inner refs) does not register as
+                # dirty in SA's history — the UPDATE would silently be omitted on
+                # commit. flag_modified forces SA to mark the column dirty so the
+                # FSRS state actually persists. (BUG-FSRS-001)
+                flag_modified(asset, "content")
 
     # Emit standardized learning event for analytics + plugin hooks
     try:
