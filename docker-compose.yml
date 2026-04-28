@@ -99,10 +99,14 @@ services:
     ports:
       - "${WEB_PORT:-3001}:3001"
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:3001 || exit 1"]
-      interval: 10s
+      # node:20-alpine ships BusyBox wget but no curl, so the previous
+      # `curl -fsS` test failed with "curl: not found" and the container
+      # was permanently flagged unhealthy despite the app serving 200.
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:3001/ || exit 1"]
+      interval: 30s
       timeout: 5s
-      retries: 5
+      retries: 3
+      start_period: 60s
     depends_on:
       api:
         condition: service_healthy
