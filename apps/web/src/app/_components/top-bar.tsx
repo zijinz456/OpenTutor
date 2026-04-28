@@ -1,9 +1,11 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { TodayToolsPopover } from "@/components/shared/today-tools-popover";
+import { getGamificationDashboard } from "@/lib/api/gamification";
 
 const NAV_ITEMS = [
   { href: "/tracks", label: "Tracks" },
@@ -11,8 +13,39 @@ const NAV_ITEMS = [
   { href: "/recap", label: "Recap" },
 ];
 
+// Chip mirrors the passive-status posture of <GamificationWidget>:
+// loading shows an em-dash placeholder (NOT "🔥 0", which would lie),
+// error keeps the chip rendered with the same placeholder so the layout
+// doesn't shift, and `streak_days = 0` is rendered honestly. We hit
+// the same `/api/gamification/dashboard` the widget already polls, so
+// the value matches what Юрій sees on the dashboard streak card.
+type StreakState =
+  | { status: "loading" }
+  | { status: "error" }
+  | { status: "loaded"; streakDays: number };
+
 export function TopBar() {
   const pathname = usePathname();
+  const [streak, setStreak] = useState<StreakState>({ status: "loading" });
+
+  useEffect(() => {
+    let cancelled = false;
+    getGamificationDashboard()
+      .then((data) => {
+        if (!cancelled) {
+          setStreak({ status: "loaded", streakDays: data.streak_days });
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setStreak({ status: "error" });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const streakLabel =
+    streak.status === "loaded" ? `🔥 ${streak.streakDays}` : "🔥 —";
 
   return (
     <header className="fixed inset-x-0 top-0 z-40 border-b border-border/80 bg-background/92 backdrop-blur">
@@ -51,9 +84,11 @@ export function TopBar() {
           <TodayToolsPopover />
           <span
             data-testid="top-bar-streak-chip"
+            data-streak-status={streak.status}
+            aria-busy={streak.status === "loading"}
             className="inline-flex h-9 items-center rounded-full border border-border/80 bg-card/80 px-3 text-sm font-medium text-foreground"
           >
-            🔥 7
+            {streakLabel}
           </span>
         </div>
       </div>

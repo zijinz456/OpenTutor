@@ -367,7 +367,7 @@ async def get_drill(
     summary="Submit a solution; run hidden tests; persist the attempt",
     description=(
         "Runs ``submitted_code`` against the drill's hidden pytest "
-        "suite in a sandboxed subprocess (5s timeout), writes a "
+        "suite in a sandboxed subprocess (12s timeout), writes a "
         "``drill_attempts`` row regardless of outcome, and returns an "
         "ADHD-safe feedback line. On pass, ``next_drill_id`` is "
         "populated with the next unpassed drill in the same course. "
