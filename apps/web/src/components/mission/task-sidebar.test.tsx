@@ -107,6 +107,32 @@ describe("<TaskSidebar>", () => {
     expect(onSelect).toHaveBeenCalledWith("b");
   });
 
+  it("reads Done (not Current) when the active task is also complete", () => {
+    // Phase B mission-progression: after answering task 1 correctly,
+    // optimistic overlay flips is_complete=true while currentTaskId
+    // still points at task 1 (parent doesn't auto-advance selection).
+    // Sidebar should show "Done" so the user gets honest progression
+    // signal instead of a stale "Current" pill.
+    const tasks: RoomTask[] = [
+      task("a", { is_complete: true }),
+      task("b", { is_complete: false }),
+    ];
+    render(
+      <TaskSidebar
+        tasks={tasks}
+        currentTaskId="a"
+        capstoneIds={[]}
+        onSelect={() => {}}
+      />,
+    );
+    expect(
+      screen.getByTestId("task-sidebar-item-a").getAttribute("data-state"),
+    ).toBe("done");
+    expect(screen.getByTestId("task-sidebar-item-a-state").textContent).toBe(
+      "Done",
+    );
+  });
+
   it("does not invoke onSelect when the target is locked", async () => {
     const tasks: RoomTask[] = [
       task("a", { is_complete: false }),

@@ -110,6 +110,58 @@ describe("PracticeShell", () => {
     expect(handleSubmit).not.toHaveBeenCalled();
   });
 
+  it("shows the Next-task CTA only when canAdvance is true and onAdvance is set", () => {
+    // Phase B mission-progression fix. When the host hasn't latched
+    // an attempt yet, the affordance is hidden so the user is not
+    // tempted to skip past unread questions.
+    const handleAdvance = vi.fn();
+    const { rerender } = render(
+      <PracticeShell
+        problemId="adv1"
+        variant="python"
+        question="Q"
+        surface={<div />}
+        correct={false}
+        onSubmit={() => undefined}
+        onAdvance={handleAdvance}
+        canAdvance={false}
+      />,
+    );
+    expect(screen.queryByTestId("practice-shell-advance-adv1")).toBeNull();
+
+    rerender(
+      <PracticeShell
+        problemId="adv1"
+        variant="python"
+        question="Q"
+        surface={<div />}
+        correct={false}
+        onSubmit={() => undefined}
+        onAdvance={handleAdvance}
+        canAdvance={true}
+      />,
+    );
+    const advanceBtn = screen.getByTestId("practice-shell-advance-adv1");
+    expect(advanceBtn).toHaveTextContent("Next task");
+    fireEvent.click(advanceBtn);
+    expect(handleAdvance).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides the Next-task CTA when onAdvance is omitted (last task in mission)", () => {
+    render(
+      <PracticeShell
+        problemId="adv2"
+        variant="python"
+        question="Q"
+        surface={<div />}
+        correct={true}
+        onSubmit={() => undefined}
+        canAdvance={true}
+      />,
+    );
+    expect(screen.queryByTestId("practice-shell-advance-adv2")).toBeNull();
+  });
+
   it("colors the caption per variant accent (data-variant attribute)", () => {
     const { rerender } = render(
       <PracticeShell

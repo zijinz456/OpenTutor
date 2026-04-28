@@ -268,9 +268,20 @@ function MissionPageContent() {
             {currentTask ? (
               data.path_slug.startsWith("python") ? (
                 <PythonPane
+                  // Force pane reset on task switch so the inline
+                  // "Next task" CTA latch (and the underlying drill
+                  // renderer's selected/result state) starts fresh
+                  // for each new task.
+                  key={currentTask.id}
                   task={currentTask}
                   correct={currentTask.is_complete}
                   onCorrect={() => handleTaskCorrect(currentTask.id)}
+                  onAdvance={
+                    currentIdx >= 0 &&
+                    currentIdx < enrichedTasks.length - 1
+                      ? handleNext
+                      : undefined
+                  }
                 />
               ) : (
                 <p className="text-sm text-muted-foreground rounded-xl border border-[var(--border-subtle,rgba(255,255,255,0.06))] bg-card p-4">

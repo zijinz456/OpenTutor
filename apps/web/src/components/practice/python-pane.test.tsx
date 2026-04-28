@@ -7,22 +7,34 @@ import type { RoomTask } from "@/lib/api/paths";
 // tests. The real wiring is exercised by `practice-shell.test.tsx`
 // (shell-level) and by Phase 11 / Phase 16a integration tests
 // (renderer-level). Here we only check that PythonPane composes the
-// two correctly.
+// two correctly. The stub exposes both onCorrect and onAttempt so
+// the attempted-latch test can drive each path independently.
 vi.mock("@/components/path/RoomTaskList", () => ({
   TaskRenderer: ({
     task,
     onCorrect,
+    onAttempt,
   }: {
     task: { id: string };
     onCorrect: () => void;
+    onAttempt?: () => void;
   }) => (
-    <button
-      type="button"
-      data-testid={`task-renderer-stub-${task.id}`}
-      onClick={onCorrect}
-    >
-      stub:{task.id}
-    </button>
+    <div data-testid={`task-renderer-stub-${task.id}`}>
+      <button
+        type="button"
+        data-testid={`task-renderer-correct-${task.id}`}
+        onClick={onCorrect}
+      >
+        stub-correct:{task.id}
+      </button>
+      <button
+        type="button"
+        data-testid={`task-renderer-attempt-${task.id}`}
+        onClick={() => onAttempt?.()}
+      >
+        stub-attempt:{task.id}
+      </button>
+    </div>
   ),
 }));
 
@@ -80,9 +92,72 @@ describe("PythonPane", () => {
       <PythonPane task={buildTask({ id: "t9" })} onCorrect={handleCorrect} />,
     );
 
-    // Click the stubbed renderer to simulate a correct submission.
-    fireEvent.click(screen.getByTestId("task-renderer-stub-t9"));
+    // Click the stubbed renderer's correct button to simulate a
+    // correct submission.
+    fireEvent.click(screen.getByTestId("task-renderer-correct-t9"));
     expect(handleCorrect).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides the Next-task CTA until the renderer reports an attempt", () => {
+    const handleAdvance = vi.fn();
+    render(
+      <PythonPane
+        task={buildTask({ id: "ta" })}
+        onAdvance={handleAdvance}
+      />,
+    );
+
+    // Pre-attempt: CTA hidden so the user must engage with the
+    // current task before being offered a way forward.
+    expect(screen.queryByTestId("practice-shell-advance-ta")).toBeNull();
+
+    // Simulate any submit roundtrip (correct or miss). Phase B fix —
+    // the latch flips on every attempt so even a wrong-answer pane
+    // gives the user an unmissable advance affordance.
+    fireEvent.click(screen.getByTestId("task-renderer-attempt-ta"));
+
+    const advance = screen.getByTestId("practice-shell-advance-ta");
+    expect(advance).toHaveTextContent("Next task");
+    fireEvent.click(advance);
+    expect(handleAdvance).toHaveBeenCalledTimes(1);
+  });
+
+  it("resets the attempted latch on task switch (no stale CTA across tasks)", () => {
+    // Mission page uses `<PythonPane key={currentTask.id} … />` so a
+    // task swap remounts the pane and useState reinitializes. Mirror
+    // that with `key=` here to assert the invariant holds end-to-end.
+    const handleAdvance = vi.fn();
+    const { rerender } = render(
+      <PythonPane
+        key="tA"
+        task={buildTask({ id: "tA" })}
+        onAdvance={handleAdvance}
+      />,
+    );
+
+    // Attempt task A → CTA visible.
+    fireEvent.click(screen.getByTestId("task-renderer-attempt-tA"));
+    expect(screen.getByTestId("practice-shell-advance-tA")).toBeInTheDocument();
+
+    // Swap to task B (parent-driven, new key forces remount). Pane
+    // should re-init with attempted=false and the CTA stays hidden
+    // until B is attempted.
+    rerender(
+      <PythonPane
+        key="tB"
+        task={buildTask({ id: "tB" })}
+        onAdvance={handleAdvance}
+      />,
+    );
+    expect(screen.queryByTestId("practice-shell-advance-tB")).toBeNull();
+  });
+
+  it("omits onAdvance when none is wired (last task in mission)", () => {
+    render(<PythonPane task={buildTask({ id: "tend" })} />);
+    fireEvent.click(screen.getByTestId("task-renderer-attempt-tend"));
+    // No onAdvance prop → shell renders nothing for the CTA slot
+    // even after attempt.
+    expect(screen.queryByTestId("practice-shell-advance-tend")).toBeNull();
   });
 
   it("keeps the shell submit button disabled (TaskRenderer owns submit)", () => {

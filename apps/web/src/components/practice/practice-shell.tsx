@@ -99,6 +99,16 @@ export interface PracticeShellProps {
    *  per ТЗ §10 line 901; pass "Run tests" or another verb when the
    *  variant uses a different primary action. */
   submitLabel?: string;
+  /** Advance to the next task in the mission. When provided alongside
+   *  `canAdvance`, the shell renders a secondary "Next task" CTA next
+   *  to Submit so the user never has to scan to the fixed footer after
+   *  a verdict lands. Phase B mission-progression UX (Юрій stuck
+   *  staring at the explained MC pane). */
+  onAdvance?: () => void;
+  /** Whether the next-task CTA should be visible+enabled. Hosts flip
+   *  this to `true` after the first submit attempt (correct OR miss)
+   *  so the user has an unmissable way forward. */
+  canAdvance?: boolean;
 }
 
 export function PracticeShell({
@@ -111,6 +121,8 @@ export function PracticeShell({
   onSubmit,
   submitDisabled = false,
   submitLabel = "Submit checkpoint & advance",
+  onAdvance,
+  canAdvance = false,
 }: PracticeShellProps) {
   return (
     <section
@@ -160,6 +172,21 @@ export function PracticeShell({
         >
           {submitLabel}
         </Button>
+        {/* Next-task CTA — surfaced once the user has attempted the
+            current task. Sitting next to Submit (not in the fixed
+            footer) keeps the affordance in the user's gaze after the
+            verdict lands. Phase B fix for Юрій-stuck-on-task-1. */}
+        {onAdvance && canAdvance ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={onAdvance}
+            data-testid={`practice-shell-advance-${problemId}`}
+          >
+            Next task
+          </Button>
+        ) : null}
       </div>
     </section>
   );
