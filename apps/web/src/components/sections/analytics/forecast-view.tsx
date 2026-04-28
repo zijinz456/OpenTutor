@@ -1,7 +1,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getForgettingForecast, getFeatureFlags, type ForgettingForecast, type ForgettingPrediction } from "@/lib/api";
+import { getForgettingForecast, type ForgettingForecast, type ForgettingPrediction } from "@/lib/api";
+
+// Build-time feature gate. Read once at module load — no per-mount fetch,
+// so N parallel <ForecastView> instances don't fan out to N /features +
+// N /forgetting-forecast calls. The backend returns 404 when LOOM is off,
+// which previously cascaded through the request retry policy (4 retries
+// on 429) into 20-30 requests + a toast spam. Default false matches the
+// backend default (settings.enable_experimental_loom=False).
+const LOOM_ENABLED =
+  process.env.NEXT_PUBLIC_ENABLE_LOOM === "true" ||
+  process.env.NEXT_PUBLIC_ENABLE_LOOM === "1";
 
 interface ForecastViewProps {
   courseId: string;
@@ -66,28 +76,21 @@ function PredictionRow({ prediction }: { prediction: ForgettingPrediction }) {
 export function ForecastView({ courseId }: ForecastViewProps) {
   const [data, setData] = useState<ForgettingForecast | null>(null);
   const [error, setError] = useState(false);
-  const [featureEnabled, setFeatureEnabled] = useState<boolean | null>(null);
 
   useEffect(() => {
-    getFeatureFlags()
-      .then((flags) => setFeatureEnabled(flags.loom))
-      .catch(() => setFeatureEnabled(false));
-  }, []);
-
-  useEffect(() => {
-    if (featureEnabled === false) return;
+    if (!LOOM_ENABLED) return;
     let cancelled = false;
     getForgettingForecast(courseId)
       .then((d) => { if (!cancelled) setData(d); })
       .catch(() => { if (!cancelled) setError(true); });
     return () => { cancelled = true; };
-  }, [courseId, featureEnabled]);
+  }, [courseId]);
 
-  if (featureEnabled === false) {
+  if (!LOOM_ENABLED) {
     return (
-      <div className="p-6 text-center text-muted-foreground">
-        <p className="text-sm">Forgetting Forecast requires LOOM (experimental).</p>
-        <p className="text-xs mt-1">Set <code className="bg-muted px-1 rounded">ENABLE_EXPERIMENTAL_LOOM=true</code> to enable.</p>
+      <div className="p-6 text-center text-muted-foreground" data-testid="forecast-panel">
+        <p className="text-sm">Forgetting Forecast (LOOM) is an experimental feature.</p>
+        <p className="text-xs mt-1">Enable it by setting <code className="bg-muted px-1 rounded">NEXT_PUBLIC_ENABLE_LOOM=true</code> at build time (also requires backend <code className="bg-muted px-1 rounded">ENABLE_EXPERIMENTAL_LOOM=true</code>).</p>
       </div>
     );
   }
