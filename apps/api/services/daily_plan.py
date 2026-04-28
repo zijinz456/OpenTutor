@@ -96,7 +96,7 @@ from __future__ import annotations
 import uuid
 from collections import defaultdict
 from collections.abc import Iterable
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Literal
 
 from sqlalchemy import func, select
@@ -172,6 +172,7 @@ async def select_daily_plan(
     *,
     strategy: Strategy = "adhd_safe",
     excluded_ids: Iterable[uuid.UUID] | None = None,
+    now: datetime | None = None,
 ) -> DailyPlan:
     """Return the daily-session batch for the configured user.
 
@@ -258,7 +259,12 @@ async def select_daily_plan(
     else:  # pragma: no cover — caught by Literal on the typed call sites
         raise ValueError(f"unknown strategy {strategy!r}")
 
-    now = utcnow()
+    # Default ``now`` to wall-clock; tests pin it via the ``now=`` kwarg
+    # to keep tier classification deterministic (see Story-3 streak fix
+    # for the symmetric problem on freeze-quota counting). Production
+    # callers pass nothing and get :func:`utcnow` as before.
+    if now is None:
+        now = utcnow()
     due_horizon = now + timedelta(hours=24)
     recent_failure_floor = now - timedelta(days=recent_window_days)
 

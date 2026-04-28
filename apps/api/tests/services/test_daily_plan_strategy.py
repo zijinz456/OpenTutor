@@ -150,7 +150,11 @@ async def test_struggle_first_rank_zero_is_recent_fail() -> None:
         failed_ids_in_order=[p_fail.id],  # marks p_fail as recent-fail
     )
 
-    plan = await select_daily_plan(db, 20, strategy="struggle_first")
+    # Pin ``now`` to the test anchor so ``next_review_at`` offsets land
+    # in the intended tier regardless of wall-clock drift between when
+    # the test was authored and when it runs (the test's ``next_review_at
+    # = _NOW + timedelta(days=5)`` must end up beyond ``due_horizon``).
+    plan = await select_daily_plan(db, 20, strategy="struggle_first", now=_NOW)
     assert plan.size >= 1
     # The recent-fail card must come before the overdue card.
     ids = [c.id for c in plan.cards]
