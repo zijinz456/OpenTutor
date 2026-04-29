@@ -110,6 +110,30 @@ describe("PracticeShell", () => {
     expect(handleSubmit).not.toHaveBeenCalled();
   });
 
+  it("omits the submit button entirely when hideSubmit is true", () => {
+    // Review follow-up: PythonPane uses this to delegate the primary
+    // CTA to the inner TaskRenderer. The shell still renders explain
+    // + advance affordances; only the misleading dead submit is gone.
+    const handleAdvance = vi.fn();
+    render(
+      <PracticeShell
+        problemId="hs1"
+        variant="python"
+        question="Q"
+        surface={<div />}
+        correct={false}
+        onSubmit={() => undefined}
+        hideSubmit
+        onAdvance={handleAdvance}
+        canAdvance
+      />,
+    );
+    expect(screen.queryByTestId("practice-shell-submit-hs1")).toBeNull();
+    // Explain + advance still mount — hideSubmit is scoped to submit.
+    expect(screen.getByTestId("explain-step-textarea-hs1")).toBeInTheDocument();
+    expect(screen.getByTestId("practice-shell-advance-hs1")).toBeInTheDocument();
+  });
+
   it("shows the Next-task CTA only when canAdvance is true and onAdvance is set", () => {
     // Phase B mission-progression fix. When the host hasn't latched
     // an attempt yet, the affordance is hidden so the user is not

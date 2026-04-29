@@ -99,6 +99,12 @@ export interface PracticeShellProps {
    *  per ТЗ §10 line 901; pass "Run tests" or another verb when the
    *  variant uses a different primary action. */
   submitLabel?: string;
+  /** Hide the shell-level submit button entirely. Used by panes whose
+   *  inner surface owns the primary CTA — e.g. `<PythonPane>` where
+   *  `<TaskRenderer>` ships its own "Run tests" / "Submit" button. The
+   *  shell still renders the explain rail and the optional Next-task
+   *  CTA so cross-variant affordances stay consistent. */
+  hideSubmit?: boolean;
   /** Advance to the next task in the mission. When provided alongside
    *  `canAdvance`, the shell renders a secondary "Next task" CTA next
    *  to Submit so the user never has to scan to the fixed footer after
@@ -121,6 +127,7 @@ export function PracticeShell({
   onSubmit,
   submitDisabled = false,
   submitLabel = "Submit checkpoint & advance",
+  hideSubmit = false,
   onAdvance,
   canAdvance = false,
 }: PracticeShellProps) {
@@ -161,17 +168,23 @@ export function PracticeShell({
       <ExplainStep problemId={problemId} correct={correct} />
 
       <div className="flex items-center gap-2">
-        <Button
-          type="button"
-          size="sm"
-          onClick={() => {
-            void onSubmit();
-          }}
-          disabled={submitDisabled}
-          data-testid={`practice-shell-submit-${problemId}`}
-        >
-          {submitLabel}
-        </Button>
+        {/* Shell submit is hidden when the inner surface owns the
+            primary CTA (Python pane delegates to `<TaskRenderer>`'s
+            own Run/Submit). Cross-variant explain + advance affordances
+            still render below regardless. */}
+        {hideSubmit ? null : (
+          <Button
+            type="button"
+            size="sm"
+            onClick={() => {
+              void onSubmit();
+            }}
+            disabled={submitDisabled}
+            data-testid={`practice-shell-submit-${problemId}`}
+          >
+            {submitLabel}
+          </Button>
+        )}
         {/* Next-task CTA — surfaced once the user has attempted the
             current task. Sitting next to Submit (not in the fixed
             footer) keeps the affordance in the user's gaze after the

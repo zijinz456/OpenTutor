@@ -131,13 +131,16 @@ export function GraphView({ courseId, focusTerms, maxNodes = 20 }: GraphViewProp
   );
 
   if (!LOOM_ENABLED) {
+    // Review follow-up: don't surface raw env-var names to the learner.
+    // Quiet experimental message keeps the panel friendly while the
+    // build-time flag stays an operator concern.
     return (
       <div
         className="p-8 text-center text-muted-foreground"
         data-testid="graph-panel"
       >
         <p className="text-sm">Knowledge Graph (LOOM) is an experimental feature.</p>
-        <p className="text-xs mt-1">Enable it by setting <code className="bg-muted px-1 rounded">NEXT_PUBLIC_ENABLE_LOOM=true</code> at build time (also requires backend <code className="bg-muted px-1 rounded">ENABLE_EXPERIMENTAL_LOOM=true</code>).</p>
+        <p className="text-xs mt-1">It&apos;s currently disabled in this build.</p>
       </div>
     );
   }

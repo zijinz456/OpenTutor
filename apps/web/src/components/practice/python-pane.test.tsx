@@ -160,13 +160,33 @@ describe("PythonPane", () => {
     expect(screen.queryByTestId("practice-shell-advance-tend")).toBeNull();
   });
 
-  it("keeps the shell submit button disabled (TaskRenderer owns submit)", () => {
+  it("hides the shell submit button entirely (TaskRenderer owns submit)", () => {
     render(<PythonPane task={buildTask()} />);
 
-    // ТЗ §3 Slice 3 item #4: keep submit visible but disabled, since
-    // the per-block <TaskRenderer> children own their own primary CTA.
-    const submit = screen.getByTestId("practice-shell-submit-t1");
-    expect(submit).toBeDisabled();
-    expect(submit).toHaveTextContent("Run tests");
+    // Review follow-up: a disabled "Run tests" shell submit sitting
+    // above the real run button was visually misleading. The Python
+    // variant now passes `hideSubmit` to the shell so the only
+    // submit affordance is the one TaskRenderer renders below.
+    expect(screen.queryByTestId("practice-shell-submit-t1")).toBeNull();
+  });
+
+  it("still renders explain rail and Next-task CTA after attempt (hideSubmit only hides submit)", () => {
+    // Defends against the regression where someone copies hideSubmit
+    // expecting it to also collapse the bottom row — shell still
+    // renders cross-variant affordances when the renderer signals an
+    // attempt.
+    const handleAdvance = vi.fn();
+    render(
+      <PythonPane
+        task={buildTask({ id: "trail" })}
+        onAdvance={handleAdvance}
+      />,
+    );
+
+    // Explain rail mounts unconditionally (mandatory across variants).
+    expect(screen.getByTestId("explain-step-textarea-trail")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("task-renderer-attempt-trail"));
+    expect(screen.getByTestId("practice-shell-advance-trail")).toBeInTheDocument();
   });
 });

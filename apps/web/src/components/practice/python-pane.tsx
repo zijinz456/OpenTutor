@@ -50,13 +50,14 @@ export function PythonPane({ task, correct = false, onCorrect, onAdvance }: Pyth
   // remounts the pane and useState's initial `false` re-applies
   // automatically — no manual reset effect needed.
   const [attempted, setAttempted] = useState(false);
-  // The shell's `onSubmit` is a no-op for the Python variant: the
-  // per-block `<TaskRenderer>` children own their own primary CTAs
-  // ("Run tests" / "Submit") and the API roundtrip. We expose a
-  // disabled shell submit so the surface visually communicates the
-  // common pattern across variants without fighting the block-level
-  // controls. Keeping submit visible (vs. omitted) is intentional —
-  // ТЗ §3 Slice 3 item #4: "Submit flow identical UX across 3."
+  // The shell's submit is hidden for the Python variant: the per-block
+  // `<TaskRenderer>` children own their own primary CTAs ("Run tests" /
+  // "Submit") and the API roundtrip. The earlier "disabled + Run tests"
+  // label was visually misleading — review feedback flagged a dead button
+  // sitting above the real one. With `hideSubmit`, the shell still hosts
+  // the explain rail + Next-task CTA (cross-variant affordances), but
+  // the only clickable submit lives in the renderer where the user
+  // expects it.
   return (
     <PracticeShell
       problemId={task.id}
@@ -75,8 +76,7 @@ export function PythonPane({ task, correct = false, onCorrect, onAdvance }: Pyth
       }
       correct={correct}
       onSubmit={() => undefined}
-      submitDisabled
-      submitLabel="Run tests"
+      hideSubmit
       onAdvance={onAdvance}
       canAdvance={attempted}
     />

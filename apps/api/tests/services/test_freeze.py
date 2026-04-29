@@ -385,15 +385,20 @@ async def test_daily_plan_excludes_frozen(db_session: AsyncSession) -> None:
     )
     await db_session.commit()
 
-    # Baseline: both appear.
-    plan_all = await select_daily_plan(db_session, size=5)
+    # Baseline: both appear. Pin ``now=_NOW`` so the 7-day recent-fail
+    # window is anchored on the test's reference timestamp — without
+    # this the test went red on any wall-clock day past 2026-04-29
+    # (the seeded failures stamped at ``_NOW - timedelta(hours=1/2)``
+    # would fall outside the live ``utcnow() - 7d`` floor and tier 2
+    # would empty out).
+    plan_all = await select_daily_plan(db_session, size=5, now=_NOW)
     all_ids = {c.id for c in plan_all.cards}
     assert problem_a.id in all_ids
     assert problem_b.id in all_ids
 
-    # With A excluded: A out, B still present.
+    # With A excluded: A out, B still present. Same now-pin applies.
     plan_filtered = await select_daily_plan(
-        db_session, size=5, excluded_ids=[problem_a.id]
+        db_session, size=5, excluded_ids=[problem_a.id], now=_NOW
     )
     filtered_ids = {c.id for c in plan_filtered.cards}
     assert problem_a.id not in filtered_ids

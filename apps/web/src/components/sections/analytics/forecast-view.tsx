@@ -87,10 +87,12 @@ export function ForecastView({ courseId }: ForecastViewProps) {
   }, [courseId]);
 
   if (!LOOM_ENABLED) {
+    // Review follow-up: avoid leaking raw env-var instructions to the
+    // learner; build-time toggles are an operator concern.
     return (
       <div className="p-6 text-center text-muted-foreground" data-testid="forecast-panel">
         <p className="text-sm">Forgetting Forecast (LOOM) is an experimental feature.</p>
-        <p className="text-xs mt-1">Enable it by setting <code className="bg-muted px-1 rounded">NEXT_PUBLIC_ENABLE_LOOM=true</code> at build time (also requires backend <code className="bg-muted px-1 rounded">ENABLE_EXPERIMENTAL_LOOM=true</code>).</p>
+        <p className="text-xs mt-1">It&apos;s currently disabled in this build.</p>
       </div>
     );
   }
