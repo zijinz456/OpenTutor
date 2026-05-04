@@ -109,6 +109,13 @@
   --font-mono-code: var(--font-jetbrains-mono), "SFMono-Regular", Menlo, Consolas, monospace;
   --font-display-thm: var(--font-space-grotesk), var(--font-inter), sans-serif;
 
+  /* Visual Shell Phase 1.5 — shared outer page width (ТЗ §VS1).
+   * NEW token (NOT a redefinition of Tailwind's `7xl=80rem/1280px`,
+   * which the mission 3-pane page intentionally still uses). Exposes
+   * `max-w-shell` utility for <PageShell> + <TopBar> alignment. Add
+   * future shell-level breakpoints here, not in component classes. */
+  --max-width-shell: 1600px;
+
   /* Motion tokens for THM components (ТЗ §8) */
   --thm-dur-fast: 120ms;
   --thm-dur-normal: 200ms;

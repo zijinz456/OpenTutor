@@ -96,6 +96,13 @@ beforeEach(() => {
 });
 
 describe("MissionPage (3-pane)", () => {
+  beforeEach(() => {
+    // PracticeShell mounts <ExplainStep>, which reads localStorage on
+    // first render. Clear between tests so reflection state from one
+    // case never bleeds into another.
+    window.localStorage.clear();
+  });
+
   it("renders the mission-header, task sidebar, content, and practice panes after load", async () => {
     getRoomDetailMock.mockResolvedValueOnce(buildResponse());
     render(<MissionPage />);
@@ -118,6 +125,15 @@ describe("MissionPage (3-pane)", () => {
     // so getAllByTestId returns length 2 for each.
     expect(screen.getAllByTestId("task-sidebar-item-t1")).toHaveLength(2);
     expect(screen.getAllByTestId("task-sidebar-item-t2")).toHaveLength(2);
+
+    // Slice 3 mount — practice surface goes through <PythonPane> →
+    // <PracticeShell> for python-* paths. Acceptance #3: confirm the
+    // shell renders with data-variant="python" rather than the old
+    // inline TaskRenderer block.
+    expect(screen.getByTestId("practice-shell-t2")).toHaveAttribute(
+      "data-variant",
+      "python",
+    );
 
     // Progress footer — 1 of 3 tasks complete → 33%, eta 20.
     const progress = screen.getByTestId("mission-progress-footer-progress");

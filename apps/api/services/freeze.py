@@ -105,13 +105,22 @@ async def _count_freezes_this_week(
 
     Split out so :func:`can_freeze` and :func:`freeze_card` share one
     SQL plan and tests can monkeypatch a single call site.
+
+    The window is half-open ``[week_start, week_end)`` — both bounds
+    matter. For wall-clock-now callers a lower bound alone is fine
+    (no future-dated tokens exist), but :func:`compute_streak` walks
+    historical anchors via ``today_utc=<past date>``: without the upper
+    bound, tokens created in any *later* week would leak into the
+    earlier week's count.
     """
 
     now = now or utcnow()
     week_start = _week_start_utc(now)
+    week_end = week_start + timedelta(days=7)
     stmt = select(func.count(FreezeToken.id)).where(
         FreezeToken.user_id == user_id,
         FreezeToken.frozen_at >= week_start,
+        FreezeToken.frozen_at < week_end,
     )
     result = await db.execute(stmt)
     return int(result.scalar_one() or 0)

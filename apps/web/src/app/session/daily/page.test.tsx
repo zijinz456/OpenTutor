@@ -55,6 +55,26 @@ function makeCard(id: string, question: string): DailyPlanCard {
   };
 }
 
+/** Recall card — no `options`, has a `correct_answer`. Mirrors the
+ *  short_answer / free_response shape Юрій's GIL-style flashcard hits. */
+function makeRecallCard(
+  id: string,
+  question: string,
+  correctAnswer: string,
+): DailyPlanCard {
+  return {
+    id,
+    question_type: "short_answer",
+    question,
+    options: null,
+    correct_answer: correctAnswer,
+    explanation: null,
+    difficulty_layer: 1,
+    content_node_id: null,
+    problem_metadata: null,
+  };
+}
+
 function renderWithProvider() {
   return render(
     <LocaleProvider>
@@ -162,6 +182,86 @@ describe("/session/daily page", () => {
     renderWithProvider();
     await user.click(screen.getByTestId("daily-session-exit"));
     expect(mockPush).toHaveBeenCalledWith("/");
+  });
+
+  it("renders the recall reveal CTA + I-knew-it / I-didn't buttons for short_answer cards", async () => {
+    // Phase B blocker (Юрій 2026-04-28): recall cards used to render the
+    // question + Exit only — no <QuizOptions> path because options is null.
+    useDailySessionStore
+      .getState()
+      .start(1, [
+        makeRecallCard(
+          "c1",
+          "What does GIL stand for?",
+          "Global Interpreter Lock",
+        ),
+      ]);
+    submitAnswerMock.mockResolvedValueOnce({
+      is_correct: true,
+      correct_answer: "Global Interpreter Lock",
+      explanation: null,
+    });
+
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    renderWithProvider();
+
+    // Question is up; reveal CTA is visible; rating buttons are not yet.
+    expect(screen.getByTestId("daily-session-question")).toHaveTextContent(
+      "What does GIL stand for?",
+    );
+    expect(screen.getByTestId("daily-session-recall-reveal")).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("daily-session-recall-yes"),
+    ).not.toBeInTheDocument();
+
+    // Click reveal → answer + both rating buttons render.
+    await user.click(screen.getByTestId("daily-session-recall-reveal"));
+    expect(screen.getByTestId("daily-session-recall-answer")).toHaveTextContent(
+      "Global Interpreter Lock",
+    );
+    expect(screen.getByTestId("daily-session-recall-yes")).toBeInTheDocument();
+    expect(screen.getByTestId("daily-session-recall-no")).toBeInTheDocument();
+
+    // "I knew it" submits the canonical answer text → backend grader
+    // decides correctness via exact match.
+    await user.click(screen.getByTestId("daily-session-recall-yes"));
+    await waitFor(() =>
+      expect(submitAnswerMock).toHaveBeenCalledWith(
+        "c1",
+        "Global Interpreter Lock",
+        expect.any(Number),
+      ),
+    );
+    await waitFor(() =>
+      expect(useDailySessionStore.getState().answered).toBe(1),
+    );
+  });
+
+  it("submits an empty answer when the user clicks I-didn't on a recall card", async () => {
+    useDailySessionStore
+      .getState()
+      .start(1, [
+        makeRecallCard("c1", "What does ORM stand for?", "Object-Relational Mapping"),
+      ]);
+    submitAnswerMock.mockResolvedValueOnce({
+      is_correct: false,
+      correct_answer: "Object-Relational Mapping",
+      explanation: null,
+    });
+
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    renderWithProvider();
+
+    await user.click(screen.getByTestId("daily-session-recall-reveal"));
+    await user.click(screen.getByTestId("daily-session-recall-no"));
+
+    await waitFor(() =>
+      expect(submitAnswerMock).toHaveBeenCalledWith(
+        "c1",
+        "",
+        expect.any(Number),
+      ),
+    );
   });
 
   it("shows submit error without losing the flow", async () => {

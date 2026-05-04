@@ -235,6 +235,13 @@ function readEditorMeta(meta: Record<string, unknown> | null | undefined) {
 interface TaskRendererProps {
   task: RoomTask;
   onCorrect: () => void;
+  /** Optional latch — fires after every submit roundtrip completes,
+   *  regardless of correctness. Hosts (e.g. PythonPane) use this to
+   *  show a "Next task" CTA after the user has engaged with the
+   *  current task. Distinct from `onCorrect` (only correct submits).
+   *  Undefined by default so existing call sites (room-page inline
+   *  expandable list) don't need touching. */
+  onAttempt?: () => void;
 }
 
 /**
@@ -242,7 +249,7 @@ interface TaskRendererProps {
  * pulling in the collapse/expand wrapper. Not re-exported from any
  * barrel — keep it test-scoped.
  */
-export function TaskRenderer({ task, onCorrect }: TaskRendererProps) {
+export function TaskRenderer({ task, onCorrect, onAttempt }: TaskRendererProps) {
   // The RoomTask schema never ships `problem_metadata`; editor tasks
   // that genuinely need `starter_code` will show an empty editor in
   // seed-gap scenarios. When Phase 16b adds metadata to the endpoint
@@ -252,6 +259,7 @@ export function TaskRenderer({ task, onCorrect }: TaskRendererProps) {
   const handleDrillSubmit = async (answer: string): Promise<AnswerResult> => {
     const res = await submitAnswer(task.id, answer);
     if (res.is_correct) onCorrect();
+    onAttempt?.();
     return res;
   };
 
@@ -260,6 +268,7 @@ export function TaskRenderer({ task, onCorrect }: TaskRendererProps) {
   ): Promise<CodeExerciseSubmitResult> => {
     const res = await submitAnswer(task.id, JSON.stringify(payload));
     if (res.is_correct) onCorrect();
+    onAttempt?.();
     return {
       is_correct: res.is_correct,
       explanation: res.explanation ?? undefined,
@@ -271,6 +280,7 @@ export function TaskRenderer({ task, onCorrect }: TaskRendererProps) {
   ): Promise<LabExerciseSubmitResult> => {
     const res = await submitAnswer(task.id, JSON.stringify(payload));
     if (res.is_correct) onCorrect();
+    onAttempt?.();
     return {
       is_correct: res.is_correct,
       explanation: res.explanation ?? undefined,

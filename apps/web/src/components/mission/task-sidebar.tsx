@@ -4,8 +4,11 @@
  * Lists every task in the mission with one of four visual states —
  * ТЗ §10 copy contract:
  *
- *   Done      task.is_complete is true
- *   Current   taskId === currentTaskId (whether or not complete)
+ *   Done      task.is_complete is true (wins over Current — a complete
+ *             task that's also the active selection reads as Done so
+ *             the user gets honest "you nailed task 1" signal instead
+ *             of staring at a "Current" pill after answering correctly)
+ *   Current   taskId === currentTaskId AND not complete
  *   Up next   future task, not complete, not in capstone gate
  *   Locked    task id is in `capstoneIds` AND not every prior non-capstone
  *             task is complete — matches the ТЗ wireframe's "Capstone 🔒"
@@ -52,8 +55,13 @@ export function computeTaskStates(
     nonCapstoneTasks.every((t) => t.is_complete);
 
   return tasks.map((task): TaskState => {
-    if (task.id === currentTaskId) return "current";
+    // Done wins over Current — Phase B mission-progression UX. Юрій's
+    // confusion: after answering task 1 correctly, sidebar still read
+    // "Current" because precedence used selection over completion. Now
+    // a complete task that's also the active selection reads "Done"
+    // and the user can see progression at a glance.
     if (task.is_complete) return "done";
+    if (task.id === currentTaskId) return "current";
     if (capstoneSet.has(task.id) && !allPriorDone) return "locked";
     return "up-next";
   });

@@ -219,6 +219,8 @@ export interface ReviewItem {
   urgency: string;
   cluster: string | null;
   last_reviewed: string | null;
+  recall_question?: string | null;
+  recall_answer?: string | null;
 }
 
 export interface ReviewSession {

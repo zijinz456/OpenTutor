@@ -8,16 +8,24 @@ rows can round-trip back as naive datetimes, which crashed URL ingestion with:
 
 These tests pin the comparison boundary directly so CI does not need Docker or
 live network fetches.
+
+The ``due_date`` is computed *relative to ``utcnow()``* rather than being a
+hardcoded calendar date — earlier the fixtures used ``2026-04-26`` and broke
+silently when wall-clock time crossed past it (the deadline-filter at
+``configure.py`` rejects anything ``<= now``, so the welcome-message branch
+never fired and the assertion at line 111 went red on every run after that
+date). The relative form is also robust to time zone (date math stays in UTC).
 """
 
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from libs.datetime_utils import utcnow
 from models.course import Course
 from models.ingestion import Assignment
 from services.ingestion.auto_generation.configure import auto_configure_course
@@ -79,25 +87,29 @@ def _db_factory_with_due_date(due_date: datetime):
     return course_id, course, db
 
 
+def _future_due_date(*, aware: bool) -> datetime:
+    """Return a future deadline 5 days out, aware or naive per ``aware``.
+
+    Anchoring to wall-clock keeps the fixture honest: the deadline-filter
+    in :func:`auto_configure_course` rejects anything ``<= now``, so a
+    hardcoded calendar date silently rots once the year ticks over.
+    """
+
+    future = utcnow() + timedelta(days=5)
+    return future if aware else future.replace(tzinfo=None)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("label", "due_date"),
-    [
-        (
-            "naive",
-            datetime(2026, 4, 26, 12, 0, 0),
-        ),
-        (
-            "aware",
-            datetime(2026, 4, 26, 12, 0, 0, tzinfo=timezone.utc),
-        ),
-    ],
+    ("label", "aware"),
+    [("naive", False), ("aware", True)],
 )
 async def test_auto_configure_course_normalizes_due_dates_before_comparison(
     label: str,
-    due_date: datetime,
+    aware: bool,
 ) -> None:
     """Future deadlines from the DB must be comparable regardless of tzinfo."""
+    due_date = _future_due_date(aware=aware)
     course_id, course, db = _db_factory_with_due_date(due_date)
 
     result = await auto_configure_course(

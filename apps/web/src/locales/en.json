@@ -798,6 +798,8 @@
   "review.retrievability": "Retrievability: {value}%",
   "review.cluster": "Cluster: {value}",
   "review.lastReviewed": "Last reviewed: {value}",
+  "review.recallQuestion": "Question",
+  "review.recallAnswer": "Answer",
   "review.again": "Again",
   "review.hard": "Hard",
   "review.good": "Good",

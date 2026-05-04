@@ -519,10 +519,18 @@ async def submit_answer(
         )
         db.add(wa)
 
+    # Phase C — capture the LearningProgress instance returned by
+    # update_quiz_result so we can surface ``interval_days`` /
+    # ``next_review_at`` on the wire. The tracker mutates the row
+    # in-place via ``_apply_fsrs_review`` (services/progress/tracker.py:148,
+    # 158-179), so reading from the in-memory instance here is the
+    # post-FSRS-write value — no re-query needed (avoids the double-write
+    # / stale-read risk flagged in the architect plan).
+    progress_after_submit = None
     try:
         from services.progress.tracker import update_quiz_result
 
-        await update_quiz_result(
+        progress_after_submit = await update_quiz_result(
             db,
             user.id,
             problem.course_id,
@@ -611,12 +619,24 @@ async def submit_answer(
             logger.exception("Prerequisite gap check failed (best-effort)")
             warnings.append("prerequisite_gap_check_failed")
 
+    # Phase C — read FSRS schedule fields from the in-memory progress
+    # instance (mutated by ``_apply_fsrs_review`` upstream). When the
+    # tracker call failed we leave both fields as None and the chip
+    # self-hides on the client.
+    interval_days: int | None = None
+    next_review_at = None
+    if progress_after_submit is not None:
+        interval_days = progress_after_submit.interval_days
+        next_review_at = progress_after_submit.next_review_at
+
     return AnswerResponse(
         is_correct=is_correct,
         correct_answer=problem.correct_answer,
         explanation=problem.explanation,
         prerequisite_gaps=prerequisite_gaps,
         warnings=warnings,
+        interval_days=interval_days,
+        next_review_at=next_review_at,
     )
 
 

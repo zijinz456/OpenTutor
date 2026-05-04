@@ -9,7 +9,9 @@ Flow
 
 1. Fetch the target :class:`Drill` or raise :class:`NotFoundError`.
 2. Hand ``submitted_code`` + ``hidden_tests`` to
-   :func:`services.drill_runner.run_drill` (5s timeout).
+   :func:`services.drill_runner.run_drill` (12s timeout — pytest cold
+   start in ``opentutor-api`` measures ~7.6s, so 5s could never let a
+   correct solution pass; cs50p drill smoke 2026-04-26).
 3. Persist a :class:`DrillAttempt` row — always, regardless of
    pass/fail — carrying the runner output + duration.
 4. Build ADHD-safe feedback copy:
@@ -127,7 +129,7 @@ async def submit_drill(
     if drill is None:
         raise NotFoundError(drill_id)
 
-    result = await run_drill(submitted_code, drill.hidden_tests, timeout_s=5.0)
+    result = await run_drill(submitted_code, drill.hidden_tests, timeout_s=12.0)
 
     attempt = DrillAttempt(
         user_id=user_id,

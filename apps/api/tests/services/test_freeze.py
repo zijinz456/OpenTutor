@@ -41,6 +41,7 @@ from services.freeze import (
     FREEZE_EXPIRY_HOURS,
     FREEZE_QUOTA_PER_WEEK,
     ConflictError,
+    _count_freezes_this_week,
     active_frozen_problem_ids,
     can_freeze,
     freeze_card,
@@ -267,6 +268,58 @@ async def test_can_freeze_resets_next_week(db_session: AsyncSession) -> None:
     assert meta_next["remaining"] == FREEZE_QUOTA_PER_WEEK
 
 
+# ── 5b. Historical-anchor leak (S.2 follow-up regression) ─────────
+
+
+@pytest.mark.asyncio
+async def test_count_freezes_respects_week_upper_bound(
+    db_session: AsyncSession,
+) -> None:
+    """Freezes from a *later* week must not leak into an earlier week's count.
+
+    Surfaced by streak live smoke 2026-04-27: ``compute_streak`` walks
+    historical ISO weeks via ``today_utc=<past date>`` → ``can_freeze``
+    is called with ``now=<past>``. The original SQL filter was
+    lower-bound only (``frozen_at >= week_start``), so any token frozen
+    in a later week was counted as "this week's freeze" for the earlier
+    anchor. The fix adds ``frozen_at < week_start + 7d``.
+
+    This test seeds two tokens on the receipt's exact dates:
+    * 2026-04-22 (Wed, ISO week 17)
+    * 2026-04-28 (Tue, ISO week 18)
+    and asks for the count anchored at week 17 — which must be 1, not 2.
+    """
+
+    user, _ = await _seed_user_and_problem(db_session)
+    course = await _first_course(db_session)
+    p_week17 = await _seed_problem(db_session, course.id)
+    p_week18 = await _seed_problem(db_session, course.id)
+
+    week17_anchor = datetime(2026, 4, 22, 12, 0, 0, tzinfo=timezone.utc)
+    week18_anchor = datetime(2026, 4, 28, 12, 0, 0, tzinfo=timezone.utc)
+
+    await freeze_card(db_session, user.id, p_week17.id, now=week17_anchor)
+    await freeze_card(db_session, user.id, p_week18.id, now=week18_anchor)
+
+    # Anchor at week 17 → only the week-17 token counts.
+    used_week17 = await _count_freezes_this_week(db_session, user.id, now=week17_anchor)
+    assert used_week17 == 1, (
+        f"week-18 token leaked into week-17 count: got {used_week17}, expected 1"
+    )
+
+    # Symmetric: anchor at week 18 → only the week-18 token counts.
+    used_week18 = await _count_freezes_this_week(db_session, user.id, now=week18_anchor)
+    assert used_week18 == 1, (
+        f"week-17 token leaked into week-18 count: got {used_week18}, expected 1"
+    )
+
+    # Higher-level: can_freeze for week 17 should report 2 remaining
+    # (not 1) — three quota minus the single week-17 token.
+    _, meta_week17 = await can_freeze(db_session, user.id, now=week17_anchor)
+    assert meta_week17["used"] == 1
+    assert meta_week17["remaining"] == FREEZE_QUOTA_PER_WEEK - 1
+
+
 # ── 6. Active-freeze expiry trimming ───────────────────────────────
 
 
@@ -332,15 +385,20 @@ async def test_daily_plan_excludes_frozen(db_session: AsyncSession) -> None:
     )
     await db_session.commit()
 
-    # Baseline: both appear.
-    plan_all = await select_daily_plan(db_session, size=5)
+    # Baseline: both appear. Pin ``now=_NOW`` so the 7-day recent-fail
+    # window is anchored on the test's reference timestamp — without
+    # this the test went red on any wall-clock day past 2026-04-29
+    # (the seeded failures stamped at ``_NOW - timedelta(hours=1/2)``
+    # would fall outside the live ``utcnow() - 7d`` floor and tier 2
+    # would empty out).
+    plan_all = await select_daily_plan(db_session, size=5, now=_NOW)
     all_ids = {c.id for c in plan_all.cards}
     assert problem_a.id in all_ids
     assert problem_b.id in all_ids
 
-    # With A excluded: A out, B still present.
+    # With A excluded: A out, B still present. Same now-pin applies.
     plan_filtered = await select_daily_plan(
-        db_session, size=5, excluded_ids=[problem_a.id]
+        db_session, size=5, excluded_ids=[problem_a.id], now=_NOW
     )
     filtered_ids = {c.id for c in plan_filtered.cards}
     assert problem_a.id not in filtered_ids

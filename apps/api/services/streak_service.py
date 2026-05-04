@@ -245,6 +245,18 @@ async def compute_streak(
     """
 
     today = today_utc or utcnow().date()
+    # Anchor "now" to the caller's ``today_utc`` so all downstream
+    # freeze-service queries use the same wall-clock as the walk. This
+    # matters because :func:`services.freeze.can_freeze` defaults to
+    # real ``utcnow()`` and computes week boundaries off of that — when
+    # the caller pins ``today_utc`` to a historical Wednesday but the
+    # real clock is in a different ISO week, the freeze-quota counter
+    # silently disagrees with the walk and the streak result lies (real
+    # wall-clock week shows ``remaining=3`` while the walk's week has
+    # already burned its budget, or vice versa). Building ``today_dt``
+    # at 12:00 UTC keeps it well inside the day's window so any
+    # downstream ``_week_start_utc(today_dt)`` lands on the right Monday.
+    today_dt = datetime.combine(today, time(hour=12), tzinfo=timezone.utc)
 
     # ── Pre-walk: gather XP-active and freeze-covered dates ──────────
     earliest_event = await _earliest_event_date(db, user_id=user_id)
@@ -255,7 +267,7 @@ async def compute_streak(
         # user has only freeze tokens (no XP events ever), we treat
         # them as inactive for streak purposes — freezes save streaks,
         # they don't bootstrap them.
-        _, meta = await freeze_service.can_freeze(db, user_id)
+        _, meta = await freeze_service.can_freeze(db, user_id, now=today_dt)
         return StreakResult(
             streak_days=0,
             freezes_used_dates=[],
@@ -275,7 +287,7 @@ async def compute_streak(
     # (Phase 14 quota = 3/week) and decrement locally as we mint new
     # tokens; that way the auto-freeze cap is enforced without round-
     # tripping per gap.
-    _, current_meta = await freeze_service.can_freeze(db, user_id)
+    _, current_meta = await freeze_service.can_freeze(db, user_id, now=today_dt)
     weekly_remaining: dict[datetime, int] = {}
     week_start_now = _week_start_utc_for(today)
     weekly_remaining[week_start_now] = int(current_meta["remaining"])
@@ -312,7 +324,14 @@ async def compute_streak(
             if week_start not in weekly_remaining:
                 # New week we haven't probed yet — refresh from the
                 # service so cross-week walks get accurate quotas.
-                _, meta = await freeze_service.can_freeze(db, user_id)
+                # Anchor the probe to noon of ``day`` so the service
+                # computes the right week_start internally (without
+                # this, the service would default to real wall-clock
+                # ``now`` and report budget for the wrong week — which
+                # would happily seed historical-week buckets with the
+                # current week's leftover quota).
+                day_noon = datetime.combine(day, time(hour=12), tzinfo=timezone.utc)
+                _, meta = await freeze_service.can_freeze(db, user_id, now=day_noon)
                 weekly_remaining[week_start] = int(meta["remaining"])
             if weekly_remaining[week_start] <= 0:
                 break
@@ -342,7 +361,10 @@ async def compute_streak(
     if inserted_freezes:
         await db.commit()
 
-    _, post_meta = await freeze_service.can_freeze(db, user_id)
+    # Probe the *current week* freeze budget from the perspective of
+    # ``today_utc`` (not real wall-clock) so callers see a consistent
+    # counter even when this is being computed for a historical anchor.
+    _, post_meta = await freeze_service.can_freeze(db, user_id, now=today_dt)
     return StreakResult(
         streak_days=streak,
         freezes_used_dates=inserted_freezes,

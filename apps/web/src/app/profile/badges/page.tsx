@@ -19,6 +19,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { clsx } from "clsx";
+import { PageShell } from "@/components/layout/page-shell";
 import {
   getBadges,
   type BadgeOut,
@@ -135,10 +136,9 @@ export default function ProfileBadgesPage() {
   const locked = data?.locked ?? [];
 
   return (
-    <div
-      data-testid="profile-badges-page"
-      className="mx-auto w-full max-w-[1600px] px-4 md:px-6 xl:px-10 pb-24"
-    >
+    // Visual Shell Phase 1.5 — migrate the 4th max-w-[1600px] site to
+    // the shared <PageShell> primitive (no remaining duplicated literal).
+    <PageShell data-testid="profile-badges-page" className="pb-24">
       <div className="pt-8">
         <Link
           href="/"
@@ -245,6 +245,6 @@ export default function ProfileBadgesPage() {
           </section>
         </>
       )}
-    </div>
+    </PageShell>
   );
 }

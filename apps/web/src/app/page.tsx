@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useLocale } from "@/lib/i18n-context";
+import { PageShell } from "@/components/layout/page-shell";
 import { RuntimeAlert } from "@/components/shared/runtime-alert";
 import { ContinueMissionHero } from "@/components/dashboard/continue-mission-hero";
 import { TodayPlanCard } from "@/components/dashboard/today-plan-card";
@@ -212,13 +213,16 @@ export default function DashboardPage() {
           (the common case). Driven by the focus-refetch hook above. */}
       <BadgeUnlockToast badge={unlockedBadge} onDismiss={dismissUnlock} />
       {/* Visual Shell V1 — Slice 1 (Dashboard).
-          Outer container is the shared shell wrapper agreed with main agent
-          + Subagent B: max-w-[1600px] with responsive horizontal padding.
+          Outer container is the shared shell primitive `<PageShell>`
+          (Visual Shell Phase 1.5): canonical max-w-shell + responsive
+          horizontal padding, kept in sync with TopBar so right edges
+          line up. Renders a <div> — the page-level <main> landmark is
+          provided by app/layout.tsx (no nested <main> a11y violation).
           Above-the-fold = 2-col grid (main + 380px support rail) at xl+.
           Below xl, single column — rail items stack under hero. */}
-      <main
+      <PageShell
         data-testid="dashboard-shell"
-        className="mx-auto w-full max-w-[1600px] px-4 md:px-6 xl:px-10 pb-24 pt-8 md:pt-12 flex flex-col gap-6"
+        className="pb-24 pt-8 md:pt-12 flex flex-col gap-6"
       >
         <RuntimeAlert health={health} />
 
@@ -470,7 +474,7 @@ export default function DashboardPage() {
         {!loading && courses.length === 0 && (
           <DashboardEmptyState onNavigate={navigate} t={t} />
         )}
-      </main>
+      </PageShell>
     </div>
   );
 }

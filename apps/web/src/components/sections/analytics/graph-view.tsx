@@ -4,7 +4,6 @@ import { useCallback, useEffect, useState } from "react";
 import { useT } from "@/lib/i18n-context";
 import {
   getKnowledgeGraph,
-  getFeatureFlags,
   type KnowledgeGraphEdge,
 } from "@/lib/api";
 import { trackApiFailure } from "@/lib/error-telemetry";
@@ -18,6 +17,16 @@ import {
   type SimNode,
 } from "./graph-simulation";
 
+// Build-time feature gate. Read once at module load — no per-mount fetch,
+// so N parallel <GraphView> instances don't fan out to N /features +
+// N /knowledge-graph calls. The backend returns 404 when LOOM is off,
+// which previously cascaded through the request retry policy (4 retries
+// on 429) into 20-30 requests + a toast spam. Default false matches the
+// backend default (settings.enable_experimental_loom=False).
+const LOOM_ENABLED =
+  process.env.NEXT_PUBLIC_ENABLE_LOOM === "true" ||
+  process.env.NEXT_PUBLIC_ENABLE_LOOM === "1";
+
 interface GraphViewProps {
   courseId: string;
   focusTerms?: string[];
@@ -29,20 +38,13 @@ export function GraphView({ courseId, focusTerms, maxNodes = 20 }: GraphViewProp
   const [nodes, setNodes] = useState<SimNode[]>([]);
   const [edges, setEdges] = useState<KnowledgeGraphEdge[]>([]);
   const [selected, setSelected] = useState<SimNode | null>(null);
-  const [featureEnabled, setFeatureEnabled] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(false);
   const [empty, setEmpty] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [reloadTick, setReloadTick] = useState(0);
 
   useEffect(() => {
-    getFeatureFlags()
-      .then((flags) => setFeatureEnabled(flags.loom))
-      .catch(() => setFeatureEnabled(false));
-  }, []);
-
-  useEffect(() => {
-    if (featureEnabled !== true) {
+    if (!LOOM_ENABLED) {
       setLoading(false);
       return;
     }
@@ -99,10 +101,10 @@ export function GraphView({ courseId, focusTerms, maxNodes = 20 }: GraphViewProp
     return () => {
       cancelled = true;
     };
-  }, [courseId, featureEnabled, focusTerms, maxNodes, reloadTick, t]);
+  }, [courseId, focusTerms, maxNodes, reloadTick, t]);
 
   useEffect(() => {
-    if (featureEnabled !== true || nodes.length === 0) return;
+    if (!LOOM_ENABLED || nodes.length === 0) return;
     let iter = 0;
     let frame: number;
     const nodeMap = new Map<string, number>();
@@ -119,7 +121,7 @@ export function GraphView({ courseId, focusTerms, maxNodes = 20 }: GraphViewProp
     frame = requestAnimationFrame(step);
     return () => cancelAnimationFrame(frame);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- nodes identity changes every frame; depend only on length
-  }, [featureEnabled, nodes.length, edges]);
+  }, [nodes.length, edges]);
 
   const handleNodeClick = useCallback(
     (node: SimNode) => {
@@ -128,12 +130,17 @@ export function GraphView({ courseId, focusTerms, maxNodes = 20 }: GraphViewProp
     [selected],
   );
 
-  if (featureEnabled === null) return <div className="p-4 text-muted-foreground text-sm">Loading...</div>;
-  if (!featureEnabled) {
+  if (!LOOM_ENABLED) {
+    // Review follow-up: don't surface raw env-var names to the learner.
+    // Quiet experimental message keeps the panel friendly while the
+    // build-time flag stays an operator concern.
     return (
-      <div className="p-8 text-center text-muted-foreground">
+      <div
+        className="p-8 text-center text-muted-foreground"
+        data-testid="graph-panel"
+      >
         <p className="text-sm">Knowledge Graph (LOOM) is an experimental feature.</p>
-        <p className="text-xs mt-1">Enable it by setting <code className="bg-muted px-1 rounded">ENABLE_EXPERIMENTAL_LOOM=true</code> in your .env file.</p>
+        <p className="text-xs mt-1">It&apos;s currently disabled in this build.</p>
       </div>
     );
   }

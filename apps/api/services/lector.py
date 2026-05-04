@@ -44,6 +44,8 @@ class ReviewItem:
     retrievability: float = 1.0
     last_practiced_at: str | None = None
     content_node_id: str | None = None
+    recall_question: str | None = None
+    recall_answer: str | None = None
 
 
 async def get_smart_review_session(
@@ -237,7 +239,53 @@ async def get_smart_review_session(
 
     # Sort by priority (highest first) and take top N
     scored_items.sort(key=lambda x: x.priority, reverse=True)
-    return scored_items[:max_items]
+    top_items = scored_items[:max_items]
+
+    # Hydrate recall question/answer from a linked PracticeProblem per concept.
+    # Single batched query; deterministic pick per content_node_id.
+    cn_ids: list[uuid.UUID] = []
+    for item in top_items:
+        if not item.content_node_id:
+            continue
+        try:
+            cn_ids.append(uuid.UUID(item.content_node_id))
+        except (ValueError, TypeError):
+            continue
+    if cn_ids:
+        from models.practice import PracticeProblem
+
+        result = await db.execute(
+            select(
+                PracticeProblem.content_node_id,
+                PracticeProblem.question,
+                PracticeProblem.correct_answer,
+            )
+            .where(PracticeProblem.content_node_id.in_(cn_ids))
+            .where(PracticeProblem.correct_answer.is_not(None))
+            .where(PracticeProblem.correct_answer != "")
+            .where(PracticeProblem.is_archived.is_(False))
+            .where(PracticeProblem.is_diagnostic.is_(False))
+            .order_by(
+                PracticeProblem.content_node_id,
+                PracticeProblem.order_index,
+                PracticeProblem.id,
+            )
+        )
+        first_per_node: dict[uuid.UUID, tuple[str, str]] = {}
+        for cn_id, question, correct_answer in result.all():
+            first_per_node.setdefault(cn_id, (question, correct_answer))
+        for item in top_items:
+            if not item.content_node_id:
+                continue
+            try:
+                cn_uuid = uuid.UUID(item.content_node_id)
+            except (ValueError, TypeError):
+                continue
+            entry = first_per_node.get(cn_uuid)
+            if entry:
+                item.recall_question, item.recall_answer = entry
+
+    return top_items
 
 
 async def get_review_summary(

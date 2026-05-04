@@ -42,7 +42,7 @@ import { MissionHeader } from "@/components/mission/mission-header";
 import { TaskSidebar } from "@/components/mission/task-sidebar";
 import { CheckpointSection } from "@/components/mission/checkpoint-section";
 import { MissionProgressFooter } from "@/components/mission/mission-progress-footer";
-import { TaskRenderer } from "@/components/path/RoomTaskList";
+import { PythonPane } from "@/components/practice/python-pane";
 
 function MissionPageContent() {
   const params = useParams();
@@ -254,28 +254,42 @@ function MissionPageContent() {
             />
           </section>
 
-          {/* Right pane — interactive TaskRenderer. On xl+, this sits
-              in its own column; below xl, it stacks under the content
-              pane (grid collapses to 1 column). */}
+          {/* Right pane — Slice 3 PracticeShell via track-variant pane.
+              Today only the python variant has live missions; English /
+              Hacking paths exist in the catalog but have no missions yet,
+              so the prefix gate is forward-safe rather than user-visible.
+              The pane internally hosts <TaskRenderer> via <PracticeShell>
+              so caption + question + Monaco surface + explain rail all
+              compose in one place. */}
           <section
             data-testid="mission-practice-pane"
-            className="min-w-0 rounded-xl border border-[var(--border-subtle,rgba(255,255,255,0.06))] bg-card p-4"
+            className="min-w-0"
           >
             {currentTask ? (
-              <div className="space-y-3">
-                <div className="text-[11px] uppercase tracking-[0.04em] text-[var(--text-muted)]">
-                  Practice
-                </div>
-                <p className="text-sm font-medium text-foreground">
-                  {currentTask.question}
-                </p>
-                <TaskRenderer
+              data.path_slug.startsWith("python") ? (
+                <PythonPane
+                  // Force pane reset on task switch so the inline
+                  // "Next task" CTA latch (and the underlying drill
+                  // renderer's selected/result state) starts fresh
+                  // for each new task.
+                  key={currentTask.id}
                   task={currentTask}
+                  correct={currentTask.is_complete}
                   onCorrect={() => handleTaskCorrect(currentTask.id)}
+                  onAdvance={
+                    currentIdx >= 0 &&
+                    currentIdx < enrichedTasks.length - 1
+                      ? handleNext
+                      : undefined
+                  }
                 />
-              </div>
+              ) : (
+                <p className="text-sm text-muted-foreground rounded-xl border border-[var(--border-subtle,rgba(255,255,255,0.06))] bg-card p-4">
+                  Practice for this track is coming soon.
+                </p>
+              )
             ) : (
-              <p className="text-sm text-muted-foreground">
+              <p className="text-sm text-muted-foreground rounded-xl border border-[var(--border-subtle,rgba(255,255,255,0.06))] bg-card p-4">
                 No tasks in this mission yet.
               </p>
             )}

@@ -23,6 +23,7 @@ server-side, the client only ever sees starter code + hints.
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from typing import Optional
 
@@ -46,10 +47,42 @@ from services.drill_selector import select_next_drill
 from services.drill_submission import NotFoundError, submit_drill
 
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
 
 
 # ── Helpers ─────────────────────────────────────────────────────────
+
+
+def _coerce_hint(raw: object, *, drill_slug: str, idx: int) -> str:
+    """Defensive cast for ``Drill.hints`` items.
+
+    Yaml seeds occasionally bleed non-string objects into ``hints`` —
+    e.g. ``- if n % 2 == 0: return "even"`` parses as a flow-style
+    mapping rather than a plain string (cs50p ``parity-label`` hint #3,
+    drill smoke 2026-04-26 receipt). Without coercion ``DrillOut.hints:
+    list[str]`` 500s the entire ``GET /api/drills/courses/{slug}``
+    endpoint and crashes the TOC for every drill in that course.
+
+    We log loud (WARNING — content team must fix the seed) and ship a
+    string, so end-users get the TOC. Quiet ``str()`` would mask the
+    bug; the receipt-driven choice is "stay up + flag in logs".
+    """
+
+    if isinstance(raw, str):
+        return raw
+    coerced = str(raw)
+    logger.warning(
+        "drill hint coerced to string: drill_slug=%s hint_idx=%d "
+        "raw_type=%s raw=%r coerced=%r — fix the yaml seed",
+        drill_slug,
+        idx,
+        type(raw).__name__,
+        raw,
+        coerced,
+    )
+    return coerced
 
 
 def _drill_to_out(drill: Drill) -> DrillOut:
@@ -61,13 +94,18 @@ def _drill_to_out(drill: Drill) -> DrillOut:
     first.
     """
 
+    raw_hints = list(drill.hints or [])
+    safe_hints = [
+        _coerce_hint(h, drill_slug=drill.slug, idx=i) for i, h in enumerate(raw_hints)
+    ]
+
     return DrillOut(
         id=drill.id,
         slug=drill.slug,
         title=drill.title,
         why_it_matters=drill.why_it_matters,
         starter_code=drill.starter_code,
-        hints=list(drill.hints or []),
+        hints=safe_hints,
         skill_tags=list(drill.skill_tags or []),
         source_citation=drill.source_citation,
         time_budget_min=drill.time_budget_min,
@@ -329,7 +367,7 @@ async def get_drill(
     summary="Submit a solution; run hidden tests; persist the attempt",
     description=(
         "Runs ``submitted_code`` against the drill's hidden pytest "
-        "suite in a sandboxed subprocess (5s timeout), writes a "
+        "suite in a sandboxed subprocess (12s timeout), writes a "
         "``drill_attempts`` row regardless of outcome, and returns an "
         "ADHD-safe feedback line. On pass, ``next_drill_id`` is "
         "populated with the next unpassed drill in the same course. "
