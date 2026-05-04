@@ -38,6 +38,7 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { getPathDetail, type PathDetailResponse } from "@/lib/api";
 import { RoomListItem } from "@/components/path/RoomListItem";
+import { PageShell } from "@/components/layout/page-shell";
 import {
   deriveRoomRouteStates,
   findActiveOrReadyRoom,
@@ -249,10 +250,9 @@ function PathDetailContent() {
   );
 
   return (
-    <main
-      data-testid="path-detail-shell"
-      className="mx-auto w-full max-w-[1600px] px-4 md:px-6 xl:px-10 pb-24 pt-8"
-    >
+    // Visual Shell Phase 1.5 — <PageShell> renders <div>; the page-level
+    // <main> landmark is provided by app/layout.tsx.
+    <PageShell data-testid="path-detail-shell" className="pb-24 pt-8">
       <header className="mb-8">
         <Link
           href="/tracks"
@@ -347,7 +347,7 @@ function PathDetailContent() {
           </aside>
         </div>
       )}
-    </main>
+    </PageShell>
   );
 }
 

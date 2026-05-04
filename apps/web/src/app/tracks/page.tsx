@@ -30,6 +30,7 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { listPaths, type PathListResponse } from "@/lib/api";
 import { PathCard } from "@/components/path/PathCard";
+import { PageShell } from "@/components/layout/page-shell";
 
 /** Canonical track order for the paths list UI. Any track_id not in
  *  this map sorts to the end but stays alphabetical within "other". */
@@ -79,10 +80,9 @@ export default function PathListPage() {
   const orphanCount = data?.orphan_count ?? 0;
 
   return (
-    <main
-      data-testid="tracks-shell"
-      className="mx-auto w-full max-w-[1600px] px-4 md:px-6 xl:px-10 pb-24 pt-8"
-    >
+    // Visual Shell Phase 1.5 — <PageShell> renders <div>; the page-level
+    // <main> landmark is provided by app/layout.tsx.
+    <PageShell data-testid="tracks-shell" className="pb-24 pt-8">
       <header className="mb-8">
         <Link
           href="/"
@@ -144,6 +144,6 @@ export default function PathListPage() {
           )}
         </div>
       )}
-    </main>
+    </PageShell>
   );
 }

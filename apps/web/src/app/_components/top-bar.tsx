@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { PageShell } from "@/components/layout/page-shell";
 import { TodayToolsPopover } from "@/components/shared/today-tools-popover";
 import { getGamificationDashboard } from "@/lib/api/gamification";
 
@@ -49,7 +50,12 @@ export function TopBar() {
 
   return (
     <header className="fixed inset-x-0 top-0 z-40 border-b border-border/80 bg-background/92 backdrop-blur">
-      <div className="mx-auto flex h-12 max-w-7xl items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
+      {/* Visual Shell Phase 1.5 — inner wrapper uses <PageShell> so the
+          TopBar's right edge lines up with the page content beneath it
+          at any viewport. Previously capped at `max-w-7xl` (1280px),
+          which inset the streak chip/nav ~160px left of the page on
+          ≥1440px monitors. */}
+      <PageShell className="flex h-12 items-center justify-between gap-4">
         <Link
           href="/"
           className="font-display shrink-0 text-base font-semibold tracking-tight text-foreground"
@@ -91,7 +97,7 @@ export function TopBar() {
             {streakLabel}
           </span>
         </div>
-      </div>
+      </PageShell>
     </header>
   );
 }
