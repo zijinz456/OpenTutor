@@ -151,6 +151,13 @@ class AnswerResponse(BaseModel):
     explanation: str | None
     prerequisite_gaps: list[PrerequisiteGap] | None = None
     warnings: list[str] = Field(default_factory=list)
+    # Phase C — surface FSRS schedule decision so the frontend can render
+    # a "Returns in N days" chip after each submit. Both fields are
+    # nullable: a tracker failure (caught above and surfaced as
+    # ``progress_update_failed`` warning) or a non-FSRS legacy problem
+    # leaves them None and the chip self-hides on the client.
+    interval_days: int | None = None
+    next_review_at: datetime | None = None
 
 
 class MasterySnapshotResponse(BaseModel):
@@ -161,6 +168,7 @@ class MasterySnapshotResponse(BaseModel):
 
 
 # ── CAT Pre-test ──
+
 
 class PretestStartRequest(BaseModel):
     course_id: uuid.UUID

@@ -144,6 +144,12 @@ export interface AnswerResult {
   explanation: string | null;
   prerequisite_gaps?: PrerequisiteGap[] | null;
   warnings?: string[];
+  // Phase C — FSRS schedule fields surfaced from the backend so a
+  // <NextReviewChip> can render "Returns in N days" without an extra
+  // round-trip. Both nullable: a tracker failure or a legacy non-FSRS
+  // problem leaves them null and the chip self-hides.
+  interval_days?: number | null;
+  next_review_at?: string | null;
 }
 
 export interface QuizNodeFailure {
