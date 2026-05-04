@@ -16,6 +16,11 @@ export const API_BASE =
 /** Show a toast for API errors (non-chat requests). */
 function showApiErrorToast(err: ApiError): void {
   if (typeof window === "undefined") return;
+  // Suppress toasts for feature-gated endpoints that legitimately return
+  // 404 when the flag is off (LOOM knowledge graph, etc). The caller
+  // already handles the Promise rejection — surfacing N toasts on the
+  // dashboard for every course is noise, not signal.
+  if (err.status === 404 && /experimental/i.test(err.detail ?? "")) return;
   const description = err.status === 429
     ? "Rate limit reached. Please wait a moment."
     : err.status === 503

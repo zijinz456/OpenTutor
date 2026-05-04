@@ -53,6 +53,7 @@ import {
 } from "@/components/blocks/lab-exercise-block";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { NextReviewChip } from "@/components/practice/next-review-chip";
 import { SessionClosure } from "@/components/session/session-closure";
 
 const ADVANCE_DELAY_MS = 500;
@@ -244,8 +245,13 @@ export default function DailySessionPage() {
   // Local state for the click-to-reveal flow lives here so it resets on
   // every card advance via the existing `currentIdx` effect above.
   const [recallRevealed, setRecallRevealed] = useState(false);
+  // Active recall: user types their answer first, then reveals the canonical
+  // one to self-grade. The typed text is local-only — submitAnswer still
+  // sends the canonical string (or empty) per the existing grader contract.
+  const [recallUserAnswer, setRecallUserAnswer] = useState("");
   useEffect(() => {
     setRecallRevealed(false);
+    setRecallUserAnswer("");
   }, [currentIdx]);
 
   const handleRecallSubmit = useCallback(
@@ -412,10 +418,29 @@ export default function DailySessionPage() {
                       })()
             : optionKeys.length === 0
               ? (
-                  // Recall-style card (no options) — click to reveal answer,
-                  // then user self-rates "I knew it" / "I didn't". See
-                  // handleRecallSubmit above for the API contract.
+                  // Recall-style card (no options) — user types their answer,
+                  // clicks reveal, then self-rates "I knew it" / "I didn't".
+                  // See handleRecallSubmit above for the API contract.
                   <div className="space-y-3" data-testid="daily-session-recall">
+                    <textarea
+                      value={recallUserAnswer}
+                      onChange={(e) => setRecallUserAnswer(e.target.value)}
+                      placeholder="Your answer…"
+                      rows={3}
+                      readOnly={recallRevealed}
+                      className="w-full rounded-xl border border-border/60 bg-background p-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring read-only:opacity-70"
+                      data-testid="daily-session-recall-input"
+                      onKeyDown={(e) => {
+                        if (
+                          !recallRevealed &&
+                          (e.ctrlKey || e.metaKey) &&
+                          e.key === "Enter"
+                        ) {
+                          e.preventDefault();
+                          setRecallRevealed(true);
+                        }
+                      }}
+                    />
                     {!recallRevealed ? (
                       <Button
                         type="button"
@@ -476,6 +501,18 @@ export default function DailySessionPage() {
         )}
 
         {result ? <QuizResult result={result} /> : null}
+
+        {/* Phase C — SRS schedule chip. Show only on correct submits:
+            wrong answers reset the FSRS interval to ~1d (relearning), where
+            the chip says "Returns in 1 day" and adds no signal beyond what
+            the wrong-answer banner already conveys. The chip self-hides
+            when interval_days is null/0 (tracker failure or non-FSRS row). */}
+        {result?.is_correct ? (
+          <NextReviewChip
+            intervalDays={result.interval_days}
+            nextReviewAt={result.next_review_at}
+          />
+        ) : null}
 
         <div className="flex justify-end">
           <Button
