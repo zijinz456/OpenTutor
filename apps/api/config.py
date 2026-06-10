@@ -161,6 +161,11 @@ class Settings(BaseSettings):
     lector_confusion_threshold: float = 0.6      # Confusion pair mastery alert
     lector_factor_interference: float = 0.15    # Proactive interference matrix weight (LECTOR paper)
 
+    # CAT diagnostic pretest stopping criteria (issue #40)
+    cat_min_items: int = 5          # Never stop before this many questions
+    cat_max_items: int = 20         # Hard cap on pretest length
+    cat_se_threshold: float = 0.15  # Stop early once ability standard error drops below this
+
     # LOOM knowledge graph parameters
     loom_fusion_similarity_threshold: float = 0.85  # Graphusion concept dedup threshold
     loom_interference_similarity_threshold: float = 0.6  # LECTOR interference matrix threshold
