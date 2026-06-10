@@ -32,7 +32,21 @@ _BLOOM_LEVELS = {
     "create": 6,
 }
 
-FUSION_SIMILARITY_THRESHOLD = 0.85  # Graphusion: merge concepts above this cosine similarity
+FUSION_SIMILARITY_THRESHOLD = 0.85  # Fallback; configurable via LOOM_FUSION_SIMILARITY_THRESHOLD
+
+
+def _fusion_threshold() -> float:
+    """Resolve the fusion similarity threshold from settings at call time.
+
+    Reads ``LOOM_FUSION_SIMILARITY_THRESHOLD`` via app settings so deployments
+    can tune fusion aggressiveness without a code change; falls back to the
+    module default when settings are unavailable (e.g. isolated unit tests).
+    """
+    try:
+        from config import settings
+        return float(settings.loom_fusion_similarity_threshold)
+    except (ImportError, AttributeError, ValueError, TypeError):
+        return FUSION_SIMILARITY_THRESHOLD
 
 _EXTRACT_PROMPT = """Analyze this educational content and extract the key concepts being taught.
 
@@ -204,7 +218,7 @@ async def _fuse_concepts(concepts: list[dict]) -> list[dict]:
         return concepts
 
     # Step 2: Find merge groups
-    merge_groups = _find_merge_groups(concepts, embeddings)
+    merge_groups = _find_merge_groups(concepts, embeddings, threshold=_fusion_threshold())
 
     if not merge_groups:
         return concepts  # No duplicates found
@@ -346,7 +360,10 @@ async def extract_course_concepts(
                 node.content_node_id = content_node.id
                 break
 
-    # Create edges
+    # Create edges. Concepts repeated across chunks (when embedding fusion is
+    # unavailable) would re-emit identical edges and violate uq_knowledge_edge,
+    # so dedupe on (source, target, relation_type).
+    seen_edges: set[tuple[uuid.UUID, uuid.UUID, str]] = set()
     for item in concepts_data[:max_nodes]:
         name = (item.get("name") or "").strip().lower()
         source = node_by_name.get(name)
@@ -356,6 +373,10 @@ async def extract_course_concepts(
         for prereq_name in item.get("prerequisites", []):
             target = node_by_name.get(prereq_name.strip().lower())
             if target and target.id != source.id:
+                key = (source.id, target.id, "prerequisite")
+                if key in seen_edges:
+                    continue
+                seen_edges.add(key)
                 edge = KnowledgeEdge(
                     source_id=source.id,
                     target_id=target.id,
@@ -366,6 +387,10 @@ async def extract_course_concepts(
         for related_name in item.get("related", []):
             target = node_by_name.get(related_name.strip().lower())
             if target and target.id != source.id:
+                key = (source.id, target.id, "related")
+                if key in seen_edges:
+                    continue
+                seen_edges.add(key)
                 edge = KnowledgeEdge(
                     source_id=source.id,
                     target_id=target.id,
