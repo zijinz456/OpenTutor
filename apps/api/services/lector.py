@@ -92,6 +92,7 @@ async def get_smart_review_session(
     prereqs_of: dict[uuid.UUID, list[uuid.UUID]] = {}  # concept → its prerequisites
     related_to: dict[uuid.UUID, list[uuid.UUID]] = {}
     confused_with: dict[uuid.UUID, list[uuid.UUID]] = {}
+    max_confused_weight: dict[uuid.UUID, float] = {}  # concept → strongest interference edge
 
     for edge in edges:
         if edge.relation_type == "prerequisite":
@@ -100,6 +101,9 @@ async def get_smart_review_session(
             related_to.setdefault(edge.source_id, []).append(edge.target_id)
         elif edge.relation_type == "confused_with":
             confused_with.setdefault(edge.source_id, []).append(edge.target_id)
+            weight = edge.weight if edge.weight is not None else 1.0
+            if weight > max_confused_weight.get(edge.source_id, 0.0):
+                max_confused_weight[edge.source_id] = weight
 
     # Score each concept
     now = datetime.now(timezone.utc)
@@ -157,14 +161,8 @@ async def get_smart_review_session(
         # Boost priority for concepts with high-weight confused_with edges,
         # regardless of whether the confused concept has low mastery.
         # This catches potential confusion BEFORE the student makes a mistake.
-        max_interference = 0.0
-        for confused_id in confused_with.get(node.id, []):
-            for edge in edges:
-                if (edge.source_id == node.id and edge.target_id == confused_id
-                        and edge.relation_type == "confused_with"
-                        and edge.weight > max_interference):
-                    max_interference = edge.weight
-        if max_interference > 0.6:
+        max_interference = max_confused_weight.get(node.id, 0.0)
+        if max_interference > settings.loom_interference_similarity_threshold:
             interference_boost = max_interference * settings.lector_factor_interference
             priority += interference_boost
             reason_parts.append("high semantic interference")
@@ -335,6 +333,17 @@ async def record_review_outcome(
     else:
         mastery.wrong_count += 1
         mastery.mastery_score = max(0.0, mastery.mastery_score - 0.1)
+
+    # Consolidation bonus: review outcomes count toward prerequisite-group
+    # mastery just like quiz submissions do (update_concept_mastery path),
+    # so a recall that completes a mastered prereq group boosts the parent.
+    node_result = await db.execute(
+        select(KnowledgeNode).where(KnowledgeNode.id == concept_id)
+    )
+    node = node_result.scalar_one_or_none()
+    if node:
+        from services.loom_mastery import _consolidate_mastered_concepts
+        await _consolidate_mastered_concepts(db, user_id, node.course_id, concept_id)
 
     await db.flush()
     logger.info(
