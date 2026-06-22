@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import collections
 import logging
+import threading
 from typing import NamedTuple
 
 logger = logging.getLogger(__name__)
@@ -42,6 +43,12 @@ class _UserState(NamedTuple):
 
 # In-memory store: user_id (str) → _UserState
 _store: dict[str, _UserState] = {}
+
+# Concurrent chat sessions reach this module from FastAPI's threadpool, so
+# every read-modify-write on _store / windows / multipliers must be serialized:
+# unlocked, the eviction scan can hit "dict changed size during iteration" and
+# parallel multiplier updates lose decay/recovery steps (issue #37).
+_lock = threading.Lock()
 
 
 def _get_or_create(user_id: str) -> _UserState:
@@ -75,41 +82,45 @@ def update_and_get_multipliers(
 
     Returns a dict mapping signal name → multiplier (float in [MIN_WEIGHT_RATIO, 1.0]).
     For signals with no history yet the multiplier is 1.0 (no adjustment).
+
+    Thread-safe: concurrent updates for the same or different users are
+    serialized, so no decay/recovery step is ever lost.
     """
-    state = _get_or_create(str(user_id))
+    with _lock:
+        state = _get_or_create(str(user_id))
 
-    for signal_name, value in signals.items():
-        if not isinstance(value, (int, float)):
-            continue
-        if signal_name not in state.windows:
-            state.windows[signal_name] = collections.deque(maxlen=WINDOW_SIZE)
-            state.multipliers[signal_name] = 1.0
+        for signal_name, value in signals.items():
+            if not isinstance(value, (int, float)):
+                continue
+            if signal_name not in state.windows:
+                state.windows[signal_name] = collections.deque(maxlen=WINDOW_SIZE)
+                state.multipliers[signal_name] = 1.0
 
-        state.windows[signal_name].append(float(value))
+            state.windows[signal_name].append(float(value))
 
-        dq = state.windows[signal_name]
-        if len(dq) < 5:
-            # Need at least 5 data points before adjusting
-            continue
+            dq = state.windows[signal_name]
+            if len(dq) < 5:
+                # Need at least 5 data points before adjusting
+                continue
 
-        mean = sum(dq) / len(dq)
-        current = state.multipliers[signal_name]
+            mean = sum(dq) / len(dq)
+            current = state.multipliers[signal_name]
 
-        if mean >= HIGH_SIGNAL_THRESHOLD:
-            # Signal persistently high → dampen its weight contribution
-            new = max(MIN_WEIGHT_RATIO, current * WEIGHT_DECAY_FACTOR)
-            if new != current:
-                logger.debug(
-                    "cognitive_load_tuning: user=%s signal=%s mean=%.2f → multiplier %.3f → %.3f",
-                    user_id, signal_name, mean, current, new,
-                )
-            state.multipliers[signal_name] = new
-        else:
-            # Signal no longer elevated → slowly recover toward 1.0
-            new = min(MAX_WEIGHT_RATIO, current * RECOVERY_FACTOR)
-            state.multipliers[signal_name] = new
+            if mean >= HIGH_SIGNAL_THRESHOLD:
+                # Signal persistently high → dampen its weight contribution
+                new = max(MIN_WEIGHT_RATIO, current * WEIGHT_DECAY_FACTOR)
+                if new != current:
+                    logger.debug(
+                        "cognitive_load_tuning: user=%s signal=%s mean=%.2f → multiplier %.3f → %.3f",
+                        user_id, signal_name, mean, current, new,
+                    )
+                state.multipliers[signal_name] = new
+            else:
+                # Signal no longer elevated → slowly recover toward 1.0
+                new = min(MAX_WEIGHT_RATIO, current * RECOVERY_FACTOR)
+                state.multipliers[signal_name] = new
 
-    return dict(state.multipliers)
+        return dict(state.multipliers)
 
 
 def get_multipliers(user_id: str) -> dict[str, float]:
@@ -118,19 +129,21 @@ def get_multipliers(user_id: str) -> dict[str, float]:
     Returns an empty dict if no data has been recorded for this user yet
     (caller should treat missing keys as multiplier=1.0).
     """
-    state = _store.get(str(user_id))
-    if state is None:
-        return {}
-    return dict(state.multipliers)
+    with _lock:
+        state = _store.get(str(user_id))
+        if state is None:
+            return {}
+        return dict(state.multipliers)
 
 
 def reset_multipliers(user_id: str) -> None:
     """Reset all multipliers for a user to 1.0 (e.g. after a long break)."""
-    state = _store.get(str(user_id))
-    if state is None:
-        return
-    for key in state.multipliers:
-        state.multipliers[key] = 1.0
-    for dq in state.windows.values():
-        dq.clear()
+    with _lock:
+        state = _store.get(str(user_id))
+        if state is None:
+            return
+        for key in state.multipliers:
+            state.multipliers[key] = 1.0
+        for dq in state.windows.values():
+            dq.clear()
     logger.info("cognitive_load_tuning: reset multipliers for user=%s", user_id)
