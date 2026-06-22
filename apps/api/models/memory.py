@@ -37,9 +37,9 @@ class ConversationMemory(Base):
     __tablename__ = "conversation_memories"
 
     id: Mapped[uuid.UUID] = mapped_column(CompatUUID, primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(CompatUUID, ForeignKey("users.id"))
+    user_id: Mapped[uuid.UUID] = mapped_column(CompatUUID, ForeignKey("users.id", ondelete="CASCADE"))
     course_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        CompatUUID, ForeignKey("courses.id"), nullable=True
+        CompatUUID, ForeignKey("courses.id", ondelete="SET NULL"), nullable=True
     )
 
     # Memory content (atomic MemCell unit)
