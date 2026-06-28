@@ -34,6 +34,7 @@ class CircuitBreakerMixin:
         self._consecutive_failures: int = 0
         self._circuit_open: bool = False
         self._circuit_open_time: float = 0
+        self.last_error_detail: str | None = None  # User-facing diagnostic of the last failure
 
     @property
     def is_healthy(self) -> bool:
@@ -54,8 +55,18 @@ class CircuitBreakerMixin:
 
     def mark_unhealthy(self, error: str):
         """Progressive cooldown + circuit breaker (openakita + circuitbreaker pattern)."""
+        from services.llm.errors import describe_llm_error
+
         self._healthy = False
         self._consecutive_failures += 1
+        # Every provider failure funnels through here — record an actionable
+        # diagnostic so "all providers unhealthy" errors can say *why*.
+        self.last_error_detail = describe_llm_error(
+            error,
+            provider=self.provider_name,
+            base_url=getattr(self, "base_url", None),
+            model=getattr(self, "model", None),
+        )
 
         # Circuit breaker: open after threshold
         if self._consecutive_failures >= CIRCUIT_OPEN_THRESHOLD:
