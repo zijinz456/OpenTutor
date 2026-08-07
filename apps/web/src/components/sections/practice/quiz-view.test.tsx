@@ -177,4 +177,24 @@ describe("QuizView", () => {
     await waitFor(() => screen.getByText("What color is the sky?"));
     expect(screen.getByText("Atmosphere")).toBeInTheDocument();
   });
+
+  it("shows error state with retry when loading fails", async () => {
+    const { listProblems } = await import("@/lib/api");
+    vi.mocked(listProblems).mockRejectedValueOnce(new Error("network down"));
+
+    render(<QuizView courseId="test" />);
+    await waitFor(() => {
+      expect(screen.getByTestId("quiz-load-error")).toBeInTheDocument();
+    });
+    // The failure must NOT masquerade as the "no quiz yet" empty state
+    expect(screen.queryByText("quiz.empty")).not.toBeInTheDocument();
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    expect(screen.getByText("network down")).toBeInTheDocument();
+
+    // Retry refetches (the default mock resolves) and renders the quiz
+    fireEvent.click(screen.getByText("quiz.retry"));
+    await waitFor(() => {
+      expect(screen.getByText("What color is the sky?")).toBeInTheDocument();
+    });
+  });
 });

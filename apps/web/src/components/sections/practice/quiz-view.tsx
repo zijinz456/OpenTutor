@@ -51,6 +51,7 @@ export function QuizView({
   const [selectedOption, setSelectedOption] = useState<string | null>(null);
   const [codeInput, setCodeInput] = useState<string>("");
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [result, setResult] = useState<AnswerResult | null>(null);
   const [score, setScore] = useState({ correct: 0, total: 0 });
   const [answeredMap, setAnsweredMap] = useState<Record<string, string>>({});
@@ -61,6 +62,7 @@ export function QuizView({
 
   const fetchData = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const items = await listProblems(courseId);
       setProblems(items);
@@ -76,12 +78,15 @@ export function QuizView({
           consecutiveWrongRef.current = saved.consecutiveWrong;
         }
       }
-    } catch {
+    } catch (error) {
+      // An API failure is not "the course has no quiz yet" — surface it
+      // instead of silently rendering the empty state.
       setProblems([]);
+      setLoadError((error as Error).message || t("quiz.loadFailed"));
     } finally {
       setLoading(false);
     }
-  }, [courseId, load]);
+  }, [courseId, load, t]);
 
   useEffect(() => {
     void fetchData();
@@ -189,6 +194,23 @@ export function QuizView({
     return (
       <div className="flex-1 flex items-center justify-center p-8" data-testid="quiz-panel" role="status" aria-live="polite">
         <SkeletonCard className="w-full max-w-md" />
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div
+        className="flex-1 flex flex-col items-center justify-center p-8 text-center"
+        data-testid="quiz-panel"
+        role="alert"
+      >
+        <h3 className="text-sm font-medium mb-1">{t("quiz.title")}</h3>
+        <p className="text-xs text-destructive" data-testid="quiz-load-error">{t("quiz.loadFailed")}</p>
+        <p className="mt-1 text-xs text-muted-foreground max-w-xs">{loadError}</p>
+        <Button className="mt-3" size="sm" variant="outline" onClick={() => void fetchData()}>
+          {t("quiz.retry")}
+        </Button>
       </div>
     );
   }
