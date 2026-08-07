@@ -347,6 +347,7 @@ async def extract_course_concepts(
                 break
 
     # Create edges
+    prereq_edges: list[KnowledgeEdge] = []
     for item in concepts_data[:max_nodes]:
         name = (item.get("name") or "").strip().lower()
         source = node_by_name.get(name)
@@ -362,6 +363,7 @@ async def extract_course_concepts(
                     relation_type="prerequisite",
                 )
                 db.add(edge)
+                prereq_edges.append(edge)
 
         for related_name in item.get("related", []):
             target = node_by_name.get(related_name.strip().lower())
@@ -372,6 +374,27 @@ async def extract_course_concepts(
                     relation_type="related",
                 )
                 db.add(edge)
+
+    # Validate the just-inserted prerequisite edges form a DAG — LLM-extracted
+    # prerequisites can be circular (A requires B, B requires A), which would
+    # hang learning path generation and mastery propagation downstream.
+    if prereq_edges:
+        from services.loom_graph import resolve_prerequisite_cycles
+        cycles, broken = resolve_prerequisite_cycles(
+            {n.id for n in nodes}, prereq_edges,
+        )
+        for edge in broken:
+            db.expunge(edge)
+        if broken:
+            node_name_by_id = {n.id: n.name for n in nodes}
+            logger.warning(
+                "Broke %d circular prerequisite link(s) for course %s: %s",
+                len(broken), course_id,
+                [
+                    f"{node_name_by_id.get(e.source_id)} -> {node_name_by_id.get(e.target_id)}"
+                    for e in broken
+                ],
+            )
 
     await db.commit()
     logger.info("Extracted %d concept nodes for course %s (after fusion)", len(nodes), course_id)
