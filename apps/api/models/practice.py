@@ -20,9 +20,9 @@ class PracticeProblem(Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(CompatUUID, primary_key=True, default=uuid.uuid4)
-    course_id: Mapped[uuid.UUID] = mapped_column(CompatUUID, ForeignKey("courses.id"))
+    course_id: Mapped[uuid.UUID] = mapped_column(CompatUUID, ForeignKey("courses.id", ondelete="CASCADE"))
     content_node_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        CompatUUID, ForeignKey("course_content_tree.id"), nullable=True
+        CompatUUID, ForeignKey("course_content_tree.id", ondelete="SET NULL"), nullable=True
     )
 
     # Problem data
@@ -44,7 +44,7 @@ class PracticeProblem(Base):
     problem_metadata: Mapped[Optional[dict]] = mapped_column(CompatJSONB, nullable=True)
     # AI-generated structured annotation: {potential_traps, core_concept, bloom_level, ...}
     parent_problem_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        CompatUUID, ForeignKey("practice_problems.id"), nullable=True
+        CompatUUID, ForeignKey("practice_problems.id", ondelete="SET NULL"), nullable=True
     )
     is_diagnostic: Mapped[bool] = mapped_column(Boolean, default=False)
     # True for simplified "clean" versions generated for diagnostic pairs
@@ -70,8 +70,8 @@ class PracticeResult(Base):
     __tablename__ = "practice_results"
 
     id: Mapped[uuid.UUID] = mapped_column(CompatUUID, primary_key=True, default=uuid.uuid4)
-    problem_id: Mapped[uuid.UUID] = mapped_column(CompatUUID, ForeignKey("practice_problems.id"))
-    user_id: Mapped[uuid.UUID] = mapped_column(CompatUUID, ForeignKey("users.id"))
+    problem_id: Mapped[uuid.UUID] = mapped_column(CompatUUID, ForeignKey("practice_problems.id", ondelete="CASCADE"))
+    user_id: Mapped[uuid.UUID] = mapped_column(CompatUUID, ForeignKey("users.id", ondelete="CASCADE"))
 
     user_answer: Mapped[str] = mapped_column(Text)
     is_correct: Mapped[bool] = mapped_column(Boolean)
