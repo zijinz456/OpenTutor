@@ -68,6 +68,10 @@ class PracticeResult(Base):
     """User answers to practice problems."""
 
     __tablename__ = "practice_results"
+    __table_args__ = (
+        # Per-user answer history for a problem (mastery/wrong-answer queries)
+        Index("ix_practice_result_user_problem", "user_id", "problem_id"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(CompatUUID, primary_key=True, default=uuid.uuid4)
     problem_id: Mapped[uuid.UUID] = mapped_column(CompatUUID, ForeignKey("practice_problems.id"))
