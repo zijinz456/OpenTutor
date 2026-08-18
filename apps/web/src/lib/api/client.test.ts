@@ -97,6 +97,18 @@ describe("request", () => {
     expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 
+  it("retries on 429 rate limiting", async () => {
+    mockFetch
+      .mockResolvedValueOnce(jsonResponse({ detail: "Rate limit exceeded" }, 429))
+      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+
+    const promise = request<{ ok: boolean }>("/health");
+    await vi.advanceTimersByTimeAsync(2000);
+    const result = await promise;
+    expect(result).toEqual({ ok: true });
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
   it("retries on network errors (TypeError)", async () => {
     mockFetch
       .mockRejectedValueOnce(new TypeError("Failed to fetch"))
