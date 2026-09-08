@@ -27,7 +27,7 @@ class IngestionJob(Base):
     __tablename__ = "ingestion_jobs"
 
     id: Mapped[uuid.UUID] = mapped_column(CompatUUID, primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(CompatUUID, ForeignKey("users.id"))
+    user_id: Mapped[uuid.UUID] = mapped_column(CompatUUID, ForeignKey("users.id", ondelete="CASCADE"))
 
     # Source info
     source_type: Mapped[str] = mapped_column(String(20))  # file | url | canvas
@@ -121,7 +121,7 @@ class Assignment(Base):
     # Types: homework, quiz, exam, project, reading
 
     source_ingestion_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        CompatUUID, ForeignKey("ingestion_jobs.id"), nullable=True
+        CompatUUID, ForeignKey("ingestion_jobs.id", ondelete="SET NULL"), nullable=True
     )
 
     status: Mapped[str] = mapped_column(String(20), default="active")
