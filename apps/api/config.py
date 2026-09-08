@@ -82,6 +82,7 @@ class Settings(BaseSettings):
     app_run_activity_engine: bool = False
     ambient_monitor_enabled: bool = True
     enable_experimental_loom: bool = False
+    loom_fusion_similarity_threshold: float = 0.85  # Graphusion fusion: merge concepts above this cosine similarity
     enable_experimental_lector: bool = False
     enable_experimental_notion_export: bool = False
     enable_experimental_cat: bool = False              # CAT adaptive diagnostic pretest
