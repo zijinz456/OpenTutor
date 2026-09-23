@@ -49,7 +49,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^5.1.4",
-    "eslint": "^9",
+    "eslint": "^10",
     "eslint-config-next": "16.2.2",
     "jsdom": "^28.1.0",
     "shadcn": "^3.8.5",
