@@ -73,6 +73,8 @@ class ConversationMemory(Base):
     __table_args__ = (
         Index("ix_mem_user_type", "user_id", "memory_type"),
         Index("ix_mem_user_course", "user_id", "course_id"),
+        # Recency-ordered memory lookups: WHERE user_id/course_id ORDER BY created_at
+        Index("ix_mem_user_course_created", "user_id", "course_id", "created_at"),
     )
 
 
