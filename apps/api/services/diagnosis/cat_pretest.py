@@ -21,11 +21,13 @@ from dataclasses import dataclass, field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config import settings
 from models.knowledge_graph import KnowledgeNode, KnowledgeEdge, ConceptMastery
 
 logger = logging.getLogger(__name__)
 
-# Stopping criteria
+# Stopping criteria fallbacks — tune via CAT_MIN_ITEMS / CAT_MAX_ITEMS /
+# CAT_SE_THRESHOLD settings without a code change.
 MIN_ITEMS = 5
 MAX_ITEMS = 20
 SE_THRESHOLD = 0.15  # Stop when standard error < this
@@ -63,9 +65,12 @@ class CATState:
 
     @property
     def should_stop(self) -> bool:
-        if self.total_count >= MAX_ITEMS:
+        max_items = getattr(settings, "cat_max_items", MAX_ITEMS)
+        min_items = getattr(settings, "cat_min_items", MIN_ITEMS)
+        se_threshold = getattr(settings, "cat_se_threshold", SE_THRESHOLD)
+        if self.total_count >= max_items:
             return True
-        if self.total_count >= MIN_ITEMS and self.standard_error < SE_THRESHOLD:
+        if self.total_count >= min_items and self.standard_error < se_threshold:
             return True
         return False
 
