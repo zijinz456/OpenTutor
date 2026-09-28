@@ -97,6 +97,8 @@ export function NotesSection({
   const [viewMode, setViewMode] = useState<"ai" | "source">("ai");
   const [aiNote, setAiNote] = useState<AiNoteForNode | null>(null);
   const [aiNoteLoading, setAiNoteLoading] = useState(false);
+  const [aiNoteError, setAiNoteError] = useState<string | null>(null);
+  const [aiNoteRetryTick, setAiNoteRetryTick] = useState(0);
   const aiFetchRequestRef = useRef(0);
   const generateRequestRef = useRef(0);
 
@@ -150,6 +152,7 @@ export function NotesSection({
     const requestId = ++aiFetchRequestRef.current;
     let cancelled = false;
     setAiNoteLoading(true);
+    setAiNoteError(null);
     getAiNoteForNode(courseId, selectedNodeForFetch)
       .then((note) => {
         if (!cancelled && requestId === aiFetchRequestRef.current) {
@@ -157,14 +160,20 @@ export function NotesSection({
           setAiNoteLoading(false);
         }
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         if (!cancelled && requestId === aiFetchRequestRef.current) {
           setAiNote(null);
           setAiNoteLoading(false);
+          // 404 just means no AI note exists yet — that's the empty state,
+          // not an error. Anything else should surface with a retry option.
+          const status = (error as { status?: number }).status;
+          if (status !== 404) {
+            setAiNoteError((error as Error).message || t("notes.loadFailed"));
+          }
         }
       });
     return () => { cancelled = true; };
-  }, [courseId, selectedNodeForFetch]);
+  }, [courseId, selectedNodeForFetch, aiNoteRetryTick, t]);
 
   const handleGenerate = useCallback(async () => {
     if (!selectedNode) {
@@ -341,6 +350,22 @@ export function NotesSection({
               {aiNoteLoading ? (
                 <div className="flex items-center justify-center py-12">
                   <p className="text-sm text-muted-foreground animate-pulse">Loading AI notes...</p>
+                </div>
+              ) : aiNoteError ? (
+                <div
+                  role="alert"
+                  data-testid="notes-load-error"
+                  className="flex flex-col items-center justify-center py-12 gap-3"
+                >
+                  <p className="text-sm text-destructive">{t("notes.loadFailed")}</p>
+                  <p className="text-xs text-muted-foreground max-w-sm text-center">{aiNoteError}</p>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setAiNoteRetryTick((tick) => tick + 1)}
+                  >
+                    {t("notes.retry")}
+                  </Button>
                 </div>
               ) : hasAiNotes ? (
                 <div className="rounded-2xl card-shadow bg-muted/20 p-4" data-testid="notes-preview">
