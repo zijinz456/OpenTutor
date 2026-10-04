@@ -15,7 +15,7 @@ class Course(Base):
     __tablename__ = "courses"
 
     id: Mapped[uuid.UUID] = mapped_column(CompatUUID, primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(CompatUUID, ForeignKey("users.id"))
+    user_id: Mapped[uuid.UUID] = mapped_column(CompatUUID, ForeignKey("users.id", ondelete="CASCADE"))
     name: Mapped[str] = mapped_column(String(200))
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     metadata_: Mapped[Optional[dict]] = mapped_column("metadata", CompatJSONB, nullable=True)

@@ -18,8 +18,8 @@ class UsageEvent(Base):
     __tablename__ = "usage_events"
 
     id = Column(CompatUUID, primary_key=True, default=uuid.uuid4)
-    user_id = Column(CompatUUID, ForeignKey("users.id"), nullable=False, index=True)
-    course_id = Column(CompatUUID, ForeignKey("courses.id"), nullable=True)
+    user_id = Column(CompatUUID, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    course_id = Column(CompatUUID, ForeignKey("courses.id", ondelete="SET NULL"), nullable=True)
 
     # Agent context
     agent_name = Column(String(64), nullable=True)   # "teaching", "exercise", etc.
