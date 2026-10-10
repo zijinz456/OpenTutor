@@ -119,7 +119,20 @@ class ProviderRegistry:
                 logger.info(f"Falling back to {provider_name}")
                 return client
 
-        raise RuntimeError("All LLM providers are unhealthy. Please check API keys and network.")
+        # Surface the per-provider diagnostics recorded by the circuit breaker
+        # so users see *why* (wrong URL / server down / bad key / missing model)
+        # instead of a generic failure.
+        reasons = "; ".join(
+            f"{name}: {client.last_error_detail}"
+            for name, client in self._providers.items()
+            if getattr(client, "last_error_detail", None)
+        )
+        message = "All LLM providers are unhealthy."
+        if reasons:
+            message = f"{message} {reasons}"
+        else:
+            message = f"{message} Please check API keys and network."
+        raise RuntimeError(message)
 
     @property
     def available_providers(self) -> list[str]:
