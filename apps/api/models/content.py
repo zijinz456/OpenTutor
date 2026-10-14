@@ -25,9 +25,9 @@ class CourseContentTree(Base):
     __tablename__ = "course_content_tree"
 
     id: Mapped[uuid.UUID] = mapped_column(CompatUUID, primary_key=True, default=uuid.uuid4)
-    course_id: Mapped[uuid.UUID] = mapped_column(CompatUUID, ForeignKey("courses.id"))
+    course_id: Mapped[uuid.UUID] = mapped_column(CompatUUID, ForeignKey("courses.id", ondelete="CASCADE"))
     parent_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        CompatUUID, ForeignKey("course_content_tree.id"), nullable=True
+        CompatUUID, ForeignKey("course_content_tree.id", ondelete="CASCADE"), nullable=True
     )
 
     # Tree structure
