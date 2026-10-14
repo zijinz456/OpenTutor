@@ -231,6 +231,155 @@ async def check_prerequisites_satisfied(
     return (len(gaps) == 0, gaps)
 
 
+# ── DAG Validation ──
+
+def _find_cycle(
+    node_ids: set[uuid.UUID],
+    edge_pairs: list[tuple[uuid.UUID, uuid.UUID]],
+) -> list[uuid.UUID] | None:
+    """Find one prerequisite cycle, or None if the graph is a DAG.
+
+    Kahn's algorithm peels off acyclic nodes; any unpeeled remainder must
+    contain a cycle. Every remainder node keeps at least one incoming edge
+    from the remainder, so walking predecessors from any remainder node is
+    guaranteed to revisit a node — that revisited loop is the cycle, returned
+    in edge order (A -> B -> C -> A yields [A, B, C]).
+    """
+    adj: dict[uuid.UUID, list[uuid.UUID]] = {nid: [] for nid in node_ids}
+    in_degree: dict[uuid.UUID, int] = {nid: 0 for nid in node_ids}
+    for source, target in edge_pairs:
+        if source in node_ids and target in node_ids:
+            adj[source].append(target)
+            in_degree[target] += 1
+
+    queue: deque[uuid.UUID] = deque(nid for nid in node_ids if in_degree[nid] == 0)
+    peeled = 0
+    while queue:
+        nid = queue.popleft()
+        peeled += 1
+        for neighbor in adj[nid]:
+            in_degree[neighbor] -= 1
+            if in_degree[neighbor] == 0:
+                queue.append(neighbor)
+
+    if peeled == len(node_ids):
+        return None
+
+    remainder = {nid for nid in node_ids if in_degree[nid] > 0}
+    rev: dict[uuid.UUID, list[uuid.UUID]] = {nid: [] for nid in remainder}
+    for source, target in edge_pairs:
+        if source in remainder and target in remainder:
+            rev[target].append(source)
+
+    path: list[uuid.UUID] = []
+    index_in_path: dict[uuid.UUID, int] = {}
+    current = next(iter(remainder))
+    while current not in index_in_path:
+        index_in_path[current] = len(path)
+        path.append(current)
+        current = rev[current][0]
+    cycle = path[index_in_path[current]:]
+    cycle.reverse()
+    return cycle
+
+
+def resolve_prerequisite_cycles(
+    node_ids: set[uuid.UUID],
+    edges: list,
+) -> tuple[list[list[uuid.UUID]], list]:
+    """Detect prerequisite cycles and pick each cycle's weakest edge for removal.
+
+    Repeatedly finds a cycle and drops its lowest-weight edge (the
+    least-confidence link) until the graph is acyclic. Edges only need
+    ``source_id``/``target_id``/``weight`` attributes; an unset weight
+    counts as the column default 1.0.
+
+    Returns ``(cycles, to_remove)``: cycles as node-ID lists in edge order,
+    and the edge objects whose removal makes the graph a DAG.
+    """
+    working = list(edges)
+    cycles: list[list[uuid.UUID]] = []
+    to_remove: list = []
+    while True:
+        cycle = _find_cycle(node_ids, [(e.source_id, e.target_id) for e in working])
+        if cycle is None:
+            return cycles, to_remove
+        cycles.append(cycle)
+        cycle_pairs = set(zip(cycle, cycle[1:] + cycle[:1]))
+        cycle_edges = [e for e in working if (e.source_id, e.target_id) in cycle_pairs]
+        weakest = min(
+            cycle_edges,
+            key=lambda e: e.weight if e.weight is not None else 1.0,
+        )
+        working.remove(weakest)
+        to_remove.append(weakest)
+
+
+async def validate_graph(
+    db: AsyncSession,
+    course_id: uuid.UUID,
+    repair: bool = False,
+) -> dict:
+    """Validate that a course's prerequisite edges form a DAG.
+
+    Circular prerequisites (A requires B, B requires C, C requires A) cause
+    infinite loops in learning path generation and mastery propagation, so
+    cycles are detected via topological sort. With ``repair=True``, each
+    cycle is broken by deleting its lowest-weight edge.
+
+    Returns::
+
+        {
+            "is_dag": bool,           # True if no cycles were found
+            "cycles": [[name, ...]],  # concept names per detected cycle
+            # Deleted (repair=True) or proposed for deletion (repair=False):
+            "removed_edges": [{"source": ..., "target": ..., "weight": ...}],
+        }
+    """
+    nodes_result = await db.execute(
+        select(KnowledgeNode).where(KnowledgeNode.course_id == course_id)
+    )
+    nodes = nodes_result.scalars().all()
+    if not nodes:
+        return {"is_dag": True, "cycles": [], "removed_edges": []}
+
+    node_by_id = {n.id: n for n in nodes}
+
+    edges_result = await db.execute(
+        select(KnowledgeEdge).where(
+            KnowledgeEdge.source_id.in_(list(node_by_id)),
+            KnowledgeEdge.relation_type == "prerequisite",
+        )
+    )
+    edges = list(edges_result.scalars().all())
+
+    cycles, to_remove = resolve_prerequisite_cycles(set(node_by_id), edges)
+    removed = [
+        {
+            "source": node_by_id[e.source_id].name,
+            "target": node_by_id[e.target_id].name,
+            "weight": e.weight if e.weight is not None else 1.0,
+        }
+        for e in to_remove
+    ]
+
+    if repair and to_remove:
+        for edge in to_remove:
+            await db.delete(edge)
+        await db.flush()
+        logger.warning(
+            "Broke %d circular prerequisite link(s) for course %s: %s",
+            len(to_remove), course_id,
+            ["{} -> {}".format(r["source"], r["target"]) for r in removed],
+        )
+
+    return {
+        "is_dag": not cycles,
+        "cycles": [[node_by_id[nid].name for nid in cycle] for cycle in cycles],
+        "removed_edges": removed,
+    }
+
+
 # ── Learning Path Generation ──
 
 async def generate_learning_path(
