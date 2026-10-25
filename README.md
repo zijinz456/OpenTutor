@@ -41,6 +41,10 @@ What makes it different:
 Upload → AI Teaches → You Practice → AI Remembers → AI Reminds → Repeat
 ```
 
+## Windows native startup (optional)
+
+Windows 10/11 x64 users can build a native launcher or a self-contained installer without Docker. Source setup requires CPython 3.12 and Node.js 24; end-user installers include both. See [Windows installation, startup, supported targets, and actual validation](docs/guides/windows-native-support.md). Native code execution is explicitly disabled; private data and API settings remain local and excluded from source exports.
+
 ## Quick Start
 
 ### 3 commands. That's it.

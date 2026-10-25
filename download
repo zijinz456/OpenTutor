@@ -1,0 +1,69 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Build
+.next/
+out/
+dist/
+*.egg-info/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Uploads
+uploads/
+
+# Python
+*.egg
+*.whl
+pip-log.txt
+.coverage
+htmlcov/
+
+# Claude Code
+.claude/
+
+# Test artifacts
+test-results/
+playwright-report/
+tmp/
+.hypothesis/
+
+# Temporary directories
+sessions/
+
+# Local database
+*.db
+*.sqlite
+
+# Windows native runtime, private learning data, and generated release files
+.runtime/
+.venv-win/
+native-data/
+local-backups/
+source-release/
+/OpenTutor.exe
+/scripts/windows/OpenTutor.ico
+*.log
+*.sqlite3
+*.sqlite3-*
+*.db-wal
+*.db-shm
+*.sqlite-wal
+*.sqlite-shm

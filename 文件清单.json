@@ -1,0 +1,217 @@
+{
+  "base": "22e57bdd13a25cd394108578d1d398926263daef",
+  "branch_suggestion": "windows-native-support",
+  "files": [
+    {
+      "path": ".env.example",
+      "change": "modified",
+      "bytes": 5870,
+      "sha256": "78b11d8988d4ce79d03a4b28c92b2fe666dabb51174e92a231d63f3777922d4f"
+    },
+    {
+      "path": ".gitignore",
+      "change": "modified",
+      "bytes": 765,
+      "sha256": "d40e7d5873203290516b247cce0dca0721984b4044818c6f38571f3c6a031ee9"
+    },
+    {
+      "path": "Backup-OpenTutor.cmd",
+      "change": "added",
+      "bytes": 121,
+      "sha256": "03b3315a6477b614b6305977f5b41d54d2a7efbc9c10f355afbd5fcbdd0f4041"
+    },
+    {
+      "path": "README.md",
+      "change": "modified",
+      "bytes": 12558,
+      "sha256": "1136311ee9dbbd2def329b9c320e53e1b8420f1991b4885186625de4be83a6e6"
+    },
+    {
+      "path": "Start-OpenTutor.cmd",
+      "change": "added",
+      "bytes": 136,
+      "sha256": "71973743d8f8a7df8c5e22ced340d7890f28d3e7a33b3f75d9b94e71590500e6"
+    },
+    {
+      "path": "Stop-OpenTutor.cmd",
+      "change": "added",
+      "bytes": 135,
+      "sha256": "77111ea410cf2fdf280ff4f8464b019b941390ef9b0eabd392fb2e478a75ad47"
+    },
+    {
+      "path": "apps/api/config.py",
+      "change": "modified",
+      "bytes": 12756,
+      "sha256": "be779ac9c94af3cc00d8a4baf60fe01b90293488ff467b0d8259441dea8cb779"
+    },
+    {
+      "path": "apps/api/services/agent/code_execution.py",
+      "change": "modified",
+      "bytes": 18142,
+      "sha256": "43f19039a0ec89951609df411ebca8339eef852ab4f083a08ce10106a84e9fc8"
+    },
+    {
+      "path": "apps/api/services/app_lifecycle.py",
+      "change": "modified",
+      "bytes": 8058,
+      "sha256": "0a19f6cb98ee65e9f9eab278b8cfca9667f59c1fe5b6489c3de435802588ea00"
+    },
+    {
+      "path": "apps/api/services/health.py",
+      "change": "modified",
+      "bytes": 5731,
+      "sha256": "005e47614c7776b5f8b0c63d0a1821248459530618d5c1ec6d89f71cbc50b701"
+    },
+    {
+      "path": "apps/web/next.config.ts",
+      "change": "modified",
+      "bytes": 2468,
+      "sha256": "3604febf29919c12943717fa529d3647c064e60cddbfc4724bcc937895b1807e"
+    },
+    {
+      "path": "docs/guides/windows-native-support.md",
+      "change": "added",
+      "bytes": 7111,
+      "sha256": "a7e5f3e6f9c5fd5c7ca8e8a4bd3be1bc6a404be76b6df487532da942e20efbc3"
+    },
+    {
+      "path": "scripts/build-native-launcher.ps1",
+      "change": "added",
+      "bytes": 2486,
+      "sha256": "251ceeefc1c5545d73b93f9a6f880e2d0ea8b4b8f553336afb7bb3dd3510f410"
+    },
+    {
+      "path": "scripts/build-windows-package.py",
+      "change": "added",
+      "bytes": 7647,
+      "sha256": "739ea6c50b626b1b59279d509649be72adced881e6366ba0685d28b9c3d30dda"
+    },
+    {
+      "path": "scripts/native-backup.py",
+      "change": "added",
+      "bytes": 1398,
+      "sha256": "c1b4ebcb0b5d694b09073f24ef3b5d506af1b6ec03e482413a60432c6925ed9f"
+    },
+    {
+      "path": "scripts/native-cleanup.py",
+      "change": "added",
+      "bytes": 3161,
+      "sha256": "b59d4e9e39a14b155a70b5220a7dfa95e1b18f27812cb28bcf8777c81f8c7011"
+    },
+    {
+      "path": "scripts/native-control.ps1",
+      "change": "added",
+      "bytes": 7638,
+      "sha256": "e04efb766e3fec7af47774db42f71e6e5f47c48ba4307520615b483a9f34027d"
+    },
+    {
+      "path": "scripts/native-init.py",
+      "change": "added",
+      "bytes": 2413,
+      "sha256": "6a2998b52085196c7b4a3d65cabc607b32953d186a761e2a83ecd8eb6e3613f0"
+    },
+    {
+      "path": "scripts/native-log-archive.ps1",
+      "change": "added",
+      "bytes": 1659,
+      "sha256": "31d85e4de47ac656d53eca5814c9b05c64cc81196031fe2826727bf66ad7fa92"
+    },
+    {
+      "path": "scripts/native-server.py",
+      "change": "added",
+      "bytes": 1411,
+      "sha256": "f68c69a2e94189e56e81dc915e7938c2a43d4c52d2fd2743746128d71e9e39eb"
+    },
+    {
+      "path": "scripts/native-setup.py",
+      "change": "added",
+      "bytes": 4391,
+      "sha256": "7c1442e2d730e65e510b5293a48d2ffac5f1d7a78179f241aea692bb635b3f45"
+    },
+    {
+      "path": "scripts/native-web-server.cjs",
+      "change": "added",
+      "bytes": 1147,
+      "sha256": "46aca4a8c4cda02e37d5243221571e9082f2409a4ba8922627d7ecd68733255b"
+    },
+    {
+      "path": "scripts/requirements-windows.lock",
+      "change": "added",
+      "bytes": 1795,
+      "sha256": "18a8909e6dcd3708af7206e7d034a72ba6c75433b37be3cf9da456d17cb90c48"
+    },
+    {
+      "path": "scripts/source-bundle.py",
+      "change": "added",
+      "bytes": 7999,
+      "sha256": "cdcfd0780dffa9f4bbe45067729fd9a1a6a948154fc8b34888e29158b0099779"
+    },
+    {
+      "path": "scripts/windows/Launcher.cs",
+      "change": "added",
+      "bytes": 14872,
+      "sha256": "a12d1465df0967259c3849881ca4564ee8e556712c500d4e10520b220a2eb9ef"
+    },
+    {
+      "path": "scripts/windows/Node-LICENSE.txt",
+      "change": "added",
+      "bytes": 157609,
+      "sha256": "5888dbb9a1d2b18f2c3e6c5f6af1b39de658372b402a0577b002777f14c62ace"
+    },
+    {
+      "path": "scripts/windows/Setup.cs",
+      "change": "added",
+      "bytes": 12356,
+      "sha256": "d4adfd3551ee466cd40b662510a182e443eeba5f59573efcabb4e428254252ce"
+    },
+    {
+      "path": "tests/test-native-log-archive.ps1",
+      "change": "added",
+      "bytes": 1778,
+      "sha256": "b44e17bacd6c6e48b22b9a472cbb42a5136757bf94160061a49d4e3b945b10da"
+    },
+    {
+      "path": "tests/test_bootstrap_seed.py",
+      "change": "added",
+      "bytes": 1073,
+      "sha256": "945f8063ac12028f4f5d8233a5ac8e1efd8dcfc39a25d219b57e02ac89c4653c"
+    },
+    {
+      "path": "tests/test_code_execution_agent.py",
+      "change": "modified",
+      "bytes": 1315,
+      "sha256": "a13446f5a6a1e77d76d2eaa06e613e58b76a49f417982d312e62245a4b883566"
+    },
+    {
+      "path": "tests/test_code_sandbox_policy.py",
+      "change": "modified",
+      "bytes": 2834,
+      "sha256": "37e6f9054830e32f80ee99eb0f67d1c2a918403e4fbe61e543fccbaa7a1c2b9c"
+    },
+    {
+      "path": "tests/test_native_api_import.py",
+      "change": "added",
+      "bytes": 832,
+      "sha256": "bf47e4dbe2fe0aa982b65dd247b9fc424d0bed253754a371e6d59be47987c456"
+    },
+    {
+      "path": "tests/test_native_cleanup.py",
+      "change": "added",
+      "bytes": 2718,
+      "sha256": "c04f624d0542643f9b6321c8385e593c9bf1d5ad66f6195dfe63edeca4a2d082"
+    },
+    {
+      "path": "tests/test_native_init.py",
+      "change": "added",
+      "bytes": 2439,
+      "sha256": "3bb6b97a4807761a6d4541f1df0f17735ec3fe18c688ab58933aa3d2dd0b9275"
+    },
+    {
+      "path": "tests/test_native_mode.py",
+      "change": "added",
+      "bytes": 1124,
+      "sha256": "bd6135e0ad83f7088acacc26ca543f1126fef56ab0529d219e18d1b0b7747804"
+    }
+  ],
+  "deletions": []
+}
