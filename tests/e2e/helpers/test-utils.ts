@@ -66,19 +66,23 @@ export async function selectTemplateIfShown(page: Page): Promise<void> {
   const templateHeading = page.getByRole("heading", { name: "Choose a template" });
   const isShown = await templateHeading.isVisible({ timeout: 3_000 }).catch(() => false);
   if (!isShown) return;
-  // Click "STEM Student" to create blocks with notes, quiz, progress, knowledge_graph
-  const stemBtn = page.getByRole("button", { name: /STEM Student/i });
-  if (await stemBtn.isVisible({ timeout: 3_000 }).catch(() => false)) {
-    await stemBtn.click();
-  } else {
-    // Fallback: click the first template button that isn't Blank Canvas
-    const firstBtn = page.locator('button').filter({ hasNotText: /Blank Canvas/ }).first();
-    await firstBtn.click();
+  const picker = templateHeading.locator("..");
+  const blocks = page.getByRole("list", { name: "Workspace blocks" });
+  const stemBtn = picker.getByRole("button", { name: /STEM Student/i });
+  const button = await stemBtn.isVisible()
+    ? stemBtn
+    : picker.getByRole("button").filter({ hasNotText: /Blank Canvas/ }).first();
+  try {
+    // Saved-layout hydration can remove the picker between visibility and click.
+    // Bound that action, but only accept failure if the real workspace is ready.
+    await button.click({ timeout: 3_000 });
+  } catch (error) {
+    if (await templateHeading.isVisible() || !(await blocks.isVisible())) {
+      throw error;
+    }
   }
-  // Wait for template picker to disappear and blocks to render
   await expect(templateHeading).not.toBeVisible({ timeout: 15_000 });
-  // Wait for at least one block to render before returning
-  await page.waitForTimeout(500);
+  await expect(blocks).toBeVisible({ timeout: 15_000 });
 }
 
 /**
