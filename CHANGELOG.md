@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Removed
+- Dead code pass (see `docs/code-cleanup-matrix.md`, 2026-10-30): the offline evaluation package and its CI step, experiment metrics/status matrix, YAML tool loader, file-based prompt templates, agent delegation/swarm machinery, the extension hook API, `orchestrate_simple`, scheduler no-op jobs, re-export shims, the orphan scraper Canvas parser, unused PDF/URL tree parsers, the `StudyPlan` double-write and model, `voice_enabled`, the `LLM_MODEL_LARGE`/`LLM_MODEL_SMALL` tier aliases (use `LLM_MODEL_FAST`/`STANDARD`/`FRONTIER`), and `POST /progress/templates/seed` (built-in templates are now constants).
+- Orphan schema dropped by migration `20261030_0027`: `course_content_tree.blocks_json`/`search_vector`, `learning_progress.ease_factor`, `ingestion_jobs.user_corrected_*`, `learning_templates.tab_preset`, `study_sessions.signals_extracted`, and tables `reports`, `audit_logs`, `tool_call_events`, `study_plans`.
+
+### Changed
+- LLM usage metering moved into the client layer: every `chat`/`stream_chat`/`extract`/`chat_with_tools` call records a `usage_events` row (attributed to the requesting user, and to course/agent/scene for chat turns), instead of only ReAct-loop tokens.
+- `ENABLE_EXPERIMENTAL_VISION` now actually gates LaTeX OCR on chat images (previously the OCR ran twice per message regardless of the flag).
+- Agenda "submit" decisions and ambient-monitor "notify" decisions store an in-app notification again.
+
 ### Fixed
 - Tutor chat now receives the conversation history. Previously every turn was sent to the model as system prompt + current message only, so follow-up questions had no context; the Socratic state machine and cognitive-load session counter also never saw prior turns.
 - Chat post-processing (memory encoding, preference extraction, tutor notes, LLM usage records) now runs in-process when the activity engine is off (the default). It used to be written to a queue nobody drained.

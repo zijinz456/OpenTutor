@@ -1,4 +1,4 @@
-"""Response schemas for StudyPlan endpoints."""
+"""Response schemas for the saved study-plan listing endpoint."""
 
 from __future__ import annotations
 

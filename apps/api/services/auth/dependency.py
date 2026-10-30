@@ -55,6 +55,7 @@ async def get_current_user(
         if request is not None:
             request.state.user_id = str(user.id)
             request.state.deployment_mode = settings.deployment_mode
+        _attribute_llm_usage(user)
         return user
 
     if not settings.auth_enabled:
@@ -92,4 +93,13 @@ async def get_current_user(
     if request is not None:
         request.state.user_id = str(user.id)
         request.state.deployment_mode = settings.deployment_mode
+    _attribute_llm_usage(user)
     return user
+
+
+def _attribute_llm_usage(user: User) -> None:
+    """Default LLM usage attribution for the request (user only; the
+    orchestrator narrows it to course/agent/scene for chat turns)."""
+    from services.llm.usage import set_usage_attribution
+
+    set_usage_attribution(user_id=user.id)

@@ -528,7 +528,6 @@ sendMessage() — SSE streaming iteration, parses content/action events
 | `/api/progress/courses/{id}` | GET | Learning progress overview |
 | `/api/progress/templates` | GET | List learning templates |
 | `/api/progress/templates/apply` | POST | Apply learning template |
-| `/api/progress/templates/seed` | POST | Seed built-in templates |
 | `/api/progress/courses/{id}/knowledge-graph` | GET | Knowledge graph data |
 | `/api/flashcards/generate` | POST | Generate FSRS flashcards |
 | `/api/flashcards/review` | POST | Review flashcard (FSRS scoring) |
@@ -578,7 +577,7 @@ LearningTemplate (standalone, 5 built-in) ┘ ┘
 | `study_sessions` | 9 | Message/quiz/signal counts |
 | `assignments` | 8 | Canvas/manual source, deadlines |
 | `wrong_answers` | 8 | review_count, mastered flag |
-| `learning_progress` | 12 | mastery_score, FSRS ease_factor |
+| `learning_progress` | 12 | mastery_score, FSRS stability/difficulty |
 | `learning_templates` | 7 | JSONB preferences, is_builtin |
 
 ---

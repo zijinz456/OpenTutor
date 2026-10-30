@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 import pytest
 
 from services.agent.agenda_ranking import AgendaDecision, rank_signals, _sort_key
-from services.agent.agenda_signals import AgendaSignal
+from services.agent.signals import AgendaSignal
 
 
 def _make_signal(signal_type: str, urgency: float = 50.0, **kwargs) -> AgendaSignal:

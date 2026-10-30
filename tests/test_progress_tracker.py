@@ -45,7 +45,6 @@ def _make_progress(**overrides):
         "quiz_correct": 0,
         "gap_type": None,
         "next_review_at": None,
-        "ease_factor": 2.5,
         "interval_days": 0,
         "fsrs_difficulty": 5.0,
         "fsrs_stability": 0.0,

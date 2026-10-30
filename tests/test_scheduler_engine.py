@@ -6,7 +6,6 @@ Covers:
 - _push_notification storage
 - Job list completeness
 - start_scheduler / stop_scheduler lifecycle
-- No-op stubs (timing_analysis, escalation_check)
 - Session timing / interval checks
 
 The scheduler engine has deep transitive imports (APScheduler, SQLAlchemy
@@ -114,17 +113,15 @@ if "services.scheduler.engine" in sys.modules:
 
 from services.scheduler.engine import (  # noqa: E402
     _SCHEDULED_JOBS,
-    _broadcast_report_job,
+    start_scheduler,
+    stop_scheduler,
+)
+from services.scheduler.engine_helpers import (  # noqa: E402
     _for_each_user,
     _get_user_ids,
     _push_notification,
-    escalation_check_job,
-    start_scheduler,
-    stop_scheduler,
-    subscribe_sse,
-    timing_analysis_job,
-    unsubscribe_sse,
 )
+from services.scheduler.engine_jobs_proactive import _broadcast_report_job  # noqa: E402
 
 
 # ── Schedule configuration ──
@@ -193,33 +190,6 @@ def test_bkt_training_scheduled():
     """BKT training job should be in the schedule."""
     job_ids = {entry[2] for entry in _SCHEDULED_JOBS}
     assert "bkt_training" in job_ids
-
-
-# ── No-op stubs ──
-
-
-@pytest.mark.asyncio
-async def test_timing_analysis_noop():
-    """Timing analysis should complete without error (no-op stub)."""
-    await timing_analysis_job()
-
-
-@pytest.mark.asyncio
-async def test_escalation_check_noop():
-    """Escalation check should complete without error (no-op stub)."""
-    await escalation_check_job()
-
-
-@pytest.mark.asyncio
-async def test_subscribe_sse_noop():
-    """subscribe_sse should be a no-op stub."""
-    await subscribe_sse()
-
-
-@pytest.mark.asyncio
-async def test_unsubscribe_sse_noop():
-    """unsubscribe_sse should be a no-op stub."""
-    await unsubscribe_sse()
 
 
 # ── _get_user_ids ──

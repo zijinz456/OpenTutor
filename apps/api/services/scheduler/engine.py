@@ -11,8 +11,6 @@ Standalone maintenance jobs:
 - weekly_prep_job    — every Monday 8:00 AM
 - scrape_refresh_job — every hour
 - memory_consolidation_job — every 6 hours
-- timing_analysis_job      — daily 3:00 AM
-- escalation_check_job     — every 2 hours
 """
 
 import logging
@@ -21,31 +19,14 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
-# ── Re-exports for backward compatibility ────────────────────────────
-# All public names that were previously importable from this module
-# are re-exported here so existing `from services.scheduler.engine import X`
-# statements continue to work.
-
-from services.scheduler.engine_helpers import (  # noqa: F401
-    _for_each_user,
-    _get_user_ids,
-    _push_notification,
-    subscribe_sse,
-    unsubscribe_sse,
-)
-from services.scheduler.engine_jobs_maintenance import (  # noqa: F401
-    _get_or_create_weekly_review_goal,
-    _has_scheduled_weekly_task,
+from services.scheduler.engine_jobs_maintenance import (
     agenda_tick_job,
     canvas_session_keepalive_job,
-    escalation_check_job,
     memory_consolidation_job,
     scrape_refresh_job,
-    timing_analysis_job,
     weekly_prep_job,
 )
-from services.scheduler.engine_jobs_proactive import (  # noqa: F401
-    _broadcast_report_job,
+from services.scheduler.engine_jobs_proactive import (
     bkt_training_job,
     cross_course_linking_job,
     daily_brief_job,
@@ -67,8 +48,6 @@ _SCHEDULED_JOBS: list[tuple] = [
     (scrape_refresh_job, IntervalTrigger(hours=1), "scrape_refresh", "Auto-Scrape Refresh"),
     (canvas_session_keepalive_job, IntervalTrigger(minutes=20), "canvas_keepalive", "Canvas Session Keep-Alive"),
     (memory_consolidation_job, IntervalTrigger(hours=6), "memory_consolidation", "Memory Consolidation (dedup + decay + categorize)"),
-    (timing_analysis_job, CronTrigger(hour=3, minute=0), "timing_analysis", "Study Timing Analysis"),
-    (escalation_check_job, IntervalTrigger(hours=2), "escalation_check", "Notification Escalation Check"),
     # Phase 1: Proactive agent jobs
     (daily_brief_job, CronTrigger(hour=8, minute=0), "daily_brief", "Daily Learning Brief"),
     (weekly_report_job, CronTrigger(day_of_week="sun", hour=20, minute=0), "weekly_report", "Weekly Learning Report"),

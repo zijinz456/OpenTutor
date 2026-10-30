@@ -1,12 +1,26 @@
-"""LLM usage recording, pricing estimation, and aggregation.
+"""LLM usage metering, pricing estimation, and aggregation.
 
-Inspired by OpenFang's metering engine with 60+ model pricing table.
-Records every LLM call and provides aggregation queries for dashboards.
+Metering is driven by the client-level usage hook in
+``services.llm.base_client``: every completed ``chat`` / ``stream_chat`` /
+``extract`` / ``chat_with_tools`` call reports its token usage, and
+``install_usage_hook()`` (called at app startup) turns each report into a
+``usage_events`` row, written fire-and-forget with its own DB session.
+
+Attribution (user, course, agent, scene) comes from a context variable that
+request handlers and the orchestrator set via ``usage_attribution()``; calls
+made with no attribution in scope are not persisted because ``user_id`` is
+required. Local/free models (ollama, lmstudio) are skipped.
 """
 
+from __future__ import annotations
+
+import asyncio
 import logging
 import uuid
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
+from typing import Iterator
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -103,6 +117,113 @@ def _is_local_model(model_provider: str, model_name: str) -> bool:
     # Unknown provider: fall back to model name heuristic
     name_lower = model_name.lower()
     return any(p in name_lower for p in _LOCAL_MODEL_PATTERNS)
+
+
+# ── Attribution context ──
+
+_attribution: ContextVar[dict | None] = ContextVar("llm_usage_attribution", default=None)
+
+
+def set_usage_attribution(
+    *,
+    user_id: uuid.UUID,
+    course_id: uuid.UUID | None = None,
+    agent_name: str | None = None,
+    scene: str | None = None,
+    metadata: dict | None = None,
+):
+    """Attach attribution to the current task context; returns a reset token."""
+    return _attribution.set({
+        "user_id": user_id,
+        "course_id": course_id,
+        "agent_name": agent_name,
+        "scene": scene,
+        "metadata": metadata,
+    })
+
+
+def update_usage_attribution(**fields) -> None:
+    """Merge fields (e.g. ``agent_name`` once routing is known) into the current attribution."""
+    current = _attribution.get()
+    if current is None:
+        return
+    _attribution.set({**current, **fields})
+
+
+def reset_usage_attribution(token) -> None:
+    _attribution.reset(token)
+
+
+def get_usage_attribution() -> dict | None:
+    return _attribution.get()
+
+
+@contextmanager
+def usage_attribution(**fields) -> Iterator[None]:
+    """``with usage_attribution(user_id=..., course_id=...):`` scoped attribution."""
+    token = set_usage_attribution(**fields)
+    try:
+        yield
+    finally:
+        reset_usage_attribution(token)
+
+
+# ── Client hook (installed at startup) ──
+
+async def _write_usage_event(attribution: dict, provider: str, model: str, usage: dict) -> None:
+    from database import async_session
+
+    try:
+        async with async_session() as db:
+            await record_usage(
+                db,
+                user_id=attribution["user_id"],
+                course_id=attribution.get("course_id"),
+                agent_name=attribution.get("agent_name"),
+                scene=attribution.get("scene"),
+                model_provider=provider,
+                model_name=model,
+                input_tokens=int(usage.get("input_tokens") or 0),
+                output_tokens=int(usage.get("output_tokens") or 0),
+                metadata=attribution.get("metadata"),
+            )
+    except Exception as exc:  # metering must never surface to callers
+        logger.debug("Usage event write failed (non-critical): %s", exc)
+
+
+def on_usage(provider: str, model: str, usage: dict) -> None:
+    """Usage hook: schedule a ``usage_events`` write for one completed LLM call."""
+    attribution = _attribution.get()
+    if not attribution or not attribution.get("user_id"):
+        logger.debug("LLM usage without attribution not recorded (%s/%s)", provider, model)
+        return
+    input_tokens = int(usage.get("input_tokens") or 0)
+    output_tokens = int(usage.get("output_tokens") or 0)
+    if not (input_tokens or output_tokens):
+        return
+    if _is_local_model(provider, model):
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        logger.debug("No running event loop; usage for %s/%s not recorded", provider, model)
+        return
+    from services.agent.background_runtime import track_background_task
+
+    track_background_task(loop.create_task(_write_usage_event(dict(attribution), provider, model, dict(usage))))
+
+
+def install_usage_hook() -> None:
+    """Register ``on_usage`` as the process-wide LLM usage hook (call at app startup)."""
+    from services.llm.base_client import set_usage_hook
+
+    set_usage_hook(on_usage)
+
+
+def uninstall_usage_hook() -> None:
+    from services.llm.base_client import set_usage_hook
+
+    set_usage_hook(None)
 
 
 async def record_usage(

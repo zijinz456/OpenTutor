@@ -116,7 +116,6 @@ from services.ingestion.pipeline import classify_by_filename, detect_mime_type
 from services.parser.quiz import _normalize_problem_metadata, prepare_generated_questions
 from services.practice.annotation import normalize_problem_annotation, parse_question_array, validate_question_payload
 from services.ingestion.document_loader_html import extract_title, get_text_from_soup
-from services.evaluation.eval_response import eval_response
 
 
 def test_classify_by_filename_lecture():
@@ -699,32 +698,6 @@ def test_extract_title_prefers_meta_title_and_strips_duplicate_heading():
     assert title == "Binary Search Notes"
     assert text.startswith("Binary search works on sorted arrays.")
     assert "binary-search.html" not in title
-
-
-@pytest.mark.asyncio
-async def test_eval_response_uses_shared_json_parser_for_wrapped_judge_output(monkeypatch):
-    class _FakeJudge:
-        provider_name = "deepseek"
-
-        async def chat(self, *_args, **_kwargs):
-            return (
-                """```json
-                {"correctness":{"score":5,"rationale":"good"},"relevance":{"score":4,"rationale":"on topic"},"helpfulness":{"score":4,"rationale":"clear"}}
-                ```""",
-                {},
-            )
-
-    monkeypatch.setattr("services.llm.router.get_llm_client", lambda *_args, **_kwargs: _FakeJudge())
-
-    score = await eval_response(
-        question="Why does binary search need sorted input?",
-        response="It needs sorted data so each midpoint comparison can eliminate half the search space.",
-        context="Binary search repeatedly halves a sorted search space.",
-    )
-
-    assert score.correctness == 5
-    assert score.relevance == 4
-    assert score.helpfulness == 4
 
 
 # ── Embedding: registry pattern ──

@@ -145,7 +145,7 @@ async def parse_nl_preference(
 
     registry = get_registry()
     try:
-        client = registry.get("small")
+        client = registry.get("fast")
         raw, _usage = await client.extract(_NL_PREFERENCE_PROMPT, body.text)
         # Strip markdown fences if present
         from libs.text_utils import strip_code_fences

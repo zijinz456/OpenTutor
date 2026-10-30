@@ -1,6 +1,6 @@
 """Scheduler engine helpers — shared utilities for scheduler jobs.
 
-Provides user iteration, notification, and backward-compatible SSE stubs.
+Provides user iteration and notification helpers.
 """
 
 import inspect
@@ -14,15 +14,6 @@ from database import async_session
 from models.user import User
 
 logger = logging.getLogger(__name__)
-
-
-# No-op stubs for removed SSE subscriber management (backward compatibility).
-async def subscribe_sse(*a, **kw):
-    pass
-
-
-async def unsubscribe_sse(*a, **kw):
-    pass
 
 
 async def _get_user_ids() -> list[uuid.UUID]:

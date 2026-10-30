@@ -22,11 +22,8 @@ logger = logging.getLogger(__name__)
 class ToolRegistry:
     """Central registry of all available tools.
 
-    Supports registration from multiple sources:
-    - Built-in education tools
-    - YAML declarative tools (config/tools/)
-
-    Later registrations override earlier ones (user tools > built-in).
+    Built-in tools are registered at startup; later registrations override
+    earlier ones.
     """
 
     def __init__(self):
@@ -139,12 +136,7 @@ _tool_registry_lock = threading.Lock()
 
 
 def get_tool_registry() -> ToolRegistry:
-    """Get or create the global tool registry.
-
-    Registration order (later overrides earlier):
-    1. Built-in education tools
-    2. YAML declarative tools (config/tools/)
-    """
+    """Get or create the global tool registry."""
     global _tool_registry
     if _tool_registry is not None:
         return _tool_registry
@@ -153,7 +145,6 @@ def get_tool_registry() -> ToolRegistry:
             return _tool_registry
         registry = ToolRegistry()
         _register_builtin_tools(registry)
-        _register_yaml_tools(registry)
         _tool_registry = registry
     return _tool_registry
 
@@ -274,13 +265,3 @@ def _register_preference_tools(registry: ToolRegistry) -> None:
         logger.info("Registered preference tools")
     except (ImportError, AttributeError) as e:
         logger.exception("Failed to load preference tools: %s", e)
-
-
-def _register_yaml_tools(registry: ToolRegistry) -> None:
-    """Register tools from YAML files in config/tools/ directory."""
-    try:
-        from services.agent.tools.yaml_runner import load_yaml_tools
-
-        load_yaml_tools(registry)
-    except (ImportError, OSError, ValueError) as e:
-        logger.exception("Failed to load YAML tools: %s", e)

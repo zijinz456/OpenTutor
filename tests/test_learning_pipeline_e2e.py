@@ -148,37 +148,6 @@ async def test_mastery_tracking(db, user_id, course_id):
 
 
 @pytest.mark.asyncio
-async def test_learning_metrics_computation(db, user_id, course_id):
-    """Test compute_learning_metrics with real data."""
-    from services.experiments.metrics import compute_learning_metrics
-
-    nodes = await _seed_graph(db, course_id)
-    await _seed_mastery(db, user_id, nodes, [0.9, 0.5, 0.2])
-
-    metrics = await compute_learning_metrics(db, user_id, course_id)
-
-    assert metrics["total_concepts"] == 3
-    assert metrics["reviewed_concepts"] == 3
-    assert metrics["mastered_concepts"] == 1  # only 0.9 >= 0.8
-    assert metrics["coverage"] == 1.0
-    assert 0.0 < metrics["avg_mastery"] < 1.0
-    assert metrics["total_practices"] == 15  # 5 * 3
-    assert 0.0 < metrics["accuracy"] <= 1.0
-
-
-@pytest.mark.asyncio
-async def test_empty_course_metrics(db, user_id, course_id):
-    """Metrics for a course with no concepts returns zeros."""
-    from services.experiments.metrics import compute_learning_metrics
-
-    metrics = await compute_learning_metrics(db, user_id, course_id)
-
-    assert metrics["total_concepts"] == 0
-    assert metrics["avg_mastery"] == 0.0
-    assert metrics["accuracy"] == 0.0
-
-
-@pytest.mark.asyncio
 async def test_experiment_assignment_deterministic():
     """Verify that experiment assignment is deterministic for same user."""
     from services.experiments.framework import (
@@ -209,38 +178,6 @@ async def test_experiment_assignment_deterministic():
     uid2 = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
     v3 = exp.get_variant_for_user(uid2)
     assert v3.name in ("control", "treatment")
-
-
-@pytest.mark.asyncio
-async def test_statistical_tests():
-    """Verify statistical test functions produce valid output."""
-    from services.experiments.metrics import two_proportion_z_test, mann_whitney_u
-
-    # Two-proportion z-test
-    result = two_proportion_z_test(80, 100, 60, 100)
-    assert "z_stat" in result
-    assert "p_value" in result
-    assert "significant" in result
-    assert result["p_a"] == 0.8
-    assert result["p_b"] == 0.6
-    assert result["significant"] is True  # 80% vs 60% should be significant
-
-    # Edge case: empty groups
-    empty = two_proportion_z_test(0, 0, 0, 0)
-    assert empty["p_value"] == 1.0
-    assert empty["significant"] is False
-
-    # Mann-Whitney U
-    group_a = [1.0, 2.0, 3.0, 4.0, 5.0]
-    group_b = [6.0, 7.0, 8.0, 9.0, 10.0]
-    mw = mann_whitney_u(group_a, group_b)
-    assert "u_stat" in mw
-    assert "p_value" in mw
-    assert mw["significant"] is True  # Clearly different groups
-
-    # Identical groups should not be significant
-    same = mann_whitney_u([1, 2, 3], [1, 2, 3])
-    assert same["significant"] is False
 
 
 @pytest.mark.asyncio
@@ -280,8 +217,7 @@ async def test_bloom_metadata(db, course_id):
 
 @pytest.mark.asyncio
 async def test_full_pipeline_flow(db, user_id, course_id):
-    """End-to-end: graph creation → mastery → metrics → experiment."""
-    from services.experiments.metrics import compute_learning_metrics
+    """End-to-end: graph creation → mastery → experiment."""
     from services.experiments.framework import (
         Experiment,
         ExperimentVariant,
@@ -297,14 +233,10 @@ async def test_full_pipeline_flow(db, user_id, course_id):
     # 2. Simulate practice: user masters first concept, struggles with third
     masteries = await _seed_mastery(db, user_id, nodes, [0.95, 0.6, 0.15])
 
-    # 3. Compute learning metrics
-    metrics = await compute_learning_metrics(db, user_id, course_id)
-    assert metrics["total_concepts"] == 3
-    assert metrics["mastered_concepts"] == 1  # only 0.95 >= 0.8
-    assert metrics["coverage"] == 1.0
-    assert metrics["overdue_count"] == 0  # no next_review_at set
+    assert len(masteries) == 3
+    assert masteries[0].mastery_score == 0.95
 
-    # 4. Assign user to experiment
+    # 3. Assign user to experiment
     exp = Experiment(
         id="e2e_test_exp",
         name="E2E Test",
@@ -322,7 +254,7 @@ async def test_full_pipeline_flow(db, user_id, course_id):
     assert variant.name in ("control", "treatment")
     assert "boost" in variant.config
 
-    # 5. Add confusion edge (simulating confusion detection)
+    # 4. Add confusion edge (simulating confusion detection)
     db.add(KnowledgeEdge(
         source_id=nodes[1].id,
         target_id=nodes[2].id,

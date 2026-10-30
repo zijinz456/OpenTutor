@@ -249,7 +249,7 @@ def _fire_background_embed(course_id: uuid.UUID):
 
 
 def _notify_scrape_disabled(source: ScrapeSource):
-    from services.scheduler.engine import _push_notification
+    from services.scheduler.engine_helpers import _push_notification
     try:
         loop = asyncio.get_running_loop()
         loop.create_task(_push_notification(
@@ -265,7 +265,7 @@ def _notify_scrape_disabled(source: ScrapeSource):
 
 
 def _notify_auth_expired(source: ScrapeSource):
-    from services.scheduler.engine import _push_notification
+    from services.scheduler.engine_helpers import _push_notification
     try:
         loop = asyncio.get_running_loop()
         loop.create_task(_push_notification(

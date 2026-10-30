@@ -12,7 +12,6 @@ from models.scrape import ScrapeSource, AuthSession
 from models.chat_session import ChatSession
 from models.chat_message import ChatMessageLog
 from models.generated_asset import GeneratedAsset
-from models.study_plan import StudyPlan
 from models.study_goal import StudyGoal
 from models.agent_task import AgentTask
 from models.agenda_run import AgendaRun
@@ -45,7 +44,6 @@ __all__ = [
     "ChatSession",
     "ChatMessageLog",
     "GeneratedAsset",
-    "StudyPlan",
     "StudyGoal",
     "AgentTask",
     "AgendaRun",

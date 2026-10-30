@@ -152,7 +152,7 @@ class CodeExecutionAgent(BaseAgent):
         "Use the code execution result provided below to guide your explanation.\n"
         "If no code was found, help the student write correct code."
     )
-    model_preference = "large"
+    model_preference = "frontier"
 
     # Safety: allowed standard library modules
     ALLOWED_MODULES = {

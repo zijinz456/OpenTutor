@@ -82,7 +82,7 @@ class OnboardingAgent(BaseAgent):
 
     name = "onboarding"
     profile = "A learning style analyst that interviews users about study habits."
-    model_preference = "small"
+    model_preference = "fast"
 
     async def execute(self, ctx: AgentContext, db: AsyncSession) -> AgentContext:
         """Run one turn of the interview."""

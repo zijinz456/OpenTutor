@@ -43,12 +43,9 @@ class Settings(BaseSettings):
     litellm_api_base: str = ""  # Optional custom API base for LiteLLM proxy
     litellm_api_key: str = ""  # Optional API key for LiteLLM proxy
 
-    # Model size routing (agent preference hints)
-    llm_model_large: str = ""   # e.g. gpt-4o for teaching/planning agents
-    llm_model_small: str = ""   # e.g. gpt-4o-mini for preference/scene agents
     llm_required: bool = False
 
-    # 3-tier model routing (overrides large/small when set)
+    # 3-tier model routing (fast / standard / frontier)
     llm_model_fast: str = ""       # e.g. gpt-4o-mini — greetings, preferences
     llm_model_standard: str = ""   # e.g. gpt-4o — teaching, exercises
     llm_model_frontier: str = ""   # e.g. o3-mini — planning, code execution
@@ -88,7 +85,6 @@ class Settings(BaseSettings):
     enable_experimental_cat: bool = False              # CAT adaptive diagnostic pretest
     enable_experimental_browser: bool = False          # Browser automation (web_search agent tool)
     enable_experimental_vision: bool = False            # Vision/LaTeX OCR service
-    voice_enabled: bool = False
 
     # Rate limiting
     rate_limit_mode: str = "simple"  # "simple" | "cost_aware"

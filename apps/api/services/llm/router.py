@@ -72,15 +72,15 @@ class ProviderRegistry:
             self._fallback_order.append(name)
 
     def register_variant(self, hint: str, client: LLMClient):
-        """Register a model variant for size hints (large/small/fast)."""
+        """Register a model variant for a tier hint (fast/standard/frontier)."""
         self._model_variants[hint] = client
 
     def get(self, name: str | None = None) -> LLMClient:
         """Get a healthy provider, with automatic fallback.
 
         Args:
-            name: Provider name (e.g. "openai"), model preference hint
-                  ("large"/"small"/"fast"), or None for default.
+            name: Provider name (e.g. "openai"), model tier hint
+                  ("fast"/"standard"/"frontier"), or None for default.
 
         Fallback chain: model_variants -> primary -> fallback_order.
         """
@@ -89,7 +89,7 @@ class ProviderRegistry:
                 "No LLM provider is configured. Set an API key or local LLM backend before using AI features."
             )
 
-        # Check model_preference hints (large/small/fast) first
+        # Check model tier hints (fast/standard/frontier) first
         if name and name in self._model_variants:
             client = self._model_variants[name]
             if client.is_healthy:
@@ -357,18 +357,12 @@ def _build_registry() -> ProviderRegistry:
         except (ConnectionError, ValueError, RuntimeError, OSError) as e:
             logger.exception("LiteLLM registration failed")
 
-    # --- Model size variants (agent preference routing) ---
-    for attr, hint in [("llm_model_large", "large"), ("llm_model_small", "small"),
-                       ("llm_model_fast", "fast"), ("llm_model_standard", "standard"),
+    # --- Model tier variants (fast / standard / frontier) ---
+    for attr, hint in [("llm_model_fast", "fast"), ("llm_model_standard", "standard"),
                        ("llm_model_frontier", "frontier")]:
         variant_model = getattr(settings, attr, None)
         if variant_model and variant_model != model:
             _register_variant(registry, provider, variant_model, hint)
-    # Alias fallbacks: fast<->small, frontier<->large
-    if "fast" not in registry._model_variants and "small" in registry._model_variants:
-        registry.register_variant("fast", registry._model_variants["small"])
-    if "frontier" not in registry._model_variants and "large" in registry._model_variants:
-        registry.register_variant("frontier", registry._model_variants["large"])
 
     # --- Mock fallback ---
     if not registry.available_providers:

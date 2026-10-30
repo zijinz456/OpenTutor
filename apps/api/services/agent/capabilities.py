@@ -57,29 +57,3 @@ def get_allowed_tools(agent_name: str) -> set[str] | None:
     Returns None if the agent is unknown (no restrictions).
     """
     return AGENT_CAPABILITIES.get(agent_name)
-
-
-def check_delegation_escalation(
-    source_agent: str,
-    target_agent: str,
-) -> tuple[bool, str]:
-    """Check if delegating from source to target would escalate capabilities.
-
-    Returns (allowed, reason). Escalation = target has tools that source doesn't.
-    Unknown agents are allowed (backward compat).
-    """
-    source_caps = AGENT_CAPABILITIES.get(source_agent)
-    target_caps = AGENT_CAPABILITIES.get(target_agent)
-
-    # If either agent is unknown, allow (backward compat)
-    if source_caps is None or target_caps is None:
-        return True, "Unknown agent — delegation allowed."
-
-    escalated = target_caps - source_caps
-    if escalated:
-        return False, (
-            f"Delegation blocked: '{target_agent}' has tools "
-            f"'{source_agent}' lacks: {escalated}"
-        )
-
-    return True, "Delegation allowed — no capability escalation."

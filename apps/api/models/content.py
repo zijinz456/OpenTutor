@@ -5,7 +5,7 @@ from typing import Optional
 from datetime import datetime
 
 from sqlalchemy import String, DateTime, ForeignKey, Text, Integer, Index, func
-from models.compat import CompatUUID, CompatJSONB, CompatTSVECTOR, CompatVector
+from models.compat import CompatUUID, CompatJSONB, CompatVector
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
@@ -43,11 +43,7 @@ class CourseContentTree(Base):
     # Content classification: knowledge (lecture_slides, textbook, notes) vs info (assignment, exam_schedule, syllabus)
     content_category: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
 
-    # Block editor content (source of truth when present; legacy nodes use `content`)
-    blocks_json: Mapped[Optional[dict]] = mapped_column(CompatJSONB, nullable=True)
-
-    # Search & embedding
-    search_vector: Mapped[Optional[str]] = mapped_column(CompatTSVECTOR, nullable=True)
+    # Embedding
     embedding: Mapped[Optional[list]] = mapped_column(CompatVector(1536), nullable=True)
 
     # Metadata
@@ -59,6 +55,5 @@ class CourseContentTree(Base):
     children = relationship("CourseContentTree", back_populates="parent", cascade="all, delete-orphan")
     parent = relationship("CourseContentTree", back_populates="children", remote_side=[id])
 
-Index("ix_content_tree_search_vector", CourseContentTree.search_vector)
 Index("ix_content_tree_course_parent", CourseContentTree.course_id, CourseContentTree.parent_id)
 Index("ix_content_tree_course_order", CourseContentTree.course_id, CourseContentTree.order_index)

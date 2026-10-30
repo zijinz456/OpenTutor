@@ -92,8 +92,6 @@ async def test_health_endpoint(client):
     assert isinstance(data["local_beta_ready"], bool)
     assert isinstance(data["local_beta_blockers"], list)
     assert isinstance(data["local_beta_warnings"], list)
-    assert isinstance(data["features"], dict)
-    assert data["features"]["voice_enabled"] is False
 
 
 # ── Course CRUD ──

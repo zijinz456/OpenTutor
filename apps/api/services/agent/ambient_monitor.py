@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.agent.agenda_signals import AgendaSignal
+from services.agent.signals import AgendaSignal
 
 logger = logging.getLogger(__name__)
 
@@ -197,8 +197,18 @@ async def execute_ambient_decision(
         return "silent"
 
     elif action == "notify":
-        logger.debug("Notification skipped (removed): %s", decision.get("message", ""))
-        return "notify_skipped"
+        from services.scheduler.engine_helpers import _push_notification
+
+        inserted = await _push_notification(
+            user_id,
+            "Study check-in",
+            decision.get("message") or "Time to check in on your learning.",
+            category="ambient",
+            course_id=_parse_course_uuid(decision.get("target_course_id")),
+            priority=decision.get("priority"),
+            data={"reason": decision.get("reason")},
+        )
+        return "notified" if inserted else "skipped"
 
     elif action == "prepare_review":
         from services.activity.engine import submit_task

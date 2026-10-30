@@ -52,50 +52,12 @@ async def _retry_async(coro_fn, name: str, max_retries: int = 2, base_delay: flo
     return {"success": False, "name": name, "error": "exhausted retries"}
 
 
-async def _persist_pp_failures(ctx: AgentContext, db_factory, failures: list[dict]) -> None:
-    """Log post-processing failures (notification system removed)."""
-    logger.warning("Post-processing failures: %s", [f.get("name") for f in failures])
-
-
-async def record_llm_usage(ctx: AgentContext, db_factory) -> None:
-    """Record LLM usage event for cost tracking (fire-and-forget)."""
-    try:
-        async with db_factory() as db:
-            from services.llm.usage import record_usage
-            from services.llm.router import get_registry
-
-            registry = get_registry()
-            provider_name = registry.primary_name or "unknown"
-
-            model_name = "unknown"
-            try:
-                if registry.primary_name:
-                    primary_client = registry.get(registry.primary_name)
-                    model_name = getattr(primary_client, "model", "unknown")
-            except (KeyError, AttributeError, RuntimeError):
-                logger.debug("Could not resolve model name from LLM registry")
-
-            await record_usage(
-                db,
-                user_id=ctx.user_id,
-                course_id=ctx.course_id,
-                agent_name=ctx.delegated_agent or ctx.metadata.get("routed_agent", "unknown"),
-                scene=ctx.scene,
-                model_provider=provider_name,
-                model_name=model_name,
-                input_tokens=ctx.input_tokens,
-                output_tokens=ctx.output_tokens,
-                tool_calls=len(ctx.tool_calls),
-                metadata={"intent": ctx.intent.value if ctx.intent else None},
-            )
-    except (SQLAlchemyError, ConnectionError, TimeoutError, ValueError, RuntimeError, ImportError, OSError) as exc:
-        logger.debug("Usage recording failed (non-critical): %s", exc)
-
-
 async def run_post_process_bundle(ctx: AgentContext, db_factory) -> None:
-    """Execute usage tracking + post-processing for a completed agent turn."""
-    if ctx.input_tokens or ctx.output_tokens:
-        await record_llm_usage(ctx, db_factory)
+    """Execute post-processing for a completed agent turn.
+
+    LLM token metering is handled by the client-level usage hook
+    (``services.llm.usage``), so nothing is recorded here.
+    """
     if ctx.response:
         await post_process(ctx, db_factory)
 
@@ -333,17 +295,6 @@ async def post_process(ctx: AgentContext, db_factory) -> None:
 
     failures = [result for result in pp_results if not result.get("success")]
     if failures:
-        try:
-            await _persist_pp_failures(ctx, db_factory, failures)
-        except (SQLAlchemyError, ConnectionError, TimeoutError, OSError) as exc:
-            logger.debug("Failed to persist post-processing failure notification: %s", exc)
-
-    try:
-        from services.agent.extensions import ExtensionHook, get_extension_registry
-        await get_extension_registry().run_hooks(
-            ExtensionHook.POST_PROCESS, ctx, response=ctx.response or "",
-        )
-    except (ImportError, RuntimeError, ValueError) as exc:
-        logger.debug("POST_PROCESS extension hook error: %s", exc)
+        logger.warning("Post-processing failures: %s", [f.get("name") for f in failures])
 
     ctx.mark_completed()

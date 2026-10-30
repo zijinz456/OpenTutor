@@ -38,33 +38,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_ITERATIONS = 5
 
-# Re-export helpers under their original private names for backward compatibility
-from services.agent.tools.react_helpers import (  # noqa: E402, F811
-    _find_balanced_bracket,
-    _build_text_mode_tools_prompt,
-    _parse_text_tool_call,
-    _parse_finish,
-    _make_call_signature,
-    _record_tool_call,
-    _messages_to_user_content,
-    _TOOL_RESULT_CONTEXT_CHARS,
-    _TOOL_CALL_START,
-)
-
-__all__ = [
-    "react_stream",
-    "DEFAULT_MAX_ITERATIONS",
-    # Backward-compatible re-exports
-    "_find_balanced_bracket",
-    "_build_text_mode_tools_prompt",
-    "_parse_text_tool_call",
-    "_parse_finish",
-    "_make_call_signature",
-    "_record_tool_call",
-    "_messages_to_user_content",
-    "_TOOL_RESULT_CONTEXT_CHARS",
-    "_TOOL_CALL_START",
-]
+__all__ = ["react_stream", "DEFAULT_MAX_ITERATIONS"]
 
 
 # ── Main ReAct Stream ──

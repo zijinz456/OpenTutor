@@ -19,7 +19,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from services.agent.agenda_signals import AgendaSignal
+from services.agent.signals import AgendaSignal
 
 # Precedence weight by signal type.  Higher = more important.
 _TYPE_PRECEDENCE: dict[str, int] = {

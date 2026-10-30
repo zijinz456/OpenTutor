@@ -18,7 +18,7 @@ from routers.preferences_crud import _normalize_preference_value
 from routers.upload import _validate_url
 from routers.wrong_answers import derive_question, diagnose_from_pair
 from services.agent.agenda_ranking import AgendaDecision
-from services.agent.agenda_signals import AgendaSignal
+from services.agent.signals import AgendaSignal
 from services.auth.dependency import get_current_user
 from services.llm.local_config import get_llm_runtime_config, update_llm_runtime_config
 from services.llm import router as llm_router

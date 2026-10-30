@@ -4,10 +4,32 @@ Combines the CircuitBreakerMixin with the abstract LLM interface.
 All provider clients inherit from LLMClient.
 """
 
+import logging
 from abc import ABC, abstractmethod
-from typing import AsyncIterator
+from typing import AsyncIterator, Callable
 
 from services.llm.circuit_breaker import CircuitBreakerMixin
+
+logger = logging.getLogger(__name__)
+
+# ── Usage hook ──
+# A single process-wide callback invoked every time a client records token
+# usage (after chat / stream_chat / extract / chat_with_tools completes).
+# ``services.llm.usage.install_usage_hook()`` registers the metering writer
+# at app startup; the default is a no-op so unit tests and scripts stay silent.
+
+UsageHook = Callable[[str, str, dict], None]
+_usage_hook: UsageHook | None = None
+
+
+def set_usage_hook(hook: UsageHook | None) -> None:
+    """Register (or clear, with ``None``) the process-wide usage callback."""
+    global _usage_hook
+    _usage_hook = hook
+
+
+def get_usage_hook() -> UsageHook | None:
+    return _usage_hook
 
 
 def normalize_history(history: list[dict] | None, current_message: str | None = None) -> list[dict]:
@@ -70,7 +92,27 @@ class LLMClient(CircuitBreakerMixin, ABC):
 
     def __init__(self):
         super().__init__()
-        self._last_usage: dict = {}
+        self._usage_snapshot: dict = {}
+
+    @property
+    def _last_usage(self) -> dict:
+        return self._usage_snapshot
+
+    @_last_usage.setter
+    def _last_usage(self, usage: dict | None) -> None:
+        """Store the latest usage and notify the process-wide usage hook.
+
+        Every provider assigns ``self._last_usage`` exactly once per completed
+        call, so this setter is the single metering point for all LLM traffic.
+        """
+        self._usage_snapshot = dict(usage) if usage else {}
+        hook = _usage_hook
+        if hook is None or not self._usage_snapshot:
+            return
+        try:
+            hook(self.provider_name, str(getattr(self, "model", "unknown")), dict(self._usage_snapshot))
+        except Exception as exc:  # never let metering break an LLM call
+            logger.debug("LLM usage hook failed: %s", exc)
 
     def get_last_usage(self) -> dict:
         """Get token usage from the last API call (useful after streaming)."""

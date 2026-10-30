@@ -469,9 +469,6 @@ async def test_orchestrate_stream_emits_enrichment_warning_before_done(monkeypat
 async def test_orchestrate_stream_runs_post_process_inline_when_engine_off(monkeypatch):
     """Default local setup: no activity engine, so post-processing must run in-process."""
     class _Agent(_StreamingOnlyAgent):
-        def get_required_inputs(self):
-            return []
-
         async def stream(self, ctx, _db):
             ctx.response += "Inline background work."
             yield "Inline background work."
@@ -531,9 +528,6 @@ async def test_orchestrate_stream_runs_post_process_inline_when_engine_off(monke
 @pytest.mark.asyncio
 async def test_orchestrate_stream_enqueues_durable_post_process_task(monkeypatch):
     class _Agent(_StreamingOnlyAgent):
-        def get_required_inputs(self):
-            return []
-
         async def stream(self, ctx, _db):
             ctx.response += "Durable background work."
             yield "Durable background work."

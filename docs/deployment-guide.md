@@ -303,8 +303,6 @@ All variables are defined in `apps/api/config.py` (via pydantic-settings) and do
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `LLM_MODEL_LARGE` | (empty) | Model for heavyweight agents (teaching, planning) |
-| `LLM_MODEL_SMALL` | (empty) | Model for lightweight agents (preference, scene) |
 | `LLM_MODEL_FAST` | (empty) | 3-tier: greetings, preferences |
 | `LLM_MODEL_STANDARD` | (empty) | 3-tier: teaching, exercises |
 | `LLM_MODEL_FRONTIER` | (empty) | 3-tier: planning, code execution, assessment |
@@ -364,14 +362,10 @@ All variables are defined in `apps/api/config.py` (via pydantic-settings) and do
 | `RATE_LIMIT_COST_BUDGET` | `500` | Cost units per minute per IP (cost_aware mode only) |
 | `TRUST_PROXY_HEADERS` | `false` | Trust `X-Forwarded-For` header. Only enable behind a reverse proxy. |
 
-### Swarm / Parallel Execution
+### Parallel Execution
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `SWARM_ENABLED` | `true` | Enable parallel agent execution |
-| `SWARM_MAX_CONCURRENCY` | `4` | Maximum concurrent agent tasks |
-| `SWARM_TIMEOUT_SECONDS` | `30.0` | Timeout per swarm task |
-| `SWARM_TOKEN_BUDGET` | `50000` | Token budget per swarm round |
 | `PARALLEL_CONTEXT_LOADING` | `true` | Load agent context in parallel |
 | `ACTIVITY_ENGINE_MAX_CONCURRENCY` | `3` | Maximum concurrent activity engine tasks |
 
@@ -594,14 +588,7 @@ LITELLM_MODEL=openai/gpt-4o
 
 OpenTutor's 6 specialist agents can use different models based on task complexity:
 
-**2-tier routing:**
-
-```bash
-LLM_MODEL_LARGE=gpt-4o           # teaching, planning agents
-LLM_MODEL_SMALL=gpt-4o-mini      # preference, scene agents
-```
-
-**3-tier routing (overrides 2-tier when set):**
+**3-tier routing:**
 
 ```bash
 LLM_MODEL_FAST=gpt-4o-mini       # greetings, preferences

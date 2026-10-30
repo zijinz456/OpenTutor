@@ -71,19 +71,6 @@ jobs:
           print("CI/local gate consistency check passed.")
           PY
 
-      - name: Run Offline Regression Benchmark
-        working-directory: apps/api
-        run: |
-          python - <<'PY'
-          import asyncio, json, sys
-          from services.evaluation.benchmark_runner import run_regression_benchmark
-
-          result = asyncio.run(run_regression_benchmark())
-          print(json.dumps(result, indent=2))
-          if not result["passed"]:
-              sys.exit(1)
-          PY
-
       - name: Validate Alembic migrations
         working-directory: apps/api
         env:

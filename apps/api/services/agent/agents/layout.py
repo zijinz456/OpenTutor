@@ -81,7 +81,7 @@ class LayoutAgent(BaseAgent):
 
     name = "layout"
     profile = _LAYOUT_SYSTEM_PROMPT
-    model_preference = "small"  # Layout changes don't need a large model
+    model_preference = "fast"  # Layout changes don't need a frontier model
 
     async def execute(self, ctx: AgentContext, db: AsyncSession) -> AgentContext:
         system_prompt = self.build_system_prompt(ctx)

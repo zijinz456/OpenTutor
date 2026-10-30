@@ -19,7 +19,7 @@ from services.preference.extractor import (
     DIMENSIONS,
     VALUE_NORMALIZATION,
 )
-from services.agent.context_builder import INTENT_BUDGET_OVERRIDES, _estimate_tokens
+from services.agent.context_trimming import INTENT_BUDGET_OVERRIDES, _estimate_tokens
 
 
 # ── AgentContext state transitions ──

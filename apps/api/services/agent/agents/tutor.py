@@ -60,7 +60,7 @@ class TutorAgent(ReActMixin, BaseAgent):
         "- At the end of your response, include a '**Sources:**' footer listing all cited materials.\n"
         "Adapt your explanation style to the student's preferences."
     )
-    model_preference = "large"
+    model_preference = "frontier"
     react_tools = [
         "search_content", "lookup_progress", "get_course_outline",
         "generate_notes", "web_search", "write_file", "update_workspace",
@@ -168,8 +168,8 @@ class TutorAgent(ReActMixin, BaseAgent):
         if socratic_directive:
             parts.append(socratic_directive)
 
-        # ── Math image tutoring ──
-        if ctx.metadata.get("_latex_extracted"):
+        # ── Math image tutoring (LaTeX-OCR results populated by context_builder) ──
+        if ctx.metadata.get("latex_ocr"):
             fragments = _load_strategy_fragments()
             math_fragment = fragments.get("math_image_tutoring", "")
             if math_fragment:
@@ -315,18 +315,6 @@ class TutorAgent(ReActMixin, BaseAgent):
         # Load Socratic engine state
         await self._load_socratic(ctx, db)
 
-        # LaTeX-OCR extraction for math images
-        if ctx.images:
-            try:
-                from services.vision.latex_ocr import try_extract_latex
-                latex_results = try_extract_latex(ctx.images)
-                if latex_results:
-                    latex_block = "\n".join(f"$$${l}$$$" for l in latex_results)
-                    ctx.user_message = f"{ctx.user_message}\n\n[Extracted math formulas from image]\n{latex_block}"
-                    ctx.metadata["_latex_extracted"] = latex_results
-            except (ImportError, OSError, RuntimeError, ValueError) as e:
-                logger.debug("LaTeX-OCR skipped: %s", e)
-
         # Code execution pre-processing
         if _CODE_RE.search(msg):
             await self._pre_execute_code(ctx)
@@ -349,17 +337,6 @@ class TutorAgent(ReActMixin, BaseAgent):
 
         # Load Socratic engine state
         await self._load_socratic(ctx, db)
-
-        if ctx.images:
-            try:
-                from services.vision.latex_ocr import try_extract_latex
-                latex_results = try_extract_latex(ctx.images)
-                if latex_results:
-                    latex_block = "\n".join(f"$$${l}$$$" for l in latex_results)
-                    ctx.user_message = f"{ctx.user_message}\n\n[Extracted math formulas from image]\n{latex_block}"
-                    ctx.metadata["_latex_extracted"] = latex_results
-            except (ImportError, OSError, RuntimeError, ValueError) as e:
-                logger.debug("LaTeX-OCR skipped: %s", e)
 
         if _CODE_RE.search(msg):
             await self._pre_execute_code(ctx)

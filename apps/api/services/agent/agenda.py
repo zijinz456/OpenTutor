@@ -22,7 +22,7 @@ from models.agenda_run import AgendaRun
 from models.agent_task import AgentTask
 from services.activity.engine import resume_task, retry_task, submit_task
 from services.agent.agenda_ranking import AgendaDecision, rank_signals
-from services.agent.agenda_signals import AgendaSignal, collect_signals
+from services.agent.signals import AgendaSignal, collect_signals
 
 logger = logging.getLogger(__name__)
 
@@ -105,9 +105,22 @@ async def run_agenda_tick(
                 run.status = "failed"
                 run.error_message = "queue_decision returned None"
 
-            # --- Notify (removed in Phase 1.1 refactor) ---
+            # --- Notify ---
             if notify and task and decision.action == "submit":
-                logger.debug("Notification skipped (removed): %s", decision.task_title)
+                if await _notification_on_cooldown(db, user_id, course_id):
+                    logger.debug("Agenda notification on cooldown: %s", decision.task_title)
+                else:
+                    from services.scheduler.engine_helpers import _push_notification
+
+                    await _push_notification(
+                        user_id,
+                        decision.task_title or "New study task queued",
+                        decision.task_summary or decision.reason or "",
+                        category="agenda",
+                        course_id=course_id,
+                        dedup_key=f"agenda:{decision.dedup_key}" if decision.dedup_key else None,
+                        data={"task_id": str(task.id), "task_type": decision.task_type},
+                    )
 
     except Exception as exc:
         logger.exception("Agenda tick failed for user=%s course=%s", user_id, course_id)

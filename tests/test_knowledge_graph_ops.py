@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from services.knowledge.graph_ops import _RELATION_MAP, sync_to_knowledge_graph, store_graph_entities
+from services.knowledge.graph_ops import _RELATION_MAP, sync_to_knowledge_graph
 
 
 # ── Pure data tests ──
@@ -99,24 +99,3 @@ async def test_sync_creates_edge_for_matching_nodes():
     result = await sync_to_knowledge_graph(db, course_id, extracted)
     assert result == 1
     assert db.add.called
-
-
-# ── store_graph_entities tests ──
-
-@pytest.mark.asyncio
-async def test_store_empty_extracted():
-    """Returns zeros when no entities or relationships provided."""
-    db = AsyncMock()
-    result = await store_graph_entities(db, uuid.uuid4(), uuid.uuid4(), {})
-    assert result == {"stored_entities": 0, "stored_relationships": 0}
-
-
-@pytest.mark.asyncio
-async def test_store_empty_lists():
-    """Returns zeros for empty entity/relationship lists."""
-    db = AsyncMock()
-    result = await store_graph_entities(
-        db, uuid.uuid4(), uuid.uuid4(),
-        {"entities": [], "relationships": []},
-    )
-    assert result == {"stored_entities": 0, "stored_relationships": 0}

@@ -77,3 +77,115 @@ def test_specificity_gpt4o_mini_before_gpt4o():
     mini_cost = estimate_cost("gpt-4o-mini", input_tokens=1_000_000, output_tokens=0)
     full_cost = estimate_cost("gpt-4o", input_tokens=1_000_000, output_tokens=0)
     assert mini_cost < full_cost
+
+
+# ── Client-level usage hook ──
+
+
+class _HookClient:
+    """Minimal LLMClient subclass exercising the _last_usage setter."""
+
+    def __init__(self):
+        from services.llm.base_client import LLMClient
+
+        class _Impl(LLMClient):
+            provider_name = "openai"
+            model = "gpt-4o-mini"
+
+            async def stream_chat(self, *a, **k):  # pragma: no cover - unused
+                yield ""
+
+            async def chat(self, *a, **k):  # pragma: no cover - unused
+                return "", {}
+
+            async def extract(self, *a, **k):  # pragma: no cover - unused
+                return "", {}
+
+        self.client = _Impl()
+
+
+def test_usage_hook_receives_each_recorded_usage():
+    from services.llm.base_client import set_usage_hook
+
+    seen: list[tuple[str, str, dict]] = []
+    set_usage_hook(lambda p, m, u: seen.append((p, m, u)))
+    try:
+        client = _HookClient().client
+        client._last_usage = {"input_tokens": 7, "output_tokens": 3}
+        client._last_usage = {"input_tokens": 1, "output_tokens": 1}
+        client._last_usage = {}
+    finally:
+        set_usage_hook(None)
+
+    assert seen == [
+        ("openai", "gpt-4o-mini", {"input_tokens": 7, "output_tokens": 3}),
+        ("openai", "gpt-4o-mini", {"input_tokens": 1, "output_tokens": 1}),
+    ]
+    assert client.get_last_usage() == {}
+
+
+def test_usage_hook_errors_never_propagate():
+    from services.llm.base_client import set_usage_hook
+
+    def _boom(*_a):
+        raise RuntimeError("hook failure")
+
+    set_usage_hook(_boom)
+    try:
+        client = _HookClient().client
+        client._last_usage = {"input_tokens": 2, "output_tokens": 2}
+    finally:
+        set_usage_hook(None)
+
+    assert client.get_last_usage() == {"input_tokens": 2, "output_tokens": 2}
+
+
+@pytest.mark.asyncio
+async def test_on_usage_writes_event_with_attribution(monkeypatch):
+    import asyncio
+    import uuid
+
+    from services.llm import usage as usage_module
+
+    recorded: list[dict] = []
+
+    async def _fake_record_usage(_db, **kwargs):
+        recorded.append(kwargs)
+
+    class _Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return False
+
+    monkeypatch.setattr(usage_module, "record_usage", _fake_record_usage)
+    monkeypatch.setattr("database.async_session", lambda: _Session())
+
+    user_id = uuid.uuid4()
+    course_id = uuid.uuid4()
+    with usage_module.usage_attribution(user_id=user_id, course_id=course_id, scene="study_session"):
+        usage_module.update_usage_attribution(agent_name="tutor", metadata={"intent": "learn"})
+        usage_module.on_usage("openai", "gpt-4o-mini", {"input_tokens": 10, "output_tokens": 5})
+        # Local models are free and skipped
+        usage_module.on_usage("ollama", "llama3.2:3b", {"input_tokens": 10, "output_tokens": 5})
+
+    # Outside of attribution nothing is recorded
+    usage_module.on_usage("openai", "gpt-4o-mini", {"input_tokens": 10, "output_tokens": 5})
+
+    from services.agent.background_runtime import wait_for_background_tasks
+
+    await wait_for_background_tasks()
+    await asyncio.sleep(0)
+
+    assert len(recorded) == 1
+    event = recorded[0]
+    assert event["user_id"] == user_id
+    assert event["course_id"] == course_id
+    assert event["agent_name"] == "tutor"
+    assert event["scene"] == "study_session"
+    assert event["model_provider"] == "openai"
+    assert event["model_name"] == "gpt-4o-mini"
+    assert event["input_tokens"] == 10
+    assert event["output_tokens"] == 5
+    assert event["metadata"] == {"intent": "learn"}

@@ -23,7 +23,7 @@ from services.agent.agenda import (
     resolve_next_action,
 )
 from services.agent.agenda_ranking import AgendaDecision
-from services.agent.agenda_signals import AgendaSignal
+from services.agent.signals import AgendaSignal
 
 
 # ── resolve_next_action ──

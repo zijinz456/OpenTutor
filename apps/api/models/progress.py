@@ -49,7 +49,6 @@ class LearningProgress(Base):
 
     # Spaced repetition — FSRS-4.5 fields
     next_review_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    ease_factor: Mapped[float] = mapped_column(Float, default=2.5)  # legacy SM-2 compat
     interval_days: Mapped[int] = mapped_column(Integer, default=0)
     fsrs_difficulty: Mapped[float] = mapped_column(Float, default=5.0)  # 1-10
     fsrs_stability: Mapped[float] = mapped_column(Float, default=0.0)  # days until 90% recall
@@ -88,8 +87,6 @@ class LearningTemplate(Base):
     # v3: Scene binding
     scene_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     # Scene this template maps to (e.g. "exam_prep", "study_session")
-    tab_preset: Mapped[Optional[dict]] = mapped_column(CompatJSONB, nullable=True)
-    # Tab layout for this template [{"type": "notes", "position": 0}, ...]
     workflow: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     # AI workflow identifier
 

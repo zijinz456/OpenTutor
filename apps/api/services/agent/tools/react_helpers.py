@@ -191,15 +191,3 @@ def messages_to_user_content(messages: list[dict]) -> str:
                 parts.append(f"[Tool result]: {content}")
 
     return "\n\n".join(parts)
-
-
-# Backward-compatible aliases (underscore-prefixed names used in react_loop.py)
-_find_balanced_bracket = find_balanced_bracket
-_build_text_mode_tools_prompt = build_text_mode_tools_prompt
-_parse_text_tool_call = parse_text_tool_call
-_parse_finish = parse_finish
-_make_call_signature = make_call_signature
-_record_tool_call = record_tool_call
-_messages_to_user_content = messages_to_user_content
-_TOOL_RESULT_CONTEXT_CHARS = TOOL_RESULT_CONTEXT_CHARS
-_TOOL_CALL_START = TOOL_CALL_START

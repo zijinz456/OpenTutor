@@ -128,7 +128,7 @@ def test_orchestrator_runs_post_process_inline_by_default():
 
     from services.agent import orchestrator
 
-    src = inspect.getsource(orchestrator.orchestrate_stream)
+    src = inspect.getsource(orchestrator._orchestrate_stream)
     assert "settings.app_run_activity_engine" in src
     assert "run_post_process_bundle(bg_ctx, db_factory)" in src
 

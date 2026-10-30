@@ -77,7 +77,6 @@ export interface HealthStatus {
   code_sandbox_backend: string;
   code_sandbox_runtime: string;
   code_sandbox_runtime_available: boolean;
-  features?: Record<string, boolean>;
   local_beta_ready?: boolean;
   local_beta_blockers?: string[];
   local_beta_warnings?: string[];

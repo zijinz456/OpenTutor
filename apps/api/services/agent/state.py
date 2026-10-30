@@ -11,7 +11,7 @@ import time
 import logging
 from enum import Enum
 from dataclasses import dataclass, field
-from typing import Any, Callable, Literal
+from typing import Any, Literal
 
 logger = logging.getLogger(__name__)
 
@@ -27,8 +27,6 @@ class TaskPhase(str, Enum):
     VERIFYING = "verifying"       # Self-check (ReflectionAgent)
     STREAMING = "streaming"       # SSE streaming to client
     POST_PROCESSING = "post"      # Signal extraction, memory encoding
-    PARALLEL_DISPATCH = "parallel_dispatch"  # Swarm: fan-out to multiple agents
-    MERGING = "merging"           # Swarm: merging parallel results
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
@@ -54,18 +52,6 @@ class IntentType(str, Enum):
     LAYOUT = "layout"         # UI layout changes
     GENERAL = "general"       # everything else
     ONBOARDING = "onboarding" # learning habit interview (dedicated endpoint)
-
-
-@dataclass
-class InputRequirement:
-    """Declares an input that an agent would like answered before execution.
-
-    Inspired by OpenClaw's SKILL.md 'Inputs' section pattern.
-    """
-    key: str                                        # e.g., "deadline", "difficulty"
-    question: str                                   # Human-readable question
-    options: list[str]                              # Suggested options for the user
-    check: Callable[["AgentContext"], bool]          # Returns True if already satisfied
 
 
 @dataclass
@@ -141,11 +127,6 @@ class AgentContext:
     error: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    # Swarm / parallel execution fields
-    parallel_branches: list[dict] = field(default_factory=list)
-    swarm_mode: bool = False
-    merge_strategy: str = "llm_synthesize"
-
     def transition(self, new_phase: TaskPhase):
         """State transition with history tracking."""
         old_phase = self.phase
@@ -206,8 +187,6 @@ class AgentContext:
             completed_at=self.completed_at,
             error=self.error,
             metadata=copy.copy(self.metadata),
-            swarm_mode=self.swarm_mode,
-            merge_strategy=self.merge_strategy,
         )
         return snap
 
@@ -240,8 +219,6 @@ class AgentContext:
                 k: (v.to_dict() if hasattr(v, "to_dict") else v)
                 for k, v in self.metadata.items()
             },
-            "swarm_mode": self.swarm_mode,
-            "merge_strategy": self.merge_strategy,
         }
 
     @classmethod
@@ -286,8 +263,6 @@ class AgentContext:
             completed_at=payload.get("completed_at"),
             error=payload.get("error"),
             metadata=dict(payload.get("metadata") or {}),
-            swarm_mode=bool(payload.get("swarm_mode")),
-            merge_strategy=str(payload.get("merge_strategy") or "llm_synthesize"),
         )
 
     def to_status_dict(self) -> dict:
@@ -301,16 +276,6 @@ class AgentContext:
             "tokens": self.total_tokens,
             "error": self.error,
         }
-        if self.swarm_mode:
-            status["swarm"] = {
-                "enabled": True,
-                "merge_strategy": self.merge_strategy,
-                "branches": len(self.parallel_branches),
-                "successful": sum(
-                    1 for b in self.parallel_branches if b.get("success")
-                ),
-                "agents": [b.get("agent") for b in self.parallel_branches],
-            }
         return status
 
 

@@ -174,37 +174,14 @@ async def _gather_report_data(
     }
 
 
-async def _save_report(
-    db: AsyncSession,
-    user_id: uuid.UUID,
-    report_type: str,
-    content: str,
-    period_start: datetime,
-    period_end: datetime,
-    course_id: Optional[uuid.UUID] = None,
-    data_snapshot: Optional[dict] = None,
-):
-    """Persist a generated report — Report model removed in Phase 1.3."""
-    logger.debug(
-        "Report generated: type=%s, user=%s (not persisted)",
-        report_type, user_id,
-    )
-    return None
-
-
 async def generate_daily_brief(
     user_id: uuid.UUID,
     db: AsyncSession,
     *,
     course_id: Optional[uuid.UUID] = None,
     days: int = 1,
-    raise_on_persist_failure: bool = False,
 ) -> str:
-    """Generate a personalised daily learning brief.
-
-    Returns markdown-formatted text.  Also persists the report to the
-    ``reports`` table for archival.
-    """
+    """Generate a personalised daily learning brief (markdown text)."""
     from services.llm.router import get_llm_client
 
     data = await _gather_report_data(user_id, db, days=days, course_id=course_id)
@@ -219,23 +196,6 @@ async def generate_daily_brief(
         logger.exception("Daily brief LLM call failed")
         report_text = _format_fallback_report(data, "daily")
 
-    now = datetime.now(timezone.utc)
-    try:
-        await _save_report(
-            db=db,
-            user_id=user_id,
-            report_type="daily_brief",
-            content=report_text,
-            period_start=now - timedelta(days=days),
-            period_end=now,
-            course_id=course_id,
-            data_snapshot=data,
-        )
-    except (OSError, ValueError, RuntimeError) as e:
-        logger.exception("Failed to persist daily brief")
-        if raise_on_persist_failure:
-            raise
-
     return report_text
 
 
@@ -245,13 +205,8 @@ async def generate_weekly_report(
     *,
     course_id: Optional[uuid.UUID] = None,
     days: int = 7,
-    raise_on_persist_failure: bool = False,
 ) -> str:
-    """Generate a personalised weekly learning summary.
-
-    Returns markdown-formatted text.  Also persists the report to the
-    ``reports`` table for archival.
-    """
+    """Generate a personalised weekly learning summary (markdown text)."""
     from services.llm.router import get_llm_client
 
     data = await _gather_report_data(user_id, db, days=days, course_id=course_id)
@@ -265,23 +220,6 @@ async def generate_weekly_report(
     except (ConnectionError, TimeoutError, RuntimeError) as e:
         logger.exception("Weekly report LLM call failed")
         report_text = _format_fallback_report(data, "weekly")
-
-    now = datetime.now(timezone.utc)
-    try:
-        await _save_report(
-            db=db,
-            user_id=user_id,
-            report_type="weekly_report",
-            content=report_text,
-            period_start=now - timedelta(days=days),
-            period_end=now,
-            course_id=course_id,
-            data_snapshot=data,
-        )
-    except (OSError, ValueError, RuntimeError) as e:
-        logger.exception("Failed to persist weekly report")
-        if raise_on_persist_failure:
-            raise
 
     return report_text
 

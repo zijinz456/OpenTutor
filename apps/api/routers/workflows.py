@@ -16,9 +16,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
 from models.content import CourseContentTree
+from models.generated_asset import GeneratedAsset
 from models.ingestion import WrongAnswer
 from models.practice import PracticeProblem
-from models.study_plan import StudyPlan
 from models.user import User
 from services.auth.dependency import get_current_user
 from schemas.study_plan import StudyPlanResponse
@@ -182,15 +182,31 @@ async def list_persisted_study_plans(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Return AI-generated StudyPlan records for the given course."""
+    """Return the most recent saved study plans (generated assets) for the course."""
     await get_course_or_404(db, course_id, user_id=user.id)
     result = await db.execute(
-        select(StudyPlan)
-        .where(StudyPlan.course_id == course_id, StudyPlan.user_id == user.id)
-        .order_by(StudyPlan.created_at.desc())
+        select(GeneratedAsset)
+        .where(
+            GeneratedAsset.course_id == course_id,
+            GeneratedAsset.user_id == user.id,
+            GeneratedAsset.asset_type == "study_plan",
+            GeneratedAsset.is_archived == False,  # noqa: E712
+        )
+        .order_by(GeneratedAsset.created_at.desc())
         .limit(limit)
     )
-    return result.scalars().all()
+    return [
+        StudyPlanResponse(
+            id=asset.id,
+            course_id=asset.course_id,
+            name=asset.title,
+            scene_id=(asset.metadata_ or {}).get("scene_id"),
+            tasks=asset.content,
+            created_at=asset.created_at,
+            updated_at=asset.updated_at,
+        )
+        for asset in result.scalars().all()
+    ]
 
 
 @router.get("/wrong-answer-review", response_model=WrongAnswerReviewResponse)

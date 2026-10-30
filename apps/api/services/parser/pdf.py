@@ -1,4 +1,4 @@
-"""PDF parsing service using Marker → Markdown → content tree.
+"""Markdown → content tree builder (shared by PDF and URL ingestion).
 
 Enhanced with:
 - Code-block-aware heading extraction (PageIndex pattern)
@@ -9,14 +9,11 @@ Enhanced with:
 References:
 - PageIndex: page_index_md.py extract_nodes_from_markdown(), tree_thinning_for_index()
 - Deep-Research: text-splitter.ts recursive separators
-- Marker (VikParuchuri/marker) for PDF → Markdown conversion
 """
 
 import logging
 import re
 import uuid
-import asyncio
-from functools import partial
 
 from models.content import CourseContentTree
 
@@ -34,41 +31,6 @@ def _sanitize_title(title: str) -> str:
     title = title.replace("\n", " ").replace("\r", " ")
     title = re.sub(r"\s{2,}", " ", title).strip()
     return title[:120] if title else "Untitled"
-
-# Marker model singleton — avoids reloading ~1GB models on every call
-_marker_models: dict | None = None
-
-
-def _get_marker_models() -> dict:
-    """Lazy-load and cache Marker models as a module-level singleton."""
-    global _marker_models
-    if _marker_models is None:
-        from marker.models import create_model_dict
-
-        logger.info("Loading Marker models (one-time)...")
-        _marker_models = create_model_dict()
-    return _marker_models
-
-
-def _marker_pdf_to_markdown(file_path: str) -> str:
-    """Convert PDF to Markdown using Marker.
-
-    Marker is CPU/GPU intensive, so we run it in a thread.
-    Models are cached as a singleton to avoid repeated loading.
-    """
-    try:
-        from marker.converters.pdf import PdfConverter
-
-        models = _get_marker_models()
-        converter = PdfConverter(artifact_dict=models)
-        rendered = converter(file_path)
-        return rendered.markdown
-    except ImportError:
-        raise ImportError(
-            "marker-pdf is required for PDF parsing. "
-            "Install with: pip install marker-pdf"
-        )
-
 
 def _count_tokens(text: str) -> int:
     """Count tokens using tiktoken (cl100k_base). Falls back to word-count estimate."""
@@ -368,21 +330,3 @@ def _thin_tree(nodes: list[CourseContentTree]) -> list[CourseContentTree]:
     # Remove merged nodes
     result = [n for i, n in enumerate(nodes) if i not in indices_to_remove]
     return result
-
-
-async def parse_pdf_to_tree(
-    file_path: str,
-    course_id: uuid.UUID,
-    source_file: str,
-) -> list[CourseContentTree]:
-    """Full pipeline: PDF → Marker → Markdown → content tree nodes."""
-    loop = asyncio.get_event_loop()
-
-    # Run Marker in a thread (it's CPU-intensive)
-    markdown = await loop.run_in_executor(
-        None, partial(_marker_pdf_to_markdown, file_path)
-    )
-
-    # Build content tree
-    nodes = _markdown_to_tree(markdown, course_id, source_file)
-    return nodes

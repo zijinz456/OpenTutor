@@ -1,9 +1,6 @@
-"""Tests for services.experiments.framework and services.experiments.metrics."""
+"""Tests for services.experiments.framework."""
 
-import math
 import uuid
-
-import pytest
 
 from services.experiments.framework import (
     Experiment,
@@ -16,12 +13,6 @@ from services.experiments.framework import (
     get_experiment_config,
     _experiments,
     _assignments,
-)
-from services.experiments.metrics import (
-    _empty_metrics,
-    _normal_cdf,
-    two_proportion_z_test,
-    mann_whitney_u,
 )
 
 
@@ -108,69 +99,3 @@ def test_get_user_variant_returns_none_for_non_running():
 def test_get_experiment_config_returns_default():
     result = get_experiment_config(uuid.uuid4(), "nonexistent_experiment", "key", default=42)
     assert result == 42
-
-
-# ── Metrics: _empty_metrics ──
-
-
-def test_empty_metrics_all_zero():
-    m = _empty_metrics()
-    assert m["total_concepts"] == 0
-    assert m["avg_mastery"] == 0.0
-    assert m["accuracy"] == 0.0
-
-
-# ── Metrics: _normal_cdf ──
-
-
-def test_normal_cdf_symmetry():
-    assert abs(_normal_cdf(0) - 0.5) < 1e-10
-    assert abs(_normal_cdf(10) - 1.0) < 1e-6
-    assert abs(_normal_cdf(-10) - 0.0) < 1e-6
-
-
-# ── Metrics: two_proportion_z_test ──
-
-
-def test_z_test_equal_proportions():
-    """Same proportions should yield z=0, not significant."""
-    result = two_proportion_z_test(50, 100, 50, 100)
-    assert result["z_stat"] == 0.0
-    assert result["significant"] is False
-
-
-def test_z_test_very_different_proportions():
-    """Very different proportions should be significant."""
-    result = two_proportion_z_test(90, 100, 10, 100)
-    assert result["significant"] is True
-    assert result["effect_size"] > 0
-
-
-def test_z_test_empty_group():
-    """Empty group should return non-significant."""
-    result = two_proportion_z_test(0, 0, 50, 100)
-    assert result["significant"] is False
-    assert result["p_value"] == 1.0
-
-
-# ── Metrics: mann_whitney_u ──
-
-
-def test_mann_whitney_identical_groups():
-    """Identical groups should not be significant."""
-    result = mann_whitney_u([1.0, 2.0, 3.0], [1.0, 2.0, 3.0])
-    assert result["significant"] is False
-
-
-def test_mann_whitney_very_different_groups():
-    """Clearly separated groups should be significant."""
-    a = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]
-    b = [100.0, 200.0, 300.0, 400.0, 500.0, 600.0, 700.0, 800.0, 900.0, 1000.0]
-    result = mann_whitney_u(a, b)
-    assert result["significant"] is True
-
-
-def test_mann_whitney_empty_group():
-    result = mann_whitney_u([], [1.0, 2.0])
-    assert result["significant"] is False
-    assert result["p_value"] == 1.0

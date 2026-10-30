@@ -65,12 +65,6 @@ class IngestionJob(Base):
     dispatched_to: Mapped[Optional[dict]] = mapped_column(CompatJSONB, nullable=True)
     # e.g. {"content_tree": "uuid", "assignments": "uuid"}
 
-    # User corrections (for learning)
-    user_corrected_category: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
-    user_corrected_course: Mapped[Optional[uuid.UUID]] = mapped_column(
-        CompatUUID, nullable=True
-    )
-
     # Extracted content (intermediate)
     extracted_markdown: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
@@ -99,9 +93,6 @@ class StudySession(Base):
     problems_attempted: Mapped[int] = mapped_column(Integer, default=0)
     problems_correct: Mapped[int] = mapped_column(Integer, default=0)
     notes_viewed: Mapped[int] = mapped_column(Integer, default=0)
-
-    # Preference signals extracted
-    signals_extracted: Mapped[int] = mapped_column(Integer, default=0)
 
     metadata_json: Mapped[Optional[dict]] = mapped_column(CompatJSONB, nullable=True)
 

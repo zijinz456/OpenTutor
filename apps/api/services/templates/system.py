@@ -1,22 +1,24 @@
 """Built-in learning templates.
 
-5 built-in templates (spec Phase 1) + user-created templates.
-Templates define default preferences for specific learning styles.
+5 built-in preference presets, defined as module constants. Templates define
+default preferences for specific learning styles; applying one writes the
+preferences through the preference engine.
 """
 
 import uuid
 import logging
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.progress import LearningTemplate
 from services.preference.engine import save_preference
 
 logger = logging.getLogger(__name__)
 
+# Namespace for deterministic template IDs (stable across restarts/deploys).
+_TEMPLATE_ID_NAMESPACE = uuid.UUID("6f1d8c2e-5b3a-4c7e-9d1f-2a4b6c8e0f13")
+
 # 5 built-in templates (spec requirement)
-BUILTIN_TEMPLATES = [
+BUILTIN_TEMPLATES: list[dict] = [
     {
         "name": "STEM Student",
         "description": (
@@ -149,33 +151,34 @@ BUILTIN_TEMPLATES = [
 ]
 
 
-async def seed_builtin_templates(db: AsyncSession) -> int:
-    """Seed the built-in templates if they don't exist."""
-    created = 0
-    for template_data in BUILTIN_TEMPLATES:
-        result = await db.execute(
-            select(LearningTemplate).where(
-                LearningTemplate.name == template_data["name"],
-                LearningTemplate.is_builtin == True,
-            )
-        )
-        if result.scalar_one_or_none():
-            continue
 
-        template = LearningTemplate(
-            name=template_data["name"],
-            description=template_data["description"],
-            is_builtin=True,
-            target_audience=template_data["target_audience"],
-            tags=template_data["tags"],
-            preferences=template_data["preferences"],
-        )
-        db.add(template)
-        created += 1
 
-    if created:
-        await db.flush()
-    return created
+def _template_id(name: str) -> uuid.UUID:
+    return uuid.uuid5(_TEMPLATE_ID_NAMESPACE, name)
+
+
+def list_templates() -> list[dict]:
+    """List all available (built-in) templates."""
+    return [
+        {
+            "id": str(_template_id(t["name"])),
+            "name": t["name"],
+            "description": t["description"],
+            "is_builtin": True,
+            "target_audience": t["target_audience"],
+            "tags": list(t["tags"]),
+            "preferences": dict(t["preferences"]),
+        }
+        for t in BUILTIN_TEMPLATES
+    ]
+
+
+def get_template(template_id: uuid.UUID) -> dict | None:
+    """Look up a built-in template by its stable ID."""
+    for t in BUILTIN_TEMPLATES:
+        if _template_id(t["name"]) == template_id:
+            return t
+    return None
 
 
 async def apply_template(
@@ -189,16 +192,13 @@ async def apply_template(
     If course_id is given, applies at course level.
     Otherwise applies at global level.
     """
-    result = await db.execute(
-        select(LearningTemplate).where(LearningTemplate.id == template_id)
-    )
-    template = result.scalar_one_or_none()
+    template = get_template(template_id)
     if not template:
         return {"error": "Template not found"}
 
     scope = "course" if course_id else "template"
 
-    for dimension, value in template.preferences.items():
+    for dimension, value in template["preferences"].items():
         await save_preference(
             db,
             user_id=user_id,
@@ -211,30 +211,7 @@ async def apply_template(
         )
 
     return {
-        "template": template.name,
-        "applied_preferences": len(template.preferences),
+        "template": template["name"],
+        "applied_preferences": len(template["preferences"]),
         "scope": scope,
     }
-
-
-async def list_templates(db: AsyncSession) -> list[dict]:
-    """List all available templates."""
-    result = await db.execute(
-        select(LearningTemplate).order_by(
-            LearningTemplate.is_builtin.desc(),
-            LearningTemplate.name,
-        )
-    )
-    templates = result.scalars().all()
-    return [
-        {
-            "id": str(t.id),
-            "name": t.name,
-            "description": t.description,
-            "is_builtin": t.is_builtin,
-            "target_audience": t.target_audience,
-            "tags": t.tags,
-            "preferences": t.preferences,
-        }
-        for t in templates
-    ]

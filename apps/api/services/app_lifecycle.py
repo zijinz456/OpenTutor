@@ -40,15 +40,15 @@ async def _maybe_seed_system_data() -> None:
     if not settings.app_auto_seed_system:
         return
 
+    if not settings.app_auto_seed_demo:
+        return
+
     from database import async_session
-    from services.templates.system import seed_builtin_templates
     from services.templates.demo_course import seed_demo_course
 
     async with async_session() as db:
-        await seed_builtin_templates(db)
-        created = await seed_demo_course(db) if settings.app_auto_seed_demo else False
+        created = await seed_demo_course(db)
         await db.commit()
-    logger.info("Seeded built-in templates")
     if created:
         logger.info("Created demo course for first-time experience")
 
@@ -208,8 +208,15 @@ def _print_auth_warning() -> None:
     )
 
 
+def _install_llm_usage_metering() -> None:
+    from services.llm.usage import install_usage_hook
+
+    install_usage_hook()
+
+
 async def run_startup_hooks() -> None:
     _print_auth_warning()
+    _install_llm_usage_metering()
     await _maybe_create_tables()
     await _maybe_bootstrap_migration_tracking()
     await _maybe_seed_system_data()

@@ -16,27 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.agent.state import AgentContext, IntentType, TaskPhase
 
-# ── Re-exports for backward compatibility ──
-from services.agent.context_trimming import (  # noqa: F401
-    MEMORY_BUDGET,
-    RAG_BUDGET,
-    HISTORY_BUDGET,
-    HISTORY_KEEP_RECENT,
-    INTENT_BUDGET_OVERRIDES,
-    HISTORY_SUMMARIZE_PROMPT,
-    TOPIC_SUMMARY_PROMPT,
-    _estimate_tokens,
-    _apply_context_guard,
-    _trim_context,
-)
-from services.agent.context_sources import (  # noqa: F401
-    INTENT_MEMORY_TYPES,
-    _fetch_latest_by_types,
-    _extract_topic_summary,
-    _auto_recall_memories,
-    _summarize_history,
-    _flush_memories_before_trim,
-)
+from services.agent.context_trimming import _apply_context_guard, _trim_context
+from services.agent.context_sources import _auto_recall_memories
 
 logger = logging.getLogger(__name__)
 
@@ -235,10 +216,6 @@ async def load_context(
             logger.exception("Difficulty recommendation failed: %s", exc)
 
     # Phase 4-6: Run independent enrichment tasks concurrently
-    async def _load_experiment_config() -> None:
-        # Experiment system removed in Phase 1.3
-        pass
-
     async def _load_error_patterns() -> None:
         if ctx.intent != IntentType.LEARN:
             return
@@ -265,7 +242,11 @@ async def load_context(
             logger.exception("Cross-course patterns load failed: %s", exc)
 
     async def _run_latex_ocr() -> None:
-        if not ctx.images:
+        """LaTeX-OCR on attached images (gated by ENABLE_EXPERIMENTAL_VISION).
+
+        This is the single OCR call site; agents reuse ``ctx.metadata["latex_ocr"]``.
+        """
+        if not ctx.images or not settings.enable_experimental_vision:
             return
         try:
             from services.vision.latex_ocr import try_extract_latex
@@ -282,7 +263,6 @@ async def load_context(
             logger.exception("LaTeX-OCR skipped: %s", exc)
 
     await asyncio.gather(
-        _load_experiment_config(),
         _load_error_patterns(),
         _load_cross_course_patterns(),
         _run_latex_ocr(),

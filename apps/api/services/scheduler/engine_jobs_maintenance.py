@@ -5,8 +5,7 @@ Jobs:
 - weekly_prep_job       — weekly study prep (Monday 8:00 AM)
 - scrape_refresh_job    — auto-scrape refresh (every hour)
 - memory_consolidation_job — dedup/decay/categorize (every 6 hours)
-- timing_analysis_job   — no-op stub
-- escalation_check_job  — no-op stub
+- canvas_session_keepalive_job — keep Canvas sessions alive (every 20 minutes)
 """
 
 import asyncio
@@ -247,7 +246,7 @@ async def agenda_tick_job():
                     llm_deliberate,
                     execute_ambient_decision,
                 )
-                from services.agent.agenda_signals import collect_signals
+                from services.agent.signals import collect_signals
 
                 all_signals = await collect_signals(user_id, course_id=None, db=db)
                 state = await gather_learning_state(user_id, all_signals, db)
@@ -459,13 +458,3 @@ async def canvas_session_keepalive_job():
         "Canvas session keep-alive: kept_alive=%d expired=%d skipped=%d",
         kept_alive, expired, skipped,
     )
-
-
-async def timing_analysis_job():
-    """Timing analysis — no-op stub (notification system removed in Phase 1.1)."""
-    logger.debug("Timing analysis job skipped (notification system removed)")
-
-
-async def escalation_check_job():
-    """Escalation check — no-op stub (notification system removed in Phase 1.1)."""
-    logger.debug("Escalation check job skipped (notification system removed)")

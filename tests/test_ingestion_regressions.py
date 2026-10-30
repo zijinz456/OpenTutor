@@ -9,7 +9,6 @@ from services.ingestion.document_loader import _crawl_result_to_extraction
 from services.ingestion.pipeline import detect_mime_type
 from services.ingestion.pipeline import run_ingestion_pipeline
 from services.parser.pdf import _markdown_to_tree
-from services.parser.url import scrape_url_to_tree
 from models.content import CourseContentTree
 
 
@@ -160,13 +159,6 @@ async def test_url_extraction_uses_fallback_when_browser_is_unavailable(unavaila
     assert result.content == "Material"
     assert len(results) == 1
     assert results[0].content == "Material"
-
-
-@pytest.mark.asyncio
-async def test_scrape_url_to_tree_returns_empty_on_extraction_error():
-    with patch("services.ingestion.document_loader.extract_content", side_effect=RuntimeError("x")):
-        nodes = await scrape_url_to_tree("https://example.com", uuid.uuid4())
-    assert nodes == []
 
 
 @pytest.mark.asyncio

@@ -33,6 +33,11 @@ from services.agent.turn_pipeline import (
 from services.agent.marker_parser import MarkerParser
 from services.agent.fatigue import detect_fatigue
 from services.agent.guided_session_handler import handle_guided_session
+from services.llm.usage import (
+    reset_usage_attribution,
+    set_usage_attribution,
+    update_usage_attribution,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -201,6 +206,10 @@ async def prepare_agent_turn(
 
     agent = get_agent(ctx.intent)
     ctx.delegated_agent = agent.name
+    update_usage_attribution(
+        agent_name=agent.name,
+        metadata={"intent": ctx.intent.value if ctx.intent else None},
+    )
     return ctx, agent
 
 
@@ -219,6 +228,39 @@ async def run_agent_turn(
     post_process_inline: bool = False,
 ) -> AgentContext:
     """One-shot orchestration path reused by workflows and non-streaming entry points."""
+    from services.llm.usage import usage_attribution
+
+    with usage_attribution(user_id=user_id, course_id=course_id, scene=scene):
+        return await _run_agent_turn(
+            user_id=user_id,
+            course_id=course_id,
+            message=message,
+            db=db,
+            db_factory=db_factory,
+            conversation_id=conversation_id,
+            session_id=session_id,
+            history=history,
+            active_tab=active_tab,
+            tab_context=tab_context,
+            scene=scene,
+            post_process_inline=post_process_inline,
+        )
+
+
+async def _run_agent_turn(
+    user_id: uuid.UUID,
+    course_id: uuid.UUID,
+    message: str,
+    db: AsyncSession,
+    db_factory,
+    conversation_id: uuid.UUID | None,
+    session_id: uuid.UUID | None,
+    history: list[dict] | None,
+    active_tab: str,
+    tab_context: dict | None,
+    scene: str | None,
+    post_process_inline: bool,
+) -> AgentContext:
     ctx = build_agent_context(
         user_id=user_id,
         course_id=course_id,
@@ -246,29 +288,6 @@ async def run_agent_turn(
     return ctx
 
 
-async def orchestrate_simple(user_id, message: str, channel: str = "api", db=None, course_id=None) -> str:
-    """Non-streaming orchestration for webhook/channel integrations."""
-    from database import async_session
-    try:
-        async with async_session() as session:
-            if course_id is None:
-                from sqlalchemy import select
-                from models.course import Course
-                stmt = select(Course.id).where(Course.user_id == user_id).order_by(Course.updated_at.desc()).limit(1)
-                result = await session.execute(stmt)
-                course_id = result.scalar_one_or_none()
-                if course_id is None:
-                    return "You don't have any courses yet. Create one on the web app first."
-            ctx = await run_agent_turn(
-                user_id=user_id, course_id=course_id, message=message,
-                db=session, db_factory=async_session, post_process_inline=True,
-            )
-            return ctx.response or "I couldn't process that. Please try again."
-    except Exception as e:
-        logger.exception("orchestrate_simple failed (channel=%s): %s", channel, e)
-        return "Sorry, I encountered an error. Please try again later."
-
-
 async def orchestrate_stream(
     user_id: uuid.UUID,
     course_id: uuid.UUID,
@@ -287,6 +306,47 @@ async def orchestrate_stream(
     dismissed_block_types: list[str] | None = None,
 ) -> AsyncIterator[dict]:
     """Main orchestration entry point for streaming responses."""
+    attribution_token = set_usage_attribution(user_id=user_id, course_id=course_id, scene=scene)
+    try:
+        async for event in _orchestrate_stream(
+            user_id=user_id,
+            course_id=course_id,
+            message=message,
+            db=db,
+            db_factory=db_factory,
+            conversation_id=conversation_id,
+            session_id=session_id,
+            history=history,
+            active_tab=active_tab,
+            tab_context=tab_context,
+            scene=scene,
+            images=images,
+            learning_mode=learning_mode,
+            block_types=block_types,
+            dismissed_block_types=dismissed_block_types,
+        ):
+            yield event
+    finally:
+        reset_usage_attribution(attribution_token)
+
+
+async def _orchestrate_stream(
+    user_id: uuid.UUID,
+    course_id: uuid.UUID,
+    message: str,
+    db: AsyncSession,
+    db_factory,
+    conversation_id: uuid.UUID | None,
+    session_id: uuid.UUID | None,
+    history: list[dict] | None,
+    active_tab: str,
+    tab_context: dict | None,
+    scene: str | None,
+    images: list[dict] | None,
+    learning_mode: str | None,
+    block_types: list[str] | None,
+    dismissed_block_types: list[str] | None,
+) -> AsyncIterator[dict]:
     ctx = build_agent_context(
         user_id=user_id,
         course_id=course_id,
@@ -327,21 +387,10 @@ async def orchestrate_stream(
             yield evt
         return
 
-    from services.agent.extensions import get_extension_registry, ExtensionHook
-    ext_registry = get_extension_registry()
-
     yield {"event": "status", "data": json.dumps({"phase": "routing"})}
-
-    await ext_registry.run_hooks(ExtensionHook.PRE_ROUTING, ctx, message=message)
 
     ctx.transition(TaskPhase.ROUTING)
     ctx = await classify_intent(ctx)
-
-    await ext_registry.run_hooks(
-        ExtensionHook.POST_ROUTING, ctx,
-        intent=ctx.intent.value, confidence=ctx.intent_confidence,
-        agent_name=get_agent(ctx.intent).name,
-    )
 
     yield {
         "event": "status",
@@ -396,6 +445,10 @@ async def orchestrate_stream(
 
     agent = get_agent(ctx.intent)
     ctx.delegated_agent = agent.name
+    update_usage_attribution(
+        agent_name=agent.name,
+        metadata={"intent": ctx.intent.value if ctx.intent else None},
+    )
 
     yield {
         "event": "status",
@@ -404,8 +457,6 @@ async def orchestrate_stream(
             "agent": agent.name,
         }),
     }
-
-    await ext_registry.run_hooks(ExtensionHook.PRE_AGENT, ctx, agent_name=agent.name)
 
     parser = MarkerParser()
     _actions_emitted_set: set[int] = set()  # Track by index to prevent duplicates
@@ -452,10 +503,6 @@ async def orchestrate_stream(
             await db.rollback()
 
     finalize_token_usage(ctx, agent)
-    await ext_registry.run_hooks(
-        ExtensionHook.POST_AGENT, ctx,
-        agent_name=agent.name, response=ctx.response or "",
-    )
     streamed_response = ctx.response
     ctx = await apply_verifier(ctx, agent)
     new_warnings = ctx.metadata.get("stream_warnings", [])[emitted_warning_count:]

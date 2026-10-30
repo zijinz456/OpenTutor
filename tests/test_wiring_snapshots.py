@@ -8,7 +8,6 @@ Protects against "code exists but never called" regressions by checking:
 
 from pathlib import Path
 
-from services.experiments.status_matrix import get_integration_status_matrix
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -45,9 +44,3 @@ def test_scheduler_job_snapshot():
         "heartbeat_review",
     ):
         assert f'"{job_id}"' in source
-
-
-def test_experimental_status_matrix_snapshot():
-    matrix = get_integration_status_matrix()
-    assert {"loom", "lector", "notion_export", "cat_pretest", "browser", "vision"} <= set(matrix.keys())
-    assert matrix["notion_export"].status in {"active", "dormant"}

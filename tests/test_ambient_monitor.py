@@ -18,7 +18,7 @@ from services.agent.ambient_monitor import (
     llm_deliberate,
     execute_ambient_decision,
 )
-from services.agent.agenda_signals import AgendaSignal
+from services.agent.signals import AgendaSignal
 
 
 def _make_signal(**kwargs) -> AgendaSignal:
@@ -206,17 +206,27 @@ async def test_execute_silent():
 
 @pytest.mark.asyncio
 async def test_execute_notify():
-    """Notify action should be a no-op (notification system removed)."""
+    """Notify action should store an in-app notification via _push_notification."""
     db = AsyncMock()
+    user_id = uuid.uuid4()
 
-    status = await execute_ambient_decision(
-        uuid.uuid4(),
-        {"action": "notify", "message": "Study now!", "priority": "normal", "target_course_id": None},
-        db,
-    )
+    with patch(
+        "services.scheduler.engine_helpers._push_notification",
+        new_callable=AsyncMock,
+        return_value=True,
+    ) as push:
+        status = await execute_ambient_decision(
+            user_id,
+            {"action": "notify", "message": "Study now!", "priority": "normal", "target_course_id": None},
+            db,
+        )
 
-    # Notification system removed — action should still succeed gracefully
-    assert status in ("notified", "skipped", "notify_skipped")
+    assert status == "notified"
+    push.assert_awaited_once()
+    args, kwargs = push.call_args
+    assert args[0] == user_id
+    assert args[2] == "Study now!"
+    assert kwargs["category"] == "ambient"
 
 
 @pytest.mark.asyncio

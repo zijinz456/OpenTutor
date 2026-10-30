@@ -279,11 +279,11 @@ async def trigger_consolidation(
 
 
 @router.get("/templates", summary="List learning templates", description="Return all available learning templates.")
-async def list_templates(db: AsyncSession = Depends(get_db)):
+async def list_templates():
     """List all available learning templates."""
     from services.templates.system import list_templates
 
-    return await list_templates(db)
+    return list_templates()
 
 
 @router.post("/templates/apply", summary="Apply a learning template", description="Apply a learning template to the user's preferences.")
@@ -298,13 +298,3 @@ async def apply_template(
     result = await apply_template(db, user.id, body.template_id, body.course_id)
     await db.commit()
     return result
-
-
-@router.post("/templates/seed", summary="Seed built-in templates", description="Seed built-in learning templates into the database.")
-async def seed_templates(db: AsyncSession = Depends(get_db)):
-    """Seed built-in learning templates (run once on setup)."""
-    from services.templates.system import seed_builtin_templates
-
-    count = await seed_builtin_templates(db)
-    await db.commit()
-    return {"seeded": count}

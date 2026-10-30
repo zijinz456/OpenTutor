@@ -10,7 +10,6 @@ from services.agent.capabilities import (
     AGENT_CAPABILITIES,
     check_tool_permission,
     get_allowed_tools,
-    check_delegation_escalation,
 )
 from services.agent.tools.base import ToolRegistry, ToolResult
 
@@ -63,48 +62,6 @@ def test_get_allowed_tools_layout_empty():
 
 def test_get_allowed_tools_unknown_returns_none():
     assert get_allowed_tools("nonexistent_agent") is None
-
-
-# ── check_delegation_escalation ──
-
-
-def test_delegation_planner_to_tutor_blocked():
-    """Tutor has run_code which planner lacks → blocked."""
-    allowed, reason = check_delegation_escalation("planner", "tutor")
-    assert allowed is False
-    assert "run_code" in reason
-
-
-def test_delegation_tutor_to_planner_allowed():
-    """Planner is a subset of tutor's capabilities → allowed."""
-    allowed, reason = check_delegation_escalation("tutor", "planner")
-    assert allowed is True
-
-
-def test_delegation_tutor_to_layout_allowed():
-    """Layout has no tools — delegating to less-capable agent is fine."""
-    allowed, reason = check_delegation_escalation("tutor", "layout")
-    assert allowed is True
-
-
-def test_delegation_layout_to_tutor_blocked():
-    """Layout has no tools. Tutor has many → massive escalation."""
-    allowed, reason = check_delegation_escalation("layout", "tutor")
-    assert allowed is False
-
-
-def test_delegation_unknown_agent_allowed():
-    """Unknown source or target → allowed (backward compat)."""
-    allowed, _ = check_delegation_escalation("unknown_agent", "tutor")
-    assert allowed is True
-    allowed, _ = check_delegation_escalation("tutor", "unknown_agent")
-    assert allowed is True
-
-
-def test_delegation_same_agent_allowed():
-    """Self-delegation is always allowed."""
-    allowed, _ = check_delegation_escalation("tutor", "tutor")
-    assert allowed is True
 
 
 # ── ToolRegistry.execute() with agent_name ──
