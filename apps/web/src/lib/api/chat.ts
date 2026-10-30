@@ -169,7 +169,7 @@ type StreamEvent =
   | { type: "tool_status"; status: "running" | "complete"; tool: string; explanation?: string }
   | { type: "tool_progress"; tool: string; message: string; step: number; total: number }
   | { type: "clarify"; clarify: ClarifyOption }
-  | { type: "block_update"; operations: BlockUpdateOp[]; cognitiveState: CognitiveState; explanation: string; interventionIds?: Record<string, string> }
+  | { type: "block_update"; operations: BlockUpdateOp[]; cognitiveState: CognitiveState; explanation: string }
   | { type: "done"; sessionId?: string; agent?: string; intent?: string; tokens?: number; metadata?: ChatMessageMetadata }
   | { type: "warning"; warningType: string; message: string };
 
@@ -339,7 +339,6 @@ export async function* streamChat(
           operations: (data.operations ?? []) as BlockUpdateOp[],
           cognitiveState: (data.cognitive_state ?? { score: 0, level: "low", top_signals: [] }) as CognitiveState,
           explanation: (data.explanation ?? "") as string,
-          interventionIds: (data.intervention_ids ?? undefined) as Record<string, string> | undefined,
         };
       } else if (resolvedEvent === "done") {
         yield {

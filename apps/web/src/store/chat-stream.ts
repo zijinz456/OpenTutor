@@ -26,7 +26,7 @@ export interface StreamEventHandlers {
  * Translates BlockUpdateOps into workspace store batch operations.
  */
 export async function applyBlockDecisions(
-  result: { operations: BlockUpdateOp[]; cognitiveState: CognitiveState; explanation: string; interventionIds?: Record<string, string> },
+  result: { operations: BlockUpdateOp[]; cognitiveState: CognitiveState; explanation: string },
   isCurrent: () => boolean = () => true,
 ): Promise<void> {
   try {
@@ -93,7 +93,7 @@ export async function applyBlockDecisions(
       try {
         const { showAdaptationToast } = await import("@/components/shared/adaptation-toast");
         if (!isCurrent()) return;
-        showAdaptationToast(result.explanation, result.operations, () => ws.undoLayout(), result.interventionIds);
+        showAdaptationToast(result.explanation, result.operations, () => ws.undoLayout());
       } catch (e) {
         console.warn("[BlockDecisions] Toast notification failed:", e);
       }
