@@ -97,7 +97,7 @@ async def _apply_turn_enrichment(ctx: AgentContext, db: AsyncSession) -> AgentCo
             user_id=ctx.user_id,
             course_id=ctx.course_id,
             fatigue_score=fatigue,
-            session_messages=len(ctx.metadata.get("history", [])),
+            session_messages=len(ctx.conversation_history or []),
             user_message=ctx.user_message,
         )
         ctx.metadata["cognitive_load"] = cl
@@ -498,8 +498,15 @@ async def orchestrate_stream(
     bg_ctx = ctx.snapshot_for_postprocess()
 
     if bg_ctx.response or bg_ctx.input_tokens or bg_ctx.output_tokens:
-        try:
-            await enqueue_post_process_task(bg_ctx)
-        except (SQLAlchemyError, ConnectionError, TimeoutError, ValueError, RuntimeError) as exc:
-            logger.exception("Failed to enqueue durable chat post-process task: %s", exc)
-            track_background_task(asyncio.create_task(run_post_process_bundle(bg_ctx, db_factory)))
+        # The durable queue is only drained when the activity engine is running.
+        # In the default local setup it is off, so run post-processing in-process;
+        # otherwise memory/preference/usage updates would silently never happen.
+        from config import settings
+
+        if settings.app_run_activity_engine:
+            try:
+                await enqueue_post_process_task(bg_ctx)
+                return
+            except (SQLAlchemyError, ConnectionError, TimeoutError, ValueError, RuntimeError) as exc:
+                logger.exception("Failed to enqueue durable chat post-process task: %s", exc)
+        track_background_task(asyncio.create_task(run_post_process_bundle(bg_ctx, db_factory)))

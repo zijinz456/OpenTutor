@@ -124,8 +124,8 @@ async def _dispatch_generate_quiz(
 
     content = "\n\n".join(str(item.get("content", ""))[:2000] for item in results)
     title = str(payload.get("title") or payload.get("description") or results[0].get("title") or "Course Content")
-    problems = await extract_questions(content, title, course_id)
-    persisted = problems[:count]
+    outcome = await extract_questions(content, title, course_id)
+    persisted = outcome.problems[:count]
     for problem in persisted:
         db.add(problem)
     await db.commit()

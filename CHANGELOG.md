@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+- Tutor chat now receives the conversation history. Previously every turn was sent to the model as system prompt + current message only, so follow-up questions had no context; the Socratic state machine and cognitive-load session counter also never saw prior turns.
+- Chat post-processing (memory encoding, preference extraction, tutor notes, LLM usage records) now runs in-process when the activity engine is off (the default). It used to be written to a queue nobody drained.
+- Automatic quiz generation after upload, the `generate_quiz` task and the chat quiz tool all crashed on `QuizExtractionOutcome` (treated as a list). Fixed, and the second per-node generator that raced with `auto_prepare` on every upload was removed.
+- Answer grading is no longer an exact string comparison: option labels vs option text, true/false spellings, select-all sets, numbers/percentages, punctuation and width differences are all handled; `fill_blank` questions can carry `accepted_answers`; free-text answers fall back to semantic grading and the rationale is returned (`grading_mode`, `grading_rationale`) and stored on wrong-answer records.
+- Mastery no longer includes a study-time term that nothing ever populated (which capped mastery at 0.7 while "mastered" required 0.8). Answer time from quiz submissions is now accumulated as study time.
+- `/progress/courses/{id}/velocity` and `/forecast` now verify course ownership and filter by the requesting user.
+
 ## [0.1.1-alpha] - 2026-03-12
 
 ### Fixed

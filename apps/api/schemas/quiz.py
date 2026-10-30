@@ -76,6 +76,8 @@ class AnswerResponse(BaseModel):
     is_correct: bool
     correct_answer: str | None
     explanation: str | None
+    grading_mode: str | None = None   # objective | llm | unavailable
+    grading_rationale: str | None = None
     prerequisite_gaps: list[PrerequisiteGap] | None = None
     warnings: list[str] = Field(default_factory=list)
 

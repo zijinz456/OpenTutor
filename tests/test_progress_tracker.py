@@ -313,7 +313,7 @@ async def test_update_quiz_correct_increments_counters():
 
 @pytest.mark.asyncio
 async def test_update_quiz_blends_mastery():
-    """Mastery should blend BKT (0.5) + weighted (0.2) + time (0.3)."""
+    """Mastery should blend BKT (0.7) + weighted (0.3); study time is not evidence."""
     db = AsyncMock()
     user_id = uuid.uuid4()
     course_id = uuid.uuid4()
@@ -335,8 +335,7 @@ async def test_update_quiz_blends_mastery():
         with patch.dict("sys.modules", {"models.mastery_snapshot": MagicMock()}):
             result = await update_quiz_result(db, user_id, course_id, None, is_correct=True)
 
-    # BKT * 0.5 + weighted * 0.2 + time * 0.3 = 0.8*0.5 + 0.6*0.2 + 0.5*0.3
-    expected = bkt * 0.5 + weighted * 0.2 + 0.5 * 0.3
+    expected = bkt * 0.7 + weighted * 0.3
     assert result.mastery_score == pytest.approx(expected, abs=0.01)
 
 
@@ -359,7 +358,7 @@ async def test_update_quiz_sets_mastered_status():
         with patch.dict("sys.modules", {"models.mastery_snapshot": MagicMock()}):
             result = await update_quiz_result(db, user_id, course_id, None, is_correct=True)
 
-    # mastery = 0.9*0.5 + 0.95*0.2 + 1.0*0.3 = 0.45 + 0.19 + 0.3 = 0.94
+    # mastery = 0.9*0.7 + 0.95*0.3 = 0.915
     assert result.mastery_score >= 0.8
     assert result.status == "mastered"
 
@@ -382,8 +381,7 @@ async def test_update_quiz_fallback_when_no_models():
             result = await update_quiz_result(db, user_id, course_id, None, is_correct=True)
 
     # quiz_correct=1, quiz_attempts=1 => ratio = 1.0
-    # mastery = 1.0 * 0.7 + 0.0 * 0.3 = 0.7
-    assert result.mastery_score == pytest.approx(0.7, abs=0.01)
+    assert result.mastery_score == pytest.approx(1.0, abs=0.01)
 
 
 # ── Constants ──

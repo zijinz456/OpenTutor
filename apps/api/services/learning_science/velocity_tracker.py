@@ -29,6 +29,7 @@ async def compute_velocity(
     course_id: uuid.UUID,
     *,
     window_days: int = 7,
+    user_id: uuid.UUID | None = None,
 ) -> dict:
     """Compute learning velocity stats for a course over a time window.
 
@@ -59,7 +60,10 @@ async def compute_velocity(
             func.avg(ConceptMastery.mastery_score),
         )
         .join(KnowledgeNode, ConceptMastery.knowledge_node_id == KnowledgeNode.id)
-        .where(KnowledgeNode.course_id == str(course_id))
+        .where(
+            KnowledgeNode.course_id == str(course_id),
+            *([ConceptMastery.user_id == user_id] if user_id else []),
+        )
     )
     row = result.one()
     total = row[0] or 0
@@ -83,6 +87,7 @@ async def compute_velocity(
         .where(
             MasterySnapshot.course_id == str(course_id),
             MasterySnapshot.recorded_at >= window_start,
+            *([MasterySnapshot.user_id == user_id] if user_id else []),
         )
         .order_by(MasterySnapshot.recorded_at.asc())
     )

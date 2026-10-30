@@ -40,6 +40,7 @@ from services.agent.agents.prompts import (  # noqa: F401 — re-exported
 
 # Import assessment data builder from split module
 from services.agent.agents.assessment import build_assessment_data  # noqa: F401
+from services.llm.base_client import normalize_history
 
 logger = logging.getLogger(__name__)
 
@@ -290,7 +291,7 @@ class TutorAgent(ReActMixin, BaseAgent):
                 classify_response_quality, save_socratic_engine,
             )
             # Get last tutor message from history for classification context
-            history = ctx.metadata.get("history", [])
+            history = ctx.conversation_history or []
             last_tutor = ""
             for h in reversed(history):
                 if h.get("role") == "assistant":
@@ -332,7 +333,7 @@ class TutorAgent(ReActMixin, BaseAgent):
 
         system_prompt = self.build_system_prompt(ctx)
         client = self.get_llm_client(ctx)
-        ctx.response, _ = await client.chat(system_prompt, ctx.user_message, images=ctx.images or None)
+        ctx.response, _ = await client.chat(system_prompt, ctx.user_message, images=ctx.images or None, history=normalize_history(ctx.conversation_history, ctx.user_message))
 
         # Save Socratic state after response
         await self._save_socratic(ctx, db)

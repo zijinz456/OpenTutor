@@ -15,7 +15,7 @@ from typing import Any, AsyncIterator
 import httpx
 import openai
 
-from services.llm.base_client import LLMClient
+from services.llm.base_client import LLMClient, build_chat_messages
 
 logger = logging.getLogger(__name__)
 
@@ -47,12 +47,15 @@ class LiteLLMClient(LLMClient):
                 "Install it with: pip install litellm"
             )
 
-    async def stream_chat(self, system_prompt: str, user_message: str, images: list[dict] | None = None) -> AsyncIterator[str]:
+    async def stream_chat(
+        self,
+        system_prompt: str,
+        user_message: str,
+        images: list[dict] | None = None,
+        history: list[dict] | None = None,
+    ) -> AsyncIterator[str]:
         try:
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message},
-            ]
+            messages = build_chat_messages(system_prompt, user_message, history)
 
             kwargs: dict[str, Any] = {
                 "model": self.model,
@@ -89,12 +92,15 @@ class LiteLLMClient(LLMClient):
             self.mark_unhealthy(str(e))
             raise
 
-    async def chat(self, system_prompt: str, user_message: str, images: list[dict] | None = None) -> tuple[str, dict]:
+    async def chat(
+        self,
+        system_prompt: str,
+        user_message: str,
+        images: list[dict] | None = None,
+        history: list[dict] | None = None,
+    ) -> tuple[str, dict]:
         try:
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message},
-            ]
+            messages = build_chat_messages(system_prompt, user_message, history)
 
             kwargs: dict[str, Any] = {
                 "model": self.model,

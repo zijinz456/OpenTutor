@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.agent.state import AgentContext, TaskPhase
 from services.agent.tools.react_loop import react_stream, DEFAULT_MAX_ITERATIONS
+from services.llm.base_client import normalize_history
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +55,10 @@ class ReActMixin:
             client = self.get_llm_client(ctx)  # type: ignore[attr-defined]
             ctx.transition(TaskPhase.STREAMING)
             full_response = ""
-            async for chunk in client.stream_chat(system_prompt, ctx.user_message, images=ctx.images or None):
+            history = normalize_history(ctx.conversation_history, ctx.user_message)
+            async for chunk in client.stream_chat(
+                system_prompt, ctx.user_message, images=ctx.images or None, history=history,
+            ):
                 full_response += chunk
                 yield chunk
             ctx.response = full_response

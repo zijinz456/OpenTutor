@@ -14,7 +14,13 @@ class MockLLMClient(LLMClient):
         """Rough token estimate for mock tracking."""
         return max(1, len(text) // 4)
 
-    async def stream_chat(self, system_prompt: str, user_message: str, images: list[dict] | None = None) -> AsyncIterator[str]:
+    async def stream_chat(
+        self,
+        system_prompt: str,
+        user_message: str,
+        images: list[dict] | None = None,
+        history: list[dict] | None = None,
+    ) -> AsyncIterator[str]:
         self.mark_healthy()
         img_note = f" (with {len(images)} image(s))" if images else ""
         content = (
@@ -27,7 +33,13 @@ class MockLLMClient(LLMClient):
         }
         yield content
 
-    async def chat(self, system_prompt: str, user_message: str, images: list[dict] | None = None) -> tuple[str, dict]:
+    async def chat(
+        self,
+        system_prompt: str,
+        user_message: str,
+        images: list[dict] | None = None,
+        history: list[dict] | None = None,
+    ) -> tuple[str, dict]:
         self.mark_healthy()
         img_note = f" (with {len(images)} image(s))" if images else ""
         content = (

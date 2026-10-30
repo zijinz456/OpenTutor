@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from services.agent.base import BaseAgent
 from services.agent.react_mixin import ReActMixin
 from services.agent.state import AgentContext, InputRequirement
+from services.llm.base_client import normalize_history
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +91,7 @@ class PlanAgent(ReActMixin, BaseAgent):
     async def execute(self, ctx: AgentContext, db: AsyncSession) -> AgentContext:
         system_prompt = self.build_system_prompt(ctx)
         client = self.get_llm_client(ctx)
-        ctx.response, _ = await client.chat(system_prompt, ctx.user_message, images=ctx.images or None)
+        ctx.response, _ = await client.chat(system_prompt, ctx.user_message, images=ctx.images or None, history=normalize_history(ctx.conversation_history, ctx.user_message))
         return ctx
 
     async def stream(self, ctx: AgentContext, db: AsyncSession) -> AsyncIterator[str]:

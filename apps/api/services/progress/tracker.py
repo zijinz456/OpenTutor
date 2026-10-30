@@ -95,36 +95,38 @@ async def update_quiz_result(
     content_node_id: uuid.UUID | None,
     is_correct: bool,
     error_category: str | None = None,
+    answer_time_ms: int | None = None,
 ) -> LearningProgress:
     """Update progress based on quiz result.
 
-    Uses weighted decay:
-    - Recent results weighted higher (0.95^i decay)
-    - Wrong answers weighted 1.3x vs correct 1.0x (asymmetric)
+    Mastery is computed only from answer evidence (never from time spent):
+    - BKT probabilistic estimate (weight 0.7) blended with
+    - weighted decay over recent results (weight 0.3): recent results count
+      more (0.95^i decay), wrong answers weigh 1.3x vs correct 1.0x
     - Gap type inferred from difficulty layer performance
+
+    Time spent on the answer is accumulated separately as study time.
     """
     progress = await get_or_create_progress(db, user_id, course_id, content_node_id)
     progress.quiz_attempts += 1
     if is_correct:
         progress.quiz_correct += 1
+    if answer_time_ms and answer_time_ms > 0:
+        # Cap a single answer at 30 minutes so an idle tab doesn't inflate study time
+        progress.time_spent_minutes += min(int(round(answer_time_ms / 60000)), 30)
 
     # Mastery from two models: weighted decay + BKT probabilistic
     weighted_mastery = await _compute_weighted_mastery(db, user_id, course_id, content_node_id)
     bkt_mastery = await _compute_bkt_mastery(db, user_id, course_id, content_node_id)
 
     if weighted_mastery is not None and bkt_mastery is not None:
-        progress.mastery_score = (
-            bkt_mastery * 0.5
-            + weighted_mastery * 0.2
-            + min(progress.time_spent_minutes / 60, 1.0) * 0.3
-        )
+        progress.mastery_score = bkt_mastery * 0.7 + weighted_mastery * 0.3
     elif weighted_mastery is not None:
-        progress.mastery_score = weighted_mastery * 0.7 + min(progress.time_spent_minutes / 60, 1.0) * 0.3
+        progress.mastery_score = weighted_mastery
     elif bkt_mastery is not None:
-        progress.mastery_score = bkt_mastery * 0.7 + min(progress.time_spent_minutes / 60, 1.0) * 0.3
+        progress.mastery_score = bkt_mastery
     else:
-        quiz_mastery = progress.quiz_correct / max(progress.quiz_attempts, 1)
-        progress.mastery_score = quiz_mastery * 0.7 + min(progress.time_spent_minutes / 60, 1.0) * 0.3
+        progress.mastery_score = progress.quiz_correct / max(progress.quiz_attempts, 1)
 
     gap_type = await _infer_gap_type(db, user_id, course_id, content_node_id)
     if gap_type:

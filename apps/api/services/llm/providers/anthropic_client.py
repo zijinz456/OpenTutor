@@ -42,14 +42,20 @@ class AnthropicClient(LLMClient):
         )
         self.model = model
 
-    async def stream_chat(self, system_prompt: str, user_message: str, images: list[dict] | None = None) -> AsyncIterator[str]:
+    async def stream_chat(
+        self,
+        system_prompt: str,
+        user_message: str,
+        images: list[dict] | None = None,
+        history: list[dict] | None = None,
+    ) -> AsyncIterator[str]:
         try:
             user_content = _build_anthropic_user_content(user_message, images)
             async with self.client.messages.stream(
                 model=self.model,
                 max_tokens=4096,
                 system=system_prompt,
-                messages=[{"role": "user", "content": user_content}],
+                messages=[*(history or []), {"role": "user", "content": user_content}],
             ) as stream:
                 marked_healthy = False
                 async for text in stream.text_stream:
@@ -70,14 +76,20 @@ class AnthropicClient(LLMClient):
             self.mark_unhealthy(str(e))
             raise
 
-    async def chat(self, system_prompt: str, user_message: str, images: list[dict] | None = None) -> tuple[str, dict]:
+    async def chat(
+        self,
+        system_prompt: str,
+        user_message: str,
+        images: list[dict] | None = None,
+        history: list[dict] | None = None,
+    ) -> tuple[str, dict]:
         try:
             user_content = _build_anthropic_user_content(user_message, images)
             response = await self.client.messages.create(
                 model=self.model,
                 max_tokens=4096,
                 system=system_prompt,
-                messages=[{"role": "user", "content": user_content}],
+                messages=[*(history or []), {"role": "user", "content": user_content}],
             )
             self.mark_healthy()
             usage = {

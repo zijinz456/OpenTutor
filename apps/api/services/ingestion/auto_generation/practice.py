@@ -98,10 +98,10 @@ async def auto_generate_quiz(
             for node in nodes[:3]:
                 if (node.content and len(node.content) > 100
                         and node.content_category not in INFO_CATEGORIES):
-                    node_problems = await extract_questions(
+                    outcome = await extract_questions(
                         node.content, node.title, course_id, node.id,
                     )
-                    problems.extend(node_problems)
+                    problems.extend(outcome.problems)
                     if len(problems) >= question_count:
                         break
 

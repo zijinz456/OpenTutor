@@ -1,3 +1,4 @@
+import asyncio
 import json
 import importlib
 import importlib.util
@@ -465,6 +466,69 @@ async def test_orchestrate_stream_emits_enrichment_warning_before_done(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_orchestrate_stream_runs_post_process_inline_when_engine_off(monkeypatch):
+    """Default local setup: no activity engine, so post-processing must run in-process."""
+    class _Agent(_StreamingOnlyAgent):
+        def get_required_inputs(self):
+            return []
+
+        async def stream(self, ctx, _db):
+            ctx.response += "Inline background work."
+            yield "Inline background work."
+
+    dummy_agent = _Agent(["Inline background work."], usage={"input_tokens": 8, "output_tokens": 5})
+    submitted: dict[str, object] = {}
+    bundled: list[object] = []
+
+    async def fake_classify_intent(ctx):
+        ctx.intent = IntentType.LEARN
+        ctx.intent_confidence = 0.95
+        return ctx
+
+    async def fake_load_context(ctx, _db, db_factory=None):
+        return ctx
+
+    async def fake_apply_verifier(ctx, _agent):
+        return ctx
+
+    async def fake_apply_reflection(ctx):
+        return ctx
+
+    async def fake_submit_task(**kwargs):
+        submitted.update(kwargs)
+        return SimpleNamespace(id=uuid.uuid4(), task_type=kwargs["task_type"], status="queued")
+
+    async def fake_bundle(ctx, _db_factory):
+        bundled.append(ctx)
+
+    monkeypatch.setattr("services.agent.orchestrator.classify_intent", fake_classify_intent)
+    monkeypatch.setattr("services.agent.orchestrator.load_context", fake_load_context)
+    monkeypatch.setattr("services.agent.orchestrator.get_agent", lambda _intent: dummy_agent)
+    monkeypatch.setattr("services.agent.orchestrator.apply_verifier", fake_apply_verifier)
+    monkeypatch.setattr("services.agent.orchestrator.apply_reflection", fake_apply_reflection)
+    monkeypatch.setattr("services.agent.orchestrator.run_post_process_bundle", fake_bundle)
+    monkeypatch.setattr("services.agent.task_planner.is_complex_request", lambda _message: False)
+    _patch_submit_task(monkeypatch, fake_submit_task)
+    monkeypatch.setattr("config.settings.app_run_activity_engine", False)
+
+    events = []
+    async for event in orchestrate_stream(
+        user_id=uuid.uuid4(),
+        course_id=uuid.uuid4(),
+        message="Explain quicksort",
+        db=None,
+        db_factory=None,
+    ):
+        events.append(event)
+    await asyncio.sleep(0)
+
+    assert any(event["event"] == "done" for event in events)
+    assert submitted == {}
+    assert len(bundled) == 1
+    assert bundled[0].response == "Inline background work."
+
+
+@pytest.mark.asyncio
 async def test_orchestrate_stream_enqueues_durable_post_process_task(monkeypatch):
     class _Agent(_StreamingOnlyAgent):
         def get_required_inputs(self):
@@ -502,6 +566,8 @@ async def test_orchestrate_stream_enqueues_durable_post_process_task(monkeypatch
     monkeypatch.setattr("services.agent.orchestrator.apply_reflection", fake_apply_reflection)
     monkeypatch.setattr("services.agent.task_planner.is_complex_request", lambda _message: False)
     _patch_submit_task(monkeypatch, fake_submit_task)
+    # The durable queue is only used when the activity engine drains it.
+    monkeypatch.setattr("config.settings.app_run_activity_engine", True)
 
     events = []
     async for event in orchestrate_stream(

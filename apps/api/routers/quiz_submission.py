@@ -106,6 +106,15 @@ async def _check_effective_review(
         logger.exception("Effective review check failed (best-effort)")
 
 
+def _with_grading_detail(detail: dict | None, grade) -> dict | None:
+    """Attach how the answer was graded (and why) to the wrong-answer record."""
+    if grade.mode == "objective" and not grade.rationale:
+        return detail
+    merged = dict(detail or {})
+    merged["grading"] = grade.to_dict()
+    return merged
+
+
 async def _auto_detect_confusion(course_id: uuid.UUID, user_id: uuid.UUID) -> None:
     """Background task: detect confusion pairs from accumulated wrong answers."""
     try:
@@ -139,21 +148,11 @@ async def submit_answer(
 
     warnings: list[str] = []
 
-    is_correct = False
-    if problem.question_type == "coding":
-        try:
-            from services.diagnosis.coding_grader import grade_coding_answer
-            grading_result = await grade_coding_answer(
-                question=problem.question,
-                reference_answer=problem.correct_answer or "",
-                user_code=body.user_answer,
-            )
-            is_correct = grading_result.get("is_correct", False)
-        except (ValueError, KeyError, TypeError, OSError):
-            logger.exception("Coding grading failed (best-effort)")
-            warnings.append("coding_grading_failed")
-    elif problem.correct_answer:
-        is_correct = body.user_answer.strip().lower() == problem.correct_answer.strip().lower()
+    from services.practice.grading import grade_answer
+
+    grade = await grade_answer(problem, body.user_answer)
+    is_correct = grade.is_correct
+    warnings.extend(grade.warnings)
 
     pr = PracticeResult(
         problem_id=problem.id,
@@ -195,7 +194,7 @@ async def submit_answer(
             correct_answer=problem.correct_answer,
             explanation=problem.explanation,
             error_category=error_category,
-            error_detail=classification if error_category else None,
+            error_detail=_with_grading_detail(classification if error_category else None, grade),
             knowledge_points=problem.knowledge_points,
         )
         db.add(wa)
@@ -206,6 +205,7 @@ async def submit_answer(
             db, user.id, problem.course_id, problem.content_node_id,
             is_correct=is_correct,
             error_category=error_category,
+            answer_time_ms=body.answer_time_ms,
         )
     except (SQLAlchemyError, ValueError, TypeError):
         logger.exception("Progress update failed (best-effort)")
@@ -278,6 +278,8 @@ async def submit_answer(
         is_correct=is_correct,
         correct_answer=problem.correct_answer,
         explanation=problem.explanation,
+        grading_mode=grade.mode,
+        grading_rationale=grade.rationale,
         prerequisite_gaps=prerequisite_gaps,
         warnings=warnings,
     )

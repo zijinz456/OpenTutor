@@ -31,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config import settings
 from services.agent.base import BaseAgent
 from services.agent.state import AgentContext, TaskPhase
+from services.llm.base_client import normalize_history
 
 logger = logging.getLogger(__name__)
 
@@ -393,7 +394,7 @@ class CodeExecutionAgent(BaseAgent):
             )
 
         client = self.get_llm_client(ctx)
-        ctx.response, _ = await client.chat(system_prompt, ctx.user_message)
+        ctx.response, _ = await client.chat(system_prompt, ctx.user_message, history=normalize_history(ctx.conversation_history, ctx.user_message))
         return ctx
 
     async def stream(self, ctx: AgentContext, db: AsyncSession) -> AsyncIterator[str]:
@@ -428,7 +429,7 @@ class CodeExecutionAgent(BaseAgent):
         client = self.get_llm_client(ctx)
         ctx.transition(TaskPhase.STREAMING)
         full_response = ""
-        async for chunk in client.stream_chat(system_prompt, ctx.user_message, images=ctx.images or None):
+        async for chunk in client.stream_chat(system_prompt, ctx.user_message, images=ctx.images or None, history=normalize_history(ctx.conversation_history, ctx.user_message)):
             full_response += chunk
             yield chunk
         ctx.response = full_response

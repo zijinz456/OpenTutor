@@ -52,7 +52,8 @@ async def generate_quiz_tool(parameters: dict[str, Any], ctx: Any, db: AsyncSess
 
         from services.parser.quiz import extract_questions
 
-        problems = await extract_questions(content, title, ctx.course_id)
+        outcome = await extract_questions(content, title, ctx.course_id)
+        problems = outcome.problems
         if not problems:
             return ToolResult(success=True, output="No questions could be extracted from the content.")
 

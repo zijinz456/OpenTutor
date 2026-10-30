@@ -41,12 +41,13 @@ EXTRACTION_PROMPT = """You are an expert educator creating practice questions fr
 
 Given the content below, extract or generate practice questions. Follow these rules:
 
-1. Generate a mix of question types: mc (multiple choice), tf (true/false), short_answer, fill_blank, and coding (for programming/technical content)
+1. Prefer question types that can be graded without judgement: mc (multiple choice), tf (true/false), select_all, and fill_blank with a single unambiguous answer (a term, a number, a name). Use coding only for programming/technical content. Avoid short_answer unless the content cannot be tested any other way.
 2. Each question should test understanding, not just recall
 3. For multiple choice, always provide exactly 4 options (A, B, C, D)
 4. Include the correct answer and a brief explanation
-5. Generate 3-8 questions depending on content length and complexity
-6. For EACH question, provide structured learning metadata:
+5. For fill_blank, also provide "accepted_answers" inside problem_metadata: other correct spellings, abbreviations or equivalent forms (empty list if none)
+6. Generate 3-8 questions depending on content length and complexity
+7. For EACH question, provide structured learning metadata:
    - difficulty_layer: 1 basic understanding, 2 standard application, 3 advanced/tricky transfer
    - core_concept: the main concept being tested
    - bloom_level: remember | understand | apply | analyze | evaluate | create
@@ -91,22 +92,6 @@ Output ONLY a valid JSON array with this structure:
     }
   },
   {
-    "question_type": "short_answer",
-    "question": "Explain the difference between X and Y.",
-    "options": null,
-    "correct_answer": "X differs from Y in that...",
-    "explanation": "The key distinction is...",
-    "difficulty_layer": 2,
-    "problem_metadata": {
-      "core_concept": "difference between X and Y",
-      "bloom_level": "analyze",
-      "potential_traps": ["mixing the definitions"],
-      "layer_justification": "Requires comparison rather than recall",
-      "skill_focus": "comparison",
-      "source_section": "Section title"
-    }
-  },
-  {
     "question_type": "fill_blank",
     "question": "The _____ algorithm is used for finding shortest paths.",
     "options": null,
@@ -114,6 +99,7 @@ Output ONLY a valid JSON array with this structure:
     "explanation": "Dijkstra's algorithm...",
     "difficulty_layer": 1,
     "problem_metadata": {
+      "accepted_answers": ["Dijkstra", "Dijkstra's algorithm"],
       "core_concept": "shortest path algorithms",
       "bloom_level": "remember",
       "potential_traps": [],

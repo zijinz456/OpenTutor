@@ -418,9 +418,11 @@ async def get_learning_velocity(
     db: AsyncSession = Depends(get_db),
 ):
     """Get learning velocity stats for a course."""
+    from services.course_access import get_course_or_404
     from services.learning_science.velocity_tracker import compute_velocity
 
-    return await compute_velocity(db, course_id, window_days=window_days)
+    await get_course_or_404(db, course_id, user_id=user.id)
+    return await compute_velocity(db, course_id, window_days=window_days, user_id=user.id)
 
 
 @router.get("/courses/{course_id}/forecast", summary="Get completion forecast", description="Forecast course completion date based on current learning velocity.")
@@ -430,9 +432,11 @@ async def get_completion_forecast(
     db: AsyncSession = Depends(get_db),
 ):
     """Forecast course completion date based on learning velocity."""
+    from services.course_access import get_course_or_404
     from services.learning_science.completion_forecaster import forecast_completion
 
-    return await forecast_completion(db, course_id)
+    await get_course_or_404(db, course_id, user_id=user.id)
+    return await forecast_completion(db, course_id, user_id=user.id)
 
 
 @router.get("/transfer-opportunities", summary="Get transfer opportunities", description="Detect cross-course transfer learning opportunities.")

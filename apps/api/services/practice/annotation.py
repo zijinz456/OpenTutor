@@ -329,6 +329,11 @@ def normalize_problem_annotation(
         "source_section": _normalize_source_section(metadata.get("source_section"), title),
         "question_type": question_type,
     }
+    accepted = metadata.get("accepted_answers")
+    if isinstance(accepted, list):
+        accepted_clean = [str(item).strip() for item in accepted if str(item).strip()]
+        if accepted_clean:
+            normalized_metadata["accepted_answers"] = accepted_clean[:8]
     if source:
         normalized_metadata["source_kind"] = source
     if extra_metadata:

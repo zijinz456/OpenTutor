@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.agent.state import AgentContext, TaskPhase
 from services.agent.tools.base import ToolRegistry, get_tool_registry
+from services.llm.base_client import normalize_history
 from services.agent.tools.react_helpers import (
     TOOL_RESULT_CONTEXT_CHARS,
     build_text_mode_tools_prompt,
@@ -92,11 +93,14 @@ async def react_stream(
     """
     registry = get_tool_registry()
     tools = registry.get_tools(tool_names)
+    history = normalize_history(ctx.conversation_history, user_message)
 
     if not tools:
         # No tools available -- direct answer (no ReAct)
         full = ""
-        async for chunk in client.stream_chat(system_prompt, user_message, images=ctx.images or None):
+        async for chunk in client.stream_chat(
+            system_prompt, user_message, images=ctx.images or None, history=history,
+        ):
             full += chunk
             yield {"type": "answer", "content": chunk}
         ctx.response = full
@@ -108,13 +112,13 @@ async def react_stream(
     if use_function_calling:
         async for event in _react_function_calling(
             client, system_prompt, user_message, ctx, db,
-            tools, registry, max_iterations,
+            tools, registry, max_iterations, history,
         ):
             yield event
     else:
         async for event in _react_text_parsing(
             client, system_prompt, user_message, ctx, db,
-            tools, registry, max_iterations,
+            tools, registry, max_iterations, history,
         ):
             yield event
 
@@ -131,6 +135,7 @@ async def _react_function_calling(
     tools: list,
     registry: ToolRegistry,
     max_iterations: int,
+    history: list[dict] | None = None,
 ) -> AsyncIterator[dict]:
     """ReAct loop using native LLM function calling."""
     tool_schemas = [t.to_openai_schema() for t in tools]
@@ -143,6 +148,7 @@ async def _react_function_calling(
 
     messages = [
         {"role": "system", "content": system_prompt},
+        *(history or []),
         {"role": "user", "content": user_content},
     ]
     call_history: set[str] = set()  # Loop detection (O(1) lookup)
@@ -260,12 +266,15 @@ async def _react_function_calling(
         yield {"type": "answer_done"}
         return
 
-    # Generate final answer after tool use (stream it)
+    # Generate final answer after tool use (stream it). Prior turns go through
+    # `history`; only this turn's tool exchange is flattened into the user content.
     full_answer = ""
+    this_turn = [messages[0]] + messages[1 + len(history or []):]
     async for chunk in client.stream_chat(
         system_prompt,
-        messages_to_user_content(messages),
+        messages_to_user_content(this_turn),
         images=ctx.images or None,
+        history=history,
     ):
         full_answer += chunk
         yield {"type": "answer", "content": chunk}
@@ -286,6 +295,7 @@ async def _react_text_parsing(
     tools: list,
     registry: ToolRegistry,
     max_iterations: int,
+    history: list[dict] | None = None,
 ) -> AsyncIterator[dict]:
     """ReAct loop using text-based tool_name[input] parsing (HelloAgents pattern)."""
     enhanced_prompt = system_prompt + build_text_mode_tools_prompt(tools, max_iterations)
@@ -303,7 +313,9 @@ async def _react_text_parsing(
         full_text = ""
         combined_user = "\n\n".join(conversation_parts)
         iter_images = (ctx.images or None) if iteration == 0 else None
-        async for chunk in client.stream_chat(enhanced_prompt, combined_user, images=iter_images):
+        async for chunk in client.stream_chat(
+            enhanced_prompt, combined_user, images=iter_images, history=history,
+        ):
             full_text += chunk
 
         # Check for Finish[answer]
@@ -370,7 +382,9 @@ async def _react_text_parsing(
     )
     full_text = ""
     combined_user = "\n\n".join(conversation_parts)
-    async for chunk in client.stream_chat(enhanced_prompt, combined_user, images=ctx.images or None):
+    async for chunk in client.stream_chat(
+        enhanced_prompt, combined_user, images=ctx.images or None, history=history,
+    ):
         full_text += chunk
 
     # Try to extract Finish[...] from forced answer

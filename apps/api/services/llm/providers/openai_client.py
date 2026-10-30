@@ -7,7 +7,7 @@ from typing import Any, AsyncIterator
 import httpx
 import openai
 
-from services.llm.base_client import LLMClient
+from services.llm.base_client import LLMClient, build_chat_messages
 
 logger = logging.getLogger(__name__)
 
@@ -81,15 +81,18 @@ class OpenAIClient(LLMClient):
             self.mark_unhealthy(f"probe_error: {e}")
             return False
 
-    async def stream_chat(self, system_prompt: str, user_message: str, images: list[dict] | None = None) -> AsyncIterator[str]:
+    async def stream_chat(
+        self,
+        system_prompt: str,
+        user_message: str,
+        images: list[dict] | None = None,
+        history: list[dict] | None = None,
+    ) -> AsyncIterator[str]:
         try:
             user_content = _build_openai_user_content(user_message, images)
             create_kwargs: dict[str, Any] = {
                 "model": self.model,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_content},
-                ],
+                "messages": build_chat_messages(system_prompt, user_content, history),
                 "stream": True,
             }
             if self._supports_stream_options:
@@ -114,15 +117,18 @@ class OpenAIClient(LLMClient):
             self.mark_unhealthy(str(e))
             raise
 
-    async def chat(self, system_prompt: str, user_message: str, images: list[dict] | None = None) -> tuple[str, dict]:
+    async def chat(
+        self,
+        system_prompt: str,
+        user_message: str,
+        images: list[dict] | None = None,
+        history: list[dict] | None = None,
+    ) -> tuple[str, dict]:
         try:
             user_content = _build_openai_user_content(user_message, images)
             response = await self.client.chat.completions.create(
                 model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_content},
-                ],
+                messages=build_chat_messages(system_prompt, user_content, history),
             )
             self.mark_healthy()
             usage = {
