@@ -44,6 +44,31 @@ class BKTState:
     observations: int = 0
 
 
+def guess_probability(question_type: str | None) -> float:
+    """P(G) for a question type: how likely a correct answer is without knowing."""
+    if not question_type:
+        return _DEFAULT_P_G
+    qt = question_type.lower()
+    if qt in ("tf", "true_false"):
+        return 0.50
+    if qt in ("mc", "multiple_choice", "select_all"):
+        return 0.25
+    if qt in ("short_answer", "fill_blank", "free_response"):
+        return 0.05
+    if qt == "matching":
+        return 0.10
+    return _DEFAULT_P_G
+
+
+def params_for_question_type(question_type: str | None) -> BKTParams:
+    """Default BKT parameters with the guess rate set for ``question_type``.
+
+    Used for single-step updates where no answer history is available
+    (e.g. the per-concept ledger in ``services.loom_mastery``).
+    """
+    return BKTParams(p_g=guess_probability(question_type))
+
+
 def estimate_params(
     results: list[bool],
     question_type: str | None = None,
@@ -60,17 +85,7 @@ def estimate_params(
         return BKTParams()
 
     # P(G) — guess probability based on question type
-    p_g = _DEFAULT_P_G
-    if question_type:
-        qt = question_type.lower()
-        if qt in ("tf", "true_false"):
-            p_g = 0.50
-        elif qt in ("mc", "multiple_choice", "select_all"):
-            p_g = 0.25
-        elif qt in ("short_answer", "fill_blank", "free_response"):
-            p_g = 0.05
-        elif qt == "matching":
-            p_g = 0.10
+    p_g = guess_probability(question_type)
 
     # P(L0) — if first attempt is correct, higher prior
     p_l0 = 0.30 if results[0] else 0.05

@@ -6,8 +6,8 @@ from models.content import CourseContentTree
 from models.preference import UserPreference, PreferenceSignal
 from models.practice import PracticeProblem, PracticeResult
 from models.memory import ConversationMemory
-from models.ingestion import IngestionJob, StudySession, Assignment, WrongAnswer
-from models.progress import LearningProgress, LearningTemplate
+from models.ingestion import IngestionJob, Assignment, WrongAnswer
+from models.progress import LearningProgress
 from models.scrape import ScrapeSource, AuthSession
 from models.chat_session import ChatSession
 from models.chat_message import ChatMessageLog
@@ -20,9 +20,7 @@ from models.mastery_snapshot import MasterySnapshot
 from models.integration_credential import IntegrationCredential
 from models.knowledge_graph import KnowledgeNode, KnowledgeEdge, ConceptMastery
 from models.notification import Notification
-from models.cognitive_baseline import CognitiveBaseline
 from models.usage_event import UsageEvent
-from models.intervention_outcome import InterventionOutcome
 
 __all__ = [
     "User",
@@ -34,11 +32,9 @@ __all__ = [
     "PracticeResult",
     "ConversationMemory",
     "IngestionJob",
-    "StudySession",
     "Assignment",
     "WrongAnswer",
     "LearningProgress",
-    "LearningTemplate",
     "ScrapeSource",
     "AuthSession",
     "ChatSession",
@@ -54,7 +50,5 @@ __all__ = [
     "KnowledgeEdge",
     "ConceptMastery",
     "Notification",
-    "CognitiveBaseline",
     "UsageEvent",
-    "InterventionOutcome",
 ]

@@ -7,7 +7,6 @@ Split from context_builder.py. Handles:
 - Pre-compaction memory flush
 """
 
-import asyncio
 import logging
 
 from sqlalchemy.exc import SQLAlchemyError
@@ -178,11 +177,12 @@ async def _auto_recall_memories(
     except (SQLAlchemyError, ConnectionError, TimeoutError, ValueError) as e:
         logger.exception("Auto-recall query search failed: %s", e)
 
-    # 2. Always fetch latest profile + preference memories
+    # 2. Always fetch latest profile memories (preferences come from the
+    #    user_preferences store via ctx.preferences, not from memories)
     try:
         type_results = await _fetch_latest_by_types(
             db, user_id, course_id,
-            memory_types=["profile", "preference"],
+            memory_types=["profile"],
             limit_per_type=2,
         )
         _add_unique(type_results)

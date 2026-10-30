@@ -205,7 +205,9 @@ async def _collect_lector_review(
     db: AsyncSession,
 ) -> list[AgendaSignal]:
     """LECTOR semantic review — concepts needing review based on knowledge graph relationships."""
-    if not course_id:
+    from services.loom_flags import lector_enabled
+
+    if not course_id or not lector_enabled():
         return []
 
     try:
@@ -255,7 +257,9 @@ async def _collect_prerequisite_gaps(
     db: AsyncSession,
 ) -> list[AgendaSignal]:
     """Detect prerequisite gaps via LOOM knowledge graph."""
-    if not course_id:
+    from services.loom_flags import loom_enabled
+
+    if not course_id or not loom_enabled():
         return []
 
     try:

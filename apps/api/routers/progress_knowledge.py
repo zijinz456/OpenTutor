@@ -1,4 +1,4 @@
-"""Progress knowledge endpoints — knowledge graph, LOOM, learning path, review, velocity."""
+"""Progress knowledge endpoints — knowledge graph, misconceptions, review, velocity."""
 
 import logging
 import uuid
@@ -10,7 +10,6 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from config import settings
 from database import get_db
 from libs.exceptions import KnowledgeGraphUnavailableError
 from models.ingestion import WrongAnswer
@@ -18,7 +17,9 @@ from models.progress import LearningProgress
 from models.practice import PracticeProblem
 from models.user import User
 from services.auth.dependency import get_current_user
+from services.course_access import get_course_or_404
 from services.knowledge.graph import build_knowledge_graph
+from services.loom_flags import lector_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -49,9 +50,12 @@ async def get_knowledge_graph(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get knowledge graph for a course (D3-compatible format)."""
-    if not settings.enable_experimental_loom:
-        raise HTTPException(404, "LOOM knowledge graph is experimental. Set ENABLE_EXPERIMENTAL_LOOM=true to enable.")
+    """Get knowledge graph for a course (D3-compatible format).
+
+    Content tree + ledger mastery by default; the LOOM concept graph when
+    ENABLE_EXPERIMENTAL_LOOM is on.
+    """
+    await get_course_or_404(db, course_id, user_id=user.id)
     try:
         return await build_knowledge_graph(db, course_id, user.id)
     except KnowledgeGraphUnavailableError:
@@ -59,24 +63,6 @@ async def get_knowledge_graph(
     except (SQLAlchemyError, KeyError, ValueError, TypeError, RuntimeError) as exc:
         logger.exception("Knowledge graph build failed for course %s user %s", course_id, user.id)
         raise KnowledgeGraphUnavailableError() from exc
-
-
-# ── Learning Path ──
-
-
-@router.get("/courses/{course_id}/learning-path", summary="Get learning path", description="Return prerequisite-respecting study order for unmastered concepts.")
-async def get_learning_path(
-    course_id: uuid.UUID,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Get prerequisite-respecting study order for unmastered concepts (Kahn's algorithm)."""
-    if not settings.enable_experimental_loom:
-        raise HTTPException(404, "LOOM knowledge graph is experimental. Set ENABLE_EXPERIMENTAL_LOOM=true to enable.")
-    from services.loom_graph import generate_learning_path
-
-    path = await generate_learning_path(db, course_id, user.id)
-    return {"course_id": str(course_id), "path": path, "count": len(path)}
 
 
 # ── Misconceptions ──
@@ -262,9 +248,9 @@ async def get_review_session(
     db: AsyncSession = Depends(get_db),
 ):
     """Get LECTOR smart review session — semantically clustered concepts to review."""
-    if not settings.enable_experimental_lector:
+    if not lector_enabled():
         raise HTTPException(404, "LECTOR semantic review is experimental. Set ENABLE_EXPERIMENTAL_LECTOR=true to enable.")
-    from services.lector import get_smart_review_session, ReviewItem
+    from services.lector import get_smart_review_session
 
     items = await get_smart_review_session(db, user.id, course_id, max_items=max_items)
     return {
@@ -284,7 +270,7 @@ def _priority_to_urgency(priority: float) -> str:
     return "scheduled"
 
 
-def _format_review_item(item: "ReviewItem") -> dict:
+def _format_review_item(item) -> dict:
     """Map internal ReviewItem fields to the frontend-expected schema."""
     return {
         "concept_id": item.concept_id,
@@ -320,91 +306,27 @@ async def submit_review_rating(
 
     Uses FSRS review_card() for scheduling (consistent with LOOM mastery updates).
     """
-    if not settings.enable_experimental_lector:
+    if not lector_enabled():
         raise HTTPException(404, "LECTOR semantic review is experimental. Set ENABLE_EXPERIMENTAL_LECTOR=true to enable.")
-    from models.knowledge_graph import ConceptMastery
-    from services.spaced_repetition.fsrs import FSRSCard, review_card as fsrs_review
+    from services.lector import record_review_outcome
 
     RATING_MAP = {"again": 1, "hard": 2, "good": 3, "easy": 4}
     if body.rating not in RATING_MAP:
         raise HTTPException(status_code=400, detail=f"Invalid rating '{body.rating}'. Must be one of: again, hard, good, easy")
 
-    fsrs_rating = RATING_MAP[body.rating]
-    concept_uuid = body.concept_id
-    now = datetime.now(timezone.utc)
-
-    result = await db.execute(
-        select(ConceptMastery).where(
-            ConceptMastery.user_id == user.id,
-            ConceptMastery.knowledge_node_id == concept_uuid,
-        )
-    )
-    mastery = result.scalar_one_or_none()
-
-    if not mastery:
-        mastery = ConceptMastery(
-            user_id=user.id,
-            knowledge_node_id=concept_uuid,
-            mastery_score=0.3,
-            practice_count=0,
-            correct_count=0,
-            wrong_count=0,
-            stability_days=1.0,
-        )
-        db.add(mastery)
-
-    # Build FSRSCard from current mastery state
-    fsrs_card = FSRSCard(
-        difficulty=5.0,
-        stability=mastery.stability_days if mastery.stability_days > 0 else 1.0,
-        reps=mastery.practice_count,
-        lapses=mastery.wrong_count,
-        last_review=mastery.last_practiced_at,
-        state="review" if mastery.practice_count > 0 else "new",
-    )
-    updated_card, _log = fsrs_review(fsrs_card, fsrs_rating, now)
-
-    # Update mastery with FSRS results
-    mastery.stability_days = updated_card.stability
-    mastery.next_review_at = updated_card.due
-    mastery.last_practiced_at = now
-    mastery.practice_count += 1
-
-    if fsrs_rating >= 2:  # hard, good, easy = correct
-        mastery.correct_count += 1
-        gain = 0.1 * (1.0 - mastery.mastery_score) * (fsrs_rating - 1) / 3
-        mastery.mastery_score = min(1.0, mastery.mastery_score + gain)
-    else:  # again = incorrect
-        mastery.wrong_count += 1
-        mastery.mastery_score = max(0.0, mastery.mastery_score - 0.1)
+    mastery = await record_review_outcome(db, user.id, body.concept_id, rating=RATING_MAP[body.rating])
+    if mastery is None:
+        raise HTTPException(status_code=404, detail="Concept not found")
 
     await db.commit()
 
     return {
-        "concept_id": str(concept_uuid),
+        "concept_id": str(body.concept_id),
         "rating": body.rating,
         "new_mastery": round(mastery.mastery_score, 3),
         "new_stability_days": round(mastery.stability_days, 1),
         "next_review_at": mastery.next_review_at.isoformat() if mastery.next_review_at else None,
     }
-
-
-# ── LOOM ──
-
-
-@router.get("/courses/{course_id}/loom", summary="Get LOOM mastery graph", description="Return LOOM concept mastery graph with nodes, edges, and recommendations.")
-async def get_loom_graph(
-    course_id: uuid.UUID,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Get LOOM concept mastery graph with nodes, edges, and recommendations."""
-    if not settings.enable_experimental_loom:
-        raise HTTPException(404, "LOOM knowledge graph is experimental. Set ENABLE_EXPERIMENTAL_LOOM=true to enable.")
-    from services.loom_graph import get_mastery_graph
-
-    graph = await get_mastery_graph(db, user.id, course_id)
-    return {"course_id": str(course_id), **graph}
 
 
 # ── Velocity & Forecast ──
@@ -418,7 +340,6 @@ async def get_learning_velocity(
     db: AsyncSession = Depends(get_db),
 ):
     """Get learning velocity stats for a course."""
-    from services.course_access import get_course_or_404
     from services.learning_science.velocity_tracker import compute_velocity
 
     await get_course_or_404(db, course_id, user_id=user.id)

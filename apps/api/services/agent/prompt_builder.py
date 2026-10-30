@@ -22,10 +22,11 @@ class PromptBuildingMixin:
         parts = [self.profile]
         parts.append(f"\n## User Goal\n{ctx.user_message}")
 
-        # Preference injection
+        # Known preferences: the resolved user_preferences store — the same
+        # store the save_user_preference tool and the implicit extractor write.
         if ctx.preferences:
             pref_lines = [f"- {k}: {v}" for k, v in ctx.preferences.items()]
-            parts.append(f"\n## Preferences\n" + "\n".join(pref_lines))
+            parts.append("\n## Known Preferences\n" + "\n".join(pref_lines))
 
         # RAG context with source metadata for citations
         if ctx.content_docs:
@@ -45,7 +46,6 @@ class PromptBuildingMixin:
         # Memory context -- organized by type for clarity
         if ctx.memories:
             profile_mems: list[str] = []
-            preference_mems: list[str] = []
             history_mems: list[str] = []
             for mem in ctx.memories:
                 mtype = mem.get("memory_type", "")
@@ -54,8 +54,6 @@ class PromptBuildingMixin:
                     continue
                 if mtype == "profile":
                     profile_mems.append(summary)
-                elif mtype == "preference":
-                    preference_mems.append(summary)
                 else:
                     history_mems.append(summary)
 
@@ -67,26 +65,11 @@ class PromptBuildingMixin:
                 parts.append("\n## Learning History")
                 for s in history_mems:
                     parts.append(f"- {s}")
-            if preference_mems:
-                parts.append("\n## Known Preferences")
-                for s in preference_mems:
-                    parts.append(f"- {s}")
 
         # Tutor notes (private evolving observations about the student)
         tutor_notes = ctx.metadata.get("tutor_notes")
         if tutor_notes:
             parts.append(f"\n## Tutor Notes (Your Private Observations)\n{tutor_notes}")
-
-        # Auto-learned teaching strategies (Claudeception pattern)
-        teaching_strategies = ctx.metadata.get("teaching_strategies")
-        if teaching_strategies:
-            strat_lines = ["## Personalized Teaching Strategies (auto-learned)"]
-            for s in teaching_strategies[:5]:
-                stype = s.get("type", "").replace("_", " ").title()
-                desc = s.get("description", "")
-                topic = s.get("topic", "")
-                strat_lines.append(f"- [{stype}] {desc}" + (f" (Topic: {topic})" if topic else ""))
-            parts.append("\n".join(strat_lines))
 
         # Pre-task clarification context (OpenClaw Inputs pattern)
         if ctx.clarify_inputs:
@@ -99,15 +82,27 @@ class PromptBuildingMixin:
         if recent_task_context:
             parts.append(f"\n## Recent Task Context\n{recent_task_context}")
 
-        # Match and inject teaching strategies
+        # Teaching strategies: ONE section — skills/*.md selected by the
+        # message/scene, then strategies auto-learned for this student (DB).
+        strategy_blocks: list[str] = []
         try:
             from services.agent.skills import match_skills
             matched = match_skills(ctx.user_message, scene=ctx.scene, limit=2)
             if matched:
-                skills_text = "\n\n".join(s.content for s in matched)
-                parts.append(f"\n## Teaching Strategies\n{skills_text}")
+                strategy_blocks.append("\n\n".join(s.content for s in matched))
         except (ImportError, FileNotFoundError, ValueError) as e:
             logger.exception("Skills matching skipped: %s", e)
+        teaching_strategies = ctx.metadata.get("teaching_strategies")
+        if teaching_strategies:
+            strat_lines = ["### Learned for this student"]
+            for s in teaching_strategies[:5]:
+                stype = s.get("type", "").replace("_", " ").title()
+                desc = s.get("description", "")
+                topic = s.get("topic", "")
+                strat_lines.append(f"- [{stype}] {desc}" + (f" (Topic: {topic})" if topic else ""))
+            strategy_blocks.append("\n".join(strat_lines))
+        if strategy_blocks:
+            parts.append("\n## Teaching Strategies\n" + "\n\n".join(strategy_blocks))
 
         # Phase 4: Cross-course concept connections
         cross_patterns = ctx.metadata.get("cross_course_patterns")

@@ -11,6 +11,7 @@ from typing import AsyncIterator
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config import settings
 from services.agent.state import AgentContext, IntentType, TaskPhase
 from services.agent.router import classify_intent
 from services.agent.base import BaseAgent
@@ -92,10 +93,16 @@ async def _apply_turn_enrichment(ctx: AgentContext, db: AsyncSession) -> AgentCo
     fatigue = detect_fatigue(ctx.user_message)
     ctx.metadata["fatigue_score"] = fatigue
 
+    from services.cognitive_load import compute_cognitive_load, neutral_cognitive_load
+
+    if not settings.enable_cognitive_load:
+        # Feature off: prompt builders and block rules see a neutral state
+        ctx.metadata["cognitive_load"] = neutral_cognitive_load()
+        return await _apply_block_decisions(ctx, db)
+
     try:
         if db is None:
             raise ValueError("db session unavailable for cognitive load")
-        from services.cognitive_load import compute_cognitive_load
 
         cl = await compute_cognitive_load(
             db,
@@ -122,9 +129,14 @@ async def _apply_turn_enrichment(ctx: AgentContext, db: AsyncSession) -> AgentCo
                 logger.debug("Failed to persist cognitive load counter")
     except (SQLAlchemyError, ImportError, ConnectionError, TimeoutError, ValueError) as e:
         logger.debug("Cognitive load detection skipped: %s", e)
+        ctx.metadata.setdefault("cognitive_load", neutral_cognitive_load())
         _record_stream_warning(ctx, _ADAPTATION_WARNING)
 
-    # Block Decision Engine — always run so cognitive badge state is updated.
+    return await _apply_block_decisions(ctx, db)
+
+
+async def _apply_block_decisions(ctx: AgentContext, db: AsyncSession) -> AgentContext:
+    """Run the deterministic block-decision engine (always, for badge state)."""
     try:
         from services.block_decision.engine import compute_block_decisions
 
@@ -133,7 +145,10 @@ async def _apply_turn_enrichment(ctx: AgentContext, db: AsyncSession) -> AgentCo
         try:
             from services.agent.signals import collect_signals
 
-            raw_signals = await collect_signals(ctx.user_id, ctx.course_id, db)
+            raw_signals = await collect_signals(
+                ctx.user_id, ctx.course_id, db,
+                cache_key=f"{ctx.session_id}:{ctx.course_id}",
+            )
             agenda_signals = [
                 {
                     "signal_type": s.signal_type,
@@ -548,8 +563,6 @@ async def _orchestrate_stream(
         # The durable queue is only drained when the activity engine is running.
         # In the default local setup it is off, so run post-processing in-process;
         # otherwise memory/preference/usage updates would silently never happen.
-        from config import settings
-
         if settings.app_run_activity_engine:
             try:
                 await enqueue_post_process_task(bg_ctx)

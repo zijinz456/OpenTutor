@@ -116,7 +116,8 @@ def test_active_goal_near_deadline():
     )
     decision = rank_signals([signal])
     assert decision.action == "submit"
-    assert decision.task_type == "exam_prep"
+    assert decision.task_type == "multi_step"
+    assert "exam" in (decision.plan_prompt or "").lower()
 
 
 def test_active_goal_generic():
@@ -129,11 +130,12 @@ def test_active_goal_generic():
     assert decision.task_type == "multi_step"
 
 
-def test_deadline_creates_assignment_analysis():
+def test_deadline_creates_multi_step_plan():
     signal = _make_signal("deadline", detail={"days_until_due": 2})
     decision = rank_signals([signal])
     assert decision.action == "submit"
-    assert decision.task_type == "assignment_analysis"
+    assert decision.task_type == "multi_step"
+    assert decision.plan_prompt
 
 
 def test_forgetting_risk_creates_review_session():
@@ -144,11 +146,43 @@ def test_forgetting_risk_creates_review_session():
     assert decision.input_json.get("session_kind") == "due_review"
 
 
-def test_weak_area_creates_wrong_answer_review():
+def test_weak_area_creates_review_session():
     signal = _make_signal("weak_area", detail={"unmastered_count": 8})
     decision = rank_signals([signal])
     assert decision.action == "submit"
-    assert decision.task_type == "wrong_answer_review"
+    assert decision.task_type == "review_session"
+    assert decision.input_json.get("session_kind") == "wrong_answer_review"
+
+
+def test_every_submit_decision_uses_a_supported_task_type():
+    from services.activity.task_types import SUPPORTED_TASK_TYPES
+    cases = [
+        ("active_goal", {"has_next_action": False, "days_until_target": 3}),
+        ("deadline", {"days_until_due": 2}),
+        ("forgetting_risk", {"overdue_count": 3, "items": []}),
+        ("prerequisite_gap", {"concept": "Limits", "mastery": 0.2}),
+        ("weak_area", {"unmastered_count": 4}),
+        ("content_stale", {"wrong_answer_count": 5}),
+        ("guided_session_ready", {}),
+        ("inactivity", {"days_inactive": 4}),
+    ]
+    for signal_type, detail in cases:
+        decision = rank_signals([_make_signal(signal_type, detail=detail)])
+        if decision.action == "submit":
+            assert decision.task_type in SUPPORTED_TASK_TYPES, signal_type
+
+
+def test_failed_task_of_unsupported_type_is_not_retried():
+    signal = _make_signal("failed_task", urgency=95, detail={"status": "failed", "task_type": "exam_prep"})
+    decision = rank_signals([signal])
+    assert decision.action == "noop"
+
+
+def test_failed_task_of_supported_type_is_retried():
+    signal = _make_signal("failed_task", urgency=95, detail={"status": "failed", "task_type": "multi_step"})
+    decision = rank_signals([signal])
+    assert decision.action == "retry"
+    assert decision.task_type == "multi_step"
 
 
 def test_inactivity_creates_reentry_session():

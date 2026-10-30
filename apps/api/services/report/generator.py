@@ -53,7 +53,8 @@ async def _gather_report_data(
     course_id: Optional[uuid.UUID] = None,
 ) -> dict:
     """Gather learning data for the report period."""
-    from models.ingestion import StudySession, WrongAnswer
+    from models.ingestion import WrongAnswer
+    from services.progress.summary import window_stats
     from models.practice import PracticeProblem, PracticeResult
     from models.progress import LearningProgress
     from models.study_goal import StudyGoal
@@ -61,20 +62,10 @@ async def _gather_report_data(
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(days=days)
 
-    # Study sessions in period
-    session_filters = [
-        StudySession.user_id == user_id,
-        StudySession.started_at >= cutoff,
-    ]
-    if course_id:
-        session_filters.append(StudySession.course_id == course_id)
-    sessions_result = await db.execute(
-        select(func.count(StudySession.id), func.sum(StudySession.duration_minutes))
-        .where(*session_filters)
-    )
-    session_row = sessions_result.one()
-    session_count = session_row[0] or 0
-    total_minutes = session_row[1] or 0
+    # Study activity in period (from the attempt ledger): "sessions" = active days
+    activity = await window_stats(db, user_id, cutoff, now, course_id=course_id)
+    session_count = activity["active_days"]
+    total_minutes = activity["study_minutes"]
 
     # Practice results (is_correct is boolean; cast to float for avg)
     practice_filters = [

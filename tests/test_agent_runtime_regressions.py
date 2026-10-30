@@ -251,6 +251,8 @@ def test_build_provenance_carries_evidence_summary_fields():
 
 @pytest.mark.asyncio
 async def test_run_agent_turn_records_verifier_and_repaired_response(monkeypatch):
+    from config import settings
+    monkeypatch.setattr(settings, "enable_answer_verification", True)
     repairing_agent = _RepairingAgent()
 
     async def fake_prepare_agent_turn(ctx, _db, **_kwargs):
@@ -270,6 +272,30 @@ async def test_run_agent_turn_records_verifier_and_repaired_response(monkeypatch
 
     assert ctx.metadata["verifier"]["status"] == "repaired"
     assert "couldn't find this in the course materials" in ctx.response.lower()
+
+
+@pytest.mark.asyncio
+async def test_run_agent_turn_skips_verifier_when_flag_off(monkeypatch):
+    from config import settings
+    monkeypatch.setattr(settings, "enable_answer_verification", False)
+    repairing_agent = _RepairingAgent()
+
+    async def fake_prepare_agent_turn(ctx, _db, **_kwargs):
+        ctx.intent = IntentType.LEARN
+        ctx.content_docs = []
+        return ctx, repairing_agent
+
+    monkeypatch.setattr("services.agent.orchestrator.prepare_agent_turn", fake_prepare_agent_turn)
+    verify = AsyncMock(side_effect=AssertionError("verifier must not run"))
+    monkeypatch.setattr("services.agent.verifier.verify_and_repair", verify)
+
+    ctx = await run_agent_turn(
+        user_id=uuid.uuid4(), course_id=uuid.uuid4(), message="Explain radix sort",
+        db=None, db_factory=None,
+    )
+
+    verify.assert_not_awaited()
+    assert "verifier" not in ctx.metadata
 
 
 @pytest.mark.asyncio
@@ -372,6 +398,48 @@ async def test_prepare_agent_turn_and_orchestrate_stream_share_enrichment(monkey
         pass
 
     assert calls == ["enrichment", "enrichment"]
+
+
+@pytest.mark.asyncio
+async def test_turn_enrichment_skips_cognitive_load_when_flag_off(monkeypatch):
+    from services.agent import orchestrator as orch
+
+    compute = AsyncMock(side_effect=AssertionError("compute_cognitive_load must not run"))
+    monkeypatch.setattr("services.cognitive_load.compute_cognitive_load", compute)
+    monkeypatch.setattr(orch.settings, "enable_cognitive_load", False)
+
+    async def fake_block_decisions(ctx, _db):
+        return ctx
+
+    monkeypatch.setattr(orch, "_apply_block_decisions", fake_block_decisions)
+
+    ctx = AgentContext(user_id=uuid.uuid4(), course_id=uuid.uuid4(), user_message="help me")
+    ctx = await orch._apply_turn_enrichment(ctx, None)
+
+    compute.assert_not_awaited()
+    assert ctx.metadata["cognitive_load"]["level"] == "low"
+    assert ctx.metadata["cognitive_load"]["score"] == 0.0
+    assert ctx.metadata["cognitive_load"]["enabled"] is False
+
+
+@pytest.mark.asyncio
+async def test_turn_enrichment_runs_cognitive_load_when_flag_on(monkeypatch):
+    from services.agent import orchestrator as orch
+
+    compute = AsyncMock(return_value={"score": 0.7, "level": "high", "guidance": "", "signals": {}, "consecutive_high": 0})
+    monkeypatch.setattr("services.cognitive_load.compute_cognitive_load", compute)
+    monkeypatch.setattr(orch.settings, "enable_cognitive_load", True)
+
+    async def fake_block_decisions(ctx, _db):
+        return ctx
+
+    monkeypatch.setattr(orch, "_apply_block_decisions", fake_block_decisions)
+
+    ctx = AgentContext(user_id=uuid.uuid4(), course_id=uuid.uuid4(), user_message="help me")
+    ctx = await orch._apply_turn_enrichment(ctx, object())
+
+    compute.assert_awaited_once()
+    assert ctx.metadata["cognitive_load"]["level"] == "high"
 
 
 @pytest.mark.asyncio

@@ -396,7 +396,7 @@ async def prepare_generated_questions(
     prepared = _PreparedQuestionBatch()
     seen_questions: set[str] = set()
     for question in questions:
-        validation = validate_question_payload(question, title=title, source="generated")
+        validation = validate_question_payload(question, title=title, source="ai_generated")
         normalized = validation.question
         if validation.errors or normalized is None:
             prepared.discarded_count += 1

@@ -286,49 +286,7 @@ async def wrong_answer_stats(
     db: AsyncSession = Depends(get_db),
 ):
     """Get wrong answer statistics for a course."""
+    from services.progress.summary import wrong_answer_stats
+
     await get_course_or_404(db, course_id, user_id=user.id)
-    total_result = await db.execute(
-        select(func.count(WrongAnswer.id)).where(
-            WrongAnswer.course_id == course_id,
-            WrongAnswer.user_id == user.id,
-        )
-    )
-    total = total_result.scalar() or 0
-
-    mastered_result = await db.execute(
-        select(func.count(WrongAnswer.id)).where(
-            WrongAnswer.course_id == course_id,
-            WrongAnswer.user_id == user.id,
-            WrongAnswer.mastered == True,
-        )
-    )
-    mastered = mastered_result.scalar() or 0
-
-    category_result = await db.execute(
-        select(WrongAnswer.error_category, func.count(WrongAnswer.id))
-        .where(
-            WrongAnswer.course_id == course_id,
-            WrongAnswer.user_id == user.id,
-        )
-        .group_by(WrongAnswer.error_category)
-    )
-    by_category = {cat or "uncategorized": count for cat, count in category_result.all()}
-
-    diagnosis_result = await db.execute(
-        select(WrongAnswer.diagnosis, func.count(WrongAnswer.id))
-        .where(
-            WrongAnswer.course_id == course_id,
-            WrongAnswer.user_id == user.id,
-            WrongAnswer.diagnosis.isnot(None),
-        )
-        .group_by(WrongAnswer.diagnosis)
-    )
-    by_diagnosis = {diagnosis: count for diagnosis, count in diagnosis_result.all() if diagnosis}
-
-    return {
-        "total": total,
-        "mastered": mastered,
-        "unmastered": total - mastered,
-        "by_category": by_category,
-        "by_diagnosis": by_diagnosis,
-    }
+    return await wrong_answer_stats(db, user.id, course_id)

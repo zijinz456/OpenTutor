@@ -480,8 +480,16 @@ async def generate_learning_path(
 async def build_course_graph(db_factory, course_id: uuid.UUID) -> int:
     """Build the knowledge graph for a course. Called after auto_prepare.
 
-    Retries extraction once if the first attempt yields 0 nodes (transient LLM failure).
+    No-op (returns 0) unless ENABLE_EXPERIMENTAL_LOOM is on — extraction costs
+    one LLM call per content chunk.  Retries extraction once if the first
+    attempt yields 0 nodes (transient LLM failure), then links the course's
+    problems and flashcards to the extracted concepts.
     """
+    from services.loom_flags import loom_enabled
+
+    if not loom_enabled():
+        logger.debug("LOOM disabled; skipping graph build for course %s", course_id)
+        return 0
     try:
         async with db_factory() as db:
             from services.loom_extraction import extract_course_concepts
@@ -491,7 +499,7 @@ async def build_course_graph(db_factory, course_id: uuid.UUID) -> int:
                 import asyncio
                 await asyncio.sleep(2)
                 nodes = await extract_course_concepts(db, course_id)
-            # Link same-name concepts across courses
+            # Link same-name concepts across this user's other courses
             await link_cross_course_concepts(db, course_id)
             # Compute proactive interference matrix (LECTOR paper, arXiv 2508.03275)
             try:
@@ -499,6 +507,11 @@ async def build_course_graph(db_factory, course_id: uuid.UUID) -> int:
                 await compute_interference_matrix(db, course_id)
             except (ImportError, RuntimeError, OSError):
                 logger.debug("Interference matrix computation skipped (embedding unavailable)")
+            # Resolve problem knowledge_points / card concepts to node ids
+            if nodes:
+                from services.loom_linking import link_course_assets_to_concepts
+                await link_course_assets_to_concepts(db, course_id)
+                await db.commit()
             return len(nodes)
     except (ConnectionError, TimeoutError, RuntimeError, ValueError, OSError) as e:
         logger.exception("LOOM graph building failed for course %s: %s", course_id, e)
@@ -509,12 +522,15 @@ async def link_cross_course_concepts(
     db: AsyncSession,
     course_id: uuid.UUID,
 ) -> int:
-    """Find and link identical concepts across different courses.
+    """Find and link identical concepts across the owning user's other courses.
 
     When a concept like "eigenvalue" appears in both Linear Algebra and
     Machine Learning, create a `reinforces` edge so mastery in one course
-    can propagate partial credit to the other via FIRe.
+    can propagate partial credit to the other via FIRe.  Only courses that
+    belong to the same user as ``course_id`` are considered.
     """
+    from models.course import Course
+
     # Get concepts for the new course
     result = await db.execute(
         select(KnowledgeNode).where(KnowledgeNode.course_id == course_id)
@@ -523,9 +539,15 @@ async def link_cross_course_concepts(
     if not new_nodes:
         return 0
 
-    # Get concepts from ALL other courses
+    # Get concepts from the same user's other courses only
+    owner_courses = select(Course.id).where(
+        Course.user_id == select(Course.user_id).where(Course.id == course_id).scalar_subquery()
+    )
     result = await db.execute(
-        select(KnowledgeNode).where(KnowledgeNode.course_id != course_id)
+        select(KnowledgeNode).where(
+            KnowledgeNode.course_id != course_id,
+            KnowledgeNode.course_id.in_(owner_courses),
+        )
     )
     other_nodes = result.scalars().all()
     if not other_nodes:

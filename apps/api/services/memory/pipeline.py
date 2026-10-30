@@ -159,6 +159,10 @@ async def generate_teaching_state(
     """
     from datetime import datetime, timezone
 
+    from services.loom_flags import lector_enabled, loom_enabled
+
+    if not loom_enabled():
+        return None
     try:
         from services.loom_graph import get_mastery_graph
         graph = await get_mastery_graph(db, user_id, course_id)
@@ -178,9 +182,10 @@ async def generate_teaching_state(
         # Get LECTOR review urgency
         review_urgency = 0
         try:
-            from services.lector import get_review_summary
-            review_summary = await get_review_summary(db, user_id, course_id)
-            review_urgency = review_summary.get("urgent_count", 0)
+            if lector_enabled():
+                from services.lector import get_review_summary
+                review_summary = await get_review_summary(db, user_id, course_id)
+                review_urgency = review_summary.get("urgent_count", 0)
         except (ImportError, KeyError, TypeError, AttributeError):
             logger.debug("LECTOR review summary unavailable", exc_info=True)
 

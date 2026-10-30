@@ -152,6 +152,21 @@ async def test_wrong_answer_schedules_background_diagnostics(db, user, course):
         AsyncMock(return_value={"category": "careless"}),
     ):
         await _submit(db, user, problem.id, "Lyon", tasks=tasks)
+    # auto-derive diagnostic only; confusion detection is a LOOM feature (off by default)
+    assert len(tasks.tasks) == 1
+
+
+@pytest.mark.asyncio
+async def test_wrong_answer_schedules_confusion_detection_with_loom(db, user, course, monkeypatch):
+    from config import settings
+    monkeypatch.setattr(settings, "enable_experimental_loom", True)
+    problem = await _make_problem(db, course)
+    tasks = BackgroundTasks()
+    with patch(
+        "services.diagnosis.classifier.classify_error",
+        AsyncMock(return_value={"category": "careless"}),
+    ):
+        await _submit(db, user, problem.id, "Lyon", tasks=tasks)
     # auto-derive diagnostic + confusion detection
     assert len(tasks.tasks) == 2
 
@@ -192,7 +207,22 @@ async def test_other_users_problem_is_not_found(db, user, course):
 
 
 @pytest.mark.asyncio
-async def test_mastery_updated_for_knowledge_points(db, user, course):
+async def test_concept_mastery_not_written_when_loom_off(db, user, course):
+    node = KnowledgeNode(id=uuid.uuid4(), course_id=course.id, name="French Geography")
+    db.add(node)
+    await db.flush()
+    problem = await _make_problem(db, course, knowledge_points=["French Geography"])
+
+    resp = await _submit(db, user, problem.id, "Paris")
+
+    assert resp.is_correct is True
+    assert (await db.execute(select(ConceptMastery))).scalars().all() == []
+
+
+@pytest.mark.asyncio
+async def test_mastery_updated_for_knowledge_points(db, user, course, monkeypatch):
+    from config import settings
+    monkeypatch.setattr(settings, "enable_experimental_loom", True)
     node = KnowledgeNode(id=uuid.uuid4(), course_id=course.id, name="French Geography")
     db.add(node)
     await db.flush()
@@ -207,3 +237,26 @@ async def test_mastery_updated_for_knowledge_points(db, user, course):
     assert mastery.practice_count == 1
     assert mastery.correct_count == 1
     assert mastery.mastery_score > 0.0
+
+
+@pytest.mark.asyncio
+async def test_concept_mastery_uses_resolved_node_id_and_shared_tracer(db, user, course, monkeypatch):
+    """A problem linked at ingestion updates by node id; the number is the shared BKT step."""
+    from services.learning_science.knowledge_tracer import BKTState, params_for_question_type, update_mastery
+
+    from config import settings
+    monkeypatch.setattr(settings, "enable_experimental_loom", True)
+    node = KnowledgeNode(id=uuid.uuid4(), course_id=course.id, name="Capitals")
+    db.add(node)
+    await db.flush()
+    problem = await _make_problem(db, course, knowledge_points=["a label that does not match"])
+    problem.problem_metadata = {**(problem.problem_metadata or {}), "knowledge_node_id": str(node.id)}
+    await db.flush()
+
+    await _submit(db, user, problem.id, "Paris")
+
+    mastery = (await db.execute(
+        select(ConceptMastery).where(ConceptMastery.knowledge_node_id == node.id)
+    )).scalar_one()
+    expected = update_mastery(BKTState(p_mastery=0.0), True, params_for_question_type(problem.question_type)).p_mastery
+    assert mastery.mastery_score == pytest.approx(expected)

@@ -29,7 +29,6 @@ from services.activity.task_types import (
     infer_task_policy,
 )
 from services.agent.verifier import verify_and_repair
-from services.scheduler import engine as scheduler_engine
 from routers.preferences_crud import build_learning_profile_summary
 from services.preference.engine import resolve_preferences
 
@@ -302,38 +301,6 @@ class _RowCollectionResult:
         return list(self._rows)
 
 
-class _SchedulerSession:
-    def __init__(self, user: User):
-        self.user = user
-        self.goals: list[StudyGoal] = []
-        self.tasks: list[AgentTask] = []
-
-    async def execute(self, query):
-        first_col = query.column_descriptions[0]
-        if first_col.get("name") == "id" and first_col.get("entity") is User:
-            return _RowCollectionResult([(self.user.id,)])
-        entity = query.column_descriptions[0].get("entity")
-        if entity is User:
-            return _ScalarCollectionResult([self.user])
-        if entity is StudyGoal:
-            return _ScalarCollectionResult(self.goals)
-        if entity is AgentTask:
-            return _ScalarCollectionResult(self.tasks[:1])
-        return _ScalarCollectionResult([])
-
-    def add(self, obj):
-        if isinstance(obj, StudyGoal):
-            if obj.id is None:
-                obj.id = uuid.uuid4()
-            self.goals.append(obj)
-
-    async def commit(self):
-        return None
-
-    async def refresh(self, _obj):
-        return None
-
-
 @pytest.mark.asyncio
 async def test_reject_task_then_retry_resets_approval(monkeypatch):
     user_id = uuid.uuid4()
@@ -446,29 +413,21 @@ async def test_approve_invalid_state_raises_task_mutation_error(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_weekly_scheduler_enqueues_durable_task_and_creates_goal(monkeypatch):
-    user = User(id=uuid.uuid4(), email="scheduler@test.dev", hashed_password="x")
-    session = _SchedulerSession(user)
+async def test_submit_task_rejects_unsupported_task_type():
+    from services.activity.task_types import SUPPORTED_TASK_TYPES, UnsupportedTaskTypeError
 
-    from services.scheduler import engine_jobs_maintenance, engine_helpers
-    monkeypatch.setattr(engine_jobs_maintenance, "async_session", lambda: _FakeSessionContext(session))
-    monkeypatch.setattr(engine_helpers, "async_session", lambda: _FakeSessionContext(session))
-    submit_task = AsyncMock()
-    push_notification = AsyncMock()
-    monkeypatch.setattr(engine_jobs_maintenance, "submit_task", submit_task)
-    monkeypatch.setattr(engine_jobs_maintenance, "_push_notification", push_notification)
+    with pytest.raises(UnsupportedTaskTypeError):
+        await activity_engine.submit_task(
+            user_id=uuid.uuid4(), task_type="weekly_prep", title="nope",
+        )
+    assert "weekly_prep" not in SUPPORTED_TASK_TYPES
 
-    await scheduler_engine.weekly_prep_job()
 
-    assert len(session.goals) == 1
-    assert session.goals[0].metadata_json["goal_kind"] == "weekly_review"
-    submit_task.assert_awaited_once()
-    queued_kwargs = submit_task.await_args.kwargs
-    assert queued_kwargs["task_type"] == "weekly_prep"
-    assert queued_kwargs["source"] == "scheduler"
-    assert queued_kwargs["goal_id"] == session.goals[0].id
-    assert queued_kwargs["metadata_json"]["provenance"]["scheduler_trigger"] == "weekly_scheduler"
-    push_notification.assert_awaited_once()
+def test_dispatch_table_matches_supported_task_types():
+    from services.activity.engine_dispatch import TASK_HANDLERS
+    from services.activity.task_types import SUPPORTED_TASK_TYPES
+
+    assert set(TASK_HANDLERS) == set(SUPPORTED_TASK_TYPES)
 
 
 def test_normalize_problem_metadata_applies_generic_defaults():
@@ -500,7 +459,8 @@ def test_shared_problem_annotation_pipeline_adds_common_contract():
 
     assert normalized["difficulty_layer"] == 2
     assert normalized["problem_metadata"]["core_concept"] == "osmosis"
-    assert normalized["problem_metadata"]["source_kind"] == "generated"
+    # legacy "generated" is normalized onto the ProblemSource enum
+    assert normalized["problem_metadata"]["source_kind"] == "ai_generated"
     assert normalized["problem_metadata"]["skill_focus"] == "explanation"
 
 

@@ -19,6 +19,33 @@ def _truncate_summary(summary: str | None, limit: int = 500) -> str | None:
     return summary[: limit - 3] + "..."
 
 
+# Every task_type the dispatcher (services.activity.engine_dispatch) can run.
+# submit_task and POST /api/tasks/submit reject anything else; the dispatch
+# table is checked against this set by tests so the two cannot drift.
+SUPPORTED_TASK_TYPES: frozenset[str] = frozenset({
+    "generate_quiz",
+    "create_flashcard",
+    "create_flashcards",
+    "multi_step",
+    "chat_post_process",
+    "code_execution",
+    "memory_consolidation",
+    "review_session",
+    "reentry_session",
+    "guided_session",
+})
+
+
+class UnsupportedTaskTypeError(ValueError):
+    """Raised by submit_task for a task_type no handler can run."""
+
+    def __init__(self, task_type: str):
+        self.task_type = task_type
+        super().__init__(
+            f"Unsupported task_type '{task_type}'. Supported: {', '.join(sorted(SUPPORTED_TASK_TYPES))}"
+        )
+
+
 FINAL_TASK_STATUSES = {"completed", "failed", "cancelled", "rejected"}
 EXECUTABLE_TASK_STATUSES = {"queued", "resuming"}
 APPROVAL_REQUIRED_STATUS = "pending_approval"

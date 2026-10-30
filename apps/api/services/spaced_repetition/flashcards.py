@@ -27,10 +27,11 @@ Create {count} flashcards. Each flashcard should have:
 - A clear, specific question (front)
 - A concise, accurate answer (back)
 - A difficulty tag: easy, medium, or hard
+- concept: the ONE concept the card tests (2-5 words, e.g. "Chain Rule")
 
 Output as JSON array:
 [
-  {{"front": "question", "back": "answer", "difficulty": "medium"}},
+  {{"front": "question", "back": "answer", "difficulty": "medium", "concept": "Chain Rule"}},
   ...
 ]
 
@@ -105,6 +106,8 @@ async def generate_flashcards(
     for i, card in enumerate(flashcards):
         card["id"] = str(uuid.uuid4())
         card["course_id"] = str(course_id)
+        concept = str(card.get("concept") or "").strip()
+        card["concept"] = concept or (nodes[0].title if nodes else "")
         card["fsrs"] = {
             "difficulty": 5.0,
             "stability": 0.0,

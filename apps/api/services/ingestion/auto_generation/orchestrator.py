@@ -83,15 +83,17 @@ async def auto_prepare(
         logger.exception("auto_prepare: auto-configure step failed")
         summary["auto_configured"] = False
 
-    # LOOM: Build knowledge concept graph from content
-    try:
-        from services.loom_graph import build_course_graph
-        summary["loom_concepts"] = await build_course_graph(db_factory, course_id)
-    except ImportError:
-        logger.debug("LOOM module not available, skipping graph building")
-        summary["loom_concepts"] = 0
-    except (sa.exc.SQLAlchemyError, ConnectionError, TimeoutError, ValueError, RuntimeError, OSError):
-        logger.exception("auto_prepare: LOOM graph building failed")
+    # LOOM (experimental): build the concept graph and link problems/cards to it
+    from services.loom_flags import loom_enabled
+
+    if loom_enabled():
+        try:
+            from services.loom_graph import build_course_graph
+            summary["loom_concepts"] = await build_course_graph(db_factory, course_id)
+        except (sa.exc.SQLAlchemyError, ConnectionError, TimeoutError, ValueError, RuntimeError, OSError):
+            logger.exception("auto_prepare: LOOM graph building failed")
+            summary["loom_concepts"] = 0
+    else:
         summary["loom_concepts"] = 0
 
     logger.info("auto_prepare complete for course %s: %s", course_id, summary)

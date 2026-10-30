@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.ingestion import StudySession, WrongAnswer
+from models.ingestion import WrongAnswer
 from models.progress import LearningProgress
 from models.study_goal import StudyGoal
 
@@ -125,16 +125,18 @@ async def run_reentry_session(
     the easiest next step.
     """
     days_inactive = int(payload.get("days_inactive", 3))
-    now = datetime.now(timezone.utc)
 
-    # 1. Last study session
-    sess_result = await db.execute(
-        select(StudySession)
-        .where(StudySession.user_id == user_id)
-        .order_by(StudySession.started_at.desc())
+    # 1. Last activity (most recently studied ledger entry)
+    from services.progress.summary import last_activity_at
+
+    last_active = await last_activity_at(db, user_id)
+    last_course_result = await db.execute(
+        select(LearningProgress.course_id)
+        .where(LearningProgress.user_id == user_id, LearningProgress.last_studied_at.isnot(None))
+        .order_by(LearningProgress.last_studied_at.desc())
         .limit(1)
     )
-    last_session = sess_result.scalar_one_or_none()
+    last_course_id = last_course_result.scalar_one_or_none()
 
     # 2. Most recent active goal
     goal_result = await db.execute(
@@ -173,9 +175,9 @@ async def run_reentry_session(
         "days_inactive": days_inactive,
         "suggested_duration_minutes": suggested_duration,
         "last_session": {
-            "started_at": last_session.started_at.isoformat() if last_session and last_session.started_at else None,
-            "course_id": str(last_session.course_id) if last_session else None,
-        } if last_session else None,
+            "started_at": last_active.isoformat(),
+            "course_id": str(last_course_id) if last_course_id else None,
+        } if last_active else None,
         "active_goal": {
             "id": str(active_goal.id),
             "title": active_goal.title,

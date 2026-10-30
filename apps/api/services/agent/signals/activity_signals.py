@@ -14,7 +14,8 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.agent_task import AgentTask
-from models.ingestion import Assignment, StudySession
+from models.ingestion import Assignment
+from services.progress.summary import last_activity_at
 
 from ._types import AgendaSignal
 
@@ -61,17 +62,10 @@ async def _collect_inactivity(
 ) -> list[AgendaSignal]:
     """Detect if the user has been inactive for >=3 days."""
     threshold = datetime.now(timezone.utc) - timedelta(days=3)
-    query = (
-        select(StudySession)
-        .where(StudySession.user_id == user_id)
-        .order_by(StudySession.started_at.desc())
-        .limit(1)
-    )
-    result = await db.execute(query)
-    last = result.scalar_one_or_none()
+    last = await last_activity_at(db, user_id)
 
-    if last and last.started_at and last.started_at < threshold:
-        days_inactive = (datetime.now(timezone.utc) - last.started_at).days
+    if last and last < threshold:
+        days_inactive = (datetime.now(timezone.utc) - last).days
         return [AgendaSignal(
             signal_type="inactivity",
             user_id=user_id,
@@ -79,7 +73,7 @@ async def _collect_inactivity(
             entity_id=f"inactivity:{user_id}",
             title=f"Inactive for {days_inactive} days",
             urgency=min(40.0 + days_inactive * 5, 65.0),
-            detail={"days_inactive": days_inactive, "last_session": last.started_at.isoformat()},
+            detail={"days_inactive": days_inactive, "last_session": last.isoformat()},
         )]
     return []
 
@@ -104,12 +98,8 @@ async def _collect_guided_session_readiness(
 
     # Check recent activity (must have studied within 7 days)
     active_threshold = now - timedelta(days=7)
-    last_session_result = await db.execute(
-        select(StudySession)
-        .where(StudySession.user_id == user_id, StudySession.started_at >= active_threshold)
-        .limit(1)
-    )
-    if not last_session_result.scalar_one_or_none():
+    last = await last_activity_at(db, user_id)
+    if not last or last < active_threshold:
         return []
 
     # Check at least one course has content

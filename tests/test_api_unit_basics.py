@@ -371,9 +371,7 @@ async def test_get_next_action_prefers_active_goal_next_action(monkeypatch):
 async def test_progress_knowledge_graph_raises_unavailable_error_on_builder_failure(monkeypatch):
     from routers import progress_knowledge as progress_knowledge_router
 
-    # LOOM must be enabled for this endpoint to be reachable
-    monkeypatch.setattr(progress_knowledge_router.settings, "enable_experimental_loom", True)
-
+    monkeypatch.setattr(progress_knowledge_router, "get_course_or_404", AsyncMock())
     monkeypatch.setattr(
         progress_knowledge_router,
         "build_knowledge_graph",
@@ -407,6 +405,7 @@ async def test_build_knowledge_graph_maps_mastery_payload(monkeypatch):
         }
 
     monkeypatch.setattr(graph_service, "get_mastery_graph", _fake_mastery_graph)
+    monkeypatch.setattr(graph_service, "loom_enabled", lambda: True)
     result = await graph_service.build_knowledge_graph(
         db=MagicMock(),
         course_id=uuid.uuid4(),
@@ -437,9 +436,9 @@ async def test_get_next_action_falls_back_to_failed_task(monkeypatch):
             entity_id=str(failed_task_id),
             title="Queued exam prep",
             urgency=80.0,
-            detail={"status": "failed", "task_type": "exam_prep"},
+            detail={"status": "failed", "task_type": "multi_step"},
         ),
-        task_type="exam_prep",
+        task_type="multi_step",
         task_title="Recover: Queued exam prep",
         existing_task_id=failed_task_id,
         reason="Most recent durable task did not finish; recovery is more valuable than starting new work.",
@@ -451,7 +450,7 @@ async def test_get_next_action_falls_back_to_failed_task(monkeypatch):
 
     assert result.source == "task_failure"
     assert result.goal_id is None
-    assert result.suggested_task_type == "exam_prep"
+    assert result.suggested_task_type == "multi_step"
 
 
 @pytest.mark.asyncio
@@ -524,9 +523,9 @@ async def test_queue_next_action_retries_failed_task_and_clears_previous_error(m
             entity_id=str(failed_task_id),
             title="Queued exam prep",
             urgency=80.0,
-            detail={"status": "failed", "task_type": "exam_prep"},
+            detail={"status": "failed", "task_type": "multi_step"},
         ),
-        task_type="exam_prep",
+        task_type="multi_step",
         task_title="Recover: Queued exam prep",
         existing_task_id=failed_task_id,
         reason="Most recent durable task did not finish; recovery is more valuable than starting new work.",
@@ -537,7 +536,7 @@ async def test_queue_next_action_retries_failed_task_and_clears_previous_error(m
         user_id=user.id,
         course_id=course_id,
         goal_id=None,
-        task_type="exam_prep",
+        task_type="multi_step",
         title="Queued exam prep",
         summary="Task failed previously.",
     )
@@ -551,7 +550,7 @@ async def test_queue_next_action_retries_failed_task_and_clears_previous_error(m
     result = await queue_next_action(course_id=course_id, user=user, db=MagicMock())
 
     assert result.id == str(failed_task_id)
-    assert result.task_type == "exam_prep"
+    assert result.task_type == "multi_step"
     assert result.status == "queued"
     assert result.attempts == 0
     assert result.error_message is None

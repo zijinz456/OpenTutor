@@ -49,6 +49,12 @@ def course_id():
     return uuid.uuid4()
 
 
+@pytest.fixture(autouse=True)
+def _enable_loom(monkeypatch):
+    from config import settings
+    monkeypatch.setattr(settings, "enable_experimental_loom", True)
+
+
 # ── Helpers ──
 
 _CONCEPTS_JSON = (
@@ -216,13 +222,25 @@ async def test_fusion_threshold_is_configurable(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_e2e_cross_course_linking(session_factory):
-    course_a, course_b = uuid.uuid4(), uuid.uuid4()
+    course_a, course_b, course_other = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
 
     async with session_factory() as db:
+        from models.course import Course
+        from models.user import User
+        owner, stranger = User(id=uuid.uuid4(), name="owner"), User(id=uuid.uuid4(), name="other")
+        db.add_all([owner, stranger])
+        await db.flush()
+        db.add_all([
+            Course(id=course_a, user_id=owner.id, name="Linear Algebra"),
+            Course(id=course_b, user_id=owner.id, name="Machine Learning"),
+            Course(id=course_other, user_id=stranger.id, name="Someone else's course"),
+        ])
         shared_a = KnowledgeNode(id=uuid.uuid4(), course_id=course_a, name="Eigenvalue", description="")
         shared_b = KnowledgeNode(id=uuid.uuid4(), course_id=course_b, name="Eigenvalue", description="")
         only_b = KnowledgeNode(id=uuid.uuid4(), course_id=course_b, name="Gradient Descent", description="")
-        db.add(shared_a); db.add(shared_b); db.add(only_b)
+        # Same concept name in another user's course must never be linked
+        foreign = KnowledgeNode(id=uuid.uuid4(), course_id=course_other, name="Eigenvalue", description="")
+        db.add_all([shared_a, shared_b, only_b, foreign])
         await db.commit()
 
         linked = await link_cross_course_concepts(db, course_b)

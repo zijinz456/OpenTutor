@@ -78,13 +78,13 @@ class Settings(BaseSettings):
     app_auto_seed_demo: bool = True
     app_run_scheduler: bool = False
     app_run_activity_engine: bool = False
-    ambient_monitor_enabled: bool = True
     enable_experimental_loom: bool = False
     enable_experimental_lector: bool = False
     enable_experimental_notion_export: bool = False
     enable_experimental_cat: bool = False              # CAT adaptive diagnostic pretest
     enable_experimental_browser: bool = False          # Browser automation (web_search agent tool)
     enable_experimental_vision: bool = False            # Vision/LaTeX OCR service
+    enable_answer_verification: bool = False            # Verifier + reflection LLM passes after each LEARN turn
 
     # Rate limiting
     rate_limit_mode: str = "simple"  # "simple" | "cost_aware"
@@ -117,22 +117,22 @@ class Settings(BaseSettings):
     # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
     encryption_key: str = ""
 
-    # Cognitive load signal weights (sum = 1.0)
-    # Source: "Cognitive Load Theory meets Deep Knowledge Tracing" (Nature, 2025)
-    # Proportionally normalized from original paper weights to sum to 1.0
-    cognitive_load_weight_fatigue: float = 0.16
-    cognitive_load_weight_session_length: float = 0.08
-    cognitive_load_weight_errors: float = 0.14
-    cognitive_load_weight_brevity: float = 0.04
-    cognitive_load_weight_help_seeking: float = 0.10
-    cognitive_load_weight_quiz_performance: float = 0.10
-    cognitive_load_weight_answer_hesitation: float = 0.06
-    cognitive_load_weight_nlp_affect: float = 0.10
-    cognitive_load_weight_relative_baseline: float = 0.08
+    # Cognitive load (experimental, default off): DB/text-only signals, no LLM.
+    enable_cognitive_load: bool = False
+    # Signal weights (sum = 1.0). Source: "Cognitive Load Theory meets Deep
+    # Knowledge Tracing" (Nature, 2025); renormalized after dropping the LLM
+    # affect and relative-baseline signals.
+    cognitive_load_weight_fatigue: float = 0.195
+    cognitive_load_weight_session_length: float = 0.098
+    cognitive_load_weight_errors: float = 0.171
+    cognitive_load_weight_brevity: float = 0.049
+    cognitive_load_weight_help_seeking: float = 0.122
+    cognitive_load_weight_quiz_performance: float = 0.122
+    cognitive_load_weight_answer_hesitation: float = 0.073
     # Clickstream-derived signals (arXiv 2512.20438)
-    cognitive_load_weight_wrong_streak: float = 0.05
-    cognitive_load_weight_message_gap: float = 0.05
-    cognitive_load_weight_repeated_errors: float = 0.04
+    cognitive_load_weight_wrong_streak: float = 0.061
+    cognitive_load_weight_message_gap: float = 0.061
+    cognitive_load_weight_repeated_errors: float = 0.048
     cognitive_load_threshold_high: float = 0.6
     cognitive_load_threshold_medium: float = 0.3
 
@@ -143,8 +143,6 @@ class Settings(BaseSettings):
     cognitive_load_quiz_accuracy_target: float = 0.7       # Below 70% accuracy = signal
     cognitive_load_hesitation_min_ms: float = 15000.0      # 15s = no signal
     cognitive_load_hesitation_range_ms: float = 45000.0    # 60s+ = full signal
-    cognitive_load_nlp_frustration_weight: float = 0.6
-    cognitive_load_nlp_confusion_weight: float = 0.4
     cognitive_load_review_reorder_threshold: float = 0.5
 
     # LECTOR review priority factors

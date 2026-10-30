@@ -61,7 +61,6 @@ def _install_stubs():
             # Provide commonly accessed attributes
             if mod_name == "config":
                 settings = MagicMock()
-                settings.ambient_monitor_enabled = False
                 stub.settings = settings
             elif mod_name == "database":
                 stub.async_session = MagicMock()
@@ -156,7 +155,6 @@ def test_core_jobs_present():
 
     expected_core = {
         "agenda_tick",
-        "weekly_prep",
         "scrape_refresh",
         "memory_consolidation",
         "bkt_training",
@@ -176,14 +174,11 @@ def test_agenda_tick_interval():
     pytest.fail("agenda_tick job not found")
 
 
-def test_weekly_prep_cron_schedule():
-    """Weekly prep should be a CronTrigger job."""
-    for func, trigger, job_id, name in _SCHEDULED_JOBS:
-        if job_id == "weekly_prep":
-            # CronTrigger has start_date attribute
-            assert hasattr(trigger, "start_date")
-            return
-    pytest.fail("weekly_prep job not found")
+def test_only_agenda_tick_produces_review_tasks():
+    """smart_review_trigger / heartbeat_review / weekly_prep were folded into agenda_tick."""
+    job_ids = {entry[2] for entry in _SCHEDULED_JOBS}
+    assert "agenda_tick" in job_ids
+    assert not job_ids & {"smart_review_trigger", "heartbeat_review", "weekly_prep"}
 
 
 def test_bkt_training_scheduled():
@@ -516,15 +511,6 @@ def test_memory_consolidation_six_hours():
     pytest.fail("memory_consolidation job not found")
 
 
-def test_smart_review_trigger_four_hours():
-    """Smart review trigger should run every 4 hours."""
-    for func, trigger, job_id, name in _SCHEDULED_JOBS:
-        if job_id == "smart_review_trigger":
-            assert trigger.interval == timedelta(hours=4)
-            return
-    pytest.fail("smart_review_trigger job not found")
-
-
 def test_cross_course_linking_twelve_hours():
     """Cross-course linking should run every 12 hours."""
     for func, trigger, job_id, name in _SCHEDULED_JOBS:
@@ -532,12 +518,3 @@ def test_cross_course_linking_twelve_hours():
             assert trigger.interval == timedelta(hours=12)
             return
     pytest.fail("cross_course_linking job not found")
-
-
-def test_heartbeat_review_six_hours():
-    """Heartbeat review should run every 6 hours."""
-    for func, trigger, job_id, name in _SCHEDULED_JOBS:
-        if job_id == "heartbeat_review":
-            assert trigger.interval == timedelta(hours=6)
-            return
-    pytest.fail("heartbeat_review job not found")

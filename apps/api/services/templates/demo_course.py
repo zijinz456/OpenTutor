@@ -267,7 +267,7 @@ async def seed_demo_course(db: AsyncSession) -> bool:
     flashcard_asset = GeneratedAsset(
         user_id=user.id,
         course_id=course.id,
-        asset_type="flashcard",
+        asset_type="flashcards",
         title="Python Basics Flashcards",
         content={"cards": _FLASHCARDS},
         metadata_={"is_demo": True, "card_count": len(_FLASHCARDS)},

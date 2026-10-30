@@ -159,31 +159,6 @@ async def interview_turn(
     }
 
 
-@router.post("/layout-from-profile", summary="Compute layout from learner profile")
-async def layout_from_profile(
-    body: LayoutFromProfileRequest,
-    _user: User = Depends(get_current_user),
-) -> dict:
-    """Compute the recommended block layout from a LearnerProfile.
-
-    Non-streaming endpoint for re-computing layout without running the
-    full interview (e.g., after manual profile edits).
-    """
-    profile = LearnerProfile(**body.model_dump())
-    layout = profile_to_layout(profile)
-    return {
-        "layout": layout,
-        "profile_summary": {
-            "style": profile.behavior.learning_style,
-            "pattern": profile.behavior.study_pattern,
-            "duration": profile.behavior.session_duration,
-        },
-    }
-
-
-# ── Helpers ──
-
-
 async def _persist_preferences(
     db: AsyncSession,
     user: User,

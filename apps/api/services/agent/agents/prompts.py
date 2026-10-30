@@ -1,7 +1,6 @@
 """Prompt constants, regex detectors, and strategy-fragment loader for TutorAgent."""
 
 import re
-from pathlib import Path
 
 # ── Keyword detectors for conditional prompt sections ──
 
@@ -30,30 +29,21 @@ _FATIGUE_RE = re.compile(
     r"hate\s+this|can'?t\s+do\s+it|too\s+hard|frustrated|forget\s+it|ugh|whatever)", re.IGNORECASE,
 )
 
-# ── Teaching strategy fragments (loaded once) ──
+# ── Math image tutoring (used when LaTeX-OCR results are attached) ──
 
-_STRATEGY_FRAGMENTS: dict[str, str] = {}
+MATH_IMAGE_TUTORING = """
+You are in **Math Image Tutoring** mode — the student uploaded an image containing math.
 
-
-def _load_strategy_fragments() -> dict[str, str]:
-    if _STRATEGY_FRAGMENTS:
-        return _STRATEGY_FRAGMENTS
-    md_path = Path(__file__).resolve().parents[3] / "prompts" / "teaching_strategies.md"
-    if not md_path.exists():
-        return _STRATEGY_FRAGMENTS
-    current_key: str | None = None
-    current_lines: list[str] = []
-    for line in md_path.read_text().splitlines():
-        if line.startswith("## ") and not line.startswith("## #"):
-            if current_key and current_lines:
-                _STRATEGY_FRAGMENTS[current_key] = "\n".join(current_lines).strip()
-            current_key = line[3:].strip()
-            current_lines = []
-        elif current_key is not None:
-            current_lines.append(line)
-    if current_key and current_lines:
-        _STRATEGY_FRAGMENTS[current_key] = "\n".join(current_lines).strip()
-    return _STRATEGY_FRAGMENTS
+**Approach:**
+- Extracted LaTeX formulas from the image are provided in `$$$...$$$` blocks — use them for accuracy
+- Do NOT give the answer directly; ask "What do you think the first step should be?"
+- Verify your own calculations step-by-step using algebraic reasoning before responding
+- When showing steps, use proper LaTeX formatting (`$$...$$`) for readability
+- If the formula is an equation to solve, guide through: identify type → choose method → execute steps → verify
+- If the formula is an expression to simplify, guide through: identify structure → apply rules → simplify → check
+- For calculus: state the rule being applied at each step (chain rule, integration by parts, etc.)
+- Acknowledge if the OCR extraction looks incorrect and ask the student to confirm the formula
+"""
 
 
 SOCRATIC_GUARDRAILS = """
@@ -165,9 +155,10 @@ the gap between "the student thinks they understand" and "they actually understa
    a 10-year-old. Simplification reveals gaps.
 
 ### After probing:
-- If the student answers well → call record_comprehension(understood=true)
-- If the student struggles → call record_comprehension(understood=false, misconception_type="...")
-  Then teach the specific gap, don't re-explain everything.
+- If the student answers well → acknowledge it briefly and move on
+- If the student struggles → teach the specific gap, don't re-explain everything.
+  Mastery is only ever updated from graded quiz and flashcard attempts, never
+  from your judgement of a chat answer — offer a quiz if you want it measured.
 - NEVER say "you don't understand" — instead say "let me check something"
 
 ### Misconception types to classify:

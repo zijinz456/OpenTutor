@@ -9,6 +9,8 @@ import time
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config import settings
+
 from services.agent.base import BaseAgent
 from services.agent.marker_parser import MarkerParser
 from services.agent.state import AgentContext, AgentTurnEnvelope, AgentVerificationResult, IntentType, TaskPhase
@@ -244,7 +246,13 @@ def envelope_payload(ctx: AgentContext) -> dict:
 
 
 async def apply_verifier(ctx: AgentContext, agent: BaseAgent) -> AgentContext:
-    """Run verifier/repair only for the intents that benefit from it."""
+    """Run verifier/repair only for the intents that benefit from it.
+
+    Gated by ENABLE_ANSWER_VERIFICATION (default off): verification and
+    reflection add 1-3 LLM calls to every substantive turn.
+    """
+    if not settings.enable_answer_verification:
+        return ctx
     if ctx.intent not in (IntentType.LEARN, IntentType.PLAN, IntentType.GENERAL):
         return ctx
     elapsed = _turn_elapsed_seconds(ctx)
@@ -280,7 +288,9 @@ async def apply_verifier(ctx: AgentContext, agent: BaseAgent) -> AgentContext:
 
 
 async def apply_reflection(ctx: AgentContext) -> AgentContext:
-    """Optionally improve longer substantive answers."""
+    """Optionally improve longer substantive answers (ENABLE_ANSWER_VERIFICATION)."""
+    if not settings.enable_answer_verification:
+        return ctx
     verifier_status = (ctx.metadata.get("verifier") or {}).get("status")
     if verifier_status == "failed":
         return ctx

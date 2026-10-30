@@ -16,7 +16,9 @@ from services.activity.task_records import create_task
 from services.activity.task_types import (
     APPROVAL_REQUIRED_STATUS,
     EXECUTABLE_TASK_STATUSES,
+    SUPPORTED_TASK_TYPES,
     JsonObject,
+    UnsupportedTaskTypeError,
     infer_approval_status,
 )
 from services.activity.redis_notify import notify_task_ready
@@ -42,6 +44,8 @@ async def submit_task(
     requires_approval: bool = False,
     max_attempts: int = 2,
 ) -> AgentTask:
+    if task_type not in SUPPORTED_TASK_TYPES:
+        raise UnsupportedTaskTypeError(task_type)
     async with _task_session(db) as db_session:
         task = await create_task(
             db_session,

@@ -98,10 +98,13 @@ async def _collect_layout_adaptation(
     except (SQLAlchemyError, ImportError, ConnectionError, TimeoutError):
         logger.debug("Cognitive load KV lookup failed in layout adaptation", exc_info=True)
 
-    # Check for confusion pairs -> suggest review
+    # Check for confusion pairs -> suggest review (LOOM only)
     try:
-        from services.loom_confusion import get_confused_concepts
-        pairs = await get_confused_concepts(db, course_id)
+        from services.loom_flags import loom_enabled
+        pairs = []
+        if loom_enabled():
+            from services.loom_confusion import get_confused_concepts
+            pairs = await get_confused_concepts(db, course_id)
         if len(pairs) >= 2:
             signals.append(AgendaSignal(
                 signal_type="layout_adaptation",

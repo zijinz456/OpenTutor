@@ -12,7 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from services.agent.base import BaseAgent
 from services.agent.react_mixin import ReActMixin
 from services.agent.state import AgentContext
-from services.llm.base_client import normalize_history
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +38,7 @@ class PlanAgent(ReActMixin, BaseAgent):
     react_tools = [
         "lookup_progress", "get_mastery_report", "get_course_outline",
         "list_study_goals", "list_assignments", "create_study_plan",
-        "export_calendar", "write_file", "list_files", "update_workspace",
+        "export_calendar", "write_file", "list_files",
     ]
 
     def build_system_prompt(self, ctx: AgentContext) -> str:
@@ -60,12 +59,6 @@ class PlanAgent(ReActMixin, BaseAgent):
                 parts.append(f"- [{atype}] {a.get('title', 'Untitled')} — due {due}")
 
         return "\n".join(parts)
-
-    async def execute(self, ctx: AgentContext, db: AsyncSession) -> AgentContext:
-        system_prompt = self.build_system_prompt(ctx)
-        client = self.get_llm_client(ctx)
-        ctx.response, _ = await client.chat(system_prompt, ctx.user_message, images=ctx.images or None, history=normalize_history(ctx.conversation_history, ctx.user_message))
-        return ctx
 
     async def stream(self, ctx: AgentContext, db: AsyncSession) -> AsyncIterator[str]:
         async for chunk in ReActMixin.stream(self, ctx, db):

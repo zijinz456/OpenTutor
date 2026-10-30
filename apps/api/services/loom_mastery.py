@@ -1,13 +1,40 @@
-"""LOOM mastery — concept mastery tracking, BKT updates, and bidirectional FIRe propagation.
+"""LOOM concept mastery — the derived, concept-level view of the mastery ledger.
 
-Handles updating mastery scores after practice/quiz attempts and
-propagating fractional implicit repetition credit to prerequisites.
+Ledger principle
+----------------
+``learning_progress`` (per content node) is the source of truth the UI reads;
+``concept_mastery`` (per LOOM knowledge node) is a *derived* view of the same
+attempt facts.  Both are only ever updated from attempt events (a graded quiz
+answer, a flashcard rating, a review rating) and both run the same Bayesian
+Knowledge Tracing step from ``services.learning_science.knowledge_tracer``.
+No LLM output ever writes a mastery number.
 
-Academic foundations:
-- BKT (Bayesian Knowledge Tracing): question-type-aware guess/slip for mastery updates (pyBKT)
-- GKT (Graph-based Knowledge Tracing): bidirectional mastery propagation through KG edges
-- FIRe: Fractional Implicit Repetitions in Knowledge Graphs (2024)
-- LOOM: Concept consolidation when prerequisite groups reach mastery (arXiv 2511.21037)
+Every value in ``concept_mastery`` is recomputable by replaying the attempt
+sequence through this module:
+
+1. BKT step (shared tracer, guess rate chosen by question type)::
+
+       P(L|correct)   = P(L)(1-s) / [P(L)(1-s) + (1-P(L)) g]
+       P(L|incorrect) = P(L) s     / [P(L) s     + (1-P(L))(1-g)]
+       P(L_next)      = P(L|obs) + (1 - P(L|obs)) * p_t
+
+2. FSRS scheduling (shared ``services.spaced_repetition.fsrs.review_card``)
+   with rating Good (3) for correct and Again (1) for incorrect; the card is
+   rebuilt from the row's own counters, so ``stability_days`` and
+   ``next_review_at`` are a pure function of the attempt history.
+
+3. FIRe prerequisite propagation (deterministic, depth <= 3)::
+
+       correct:   prereq.mastery += FIRE_BOOST_PER_DEPTH / (depth + 1)
+       incorrect: prereq.mastery -= FIRE_DOUBT_PER_DEPTH / (depth + 1)
+
+4. LOOM consolidation (correct attempts only): when every prerequisite of a
+   parent concept is at or above ``CONSOLIDATION_THRESHOLD``, the parent gets
+   ``+CONSOLIDATION_PARENT_BOOST`` and each prerequisite's stability is
+   multiplied by ``CONSOLIDATION_STABILITY_MULTIPLIER``.
+
+Academic foundations: BKT (Corbett & Anderson 1994; pyBKT guess/slip by
+question type), GKT doubt propagation, FIRe (2024), LOOM (arXiv 2511.21037).
 """
 
 import logging
@@ -16,27 +43,16 @@ from collections import deque
 from datetime import datetime, timezone
 
 from sqlalchemy import select, func
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.knowledge_graph import KnowledgeNode, KnowledgeEdge, ConceptMastery
+from services.learning_science.knowledge_tracer import (
+    BKTState,
+    params_for_question_type,
+    update_mastery as bkt_step,
+)
 
 logger = logging.getLogger(__name__)
-
-# ── BKT Parameters (pyBKT paper) ──
-# Question-type-specific guess/slip parameters: (guess_probability, slip_probability)
-# guess = P(correct | not learned), slip = P(incorrect | learned)
-BKT_PARAMS: dict[str, tuple[float, float]] = {
-    "mc": (0.25, 0.10),            # MCQ: 25% chance of guessing correctly (1/4 options)
-    "tf": (0.50, 0.10),            # True/False: 50% chance of guessing
-    "short_answer": (0.05, 0.10),  # Short answer: very low guess probability
-    "free_response": (0.05, 0.10), # Free response: very low guess probability
-    "fill_blank": (0.10, 0.10),    # Fill-in-blank: low guess probability
-    "matching": (0.15, 0.10),      # Matching: moderate guess probability
-    "select_all": (0.10, 0.10),    # Select all: low guess probability
-}
-BKT_DEFAULT_PARAMS = (0.15, 0.10)  # Default: moderate guess
-BKT_P_LEARN = 0.10                 # Learning transition probability per practice
 
 # ── FIRe Parameters ──
 FIRE_BOOST_PER_DEPTH = 0.05   # 5% mastery boost per FIRe propagation level (correct)
@@ -48,64 +64,54 @@ CONSOLIDATION_PARENT_BOOST = 0.1        # Mastery boost for parent concept
 CONSOLIDATION_STABILITY_MULTIPLIER = 1.5  # Extend review interval for mastered prereqs
 
 
-# ── BKT Mastery Update ──
-
-def _bkt_update(prior: float, correct: bool, question_type: str | None = None) -> float:
-    """Bayesian Knowledge Tracing mastery update with question-type-aware guess/slip.
-
-    Based on pyBKT (CAHLR, 242★ on GitHub):
-    P(L|correct) = P(L)·(1-slip) / [P(L)·(1-slip) + (1-P(L))·guess]
-    P(L|incorrect) = P(L)·slip / [P(L)·slip + (1-P(L))·(1-guess)]
-    P(L_next) = P(L|obs) + (1 - P(L|obs)) · p_learn
-
-    Key insight: MCQ correct barely moves mastery (could be guessing),
-    while free-response correct gives strong evidence of learning.
-    """
-    guess, slip = BKT_PARAMS.get(question_type or "", BKT_DEFAULT_PARAMS)
-    prior = max(0.001, min(0.999, prior))  # Avoid division by zero
-
-    if correct:
-        # P(Learned | Correct) = P(L)·(1-slip) / [P(L)·(1-slip) + (1-P(L))·guess]
-        posterior = prior * (1 - slip) / (prior * (1 - slip) + (1 - prior) * guess)
-    else:
-        # P(Learned | Incorrect) = P(L)·slip / [P(L)·slip + (1-P(L))·(1-guess)]
-        posterior = prior * slip / (prior * slip + (1 - prior) * (1 - guess))
-
-    # Learning transition: even after observing, there's a chance the student learned
-    updated = posterior + (1 - posterior) * BKT_P_LEARN
-    return max(0.0, min(1.0, updated))
+def rating_is_correct(rating: int) -> bool:
+    """Map an FSRS rating (1=Again, 2=Hard, 3=Good, 4=Easy) to a binary attempt fact."""
+    return rating >= 3
 
 
-# ── Mastery Tracking ──
-
-async def update_concept_mastery(
+async def _resolve_node(
     db: AsyncSession,
-    user_id: uuid.UUID,
-    concept_name: str,
-    course_id: uuid.UUID,
-    correct: bool,
-    question_type: str | None = None,
-) -> ConceptMastery | None:
-    """Update mastery score for a concept after practice/quiz.
-
-    Uses BKT Bayesian update with question-type-aware guess/slip parameters
-    instead of simple EMA. This means:
-    - MCQ correct (guess=0.25) barely increases mastery for low-mastery students
-    - Free-response correct (guess=0.05) strongly increases mastery
-    - Incorrect on T/F (slip=0.10) doesn't overly punish high-mastery students
-    """
-    # Find the concept node
+    course_id: uuid.UUID | None,
+    concept_name: str | None,
+    knowledge_node_id: uuid.UUID | None,
+) -> KnowledgeNode | None:
+    if knowledge_node_id is not None:
+        result = await db.execute(select(KnowledgeNode).where(KnowledgeNode.id == knowledge_node_id))
+        return result.scalar_one_or_none()
+    if not concept_name or course_id is None:
+        return None
     result = await db.execute(
         select(KnowledgeNode).where(
             KnowledgeNode.course_id == course_id,
             func.lower(KnowledgeNode.name) == concept_name.lower(),
         )
     )
-    node = result.scalar_one_or_none()
+    return result.scalar_one_or_none()
+
+
+async def update_concept_mastery(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    concept_name: str | None,
+    course_id: uuid.UUID | None,
+    correct: bool,
+    question_type: str | None = None,
+    *,
+    knowledge_node_id: uuid.UUID | None = None,
+    rating: int | None = None,
+) -> ConceptMastery | None:
+    """Apply one attempt fact to a concept's derived mastery row.
+
+    The concept is resolved by ``knowledge_node_id`` when given (the id stored
+    on ``problem_metadata`` / card JSON at ingestion), otherwise by normalized
+    name within ``course_id``.  ``rating`` (FSRS 1-4) is used for scheduling
+    when supplied; otherwise correct→Good, incorrect→Again.
+    """
+    node = await _resolve_node(db, course_id, concept_name, knowledge_node_id)
     if not node:
         return None
+    course_id = course_id or node.course_id
 
-    # Get or create mastery record
     result = await db.execute(
         select(ConceptMastery).where(
             ConceptMastery.user_id == user_id,
@@ -126,17 +132,21 @@ async def update_concept_mastery(
         )
         db.add(mastery)
 
-    # Update counters
     mastery.practice_count += 1
     if correct:
         mastery.correct_count += 1
     else:
         mastery.wrong_count += 1
 
-    # BKT Bayesian mastery update (replaces EMA)
-    mastery.mastery_score = _bkt_update(mastery.mastery_score, correct, question_type)
+    # 1. Shared BKT step
+    state = bkt_step(
+        BKTState(p_mastery=mastery.mastery_score or 0.0, observations=mastery.practice_count - 1),
+        correct,
+        params_for_question_type(question_type),
+    )
+    mastery.mastery_score = state.p_mastery
 
-    # FSRS-based stability and scheduling
+    # 2. Shared FSRS scheduling
     from services.spaced_repetition.fsrs import FSRSCard, review_card as fsrs_review
 
     fsrs_card = FSRSCard(
@@ -147,27 +157,19 @@ async def update_concept_mastery(
         last_review=mastery.last_practiced_at,
         state="review" if mastery.practice_count > 1 else "new",
     )
-
-    # Map correct/incorrect to FSRS ratings
-    if correct:
-        rating = 3  # Good
-    else:
-        rating = 1  # Again
-
+    fsrs_rating = rating if rating in (1, 2, 3, 4) else (3 if correct else 1)
     now = datetime.now(timezone.utc)
-    updated_card, _ = fsrs_review(fsrs_card, rating, now)
+    updated_card, _ = fsrs_review(fsrs_card, fsrs_rating, now)
     mastery.stability_days = updated_card.stability
     mastery.last_practiced_at = now
-    mastery.next_review_at = updated_card.due  # Now properly set via FSRS scheduling
+    mastery.next_review_at = updated_card.due
 
-    # Bidirectional FIRe: propagate credit (correct) or doubt (incorrect) to prerequisites
+    # 3. Bidirectional FIRe: propagate credit (correct) or doubt (incorrect) to prerequisites
     await _fire_propagate(db, user_id, node.id, course_id, correct)
 
-    # LOOM consolidation: check if prerequisite groups are fully mastered
-    await _consolidate_mastered_concepts(db, user_id, course_id, node.id)
-
-    # Sync concept mastery → LearningProgress so forgetting_risk signals stay current
-    await _sync_to_learning_progress(db, user_id, course_id, mastery)
+    # 4. LOOM consolidation: only a correct attempt can complete a mastered group
+    if correct:
+        await _consolidate_mastered_concepts(db, user_id, course_id, node.id)
 
     await db.flush()
     return mastery
@@ -192,7 +194,6 @@ async def _fire_propagate(
 
     Propagation decays with depth: factor = 1/(depth+1)
     """
-    # Get prerequisite edges from practiced node
     edges_result = await db.execute(
         select(KnowledgeEdge).where(
             KnowledgeEdge.source_id == practiced_node_id,
@@ -223,15 +224,12 @@ async def _fire_propagate(
         prereq_mastery = mastery_result.scalar_one_or_none()
         if prereq_mastery:
             if correct:
-                # Positive FIRe: boost prerequisite mastery
                 boost = fraction * FIRE_BOOST_PER_DEPTH
                 prereq_mastery.mastery_score = min(1.0, prereq_mastery.mastery_score + boost)
             else:
-                # GKT doubt propagation: reduce prerequisite mastery
                 doubt = fraction * FIRE_DOUBT_PER_DEPTH
                 prereq_mastery.mastery_score = max(0.0, prereq_mastery.mastery_score - doubt)
 
-        # Continue walking up the prerequisite chain
         deeper_edges = await db.execute(
             select(KnowledgeEdge).where(
                 KnowledgeEdge.source_id == prereq_id,
@@ -257,7 +255,6 @@ async def _consolidate_mastered_concepts(
     1. Boost the parent concept's mastery (foundation is solid)
     2. Extend stability of mastered prerequisites (reduce review frequency)
     """
-    # Find concepts where this node is a prerequisite (i.e., parent concepts)
     parent_edges = await db.execute(
         select(KnowledgeEdge).where(
             KnowledgeEdge.target_id == updated_node_id,
@@ -267,7 +264,6 @@ async def _consolidate_mastered_concepts(
     parent_ids = [e.source_id for e in parent_edges.scalars().all()]
 
     for parent_id in parent_ids:
-        # Get all prerequisites of this parent
         prereq_edges = await db.execute(
             select(KnowledgeEdge).where(
                 KnowledgeEdge.source_id == parent_id,
@@ -278,7 +274,6 @@ async def _consolidate_mastered_concepts(
         if not prereq_ids:
             continue
 
-        # Check if ALL prereqs are mastered
         masteries = await db.execute(
             select(ConceptMastery).where(
                 ConceptMastery.user_id == user_id,
@@ -294,8 +289,6 @@ async def _consolidate_mastered_concepts(
         if not all_mastered:
             continue
 
-        # All prereqs mastered! → Consolidate
-        # 1. Boost parent mastery
         parent_mastery_result = await db.execute(
             select(ConceptMastery).where(
                 ConceptMastery.user_id == user_id,
@@ -310,52 +303,6 @@ async def _consolidate_mastered_concepts(
                 parent_id, pm.mastery_score,
             )
 
-        # 2. Extend stability of mastered prereqs (space out reviews)
         for m in mastery_list:
             if m.stability_days and m.stability_days > 0:
                 m.stability_days *= CONSOLIDATION_STABILITY_MULTIPLIER
-
-
-# ── Mastery Sync: ConceptMastery → LearningProgress ──
-
-async def _sync_to_learning_progress(
-    db: AsyncSession,
-    user_id: uuid.UUID,
-    course_id: uuid.UUID,
-    concept_mastery: ConceptMastery,
-) -> None:
-    """Sync concept mastery changes to LearningProgress.
-
-    This ensures that forgetting_risk signals (which read LearningProgress)
-    reflect LOOM concept-level mastery updates from quiz and flashcard reviews.
-    """
-    try:
-        from models.progress import LearningProgress
-
-        result = await db.execute(
-            select(LearningProgress).where(
-                LearningProgress.user_id == user_id,
-                LearningProgress.course_id == course_id,
-            )
-        )
-        progress = result.scalar_one_or_none()
-        if not progress:
-            return
-
-        # Sync FSRS scheduling data from concept mastery.
-        # Use min strategy for next_review_at (earliest review wins) and
-        # weighted blend for stability to avoid last-writer-wins overwrites.
-        if concept_mastery.stability_days and concept_mastery.stability_days > 0:
-            current_stability = progress.fsrs_stability or concept_mastery.stability_days
-            progress.fsrs_stability = current_stability * 0.85 + concept_mastery.stability_days * 0.15
-        if concept_mastery.next_review_at:
-            if not progress.next_review_at or concept_mastery.next_review_at < progress.next_review_at:
-                progress.next_review_at = concept_mastery.next_review_at
-        # Blend mastery scores: nudge LearningProgress toward concept mastery
-        if concept_mastery.mastery_score is not None:
-            current = progress.mastery_score or 0.0
-            # Small nudge (±0.05) to avoid overriding flashcard-specific mastery
-            delta = (concept_mastery.mastery_score - current) * 0.15
-            progress.mastery_score = max(0.0, min(1.0, current + delta))
-    except (SQLAlchemyError, OSError) as e:
-        logger.warning("ConceptMastery → LearningProgress sync failed: %s", e)

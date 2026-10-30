@@ -167,7 +167,7 @@ async def test_e2e_review_outcome_triggers_consolidation(db, user_id, course_id)
                           practice_count=2, correct_count=1, stability_days=2.0))
     await db.commit()
 
-    # Correct recall of R: 0.84 + 0.1·(1−0.84) ≈ 0.856 → crosses 0.85 → consolidate
+    # Correct recall of R through the shared BKT step (g=0.05): 0.84 → ≈0.99 → crosses 0.85 → consolidate
     await record_review_outcome(db, user_id, r.id, recalled_correctly=True)
     await db.commit()
 

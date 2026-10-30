@@ -178,7 +178,7 @@ async def test_quiz_endpoints_block_cross_user_access(authz_client):
             correct_answer="4",
             explanation="4 is correct",
             order_index=1,
-            source="generated",
+            source="ai_generated",
         )
         db.add(problem)
         await db.commit()

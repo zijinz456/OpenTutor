@@ -1,11 +1,9 @@
 """LLM runtime configuration and natural-language preference parsing endpoints."""
 
-import json
 import logging
 
 from fastapi import APIRouter, Depends
 from libs.exceptions import ExternalServiceError, ValidationError
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.user import User
 from schemas.preference import (
@@ -13,8 +11,6 @@ from schemas.preference import (
     LlmConnectionTestResponse,
     LlmRuntimeConfigResponse,
     LlmRuntimeConfigUpdate,
-    NLPreferenceRequest,
-    NLPreferenceResult,
     OllamaModelEntry,
 )
 from services.auth.dependency import get_current_user
@@ -132,34 +128,3 @@ def _is_direct_parse_confident(text: str, dimension: str | None, value: str | No
     has_value_signal = any(signal in normalized for signal in value_signals)
     has_context_signal = any(signal in normalized for signal in context_signals)
     return has_value_signal and has_context_signal
-
-
-@router.post("/parse-nl", response_model=NLPreferenceResult, summary="Parse NL preference", description="Parse a natural language preference request into a structured dimension and value.")
-async def parse_nl_preference(
-    body: NLPreferenceRequest,
-    user: User = Depends(get_current_user),
-):
-    """Parse a natural language preference request using LLM."""
-    _ = user
-    from services.llm.router import get_registry
-
-    registry = get_registry()
-    try:
-        client = registry.get("fast")
-        raw, _usage = await client.extract(_NL_PREFERENCE_PROMPT, body.text)
-        # Strip markdown fences if present
-        from libs.text_utils import strip_code_fences
-        raw = strip_code_fences(raw)
-        parsed = json.loads(raw)
-        dim = parsed.get("dimension")
-        val = parsed.get("value")
-        if not _is_direct_parse_confident(body.text, dim, val):
-            return NLPreferenceResult()
-        label = f"{(dim or '').replace('_', ' ')}: {val}" if dim and val else None
-        return NLPreferenceResult(dimension=dim, value=val, label=label)
-    except (json.JSONDecodeError, KeyError, TypeError) as e:
-        logger.debug("NL preference parsing returned unparseable result: %s", e)
-        return NLPreferenceResult()
-    except (OSError, ConnectionError, TimeoutError, ValueError) as exc:
-        logger.exception("NL preference parsing failed")
-        return NLPreferenceResult()

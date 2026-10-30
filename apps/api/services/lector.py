@@ -285,69 +285,41 @@ async def record_review_outcome(
     db: AsyncSession,
     user_id: uuid.UUID,
     concept_id: uuid.UUID,
-    recalled_correctly: bool,
-) -> None:
-    """Record whether a concept was recalled correctly after being reviewed.
+    recalled_correctly: bool | None = None,
+    *,
+    rating: int | None = None,
+) -> "ConceptMastery | None":
+    """Record a concept review outcome through the single mastery ledger.
 
-    Delegates to FSRS review_card() for consistent scheduling with the
-    rest of the system (quiz submissions, flashcard reviews).
+    Accepts either a binary recall fact or an FSRS rating (1=Again, 2=Hard,
+    3=Good, 4=Easy); Good/Easy count as a correct attempt.  The row is
+    updated by ``services.loom_mastery.update_concept_mastery`` (shared BKT
+    step + shared FSRS scheduling), so review ratings and quiz answers move
+    mastery by the same rule.  Returns the updated row, or None when the
+    concept does not exist.
     """
-    from services.spaced_repetition.fsrs import FSRSCard, review_card as fsrs_review
+    from services.loom_mastery import rating_is_correct, update_concept_mastery
 
-    result = await db.execute(
-        select(ConceptMastery).where(
-            ConceptMastery.user_id == user_id,
-            ConceptMastery.knowledge_node_id == concept_id,
-        )
+    if rating is not None:
+        recalled_correctly = rating_is_correct(rating)
+    if recalled_correctly is None:
+        raise ValueError("record_review_outcome needs recalled_correctly or rating")
+
+    mastery = await update_concept_mastery(
+        db, user_id, None, None,
+        correct=recalled_correctly,
+        question_type="free_response",
+        knowledge_node_id=concept_id,
+        rating=rating,
     )
-    mastery = result.scalar_one_or_none()
     if mastery is None:
         logger.warning(
-            "record_review_outcome: no ConceptMastery for user=%s concept=%s",
-            user_id, concept_id,
+            "record_review_outcome: no concept %s for user=%s", concept_id, user_id,
         )
-        return
-
-    now = datetime.now(timezone.utc)
-    fsrs_rating = 3 if recalled_correctly else 1  # Good vs Again
-
-    fsrs_card = FSRSCard(
-        difficulty=5.0,
-        stability=mastery.stability_days if mastery.stability_days > 0 else 1.0,
-        reps=mastery.practice_count,
-        lapses=mastery.wrong_count,
-        last_review=mastery.last_practiced_at,
-        state="review" if mastery.practice_count > 0 else "new",
-    )
-    updated_card, _log = fsrs_review(fsrs_card, fsrs_rating, now)
-
-    mastery.stability_days = updated_card.stability
-    mastery.next_review_at = updated_card.due
-    mastery.last_practiced_at = now
-    mastery.practice_count += 1
-
-    if recalled_correctly:
-        mastery.correct_count += 1
-        gain = 0.1 * (1.0 - mastery.mastery_score)
-        mastery.mastery_score = min(1.0, mastery.mastery_score + gain)
-    else:
-        mastery.wrong_count += 1
-        mastery.mastery_score = max(0.0, mastery.mastery_score - 0.1)
-
-    # Consolidation bonus: review outcomes count toward prerequisite-group
-    # mastery just like quiz submissions do (update_concept_mastery path),
-    # so a recall that completes a mastered prereq group boosts the parent.
-    node_result = await db.execute(
-        select(KnowledgeNode).where(KnowledgeNode.id == concept_id)
-    )
-    node = node_result.scalar_one_or_none()
-    if node and recalled_correctly:
-        from services.loom_mastery import _consolidate_mastered_concepts
-        await _consolidate_mastered_concepts(db, user_id, node.course_id, concept_id)
-
-    await db.flush()
+        return None
     logger.info(
         "Recorded review outcome: user=%s concept=%s recalled=%s mastery=%.3f stability=%.2f",
         user_id, concept_id, recalled_correctly,
         mastery.mastery_score, mastery.stability_days,
     )
+    return mastery

@@ -43,15 +43,6 @@ Rules:
 - Multiple actions are allowed when the user asks for combined operations.
 """
 
-# Preference tools (only when preference changes are likely)
-PREFERENCE_TOOLS = """
-## Preference Actions
-- [ACTION:set_preference:note_format:<value>] — bullet_point|table|mind_map|step_by_step|summary
-- [ACTION:set_preference:detail_level:<value>] — concise|balanced|detailed
-- [ACTION:set_preference:language:<value>] — en|zh|auto
-- [ACTION:set_preference:explanation_style:<value>] — formal|conversational|socratic|example_heavy
-"""
-
 # Quiz tools (only in quiz/exercise scenes)
 QUIZ_TOOLS = """
 ## Quiz Generation Guidelines
@@ -106,44 +97,22 @@ SCENE_TOOL_MAP: dict[str, list[str]] = {
 TOOL_REGISTRY: dict[str, str] = {
     "core": CORE_TOOLS,
     "layout": LAYOUT_TOOLS,
-    "preference": PREFERENCE_TOOLS,
     "quiz": QUIZ_TOOLS,
     "plan": PLAN_TOOLS,
     "review": REVIEW_TOOLS,
 }
 
 
-def get_all_tools(include_preference: bool = False) -> str:
-    """Get concatenated tool definitions for all tool categories.
-
-    Args:
-        include_preference: Whether to include preference tools
-                           (only when intent is PREFERENCE or LAYOUT)
-
-    Returns:
-        Concatenated tool prompt string
-    """
-    parts = []
-    for key, tool_prompt in TOOL_REGISTRY.items():
-        if key == "preference" and not include_preference:
-            continue
-        if tool_prompt:
-            parts.append(tool_prompt)
-
-    return "\n".join(parts)
-
-
-def get_scene_tools(scene: str, include_preference: bool = False) -> str:
+def get_scene_tools(scene: str) -> str:
     """Get tool definitions filtered by the current scene.
 
-    Only loads tools relevant to the scene, saving ~30% prompt tokens
-    compared to get_all_tools().
+    Only loads tools relevant to the scene.  Preferences are captured by the
+    ``save_user_preference`` ReAct tool (explicit) and the async preference
+    extractor (implicit), not by text markers.
 
     Falls back to core + layout if scene is unknown.
     """
     tool_keys = SCENE_TOOL_MAP.get(scene, ["core", "layout"])
-    if include_preference and "preference" not in tool_keys:
-        tool_keys = list(tool_keys) + ["preference"]
 
     parts = []
     for key in tool_keys:

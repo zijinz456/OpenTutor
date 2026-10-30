@@ -17,7 +17,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from services.agent.base import BaseAgent
 from services.agent.react_mixin import ReActMixin
 from services.agent.state import AgentContext
-from services.agent.tool_loader import get_all_tools
 
 # Import prompt constants and helpers from split module
 from services.agent.agents.prompts import (  # noqa: F401 — re-exported
@@ -27,7 +26,7 @@ from services.agent.agents.prompts import (  # noqa: F401 — re-exported
     _CURRICULUM_RE,
     _CODE_RE,
     _FATIGUE_RE,
-    _load_strategy_fragments,
+    MATH_IMAGE_TUTORING,
     SOCRATIC_GUARDRAILS,
     _QUIZ_INSTRUCTIONS,
     _REVIEW_INSTRUCTIONS,
@@ -40,7 +39,6 @@ from services.agent.agents.prompts import (  # noqa: F401 — re-exported
 
 # Import assessment data builder from split module
 from services.agent.agents.assessment import build_assessment_data  # noqa: F401
-from services.llm.base_client import normalize_history
 
 logger = logging.getLogger(__name__)
 
@@ -63,14 +61,12 @@ class TutorAgent(ReActMixin, BaseAgent):
     model_preference = "frontier"
     react_tools = [
         "search_content", "lookup_progress", "get_course_outline",
-        "generate_notes", "web_search", "write_file", "update_workspace",
+        "generate_notes", "web_search", "write_file",
         # quiz/exercise tools
         "get_mastery_report", "list_wrong_answers", "generate_flashcards",
         "generate_quiz", "export_anki",
         # review tools
         "derive_diagnostic",
-        # comprehension probing
-        "record_comprehension",
         # assessment tools
         "list_recent_tasks",
         # planning-adjacent tools
@@ -143,23 +139,8 @@ class TutorAgent(ReActMixin, BaseAgent):
                 "Offer step-by-step worked examples rather than questions.\n"
             )
         else:
-            # Only load relevant teaching strategy fragments (not all)
-            fragments = _load_strategy_fragments()
-            if fragments:
-                # Select at most 2 relevant fragments based on message context
-                relevant_keys = []
-                msg_lower = msg.lower()
-                for k in fragments:
-                    k_lower = k.lower().replace("_", " ")
-                    if any(word in msg_lower for word in k_lower.split()):
-                        relevant_keys.append(k)
-                if not relevant_keys:
-                    # Default to first 2 fragments if none match
-                    relevant_keys = list(fragments.keys())[:2]
-                else:
-                    relevant_keys = relevant_keys[:2]
-                frag_text = "\n\n".join(f"### {k}\n{fragments[k]}" for k in relevant_keys)
-                parts.append(f"\n## Teaching Strategies\n{frag_text}\n")
+            # Teaching strategies come from one place: the base prompt's
+            # "## Teaching Strategies" section (skills/*.md + learned strategies).
             parts.append(SOCRATIC_GUARDRAILS)
             parts.append(_COMPREHENSION_PROBING)
 
@@ -170,10 +151,7 @@ class TutorAgent(ReActMixin, BaseAgent):
 
         # ── Math image tutoring (LaTeX-OCR results populated by context_builder) ──
         if ctx.metadata.get("latex_ocr"):
-            fragments = _load_strategy_fragments()
-            math_fragment = fragments.get("math_image_tutoring", "")
-            if math_fragment:
-                parts.append(f"\n{math_fragment}\n")
+            parts.append(f"\n{MATH_IMAGE_TUTORING}\n")
 
         # ── Cross-course connections ──
         cross_patterns = ctx.metadata.get("cross_course_patterns")
@@ -202,7 +180,7 @@ class TutorAgent(ReActMixin, BaseAgent):
         # Scene-specific tools (only load relevant tools for current context)
         from services.agent.tool_loader import get_scene_tools
         scene = ctx.metadata.get("scene") or ctx.scene or ""
-        scene_tools = get_scene_tools(scene, include_preference=False)
+        scene_tools = get_scene_tools(scene)
         parts.append(scene_tools)
 
         return "\n".join(parts)
@@ -303,30 +281,6 @@ class TutorAgent(ReActMixin, BaseAgent):
             await save_socratic_engine(db, ctx.user_id, ctx.course_id, engine)
         except (SQLAlchemyError, ConnectionError, TimeoutError, KeyError, ValueError) as e:
             logger.debug("Socratic state save skipped: %s", e)
-
-    async def execute(self, ctx: AgentContext, db: AsyncSession) -> AgentContext:
-        """Generate response using unified prompt with conditional sections."""
-        msg = ctx.user_message
-
-        # Pre-load assessment data if assessment keywords detected
-        if _ASSESS_RE.search(msg):
-            ctx.metadata["assessment_data"] = await self._build_assessment_data(ctx, db)
-
-        # Load Socratic engine state
-        await self._load_socratic(ctx, db)
-
-        # Code execution pre-processing
-        if _CODE_RE.search(msg):
-            await self._pre_execute_code(ctx)
-
-        system_prompt = self.build_system_prompt(ctx)
-        client = self.get_llm_client(ctx)
-        ctx.response, _ = await client.chat(system_prompt, ctx.user_message, images=ctx.images or None, history=normalize_history(ctx.conversation_history, ctx.user_message))
-
-        # Save Socratic state after response
-        await self._save_socratic(ctx, db)
-
-        return ctx
 
     async def stream(self, ctx: AgentContext, db: AsyncSession) -> AsyncIterator[str]:
         """Pre-load assessment data if needed, then delegate to ReActMixin.stream()."""

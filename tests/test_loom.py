@@ -12,10 +12,17 @@ from services.loom_graph import (
     get_mastery_graph,
     link_cross_course_concepts,
 )
-from services.loom_mastery import _bkt_update, update_concept_mastery
+from services.learning_science.knowledge_tracer import BKTState, params_for_question_type, update_mastery as _bkt_step
+from services.loom_mastery import update_concept_mastery
 
 
 pytestmark = pytest.mark.usefixtures("block_unmocked_cloud_requests")
+
+
+@pytest.fixture(autouse=True)
+def _enable_loom(monkeypatch):
+    from config import settings
+    monkeypatch.setattr(settings, "enable_experimental_loom", True)
 
 def _node(name, cid, nid=None, meta=None):
     n = MagicMock(); n.id = nid or uuid.uuid4(); n.course_id = cid; n.name = name
@@ -153,8 +160,9 @@ async def test_extract_handles_llm_connection_error():
 def test_bkt_update_mcq_correct_low_mastery():
     """MCQ correct on low mastery: high guess rate means small increase."""
     result = _bkt_update(0.2, correct=True, question_type="mc")
-    # With guess=0.25, correct barely moves low mastery
-    assert result < 0.55  # Much less than free_response would give
+    # With guess=0.25, correct moves low mastery far less than free_response would
+    assert result < 0.6
+    assert result < _bkt_update(0.2, correct=True, question_type="free_response")
 
 def test_bkt_update_free_response_correct_low_mastery():
     """Free-response correct on low mastery: low guess rate means strong increase."""
@@ -176,13 +184,27 @@ def test_bkt_update_incorrect_high_mastery():
 def test_bkt_update_tf_correct():
     """True/False: 50% guess rate means correct barely helps."""
     result = _bkt_update(0.3, correct=True, question_type="tf")
-    assert result < 0.5  # High guess rate means weak evidence
+    assert result < 0.6  # High guess rate means weak evidence
+    assert result < _bkt_update(0.3, correct=True, question_type="mc")
+
+def _bkt_update(prior, correct, question_type=None):
+    """Mirror of the single BKT step loom_mastery runs (shared knowledge_tracer)."""
+    return _bkt_step(BKTState(p_mastery=prior), correct, params_for_question_type(question_type)).p_mastery
+
 
 def test_bkt_update_bounds():
     """BKT should always return values in [0, 1]."""
     assert 0.0 <= _bkt_update(0.0, True) <= 1.0
     assert 0.0 <= _bkt_update(1.0, False) <= 1.0
     assert 0.0 <= _bkt_update(0.5, True, "mc") <= 1.0
+
+
+def test_concept_mastery_uses_shared_tracer():
+    """loom_mastery must not carry its own BKT table — guess rate comes from knowledge_tracer."""
+    import services.loom_mastery as lm
+    assert not hasattr(lm, "BKT_PARAMS") and not hasattr(lm, "_bkt_update")
+    assert params_for_question_type("tf").p_g == 0.5
+    assert params_for_question_type("free_response").p_g == 0.05
 
 # ── update_concept_mastery ──
 
@@ -197,17 +219,16 @@ async def test_update_mastery_correct_answer():
     n = _node("Derivative", cid)
     m = _mastery(uid, n.id, score=0.5, pc=3, cc=2, wc=1, stab=2.0)
     # Mock results: 1) find node, 2) find mastery,
-    # 3) FIRe prereq edges, 4) consolidation parent edges, 5) sync LearningProgress
-    no_progress = MagicMock(); no_progress.scalar_one_or_none.return_value = None
-    db.execute = AsyncMock(side_effect=[_scalars([n]), _scalars([m]), _scalars([]), _scalars([]), no_progress])
+    # 3) FIRe prereq edges, 4) consolidation parent edges (correct only)
+    db.execute = AsyncMock(side_effect=[_scalars([n]), _scalars([m]), _scalars([]), _scalars([])])
     db.flush = AsyncMock()
     with _fsrs_patch() as fp:
         fp.return_value = (_fsrs_card(5.0), MagicMock())
         r = await update_concept_mastery(db, uid, "Derivative", cid, correct=True)
-    # BKT(0.5, correct, default guess=0.15, slip=0.10):
-    # posterior = 0.5*0.9 / (0.5*0.9 + 0.5*0.15) = 0.857
-    # updated = 0.857 + (1-0.857)*0.10 = 0.871
-    assert r.mastery_score == pytest.approx(0.87, abs=0.02)
+    # BKT(0.5, correct, tracer defaults guess=0.25, slip=0.10, learn=0.20):
+    # posterior = 0.5*0.9 / (0.5*0.9 + 0.5*0.25) = 0.783
+    # updated = 0.783 + (1-0.783)*0.20 = 0.826
+    assert r.mastery_score == pytest.approx(0.83, abs=0.02)
     assert r.practice_count == 4 and r.correct_count == 3
 
 @pytest.mark.asyncio
@@ -216,17 +237,16 @@ async def test_update_mastery_incorrect_answer():
     n = _node("Integration", cid)
     m = _mastery(uid, n.id, score=0.8, pc=5, cc=4, wc=1, stab=3.0)
     # Mock results: 1) find node, 2) find mastery,
-    # 3) FIRe prereq edges (now runs on incorrect too!), 4) consolidation parent edges, 5) sync LearningProgress
-    no_progress = MagicMock(); no_progress.scalar_one_or_none.return_value = None
-    db.execute = AsyncMock(side_effect=[_scalars([n]), _scalars([m]), _scalars([]), _scalars([]), no_progress])
+    # 3) FIRe prereq edges (runs on incorrect too); no consolidation on a wrong answer
+    db.execute = AsyncMock(side_effect=[_scalars([n]), _scalars([m]), _scalars([]), _scalars([])])
     db.flush = AsyncMock()
     with _fsrs_patch() as fp:
         fp.return_value = (_fsrs_card(1.0), MagicMock())
         r = await update_concept_mastery(db, uid, "Integration", cid, correct=False)
-    # BKT(0.8, incorrect, default guess=0.15, slip=0.10):
-    # posterior = 0.8*0.10 / (0.8*0.10 + 0.2*0.85) = 0.08/0.25 = 0.32
-    # updated = 0.32 + 0.68*0.10 = 0.388
-    assert r.mastery_score == pytest.approx(0.39, abs=0.02)
+    # BKT(0.8, incorrect, tracer defaults guess=0.25, slip=0.10, learn=0.20):
+    # posterior = 0.8*0.10 / (0.8*0.10 + 0.2*0.75) = 0.08/0.23 = 0.348
+    # updated = 0.348 + 0.652*0.20 = 0.478
+    assert r.mastery_score == pytest.approx(0.48, abs=0.02)
     assert r.wrong_count == 2
 
 @pytest.mark.asyncio
@@ -236,16 +256,15 @@ async def test_update_mastery_creates_new_record():
     no_m = MagicMock(); no_m.scalar_one_or_none.return_value = None
     s = MagicMock(); s.all.return_value = []; no_m.scalars.return_value = s
     # Mock results: 1) find node, 2) no existing mastery,
-    # 3) FIRe prereq edges, 4) consolidation parent edges, 5) sync LearningProgress
-    no_progress = MagicMock(); no_progress.scalar_one_or_none.return_value = None
-    db.execute = AsyncMock(side_effect=[_scalars([n]), no_m, _scalars([]), _scalars([]), no_progress])
+    # 3) FIRe prereq edges, 4) consolidation parent edges (correct only)
+    db.execute = AsyncMock(side_effect=[_scalars([n]), no_m, _scalars([]), _scalars([])])
     added = []; db.add = lambda o: added.append(o); db.flush = AsyncMock()
     with _fsrs_patch() as fp:
         fp.return_value = (_fsrs_card(1.0), MagicMock())
         r = await update_concept_mastery(db, uid, "Limit", cid, correct=True)
     assert r is not None and len(added) == 1
-    # BKT(0.0→0.001, correct, default): ~0.106
-    assert r.mastery_score == pytest.approx(0.11, abs=0.02)
+    # BKT(0.0, correct, tracer defaults): posterior 0 → learn step 0.20
+    assert r.mastery_score == pytest.approx(0.20, abs=0.02)
     assert r.practice_count == 1 and r.correct_count == 1
 
 @pytest.mark.asyncio
@@ -254,15 +273,14 @@ async def test_update_mastery_bkt_from_zero():
     n = _node("Topic", cid)
     m = _mastery(uid, n.id, score=0.0, pc=0, cc=0, wc=0, stab=0.0)
     # Mock results: 1) find node, 2) find mastery,
-    # 3) FIRe prereq edges, 4) consolidation parent edges, 5) sync LearningProgress
-    no_progress = MagicMock(); no_progress.scalar_one_or_none.return_value = None
-    db.execute = AsyncMock(side_effect=[_scalars([n]), _scalars([m]), _scalars([]), _scalars([]), no_progress])
+    # 3) FIRe prereq edges, 4) consolidation parent edges (correct only)
+    db.execute = AsyncMock(side_effect=[_scalars([n]), _scalars([m]), _scalars([]), _scalars([])])
     db.flush = AsyncMock()
     with _fsrs_patch() as fp:
         fp.return_value = (_fsrs_card(1.0), MagicMock())
         r = await update_concept_mastery(db, uid, "Topic", cid, correct=True)
-    # BKT(0.001, correct, default): ~0.106
-    assert r.mastery_score == pytest.approx(0.11, abs=0.02)
+    # BKT(0.0, correct, tracer defaults): posterior 0 → learn step 0.20
+    assert r.mastery_score == pytest.approx(0.20, abs=0.02)
 
 @pytest.mark.asyncio
 async def test_update_mastery_with_question_type():
@@ -270,8 +288,7 @@ async def test_update_mastery_with_question_type():
     db = AsyncMock(); uid, cid = uuid.uuid4(), uuid.uuid4()
     n = _node("Concept", cid)
     m = _mastery(uid, n.id, score=0.3, pc=2, cc=1, wc=1, stab=1.0)
-    no_progress = MagicMock(); no_progress.scalar_one_or_none.return_value = None
-    db.execute = AsyncMock(side_effect=[_scalars([n]), _scalars([m]), _scalars([]), _scalars([]), no_progress])
+    db.execute = AsyncMock(side_effect=[_scalars([n]), _scalars([m]), _scalars([]), _scalars([])])
     db.flush = AsyncMock()
     with _fsrs_patch() as fp:
         fp.return_value = (_fsrs_card(2.0), MagicMock())
@@ -422,7 +439,22 @@ async def test_build_course_graph_success():
           patch("services.loom_graph.link_cross_course_concepts", new_callable=AsyncMock) as ml,
           patch("services.loom_confusion.compute_interference_matrix", new_callable=AsyncMock) as mi):
         me.return_value = [_node("A", cid), _node("B", cid)]; ml.return_value = 0; mi.return_value = []
-        assert await build_course_graph(lambda: ctx, cid) == 2
+        with patch("services.loom_linking.link_course_assets_to_concepts", new_callable=AsyncMock) as mlink:
+            mlink.return_value = {"problems": 0, "cards": 0}
+            assert await build_course_graph(lambda: ctx, cid) == 2
+        mlink.assert_awaited_once()
+
+@pytest.mark.asyncio
+async def test_build_course_graph_skipped_when_flag_off(monkeypatch):
+    """Flag off → no DB session, no LLM call, 0 nodes."""
+    from config import settings
+    monkeypatch.setattr(settings, "enable_experimental_loom", False)
+    factory = MagicMock(side_effect=AssertionError("db_factory must not be called"))
+    with patch("services.loom_extraction.extract_course_concepts", new_callable=AsyncMock) as me:
+        assert await build_course_graph(factory, uuid.uuid4()) == 0
+        me.assert_not_awaited()
+    factory.assert_not_called()
+
 
 @pytest.mark.asyncio
 async def test_build_course_graph_handles_exception():

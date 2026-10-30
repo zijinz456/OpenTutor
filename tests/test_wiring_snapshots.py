@@ -38,9 +38,10 @@ def test_scheduler_job_snapshot():
         "agenda_tick",
         "daily_brief",
         "weekly_report",
-        "smart_review_trigger",
         "bkt_training",
         "cross_course_linking",
-        "heartbeat_review",
     ):
         assert f'"{job_id}"' in source
+    # agenda_tick is the only producer of proactive review tasks
+    for job_id in ("smart_review_trigger", "heartbeat_review", "weekly_prep"):
+        assert f'"{job_id}"' not in source

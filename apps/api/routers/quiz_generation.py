@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config import settings
 from database import get_db
 from models.content import CourseContentTree, INFO_CATEGORIES
-from models.practice import PracticeProblem
+from models.practice import PracticeProblem, ProblemSource
 from models.user import User
 from schemas.quiz import (
     ExtractRequest,
@@ -49,7 +49,7 @@ async def list_generated_batches(
         select(PracticeProblem)
         .where(
             PracticeProblem.course_id == course_id,
-            PracticeProblem.source == "generated",
+            PracticeProblem.source == ProblemSource.AI_GENERATED.value,
             PracticeProblem.source_batch_id.isnot(None),
         )
         .order_by(PracticeProblem.source_batch_id, PracticeProblem.source_version.desc(), PracticeProblem.created_at.desc())
@@ -98,7 +98,7 @@ async def save_generated_quiz(
         prior_result = await db.execute(
             select(PracticeProblem).where(
                 PracticeProblem.course_id == body.course_id,
-                PracticeProblem.source == "generated",
+                PracticeProblem.source == ProblemSource.AI_GENERATED.value,
                 PracticeProblem.source_batch_id == replace_batch_id,
                 PracticeProblem.is_archived == False,
             )
@@ -129,7 +129,7 @@ async def save_generated_quiz(
             title=title,
             question=question,
             order_index=start_order + index,
-            source="generated",
+            source=ProblemSource.AI_GENERATED.value,
             source_batch_id=replace_batch_id,
             source_version=next_version,
         )
@@ -276,7 +276,8 @@ async def extract_quiz(body: ExtractRequest, user: User = Depends(get_current_us
             kp_list = p.knowledge_points if hasattr(p, "knowledge_points") else None
             if kp_list:
                 kp_names.extend(kp_list if isinstance(kp_list, list) else [kp_list])
-        if kp_names:
+        from services.loom_flags import loom_enabled
+        if kp_names and loom_enabled():
             from services.loom_graph import check_prerequisites_satisfied
             satisfied, gaps = await check_prerequisites_satisfied(
                 db, user.id, body.course_id, list(set(kp_names)),

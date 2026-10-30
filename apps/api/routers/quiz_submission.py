@@ -1,4 +1,4 @@
-"""Quiz submission endpoints: submit answers, list problems, mastery history."""
+"""Quiz submission endpoints: submit answers, list problems."""
 
 import logging
 import uuid
@@ -15,12 +15,12 @@ from models.practice import PracticeProblem, PracticeResult
 from models.user import User
 from schemas.quiz import (
     AnswerResponse,
-    MasterySnapshotResponse,
     ProblemResponse,
     SubmitAnswerRequest,
 )
 from services.auth.dependency import get_current_user
 from services.course_access import get_course_or_404
+from services.loom_flags import loom_enabled
 from sqlalchemy.exc import SQLAlchemyError
 
 from libs.exceptions import NotFoundError
@@ -219,15 +219,32 @@ async def submit_answer(
         else []
     )
 
-    # Update LOOM concept mastery for each knowledge point
-    if kp_list:
+    # LOOM (experimental): apply the same attempt fact to the derived concept
+    # ledger, using the node id resolved at ingestion when available.
+    if loom_enabled() and kp_list:
         from services.loom_mastery import update_concept_mastery
-        for kp in kp_list:
-            try:
-                await update_concept_mastery(db, user.id, str(kp), problem.course_id, correct=is_correct, question_type=problem.question_type)
-            except (SQLAlchemyError, ValueError, KeyError):
-                logger.exception("Concept mastery update failed for '%s'", kp)
-                warnings.append("concept_mastery_update_failed")
+        meta = problem.problem_metadata if isinstance(problem.problem_metadata, dict) else {}
+        node_id: uuid.UUID | None = None
+        try:
+            node_id = uuid.UUID(str(meta["knowledge_node_id"])) if meta.get("knowledge_node_id") else None
+        except ValueError:
+            node_id = None
+        try:
+            if node_id is not None:
+                await update_concept_mastery(
+                    db, user.id, None, problem.course_id,
+                    correct=is_correct, question_type=problem.question_type,
+                    knowledge_node_id=node_id,
+                )
+            else:
+                for kp in kp_list:
+                    await update_concept_mastery(
+                        db, user.id, str(kp), problem.course_id,
+                        correct=is_correct, question_type=problem.question_type,
+                    )
+        except (SQLAlchemyError, ValueError, KeyError):
+            logger.exception("Concept mastery update failed for %s", kp_list)
+            warnings.append("concept_mastery_update_failed")
 
     # Emit analytics event before committing — single transaction for atomicity
     try:
@@ -250,8 +267,9 @@ async def submit_answer(
 
     if not is_correct and wa:
         background_tasks.add_task(_auto_derive_diagnostic, wa.id, user.id)
-        # Auto-detect confusion pairs from accumulated wrong answers
-        background_tasks.add_task(_auto_detect_confusion, problem.course_id, user.id)
+        # Auto-detect confusion pairs from accumulated wrong answers (LOOM only)
+        if loom_enabled():
+            background_tasks.add_task(_auto_detect_confusion, problem.course_id, user.id)
 
     # Detect improvement: correct answer on a previously-wrong problem → effective_review signal
     if is_correct:
@@ -261,7 +279,7 @@ async def submit_answer(
 
     # Check prerequisite gaps on wrong answers
     prerequisite_gaps = None
-    if not is_correct and kp_list:
+    if loom_enabled() and not is_correct and kp_list:
         try:
             from services.loom_graph import check_prerequisite_gaps
             gaps = await check_prerequisite_gaps(
@@ -283,45 +301,3 @@ async def submit_answer(
         prerequisite_gaps=prerequisite_gaps,
         warnings=warnings,
     )
-
-
-# -- Mastery history time-series endpoint --
-
-
-@router.get("/{course_id}/mastery-history", response_model=list[MasterySnapshotResponse], summary="Get mastery history", description="Return mastery score time-series for analytics charts.")
-async def mastery_history(
-    course_id: uuid.UUID,
-    content_node_id: uuid.UUID | None = None,
-    limit: int = Query(default=50, ge=1, le=200),
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Return mastery score time-series for analytics charts."""
-    from models.mastery_snapshot import MasterySnapshot
-
-    await get_course_or_404(db, course_id, user_id=user.id)
-
-    query = (
-        select(MasterySnapshot)
-        .where(
-            MasterySnapshot.user_id == user.id,
-            MasterySnapshot.course_id == course_id,
-        )
-        .order_by(MasterySnapshot.recorded_at.desc())
-        .limit(limit)
-    )
-    if content_node_id:
-        query = query.where(MasterySnapshot.content_node_id == content_node_id)
-
-    result = await db.execute(query)
-    snapshots = result.scalars().all()
-
-    return [
-        MasterySnapshotResponse(
-            mastery_score=s.mastery_score,
-            gap_type=s.gap_type,
-            content_node_id=str(s.content_node_id) if s.content_node_id else None,
-            recorded_at=s.recorded_at,
-        )
-        for s in reversed(snapshots)
-    ]

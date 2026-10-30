@@ -11,8 +11,7 @@ Tool modules:
                      update_workspace_layout
 - flashcard_tools:   generate_flashcards_tool, generate_notes_tool,
                      create_study_plan_tool
-- quiz_tools:        generate_quiz_tool, derive_diagnostic_tool,
-                     record_comprehension_tool
+- quiz_tools:        generate_quiz_tool, derive_diagnostic_tool
 """
 
 from services.agent.tools.base import Tool
@@ -43,7 +42,6 @@ from services.agent.tools.flashcard_tools import (  # noqa: F401
 from services.agent.tools.quiz_tools import (  # noqa: F401
     derive_diagnostic_tool,
     generate_quiz_tool,
-    record_comprehension_tool,
 )
 
 
@@ -62,6 +60,4 @@ def get_builtin_tools() -> list[Tool]:
         generate_flashcards_tool, generate_quiz_tool, generate_notes_tool,
         create_study_plan_tool, derive_diagnostic_tool,
         sync_deadlines_to_calendar_tool, update_workspace_layout,
-        # Comprehension probing
-        record_comprehension_tool,
     ]

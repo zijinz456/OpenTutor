@@ -1,6 +1,7 @@
 """Practice problem and result models."""
 
 import uuid
+from enum import Enum
 from typing import Optional
 from datetime import datetime
 
@@ -9,6 +10,36 @@ from models.compat import CompatUUID, CompatJSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
+
+
+class ProblemSource(str, Enum):
+    """Where a practice problem came from (``practice_problems.source``).
+
+    extracted    — parsed from course content at ingestion
+    ai_generated — generated on request (chat tool, /quiz/save-generated, auto-gen)
+    derived      — diagnostic variant derived from a wrong answer
+    imported     — supplied by the user / an external source
+    """
+
+    EXTRACTED = "extracted"
+    AI_GENERATED = "ai_generated"
+    DERIVED = "derived"
+    IMPORTED = "imported"
+
+
+# Legacy values still present in old rows → canonical value (see alembic 20261031_0028)
+LEGACY_PROBLEM_SOURCES: dict[str, str] = {"generated": ProblemSource.AI_GENERATED.value}
+
+
+def normalize_problem_source(value: str | None) -> str | None:
+    """Map any historical/free-form source string onto ``ProblemSource``."""
+    if value is None:
+        return None
+    candidate = LEGACY_PROBLEM_SOURCES.get(value, value)
+    try:
+        return ProblemSource(candidate).value
+    except ValueError:
+        return ProblemSource.IMPORTED.value
 
 
 class PracticeProblem(Base):
@@ -36,7 +67,7 @@ class PracticeProblem(Base):
     # v3: Knowledge point tagging + source tracking
     knowledge_points: Mapped[Optional[list]] = mapped_column(CompatJSONB, nullable=True, default=list)
     source: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
-    # Sources: extracted | ai_generated | derived
+    # One of ProblemSource: extracted | ai_generated | derived | imported
 
     # v4: VCE-inspired diagnostic fields
     difficulty_layer: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)

@@ -204,9 +204,9 @@ p_l_new = p_l_post + (1 - p_l_post) × p_t  # Learning opportunity
 
 ---
 
-## ADR-008: 12-Signal Cognitive Load Detection
+## ADR-008: Cognitive Load Detection (DB/text signals, flag-gated)
 
-**Status:** Accepted
+**Status:** Accepted (amended 2026-10-31: default off behind `ENABLE_COGNITIVE_LOAD`; LLM affect, relative-baseline calibration and intervention tracking removed — signals are now the ten DB/text-only ones in `services/cognitive_load.py`)
 **Date:** 2026-02-25
 
 **Context:** Adaptive tutoring requires sensing when a student is overwhelmed to adjust difficulty and pacing.
@@ -228,3 +228,14 @@ p_l_new = p_l_post + (1 - p_l_post) × p_t  # Learning opportunity
 12. Repeated error loops
 
 **Implementation:** `apps/api/services/cognitive_load.py` — async `compute_cognitive_load()` returns 0.0-1.0 score with individual signal breakdown. Used by tutor agent to adjust response complexity and suggest breaks.
+
+## ADR-009: Mastery Ledger — Single Writer, LLM Never Writes Mastery
+
+**Status:** Accepted
+**Date:** 2026-10-31
+
+**Context:** Mastery had three independent writers (the `learning_progress` tracker, a second BKT in `loom_mastery.py` that also nudged `learning_progress`, and an LLM-judged `record_comprehension` tool that added or subtracted up to 0.225 mastery from a chat answer) and three FSRS state stores. Numbers could not be explained from stored facts and could not be recomputed.
+
+**Decision:** Mastery is an auditable ledger. Every mastery number must be recomputable from stored attempt facts (`practice_results`, flashcard ratings, review ratings). `learning_progress` (per content node) is the source of truth the UI reads and the only writer of `mastery_snapshots`; `concept_mastery` (per LOOM concept) is a derived view updated only from the same attempt events through the shared BKT step in `services/learning_science/knowledge_tracer.py` and the shared FSRS scheduler, with deterministic prerequisite propagation and consolidation (formula in `services/loom_mastery.py`). An LLM may generate questions, grade free-text answers (producing an attempt fact with a rationale) and explain — it may never write a mastery score directly. Knowledge points stay coarse (one concept per question); fine-grained diagnosis is the wrong-answer mechanism.
+
+**Consequences:** `record_comprehension` and `_sync_to_learning_progress` are deleted; review ratings flow through `lector.record_review_outcome` → `update_concept_mastery`; any future mastery-affecting feature must be expressed as an attempt fact plus a deterministic update rule.

@@ -3,20 +3,22 @@
 Based on: "Cognitive Load Theory meets Deep Knowledge Tracing"
 (Nature Scientific Reports, 2025, doi:10.1038/s41598-025-10497-x)
 
-Computes a real-time cognitive load score (0.0–1.0) from existing behavioral
-signals: fatigue text cues, session duration, error patterns, and message
-characteristics. The score is injected into the tutor's system prompt to
-dynamically adjust explanation depth and difficulty.
+Computes a real-time cognitive load score (0.0–1.0) from behavioural signals
+that are already in the database or in the message text: fatigue cues,
+session length, error rate, message brevity, help-seeking, quiz accuracy,
+answer time, wrong-answer streaks, message gaps and repeated errors.  No LLM
+call is made.  The score is injected into the tutor's system prompt to adjust
+explanation depth and feeds the block-decision rules.
 
-Signal weights are tuned for a single-user local deployment where we have
-full session context (no multi-tenant noise).
+Gated by ENABLE_COGNITIVE_LOAD (default off): when the flag is off the
+orchestrator uses ``neutral_cognitive_load()`` instead of calling
+``compute_cognitive_load``.  Signal weights live in config and sum to 1.0.
 """
 
 import asyncio
 import logging
 import re
 import uuid
-from datetime import datetime, timezone
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError as _SQLAlchemyError
@@ -32,10 +34,17 @@ _MAX_TRACKING_SIZE = 200
 _consecutive_high: dict[str, int] = {}  # user_id -> count
 _consecutive_high_lock = asyncio.Lock()
 
-# Cache last NLP affect result per user (reused between LLM calls).
-# Bounded with same limit.
-_last_affect: dict[str, dict] = {}  # user_id -> affect dict
-_last_affect_lock = asyncio.Lock()
+
+def neutral_cognitive_load() -> dict:
+    """The value prompt builders and block rules see when the feature is off."""
+    return {
+        "score": 0.0,
+        "level": "low",
+        "guidance": "",
+        "signals": {},
+        "consecutive_high": 0,
+        "enabled": False,
+    }
 
 # Pre-compiled help-seeking patterns (word boundaries avoid false positives)
 _HELP_PATTERNS = [
@@ -169,55 +178,7 @@ async def compute_cognitive_load(
         logger.debug("Cognitive load: answer hesitation query failed: %s", e)
         signals["answer_hesitation"] = 0.0
 
-    # ── Signal 8: NLP-based affect analysis ──
-    # LLM affect call is expensive (~500ms). Only call every 3 messages;
-    # reuse the last result for intermediate messages.
-    from services.cognitive_load_nlp import analyze_student_affect
-
-    _should_run_nlp = (session_messages <= 1) or (session_messages % 3 == 0)
-    if _should_run_nlp and user_message:
-        affect = await analyze_student_affect(user_message)
-        async with _last_affect_lock:
-            _affect_key = str(user_id)
-            if _affect_key not in _last_affect and len(_last_affect) >= _MAX_TRACKING_SIZE:
-                # Evict arbitrary entry (oldest by insertion order in Python 3.7+)
-                del _last_affect[next(iter(_last_affect))]
-            _last_affect[_affect_key] = affect
-    else:
-        async with _last_affect_lock:
-            affect = _last_affect.get(str(user_id), {})
-    frustration = affect.get("frustration", 0.0)
-    confusion = affect.get("confusion", 0.0)
-    nlp_signal = (frustration * settings.cognitive_load_nlp_frustration_weight
-                  + confusion * settings.cognitive_load_nlp_confusion_weight)
-    signals["nlp_affect"] = nlp_signal
-    load += nlp_signal * settings.cognitive_load_weight_nlp_affect
-
-    # ── Signal 9: Relative baseline calibration ──
-    from services.cognitive_load_calibrator import (
-        resolve_baseline,
-        flush_baseline_to_db,
-        compute_relative_load,
-    )
-
-    baseline = await resolve_baseline(db, user_id)
-    is_help = help_signal > 0
-    relative = compute_relative_load(
-        baseline, len(user_message), is_help,
-        current_word_count=len(user_message.split()) if user_message else 0,
-    )
-    baseline.update(user_message, is_help)
-
-    # Periodically persist baseline to survive restarts
-    if baseline.needs_flush:
-        await flush_baseline_to_db(db, user_id)
-
-    if relative["calibrated"]:
-        for adj_name, adj_value in relative["adjustments"].items():
-            signals[adj_name] = adj_value
-            load += adj_value * settings.cognitive_load_weight_relative_baseline
-
-    # ── Signal 10: Wrong answer streak ──
+    # ── Signal 8: Wrong answer streak ──
     # 3+ consecutive wrong answers signals frustration/overload
     try:
         from models.practice import PracticeResult as _PR
@@ -239,7 +200,7 @@ async def compute_cognitive_load(
     except (_SQLAlchemyError, OSError):
         signals["wrong_streak"] = 0.0
 
-    # ── Signal 11: Message gap (pause hesitation) ──
+    # ── Signal 9: Message gap (pause hesitation) ──
     # Long gaps between messages indicate the student is struggling
     try:
         from models.chat_message import ChatMessageLog as _CML
@@ -270,12 +231,11 @@ async def compute_cognitive_load(
     except (_SQLAlchemyError, OSError, AttributeError):
         signals["message_gap"] = 0.0
 
-    # ── Signal 12: Repeated errors on same problems ──
+    # ── Signal 10: Repeated errors on same problems ──
     # Multiple wrong answers on the same problem signals deep confusion
     try:
         from models.ingestion import WrongAnswer as _WA2
         # Count problems with 2+ wrong attempts (still unmastered)
-        from sqlalchemy import literal_column
         sub = (
             select(_WA2.problem_id, func.count().label("cnt"))
             .where(
@@ -324,28 +284,13 @@ async def compute_cognitive_load(
     # Generate teaching guidance
     guidance = _build_guidance(level, score, signals, consecutive)
 
-    # ── Resolve unresolved intervention outcomes (last 10 min) ──
-    try:
-        await _resolve_intervention_outcomes(db, user_id, course_id, score)
-    except (_SQLAlchemyError, OSError, RuntimeError, ValueError, AttributeError):
-        logger.warning("Failed to resolve intervention outcomes", exc_info=True)
-
-    # ── Phase 1 weight auto-tuning: update sliding window ──
-    try:
-        from services.cognitive_load_tuning import update_and_get_multipliers
-        weight_multipliers = update_and_get_multipliers(str(user_id), signals)
-    except Exception:  # noqa: BLE001
-        weight_multipliers = {}
-
     return {
         "score": round(score, 3),
         "level": level,
         "guidance": guidance,
         "signals": {k: round(v, 3) for k, v in signals.items()},
         "consecutive_high": consecutive,
-        "affect": affect if user_message else {},
-        "baseline_calibrated": relative.get("calibrated", False),
-        "weight_multipliers": {k: round(v, 3) for k, v in weight_multipliers.items()},
+        "enabled": True,
     }
 
 
@@ -380,12 +325,6 @@ def _build_guidance(level: str, score: float, signals: dict, consecutive: int = 
                 "  2. Switching to a simpler scaffolded question\n"
                 "  3. Providing a worked example instead of asking questions"
             )
-        # NLP-based signal advice
-        if signals.get("nlp_affect", 0) > 0.5:
-            parts.append(
-                "- NLP analysis detects elevated frustration or confusion. "
-                "Prioritize empathy and validation before instruction."
-            )
 
     elif level == "medium":
         parts.append(
@@ -396,44 +335,6 @@ def _build_guidance(level: str, score: float, signals: dict, consecutive: int = 
         )
 
     return "\n".join(parts)
-
-
-def check_response_complexity(
-    cognitive_load_level: str,
-    response_text: str,
-) -> dict:
-    """Check if tutor response complexity is appropriate for student's cognitive load.
-
-    Uses text complexity metrics to flag when a response may be too complex
-    for a student currently experiencing high cognitive load.
-
-    Returns dict with complexity metrics and a simplification recommendation.
-    """
-    from services.cognitive_load_nlp import compute_text_complexity
-
-    metrics = compute_text_complexity(response_text)
-    complexity = metrics.get("complexity", 0.0)
-
-    should_simplify = False
-    reason = ""
-
-    if cognitive_load_level == "high" and complexity > 0.5:
-        should_simplify = True
-        reason = (
-            f"Response complexity ({complexity:.2f}) is high while student is cognitively loaded. "
-            "Consider shorter sentences and simpler vocabulary."
-        )
-    elif cognitive_load_level == "medium" and complexity > 0.7:
-        should_simplify = True
-        reason = (
-            f"Response complexity ({complexity:.2f}) may be too high for a moderately loaded student."
-        )
-
-    return {
-        **metrics,
-        "should_simplify": should_simplify,
-        "reason": reason,
-    }
 
 
 def adjust_review_order_for_load(
@@ -453,36 +354,3 @@ def adjust_review_order_for_load(
         key=lambda c: c.get("fsrs", {}).get("stability", 0),
         reverse=True,
     )
-
-
-async def _resolve_intervention_outcomes(
-    db: AsyncSession,
-    user_id: uuid.UUID,
-    course_id: uuid.UUID,
-    current_score: float,
-) -> None:
-    """Resolve unresolved intervention outcomes from the last 10 minutes.
-
-    An intervention is considered effective if the cognitive load score
-    dropped by at least 0.05 since the intervention was recorded.
-    """
-    from datetime import timedelta
-    from models.intervention_outcome import InterventionOutcome
-
-    cutoff = datetime.now(timezone.utc) - timedelta(minutes=10)
-    result = await db.execute(
-        select(InterventionOutcome).where(
-            InterventionOutcome.user_id == user_id,
-            InterventionOutcome.course_id == course_id,
-            InterventionOutcome.resolved_at.is_(None),
-            InterventionOutcome.created_at >= cutoff,
-        )
-    )
-    unresolved = result.scalars().all()
-
-    now = datetime.now(timezone.utc)
-    for outcome in unresolved:
-        outcome.cognitive_load_after = current_score
-        outcome.resolved_at = now
-        if outcome.cognitive_load_before is not None:
-            outcome.was_effective = current_score < outcome.cognitive_load_before - 0.05

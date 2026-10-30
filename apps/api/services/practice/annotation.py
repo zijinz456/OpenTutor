@@ -8,14 +8,14 @@ This module centralizes normalization of question metadata so every source of
 """
 
 from dataclasses import dataclass
-import json
+
 import re
 import uuid
 from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError as PydanticValidationError
 
-from models.practice import PracticeProblem
+from models.practice import PracticeProblem, normalize_problem_source
 
 VALID_QUESTION_TYPES = {
     "mc",
@@ -335,7 +335,7 @@ def normalize_problem_annotation(
         if accepted_clean:
             normalized_metadata["accepted_answers"] = accepted_clean[:8]
     if source:
-        normalized_metadata["source_kind"] = source
+        normalized_metadata["source_kind"] = normalize_problem_source(source)
     if extra_metadata:
         normalized_metadata.update(extra_metadata)
 
@@ -444,7 +444,12 @@ def build_practice_problem(
     difficulty_layer_default: int | None = None,
     extra_metadata: dict[str, Any] | None = None,
 ) -> PracticeProblem:
-    """Build a PracticeProblem using the shared annotation contract."""
+    """Build a PracticeProblem using the shared annotation contract.
+
+    ``knowledge_points`` defaults to the single coarse concept the question
+    tests (``problem_metadata.core_concept``); fine-grained diagnosis is the
+    wrong-answer mechanism, not more tags.
+    """
     normalized = normalize_problem_annotation(
         question,
         title=title,
@@ -452,6 +457,9 @@ def build_practice_problem(
         difficulty_layer_default=difficulty_layer_default,
         extra_metadata=extra_metadata,
     )
+    if knowledge_points is None:
+        core = normalized["problem_metadata"].get("core_concept")
+        knowledge_points = [core] if core else []
 
     return PracticeProblem(
         course_id=course_id,
@@ -463,7 +471,7 @@ def build_practice_problem(
         explanation=normalized["explanation"],
         order_index=order_index,
         knowledge_points=knowledge_points,
-        source=source,
+        source=normalize_problem_source(source),
         difficulty_layer=normalized["difficulty_layer"],
         problem_metadata=normalized["problem_metadata"],
         parent_problem_id=parent_problem_id,

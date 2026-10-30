@@ -7,7 +7,7 @@ Borrows from:
 """
 
 import logging
-from abc import ABC, abstractmethod
+from abc import ABC
 from typing import AsyncIterator
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -72,10 +72,21 @@ class BaseAgent(PromptBuildingMixin, ABC):
             ctx.mark_failed(str(e))
             return ctx
 
-    @abstractmethod
     async def execute(self, ctx: AgentContext, db: AsyncSession) -> AgentContext:
-        """Agent-specific execution logic. Subclasses must implement."""
-        ...
+        """Non-streaming execution.
+
+        Streaming agents (the chat path) only implement ``stream``; this
+        default drains that stream so ``run`` still works for them.  Agents
+        that are only ever called synchronously override ``execute``.
+        """
+        if type(self).stream is BaseAgent.stream:
+            raise NotImplementedError(f"{self.name} must implement execute() or stream()")
+        chunks: list[str] = []
+        async for chunk in self.stream(ctx, db):
+            chunks.append(chunk)
+        if not ctx.response:
+            ctx.response = "".join(chunks)
+        return ctx
 
     async def stream(self, ctx: AgentContext, db: AsyncSession) -> AsyncIterator[str]:
         """Stream response chunks for SSE. Default: run then yield full response."""

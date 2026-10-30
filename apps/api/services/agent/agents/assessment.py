@@ -16,7 +16,7 @@ async def build_assessment_data(ctx: AgentContext, db: AsyncSession) -> str:
     """Collect learning data from multiple tables for assessment context."""
     from models.progress import LearningProgress
     from models.practice import PracticeProblem
-    from models.ingestion import WrongAnswer, StudySession
+    from models.ingestion import WrongAnswer
 
     parts: list[str] = []
 
@@ -89,29 +89,22 @@ async def build_assessment_data(ctx: AgentContext, db: AsyncSession) -> str:
     except (SQLAlchemyError, ConnectionError, TimeoutError) as e:
         logger.exception("Assessment error loading failed: %s", e)
 
-    # 3. Study sessions
+    # 3. Study activity (last 30 days, from the attempt ledger)
     try:
-        session_result = await db.execute(
-            select(StudySession).where(
-                StudySession.user_id == ctx.user_id,
-                StudySession.course_id == ctx.course_id,
-            ).order_by(StudySession.started_at.desc()).limit(30)
-        )
-        sessions = session_result.scalars().all()
-        if sessions:
-            total_sessions = len(sessions)
-            total_duration = sum(s.duration_minutes or 0 for s in sessions)
-            total_problems = sum(s.problems_attempted for s in sessions)
-            total_correct_sess = sum(s.problems_correct for s in sessions)
-            avg_duration = total_duration / total_sessions if total_sessions else 0
+        from datetime import datetime, timedelta, timezone
+        from services.progress.summary import window_stats
+
+        now = datetime.now(timezone.utc)
+        activity = await window_stats(db, ctx.user_id, now - timedelta(days=30), now, course_id=ctx.course_id)
+        if activity["quiz_total"] or activity["study_minutes"]:
             parts.append(
-                f"\n## Study Sessions (last {total_sessions})\n"
-                f"- Total study time: {total_duration} minutes\n"
-                f"- Average session: {avg_duration:.0f} minutes\n"
-                f"- Problems attempted: {total_problems}\n"
-                f"- Problems correct: {total_correct_sess}"
+                f"\n## Study Activity (last 30 days)\n"
+                f"- Total study time: {activity['study_minutes']} minutes\n"
+                f"- Active days: {activity['active_days']}\n"
+                f"- Problems attempted: {activity['quiz_total']}\n"
+                f"- Problems correct: {activity['quiz_correct']}"
             )
     except (SQLAlchemyError, ConnectionError, TimeoutError) as e:
-        logger.exception("Assessment session loading failed: %s", e)
+        logger.exception("Assessment activity loading failed: %s", e)
 
     return "\n".join(parts) if parts else "No assessment data available yet."

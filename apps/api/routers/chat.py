@@ -282,9 +282,14 @@ async def get_greeting(
     days_until: int | None = None
     degraded_features: list[str] = []
 
+    from services.loom_flags import lector_enabled, loom_enabled
+
     try:
-        from services.lector import get_review_summary
-        review = await get_review_summary(db, user.id, course_id)
+        if lector_enabled():
+            from services.lector import get_review_summary
+            review = await get_review_summary(db, user.id, course_id)
+        else:
+            review = {"needs_review": False, "urgent_count": 0, "concepts_at_risk": []}
 
         if review.get("needs_review") and review.get("urgent_count", 0) > 0:
             concepts = review.get("concepts_at_risk", [])[:3]
@@ -301,8 +306,11 @@ async def get_greeting(
         degraded_features.append("review_summary")
 
     try:
-        from services.loom_graph import get_mastery_graph
-        graph = await get_mastery_graph(db, user.id, course_id)
+        if loom_enabled():
+            from services.loom_graph import get_mastery_graph
+            graph = await get_mastery_graph(db, user.id, course_id)
+        else:
+            graph = {}
 
         if graph.get("weak_concepts"):
             weak = graph["weak_concepts"][:2]

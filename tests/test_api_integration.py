@@ -18,7 +18,7 @@ from main import app
 import database as database_module
 from database import get_db, Base
 from models.content import CourseContentTree
-from models.ingestion import StudySession, WrongAnswer
+from models.ingestion import WrongAnswer
 from models.practice import PracticeProblem, PracticeResult
 from models.preference import PreferenceSignal
 from models.user import User
@@ -840,32 +840,25 @@ async def test_progress_trend_endpoints_handle_practice_results_with_answered_at
                 user_answer="A search algorithm",
                 is_correct=True,
                 answered_at=datetime.now(timezone.utc),
-            )
-        )
-        session.add(
-            StudySession(
-                user_id=user.id,
-                course_id=course_id,
-                duration_minutes=25,
-                started_at=datetime.now(timezone.utc),
-                ended_at=datetime.now(timezone.utc),
+                answer_time_ms=3 * 60 * 1000,
             )
         )
         await session.commit()
 
-    course_trends = await client.get(f"/api/progress/courses/{course_id}/trends")
-    assert course_trends.status_code == 200
-    course_payload = course_trends.json()
-    assert course_payload["course_id"] == str(course_id)
-    assert any(entry["quiz_total"] >= 1 for entry in course_payload["trend"])
+    # Per-course trends endpoint was removed (no caller); the global one derives
+    # study minutes from practice answer time, not a study_sessions table.
+    assert (await client.get(f"/api/progress/courses/{course_id}/trends")).status_code == 404
 
     global_trends = await client.get("/api/progress/trends")
     assert global_trends.status_code == 200
-    assert any(entry["quiz_total"] >= 1 for entry in global_trends.json()["trend"])
+    trend = global_trends.json()["trend"]
+    assert any(entry["quiz_total"] >= 1 for entry in trend)
+    assert sum(entry["study_minutes"] for entry in trend) == 3
 
     weekly_report = await client.get("/api/progress/weekly-report")
     assert weekly_report.status_code == 200
     assert weekly_report.json()["this_week"]["quiz_total"] >= 1
+    assert weekly_report.json()["this_week"]["study_minutes"] == 3
 
 
 @pytest.mark.asyncio
@@ -873,9 +866,6 @@ async def test_knowledge_graph_failure_returns_structured_500(client, monkeypatc
     create_resp = await client.post("/api/courses/", json={"name": "Graph Failure", "description": "graph"})
     assert create_resp.status_code == 201
     course_id = create_resp.json()["id"]
-
-    # LOOM must be enabled for this endpoint to be reachable
-    monkeypatch.setattr("routers.progress_knowledge.settings.enable_experimental_loom", True)
 
     async def _raise_graph_error(*_args, **_kwargs):
         raise RuntimeError("graph backend down")
@@ -992,7 +982,7 @@ async def test_workflow_compat_routes_cover_exam_plan_study_plan_and_wrong_answe
             correct_answer="A",
             explanation="Binary search preserves a valid search interval each iteration.",
             order_index=1,
-            source="generated",
+            source="ai_generated",
             source_owner="ai",
             locked=False,
         )
@@ -1052,7 +1042,7 @@ async def test_study_goal_create_update_and_task_link(client):
     task_resp = await client.post(
         "/api/tasks/submit",
         json={
-            "task_type": "weekly_prep",
+            "task_type": "multi_step",
             "title": "Goal-linked weekly prep",
             "course_id": course_id,
             "goal_id": goal["id"],
@@ -1067,6 +1057,16 @@ async def test_study_goal_create_update_and_task_link(client):
     assert len(goals) == 1
     assert goals[0]["id"] == goal["id"]
     assert goals[0]["linked_task_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_submit_task_rejects_unknown_task_type(client):
+    resp = await client.post(
+        "/api/tasks/submit",
+        json={"task_type": "weekly_prep", "title": "Unsupported"},
+    )
+    assert resp.status_code == 422
+    assert "weekly_prep" in resp.json()["message"]
 
 
 @pytest.mark.asyncio

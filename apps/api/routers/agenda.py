@@ -13,7 +13,7 @@ from models.agenda_run import AgendaRun
 from models.agent_task import AgentTask
 from models.study_goal import StudyGoal
 from models.user import User
-from services.agent.agenda import resolve_next_action, run_agenda_tick
+from services.agent.agenda import resolve_next_action
 from services.auth.dependency import get_current_user
 from utils.serializers import serialize_model
 
@@ -39,19 +39,6 @@ class AgendaRunResponse(BaseModel):
     error_message: str | None
     created_at: str | None
     completed_at: str | None
-
-
-class AgendaTickRequest(BaseModel):
-    course_id: uuid.UUID | None = None
-    trigger: str = "manual"
-
-
-class AgendaTickResponse(BaseModel):
-    run_id: str
-    status: str
-    task_id: str | None
-    top_signal_type: str | None
-    decision_json: dict | None
 
 
 class AgendaDecisionLogRequest(BaseModel):
@@ -82,29 +69,6 @@ class CourseAgendaResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
-
-@router.post("/tick", response_model=AgendaTickResponse)
-async def trigger_tick(
-    body: AgendaTickRequest,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Manually trigger one agenda tick for the current user."""
-    run = await run_agenda_tick(
-        user_id=user.id,
-        course_id=body.course_id,
-        trigger=body.trigger or "manual",
-        db=db,
-        notify=True,
-    )
-    return AgendaTickResponse(
-        run_id=str(run.id),
-        status=run.status,
-        task_id=str(run.task_id) if run.task_id else None,
-        top_signal_type=run.top_signal_type,
-        decision_json=run.decision_json,
-    )
-
 
 @router.post("/log-decision", response_model=AgendaRunResponse)
 async def log_decision(

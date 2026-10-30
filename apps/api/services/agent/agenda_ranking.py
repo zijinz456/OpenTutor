@@ -19,6 +19,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
+from services.activity.task_types import SUPPORTED_TASK_TYPES
 from services.agent.signals import AgendaSignal
 
 # Precedence weight by signal type.  Higher = more important.
@@ -97,10 +98,15 @@ def rank_signals(signals: list[AgendaSignal]) -> AgendaDecision:
     decision.dedup_key = base_dedup
 
     if winner.signal_type == "failed_task":
+        failed_type = winner.detail.get("task_type")
+        if failed_type not in SUPPORTED_TASK_TYPES:
+            decision.action = "noop"
+            decision.reason = f"Failed task has unsupported type '{failed_type}'; nothing can run it."
+            return decision
         is_cancelled = winner.detail.get("status") == "cancelled"
         decision.action = "resume" if is_cancelled else "retry"
         decision.existing_task_id = uuid.UUID(winner.entity_id) if winner.entity_id else None
-        decision.task_type = winner.detail.get("task_type")
+        decision.task_type = failed_type
         decision.task_title = f"Recover: {winner.title}"
         decision.reason = "Most recent durable task did not finish; recovery is more valuable than starting new work."
 
@@ -120,14 +126,16 @@ def rank_signals(signals: list[AgendaSignal]) -> AgendaDecision:
             )
             decision.reason = "Active goal has a concrete next action."
         elif (detail.get("days_until_target") or 999) <= 7:
-            decision.task_type = "exam_prep"
+            days_left = max(detail.get("days_until_target", 7), 1)
+            decision.task_type = "multi_step"
             decision.task_title = f"Exam prep: {winner.title}"
-            decision.task_summary = f"Break {winner.title} into a plan for the next 7 days."
-            decision.input_json = {
-                "course_id": str(winner.course_id) if winner.course_id else None,
-                "exam_topic": winner.title,
-                "days_until_exam": max(detail.get("days_until_target", 7), 1),
-            }
+            decision.task_summary = f"Break {winner.title} into a plan for the next {days_left} day(s)."
+            decision.plan_prompt = (
+                f"Goal: {winner.title}\n"
+                f"Objective: {detail.get('objective', '')}\n"
+                f"The target date is in {days_left} day(s). Produce a focused exam-prep plan "
+                f"for the remaining days, starting with the weakest material."
+            )
             decision.reason = f"Goal due in {detail.get('days_until_target')} day(s)."
         else:
             decision.task_type = "multi_step"
@@ -142,10 +150,18 @@ def rank_signals(signals: list[AgendaSignal]) -> AgendaDecision:
 
     elif winner.signal_type == "deadline":
         decision.action = "submit"
-        decision.task_type = "assignment_analysis"
-        decision.task_title = f"Analyze assignment: {winner.title}"
+        decision.task_type = "multi_step"
+        decision.task_title = f"Plan assignment: {winner.title}"
         decision.task_summary = f"Assignment due in {winner.detail.get('days_until_due', '?')} day(s)."
-        decision.input_json = {"assignment_id": winner.entity_id}
+        decision.input_json = {
+            "course_id": str(winner.course_id) if winner.course_id else None,
+            "assignment_id": winner.entity_id,
+        }
+        decision.plan_prompt = (
+            f"Assignment: {winner.title}\n"
+            f"Due in {winner.detail.get('days_until_due', '?')} day(s).\n"
+            f"Break it into concrete, ordered steps the student can start today."
+        )
         decision.reason = f"Assignment due in {winner.detail.get('days_until_due')} day(s)."
 
     elif winner.signal_type == "forgetting_risk":
@@ -168,8 +184,10 @@ def rank_signals(signals: list[AgendaSignal]) -> AgendaDecision:
         decision.reason = "Forgetting forecast shows material close to slipping below retention threshold."
 
     elif winner.signal_type == "prerequisite_gap":
+        # A prerequisite gap is a review of that concept (review_session is
+        # the only review producer); fine diagnosis stays with wrong answers.
         decision.action = "submit"
-        decision.task_type = "prerequisite_review"
+        decision.task_type = "review_session"
         concept = winner.detail.get("concept", "unknown")
         decision.task_title = f"Review prerequisite: {concept}"
         decision.task_summary = (
@@ -179,41 +197,31 @@ def rank_signals(signals: list[AgendaSignal]) -> AgendaDecision:
         )
         decision.input_json = {
             "course_id": str(winner.course_id) if winner.course_id else None,
+            "session_kind": "prerequisite_review",
             "concept": concept,
             "concept_id": winner.detail.get("concept_id"),
             "trigger_signal": "prerequisite_gap",
-            "content_mutation_hint": {
-                "tool": "add_targeted_practice",
-                "reason": f"Prerequisite gap detected for '{concept}' — generate foundational exercises",
-            },
+            "duration_minutes": 10,
         }
         decision.reason = f"Prerequisite concept '{concept}' has low mastery — must strengthen before dependent topics."
 
     elif winner.signal_type == "weak_area":
         decision.action = "submit"
-        decision.task_type = "wrong_answer_review"
+        decision.task_type = "review_session"
         decision.task_title = f"Review {winner.detail.get('unmastered_count', 0)} weak areas"
-        decision.task_summary = "Targeted exercises for unmastered wrong answers."
+        decision.task_summary = "Targeted review of unmastered wrong answers."
         decision.input_json = {
             "course_id": str(winner.course_id) if winner.course_id else None,
-            "content_mutation_hint": {
-                "tool": "add_targeted_practice",
-                "reason": "High error rate on this topic — generate targeted practice",
-            },
+            "session_kind": "wrong_answer_review",
+            "trigger_signal": "weak_area",
+            "duration_minutes": 10,
         }
         decision.reason = "Enough unmastered wrong answers to warrant a targeted review."
 
     elif winner.signal_type == "content_stale":
-        decision.action = "submit"
-        decision.task_type = "content_update"
-        decision.task_title = f"Update content: {winner.title}"
-        decision.task_summary = "Content has high error rates and hasn't been updated recently."
-        decision.input_json = {
-            "course_id": str(winner.course_id) if winner.course_id else None,
-            "node_id": winner.entity_id,
-            "content_mutation_hint": winner.detail.get("content_mutation_hint"),
-        }
-        decision.reason = f"Content stale with {winner.detail.get('wrong_answer_count', 0)} errors."
+        # No task can rewrite content; the signal still feeds block badges.
+        decision.action = "noop"
+        decision.reason = f"Content stale with {winner.detail.get('wrong_answer_count', 0)} errors; no content_update task exists."
 
     elif winner.signal_type == "guided_session_ready":
         decision.action = "submit"

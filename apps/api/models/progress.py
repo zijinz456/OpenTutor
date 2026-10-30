@@ -12,8 +12,8 @@ import uuid
 from typing import Optional
 from datetime import datetime
 
-from sqlalchemy import String, DateTime, ForeignKey, Text, Float, Integer, Boolean, func
-from models.compat import CompatUUID, CompatJSONB
+from sqlalchemy import String, DateTime, ForeignKey, Float, Integer, func
+from models.compat import CompatUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from database import Base
@@ -61,38 +61,3 @@ class LearningProgress(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
-
-
-class LearningTemplate(Base):
-    """Reusable learning templates (5 built-in + user-created).
-
-    Templates define default preferences for specific learning styles.
-    Reference: spec Phase 1 — learning template system.
-    """
-
-    __tablename__ = "learning_templates"
-
-    id: Mapped[uuid.UUID] = mapped_column(CompatUUID, primary_key=True, default=uuid.uuid4)
-    name: Mapped[str] = mapped_column(String(200))
-    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    is_builtin: Mapped[bool] = mapped_column(Boolean, default=False)
-    created_by: Mapped[Optional[uuid.UUID]] = mapped_column(
-        CompatUUID, ForeignKey("users.id", ondelete="CASCADE"), nullable=True
-    )
-
-    # Template preferences (key-value pairs)
-    preferences: Mapped[dict] = mapped_column(CompatJSONB, default=dict)
-    # e.g. {"note_format": "step_by_step", "detail_level": "detailed", ...}
-
-    # v3: Scene binding
-    scene_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
-    # Scene this template maps to (e.g. "exam_prep", "study_session")
-    workflow: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
-    # AI workflow identifier
-
-    # Template metadata
-    target_audience: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-    # e.g. "STEM student", "Language learner", "Visual learner"
-    tags: Mapped[Optional[list]] = mapped_column(CompatJSONB, nullable=True)
-
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

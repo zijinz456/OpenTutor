@@ -2,7 +2,6 @@
 
 Jobs:
 - agenda_tick_job       — unified proactive agent loop (every 2 hours)
-- weekly_prep_job       — weekly study prep (Monday 8:00 AM)
 - scrape_refresh_job    — auto-scrape refresh (every hour)
 - memory_consolidation_job — dedup/decay/categorize (every 6 hours)
 - canvas_session_keepalive_job — keep Canvas sessions alive (every 20 minutes)
@@ -11,140 +10,18 @@ Jobs:
 import asyncio
 import logging
 import uuid
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
-from config import settings
 from database import async_session
-from models.agent_task import AgentTask
-from models.study_goal import StudyGoal
-from services.activity.engine import submit_task
-from services.provenance import build_provenance
-from services.scheduler.engine_helpers import _get_user_ids, _push_notification
+from services.scheduler.engine_helpers import _get_user_ids
 
 logger = logging.getLogger(__name__)
 
 
-# ── Weekly prep helpers ──────────────────────────────────────────────
-
-
-async def _get_or_create_weekly_review_goal(
-    db,
-    user_id: uuid.UUID,
-    week_start: datetime,
-) -> StudyGoal:
-    result = await db.execute(
-        select(StudyGoal)
-        .where(
-            StudyGoal.user_id == user_id,
-            StudyGoal.status == "active",
-            StudyGoal.course_id.is_(None),
-        )
-        .order_by(StudyGoal.created_at.asc())
-    )
-    goals = result.scalars().all()
-    for goal in goals:
-        metadata = goal.metadata_json or {}
-        if metadata.get("goal_kind") == "weekly_review":
-            goal.target_date = week_start + timedelta(days=6)
-            goal.metadata_json = {
-                **metadata,
-                "system_managed": True,
-            }
-            await db.commit()
-            await db.refresh(goal)
-            return goal
-
-    goal = StudyGoal(
-        user_id=user_id,
-        course_id=None,
-        title="Stay on track this week",
-        objective="Refresh priorities every week, review deadlines, and keep one clear next study action active.",
-        success_metric="Complete a weekly review and keep the next action current.",
-        current_milestone="Weekly review queue initialized",
-        next_action="Review this week's queued study task.",
-        status="active",
-        confidence="system",
-        target_date=week_start + timedelta(days=6),
-        metadata_json={"goal_kind": "weekly_review", "system_managed": True},
-    )
-    db.add(goal)
-    await db.commit()
-    await db.refresh(goal)
-    return goal
-
-
-async def _has_scheduled_weekly_task(
-    db,
-    user_id: uuid.UUID,
-    goal_id: uuid.UUID,
-    week_start: datetime,
-) -> bool:
-    result = await db.execute(
-        select(AgentTask)
-        .where(
-            AgentTask.user_id == user_id,
-            AgentTask.goal_id == goal_id,
-            AgentTask.task_type == "weekly_prep",
-            AgentTask.source == "scheduler",
-            AgentTask.created_at >= week_start,
-        )
-        .limit(1)
-    )
-    return result.scalar_one_or_none() is not None
-
-
 # ── Jobs ─────────────────────────────────────────────────────────────
-
-
-async def weekly_prep_job():
-    """Weekly prep job — triggers WF-2 for all users every Monday."""
-    logger.info("Running weekly prep job...")
-    now = datetime.now(timezone.utc)
-    week_start = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
-
-    user_ids = await _get_user_ids()
-    for user_id in user_ids:
-        try:
-            async with async_session() as db:
-                goal = await _get_or_create_weekly_review_goal(db, user_id, week_start)
-                if await _has_scheduled_weekly_task(db, user_id, goal.id, week_start):
-                    continue
-                await submit_task(
-                    user_id=user_id,
-                    goal_id=goal.id,
-                    task_type="weekly_prep",
-                    title=f"Weekly review for {week_start.date().isoformat()}",
-                    summary="Scheduler queued a weekly review to refresh your study plan and next action.",
-                    source="scheduler",
-                    input_json={
-                        "trigger": "weekly_scheduler",
-                        "week_start": week_start.date().isoformat(),
-                    },
-                    metadata_json={
-                        "provenance": build_provenance(
-                            workflow="weekly_prep",
-                            generated=True,
-                            source_labels=["workflow", "generated", "scheduler"],
-                            scheduler_trigger="weekly_scheduler",
-                        ),
-                        "scheduler": {
-                            "job": "weekly_prep",
-                            "week_start": week_start.date().isoformat(),
-                        },
-                    },
-                    max_attempts=2,
-                )
-            await _push_notification(
-                user_id,
-                "Weekly Review Queued",
-                "OpenTutor queued your weekly review task. Approve or inspect it from the activity panel once it starts.",
-                category="weekly_prep",
-            )
-        except (ValueError, RuntimeError, ConnectionError, TimeoutError, OSError) as e:
-            logger.exception("Weekly prep failed for user %s", user_id)
 
 
 async def agenda_tick_job():
@@ -160,10 +37,7 @@ async def agenda_tick_job():
     4. Materialises a single AgentTask if warranted
     5. Optionally notifies the user
 
-    UPGRADED (Phase 1): After the deterministic tick, runs an LLM-enhanced
-    Ambient Study Monitor (OpenClaw Heartbeat pattern) that can make richer
-    decisions: trigger goal pursuit, generate reports, or craft personalised
-    notifications.
+    This is the single producer of proactive review_session tasks.
     """
     from models.course import Course
     from services.agent.agenda import run_agenda_tick
@@ -174,7 +48,6 @@ async def agenda_tick_job():
     logger.info("Running agenda tick job...")
     ticks_run = 0
     tasks_created = 0
-    ambient_actions = 0
     skipped_users = 0
     sem = asyncio.Semaphore(5)
 
@@ -204,11 +77,10 @@ async def agenda_tick_job():
     if skipped_users:
         logger.info("Agenda tick: skipping %d inactive users", skipped_users)
 
-    async def _process_user(user_id: uuid.UUID) -> tuple[int, int, int]:
-        """Process a single user's agenda ticks + ambient monitor."""
+    async def _process_user(user_id: uuid.UUID) -> tuple[int, int]:
+        """Process a single user's agenda ticks."""
         u_ticks = 0
         u_tasks = 0
-        u_ambient = 0
 
         async with sem, async_session() as db:
             course_result = await db.execute(
@@ -237,32 +109,7 @@ async def agenda_tick_job():
                         user_id, course_id,
                     )
 
-            # --- Ambient Study Monitor (LLM deliberation layer) ---
-            if not settings.ambient_monitor_enabled:
-                return u_ticks, u_tasks, u_ambient
-            try:
-                from services.agent.ambient_monitor import (
-                    gather_learning_state,
-                    llm_deliberate,
-                    execute_ambient_decision,
-                )
-                from services.agent.signals import collect_signals
-
-                all_signals = await collect_signals(user_id, course_id=None, db=db)
-                state = await gather_learning_state(user_id, all_signals, db)
-                decision = await llm_deliberate(state)
-
-                if decision and decision.get("action") != "silent":
-                    status = await execute_ambient_decision(user_id, decision, db)
-                    u_ambient += 1
-                    logger.info(
-                        "Ambient monitor for user=%s: action=%s status=%s reason=%s",
-                        user_id, decision.get("action"), status, decision.get("reason", ""),
-                    )
-            except (ValueError, RuntimeError, ConnectionError, TimeoutError, OSError) as e:
-                logger.exception("Ambient monitor skipped for user %s", user_id)
-
-        return u_ticks, u_tasks, u_ambient
+        return u_ticks, u_tasks
 
     results = await asyncio.gather(
         *[_process_user(uid) for uid in active_user_ids],
@@ -272,15 +119,14 @@ async def agenda_tick_job():
         if isinstance(r, tuple):
             ticks_run += r[0]
             tasks_created += r[1]
-            ambient_actions += r[2]
         elif isinstance(r, Exception):
             logger.error("Agenda tick outer loop failed: %s", r)
 
     _elapsed = (_time.monotonic() - _start) * 1000
     logger.info(
-        "Agenda tick complete: ticks=%d tasks_created=%d ambient_actions=%d "
+        "Agenda tick complete: ticks=%d tasks_created=%d "
         "active_users=%d skipped=%d elapsed=%.0fms",
-        ticks_run, tasks_created, ambient_actions,
+        ticks_run, tasks_created,
         len(active_user_ids), skipped_users, _elapsed,
     )
 

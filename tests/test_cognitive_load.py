@@ -33,8 +33,6 @@ def _stub_config(**overrides):
         "cognitive_load_weight_help_seeking": 0.15,
         "cognitive_load_weight_quiz_performance": 0.15,
         "cognitive_load_weight_answer_hesitation": 0.10,
-        "cognitive_load_weight_nlp_affect": 0.15,
-        "cognitive_load_weight_relative_baseline": 0.10,
         "cognitive_load_weight_wrong_streak": 0.05,
         "cognitive_load_weight_message_gap": 0.05,
         "cognitive_load_weight_repeated_errors": 0.05,
@@ -46,8 +44,6 @@ def _stub_config(**overrides):
         "cognitive_load_quiz_accuracy_target": 0.7,
         "cognitive_load_hesitation_min_ms": 15000.0,
         "cognitive_load_hesitation_range_ms": 45000.0,
-        "cognitive_load_nlp_frustration_weight": 0.6,
-        "cognitive_load_nlp_confusion_weight": 0.4,
         "cognitive_load_layout_simplify_threshold": 0.7,
         "cognitive_load_review_reorder_threshold": 0.5,
     }
@@ -85,14 +81,6 @@ def _mock_db_no_data():
     return db
 
 
-def _mock_baseline(calibrated=False):
-    """Return a mock baseline object."""
-    baseline = MagicMock()
-    baseline.is_calibrated = calibrated
-    baseline.update = MagicMock()
-    return baseline
-
-
 # ── compute_cognitive_load: basic behavior ──
 
 
@@ -103,10 +91,7 @@ async def test_score_in_zero_one_range():
     user_id = uuid.uuid4()
     course_id = uuid.uuid4()
 
-    with patch("services.cognitive_load.settings", _stub_config()), \
-         patch("services.cognitive_load_nlp.analyze_student_affect", new_callable=AsyncMock, return_value={}), \
-         patch("services.cognitive_load_calibrator.get_or_create_baseline", return_value=_mock_baseline()), \
-         patch("services.cognitive_load_calibrator.compute_relative_load", return_value={"calibrated": False, "adjustments": {}}):
+    with patch("services.cognitive_load.settings", _stub_config()):
 
         result = await compute_cognitive_load(
             db, user_id, course_id,
@@ -124,10 +109,7 @@ async def test_score_clamped_at_one():
     user_id = uuid.uuid4()
     course_id = uuid.uuid4()
 
-    with patch("services.cognitive_load.settings", _stub_config()), \
-         patch("services.cognitive_load_nlp.analyze_student_affect", new_callable=AsyncMock, return_value={"frustration": 1.0, "confusion": 1.0}), \
-         patch("services.cognitive_load_calibrator.get_or_create_baseline", return_value=_mock_baseline()), \
-         patch("services.cognitive_load_calibrator.compute_relative_load", return_value={"calibrated": False, "adjustments": {}}):
+    with patch("services.cognitive_load.settings", _stub_config()):
 
         result = await compute_cognitive_load(
             db, user_id, course_id,
@@ -148,10 +130,7 @@ async def test_fatigue_signal_contributes():
     user_id = uuid.uuid4()
     course_id = uuid.uuid4()
 
-    with patch("services.cognitive_load.settings", _stub_config()), \
-         patch("services.cognitive_load_nlp.analyze_student_affect", new_callable=AsyncMock, return_value={}), \
-         patch("services.cognitive_load_calibrator.get_or_create_baseline", return_value=_mock_baseline()), \
-         patch("services.cognitive_load_calibrator.compute_relative_load", return_value={"calibrated": False, "adjustments": {}}):
+    with patch("services.cognitive_load.settings", _stub_config()):
 
         low = await compute_cognitive_load(
             db, user_id, course_id, fatigue_score=0.0, session_messages=0, user_message="",
@@ -172,10 +151,7 @@ async def test_session_length_signal():
     user_id = uuid.uuid4()
     course_id = uuid.uuid4()
 
-    with patch("services.cognitive_load.settings", _stub_config()), \
-         patch("services.cognitive_load_nlp.analyze_student_affect", new_callable=AsyncMock, return_value={}), \
-         patch("services.cognitive_load_calibrator.get_or_create_baseline", return_value=_mock_baseline()), \
-         patch("services.cognitive_load_calibrator.compute_relative_load", return_value={"calibrated": False, "adjustments": {}}):
+    with patch("services.cognitive_load.settings", _stub_config()):
 
         result = await compute_cognitive_load(
             db, user_id, course_id,
@@ -193,10 +169,7 @@ async def test_help_seeking_signal():
     user_id = uuid.uuid4()
     course_id = uuid.uuid4()
 
-    with patch("services.cognitive_load.settings", _stub_config()), \
-         patch("services.cognitive_load_nlp.analyze_student_affect", new_callable=AsyncMock, return_value={}), \
-         patch("services.cognitive_load_calibrator.get_or_create_baseline", return_value=_mock_baseline()), \
-         patch("services.cognitive_load_calibrator.compute_relative_load", return_value={"calibrated": False, "adjustments": {}}):
+    with patch("services.cognitive_load.settings", _stub_config()):
 
         result = await compute_cognitive_load(
             db, user_id, course_id,
@@ -214,10 +187,7 @@ async def test_no_help_seeking_for_normal_message():
     user_id = uuid.uuid4()
     course_id = uuid.uuid4()
 
-    with patch("services.cognitive_load.settings", _stub_config()), \
-         patch("services.cognitive_load_nlp.analyze_student_affect", new_callable=AsyncMock, return_value={}), \
-         patch("services.cognitive_load_calibrator.get_or_create_baseline", return_value=_mock_baseline()), \
-         patch("services.cognitive_load_calibrator.compute_relative_load", return_value={"calibrated": False, "adjustments": {}}):
+    with patch("services.cognitive_load.settings", _stub_config()):
 
         result = await compute_cognitive_load(
             db, user_id, course_id,
@@ -235,10 +205,7 @@ async def test_brevity_signal_only_after_session_context():
     user_id = uuid.uuid4()
     course_id = uuid.uuid4()
 
-    with patch("services.cognitive_load.settings", _stub_config()), \
-         patch("services.cognitive_load_nlp.analyze_student_affect", new_callable=AsyncMock, return_value={}), \
-         patch("services.cognitive_load_calibrator.get_or_create_baseline", return_value=_mock_baseline()), \
-         patch("services.cognitive_load_calibrator.compute_relative_load", return_value={"calibrated": False, "adjustments": {}}):
+    with patch("services.cognitive_load.settings", _stub_config()):
 
         # Very first message -> no brevity signal
         result_first = await compute_cognitive_load(
@@ -271,10 +238,7 @@ async def test_empty_message():
     user_id = uuid.uuid4()
     course_id = uuid.uuid4()
 
-    with patch("services.cognitive_load.settings", _stub_config()), \
-         patch("services.cognitive_load_nlp.analyze_student_affect", new_callable=AsyncMock, return_value={}), \
-         patch("services.cognitive_load_calibrator.get_or_create_baseline", return_value=_mock_baseline()), \
-         patch("services.cognitive_load_calibrator.compute_relative_load", return_value={"calibrated": False, "adjustments": {}}):
+    with patch("services.cognitive_load.settings", _stub_config()):
 
         result = await compute_cognitive_load(
             db, user_id, course_id,
@@ -283,7 +247,7 @@ async def test_empty_message():
 
     assert result["signals"]["help_seeking"] == 0.0
     assert result["signals"]["message_brevity"] == 0.0
-    assert result["affect"] == {}
+    assert "nlp_affect" not in result["signals"]
 
 
 @pytest.mark.asyncio
@@ -293,10 +257,7 @@ async def test_level_classification():
     user_id = uuid.uuid4()
     course_id = uuid.uuid4()
 
-    with patch("services.cognitive_load.settings", _stub_config()), \
-         patch("services.cognitive_load_nlp.analyze_student_affect", new_callable=AsyncMock, return_value={}), \
-         patch("services.cognitive_load_calibrator.get_or_create_baseline", return_value=_mock_baseline()), \
-         patch("services.cognitive_load_calibrator.compute_relative_load", return_value={"calibrated": False, "adjustments": {}}):
+    with patch("services.cognitive_load.settings", _stub_config()):
 
         low = await compute_cognitive_load(
             db, user_id, course_id, fatigue_score=0.0, session_messages=0, user_message="",

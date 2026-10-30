@@ -11,11 +11,13 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config import settings
 from database import get_db
 from models.user import User
 from services.auth.dependency import get_current_user
 from services.course_access import get_course_or_404
 from services.llm.readiness import ensure_llm_ready
+from services.loom_flags import lector_enabled, loom_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -109,20 +111,20 @@ async def review_flashcard_endpoint(
     except (SQLAlchemyError, ValueError, TypeError):
         logger.exception("Flashcard learning event emission failed (best-effort)")
 
-    # Sync flashcard review to LOOM concept mastery (bridges flashcard ↔ knowledge graph)
-    concept_names = body.card.get("knowledge_points") or body.card.get("concepts") or []
-    if isinstance(concept_names, str):
-        concept_names = [concept_names]
+    # LOOM (experimental): the rating is an attempt fact for the card's one concept
     course_id = body.card.get("course_id")
-    if concept_names and course_id:
+    concept = body.card.get("concept")
+    node_id_raw = body.card.get("knowledge_node_id")
+    if loom_enabled() and course_id and (concept or node_id_raw):
         try:
-            from services.loom_mastery import update_concept_mastery
-            is_correct = body.rating >= 3  # Good or Easy = correct recall
+            from services.loom_mastery import rating_is_correct, update_concept_mastery
             cid = uuid.UUID(course_id) if isinstance(course_id, str) else course_id
-            for concept in concept_names[:5]:  # Cap to avoid excessive DB ops
-                await update_concept_mastery(db, user.id, str(concept), cid, correct=is_correct, question_type="free_response")
-        except ImportError:
-            logger.warning("Flashcard → LOOM mastery sync failed: services.loom_mastery not found")
+            node_id = uuid.UUID(str(node_id_raw)) if node_id_raw else None
+            await update_concept_mastery(
+                db, user.id, str(concept) if concept else None, cid,
+                correct=rating_is_correct(body.rating), question_type="free_response",
+                knowledge_node_id=node_id, rating=body.rating,
+            )
         except (SQLAlchemyError, ValueError, KeyError):
             logger.debug("Flashcard → LOOM mastery sync failed (best-effort)")
 
@@ -196,8 +198,10 @@ async def get_lector_ordered_flashcards(
 
     await get_course_or_404(db, course_id, user_id=user.id)
 
-    # Get LECTOR priority order
-    review_items = await get_smart_review_session(db, user.id, course_id, max_items=30)
+    # Get LECTOR priority order (plain due order when the experiment is off)
+    review_items = []
+    if lector_enabled():
+        review_items = await get_smart_review_session(db, user.id, course_id, max_items=30)
 
     # Apply structured session ordering if experiment enables it
     from services.experiments.framework import get_experiment_config
@@ -318,13 +322,14 @@ async def get_due_flashcards(
                     due_cards.append({**card, "batch_id": str(batch.id)})
 
     # Adjust card order based on cognitive load (easier cards first when loaded)
-    try:
-        from services.cognitive_load import compute_cognitive_load, adjust_review_order_for_load
-        cl = await compute_cognitive_load(db, user.id, course_id)
-        if cl.get("score", 0) >= 0.5:
-            due_cards = adjust_review_order_for_load(cl["score"], due_cards)
-    except (SQLAlchemyError, ValueError, KeyError, TypeError):
-        logger.exception("Cognitive load adjustment failed (best-effort)")
+    if settings.enable_cognitive_load:
+        try:
+            from services.cognitive_load import compute_cognitive_load, adjust_review_order_for_load
+            cl = await compute_cognitive_load(db, user.id, course_id)
+            if cl.get("score", 0) >= 0.5:
+                due_cards = adjust_review_order_for_load(cl["score"], due_cards)
+        except (SQLAlchemyError, ValueError, KeyError, TypeError):
+            logger.exception("Cognitive load adjustment failed (best-effort)")
 
     return {"cards": due_cards, "due_count": len(due_cards), "total_batches": len(batches)}
 
@@ -337,6 +342,9 @@ async def get_confusion_pairs(
 ):
     """Get confused concept pairs for side-by-side comparison review."""
     await get_course_or_404(db, course_id, user_id=user.id)
+
+    if not loom_enabled():
+        return {"pairs": [], "count": 0}
 
     from services.loom_confusion import get_confused_concepts
     pairs = await get_confused_concepts(db, course_id)

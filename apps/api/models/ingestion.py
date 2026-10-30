@@ -74,29 +74,6 @@ class IngestionJob(Base):
     )
 
 
-class StudySession(Base):
-    """Tracks study sessions for learning progress."""
-
-    __tablename__ = "study_sessions"
-
-    id: Mapped[uuid.UUID] = mapped_column(CompatUUID, primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(CompatUUID, ForeignKey("users.id", ondelete="CASCADE"))
-    course_id: Mapped[uuid.UUID] = mapped_column(CompatUUID, ForeignKey("courses.id", ondelete="CASCADE"))
-
-    # Session metrics
-    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    ended_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    duration_minutes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-
-    # Activity tracking
-    messages_sent: Mapped[int] = mapped_column(Integer, default=0)
-    problems_attempted: Mapped[int] = mapped_column(Integer, default=0)
-    problems_correct: Mapped[int] = mapped_column(Integer, default=0)
-    notes_viewed: Mapped[int] = mapped_column(Integer, default=0)
-
-    metadata_json: Mapped[Optional[dict]] = mapped_column(CompatJSONB, nullable=True)
-
-
 class Assignment(Base):
     """Course assignments extracted from ingestion pipeline."""
 

@@ -13,7 +13,7 @@ import asyncio
 import logging
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -118,7 +118,8 @@ async def search_content(parameters: dict[str, Any], ctx: Any, db: AsyncSession)
 )
 async def get_mastery_report(parameters: dict[str, Any], ctx: Any, db: AsyncSession) -> ToolResult:
     from models.progress import LearningProgress
-    from models.ingestion import StudySession, WrongAnswer
+    from models.ingestion import WrongAnswer
+    from models.practice import PracticeProblem, PracticeResult
 
     try:
         progress_q = select(LearningProgress).where(
@@ -131,19 +132,24 @@ async def get_mastery_report(parameters: dict[str, Any], ctx: Any, db: AsyncSess
             WrongAnswer.mastered == False,  # noqa: E712
         ).group_by(WrongAnswer.error_category)
 
-        session_q = select(
-            func.count(StudySession.id), func.sum(StudySession.duration_minutes),
-            func.sum(StudySession.problems_attempted), func.sum(StudySession.problems_correct),
-        ).where(StudySession.user_id == ctx.user_id, StudySession.course_id == ctx.course_id)
+        attempts_q = (
+            select(
+                func.count(PracticeResult.id),
+                func.sum(case((PracticeResult.is_correct == True, 1), else_=0)),  # noqa: E712
+            )
+            .join(PracticeProblem, PracticeProblem.id == PracticeResult.problem_id)
+            .where(PracticeResult.user_id == ctx.user_id, PracticeProblem.course_id == ctx.course_id)
+        )
 
         # Run sequentially — AsyncSession is NOT safe for concurrent use
         progress_res = await db.execute(progress_q)
         wrong_res = await db.execute(wrong_stats_q)
-        session_res = await db.execute(session_q)
+        attempts_res = await db.execute(attempts_q)
 
         progress_rows = progress_res.scalars().all()
         wrong_cats = wrong_res.all()
-        session_stats = session_res.one_or_none()
+        total_attempted, total_correct = attempts_res.one_or_none() or (0, 0)
+        total_minutes = sum(r.time_spent_minutes or 0 for r in progress_rows)
 
         parts = ["## Learning Report\n"]
         if progress_rows:
@@ -166,12 +172,12 @@ async def get_mastery_report(parameters: dict[str, Any], ctx: Any, db: AsyncSess
             for cat, count in wrong_cats:
                 parts.append(f"  - {cat or 'unclassified'}: {count}")
 
-        if session_stats and session_stats[0]:
-            total_sessions, total_minutes, total_attempted, total_correct = session_stats
+        if total_attempted or total_minutes:
+            total_attempted = int(total_attempted or 0)
+            total_correct = int(total_correct or 0)
             accuracy = (total_correct / total_attempted * 100) if total_attempted else 0
-            parts.append(f"\n**Study sessions**: {total_sessions}")
-            parts.append(f"**Total study time**: {total_minutes or 0} minutes")
-            parts.append(f"**Quiz accuracy**: {total_correct or 0}/{total_attempted or 0} ({accuracy:.0f}%)")
+            parts.append(f"\n**Total study time**: {total_minutes} minutes")
+            parts.append(f"**Quiz accuracy**: {total_correct}/{total_attempted} ({accuracy:.0f}%)")
 
         return ToolResult(success=True, output="\n".join(parts))
     except SQLAlchemyError as e:

@@ -95,8 +95,14 @@ async def test_enrichment_attaches_fatigue_score():
 # ── Cognitive load enrichment ──
 
 
+@pytest.fixture
+def _cognitive_load_on(monkeypatch):
+    from config import settings
+    monkeypatch.setattr(settings, "enable_cognitive_load", True)
+
+
 @pytest.mark.asyncio
-async def test_enrichment_attaches_cognitive_load():
+async def test_enrichment_attaches_cognitive_load(_cognitive_load_on):
     ctx = _ctx("explain derivatives")
     payload = {"load": 0.72, "level": "high", "consecutive_high": 0, "signals": {}}
     compute = AsyncMock(return_value=payload)
@@ -116,18 +122,18 @@ async def test_enrichment_attaches_cognitive_load():
 
 
 @pytest.mark.asyncio
-async def test_enrichment_degrades_gracefully_without_db():
+async def test_enrichment_degrades_gracefully_without_db(_cognitive_load_on):
     ctx = _ctx("explain derivatives")
     enriched = await _apply_turn_enrichment(ctx, db=None)
-    # Fatigue still computed; cognitive load skipped with a user-visible warning
+    # Fatigue still computed; cognitive load falls back to neutral with a user-visible warning
     assert "fatigue_score" in enriched.metadata
-    assert "cognitive_load" not in enriched.metadata
+    assert enriched.metadata["cognitive_load"]["level"] == "low"
     warnings = enriched.metadata["stream_warnings"]
     assert any(w["type"] == "adaptation_degraded" for w in warnings)
 
 
 @pytest.mark.asyncio
-async def test_enrichment_degrades_when_cognitive_load_crashes():
+async def test_enrichment_degrades_when_cognitive_load_crashes(_cognitive_load_on):
     ctx = _ctx("explain derivatives")
     with patch(
         "services.cognitive_load.compute_cognitive_load",

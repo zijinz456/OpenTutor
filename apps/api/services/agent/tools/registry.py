@@ -167,7 +167,6 @@ def _register_builtin_tools(registry: ToolRegistry) -> None:
     _register_export_tools(registry)
     _register_file_tools(registry)
     _register_mutation_tools(registry)
-    _register_workspace_tools(registry)
     _register_preference_tools(registry)
 
 
@@ -243,17 +242,6 @@ def _register_mutation_tools(registry: ToolRegistry) -> None:
         logger.debug("content_mutations module removed; skipping mutation tools")
     except (AttributeError, TypeError) as e:
         logger.exception("Failed to load content mutation tools: %s", e)
-
-
-def _register_workspace_tools(registry: ToolRegistry) -> None:
-    """Register workspace control tools (UI navigation, layout)."""
-    try:
-        from services.agent.tools.workspace import update_workspace
-
-        registry.register(update_workspace)
-        logger.info("Registered workspace control tool")
-    except (ImportError, AttributeError) as e:
-        logger.exception("Failed to load workspace tools: %s", e)
 
 
 def _register_preference_tools(registry: ToolRegistry) -> None:

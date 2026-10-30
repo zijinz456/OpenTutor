@@ -228,8 +228,9 @@ async def test_outcome_correct():
     uid, cid = _uid(), _uid()
     past = datetime.now(timezone.utc) - timedelta(days=5)
     m = _mastery(uid, cid, score=0.5, pcount=3, stab=5.0, cc=2, wc=1, last=past)
-    n = _node(_uid(), "T")
-    db = _mock_db([[m], [n], []])
+    n = _node(_uid(), "T"); n.id = cid
+    # node lookup, mastery row, FIRe prereq edges, consolidation parent edges
+    db = _mock_db([[n], [m], [], []])
     await record_review_outcome(db, uid, cid, recalled_correctly=True)
     assert m.practice_count == 4 and m.correct_count == 3
     assert m.mastery_score > 0.5 and m.stability_days > 5.0
@@ -241,9 +242,11 @@ async def test_outcome_incorrect():
     uid, cid = _uid(), _uid()
     past = datetime.now(timezone.utc) - timedelta(days=5)
     m = _mastery(uid, cid, score=0.6, pcount=5, stab=10.0, cc=4, wc=1, last=past)
-    db = _mock_db([[m], [_node(_uid(), "T")], []])
+    n = _node(_uid(), "T"); n.id = cid
+    db = _mock_db([[n], [m], []])
     await record_review_outcome(db, uid, cid, recalled_correctly=False)
-    assert m.wrong_count == 2 and m.mastery_score == pytest.approx(0.5, abs=0.01)
+    # BKT(0.6, wrong, g=0.05, s=0.10, t=0.20): posterior 0.136 -> 0.31
+    assert m.wrong_count == 2 and m.mastery_score == pytest.approx(0.31, abs=0.02)
     assert m.stability_days < 10.0
 
 
@@ -251,7 +254,7 @@ async def test_outcome_incorrect():
 async def test_outcome_missing_mastery():
     rm = MagicMock(); rm.scalar_one_or_none.return_value = None
     db = AsyncMock(); db.execute = AsyncMock(return_value=rm); db.flush = AsyncMock()
-    await record_review_outcome(db, _uid(), _uid(), recalled_correctly=True)
+    assert await record_review_outcome(db, _uid(), _uid(), recalled_correctly=True) is None
     db.flush.assert_not_awaited()
 
 
@@ -259,11 +262,12 @@ async def test_outcome_missing_mastery():
 async def test_outcome_bounds():
     uid, cid = _uid(), _uid()
     mh = _mastery(uid, cid, score=0.99, pcount=10, stab=5.0, cc=9, wc=1)
-    db = _mock_db([[mh], [_node(_uid(), "T")], []])
+    n = _node(_uid(), "T"); n.id = cid
+    db = _mock_db([[n], [mh], [], []])
     await record_review_outcome(db, uid, cid, recalled_correctly=True)
     assert mh.mastery_score <= 1.0
     ml = _mastery(uid, cid, score=0.05, pcount=10, stab=1.0, cc=1, wc=9)
-    db2 = _mock_db([[ml], [_node(_uid(), "T")], []])
+    db2 = _mock_db([[n], [ml], []])
     await record_review_outcome(db2, uid, cid, recalled_correctly=False)
     assert ml.mastery_score >= 0.0
 
