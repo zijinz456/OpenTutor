@@ -162,7 +162,3 @@ export function saveStoredSpaceLayout(courseId: string, layout: SpaceLayout): Sp
   storage.set(getSpaceLayoutStorageKey(courseId), normalized);
   return normalized;
 }
-
-export function getStoredSpaceLayoutMode(courseId: string): LearningMode | undefined {
-  return loadStoredSpaceLayout(courseId)?.mode;
-}

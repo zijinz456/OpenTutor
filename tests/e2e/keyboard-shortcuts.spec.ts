@@ -4,8 +4,7 @@ import { skipOnboarding, createCourseWithContent } from "./helpers/test-utils";
 /**
  * Keyboard Shortcuts tests.
  *
- * The block-based workspace renders sections as blocks in a grid.
- * The STEM Student template creates notes, quiz, progress, and knowledge_graph blocks.
+ * Workspace blocks are summary cards that link to dedicated routes.
  * Cmd+K opens the search dialog.
  */
 test.describe.serial("Keyboard Shortcuts", () => {
@@ -13,15 +12,13 @@ test.describe.serial("Keyboard Shortcuts", () => {
     await skipOnboarding(page);
   });
 
-  test("notes block is visible after template is applied", async ({ page }) => {
-    await createCourseWithContent(page, "KB Notes");
-    // Notes panel should be visible as a block in the grid
+  test("notes route renders the notes panel", async ({ page }) => {
+    await createCourseWithContent(page, "KB Notes", "notes");
     await expect(page.getByTestId("notes-panel")).toBeVisible({ timeout: 15_000 });
   });
 
-  test("quiz block renders quiz tab", async ({ page }) => {
-    await createCourseWithContent(page, "KB Quiz");
-    // Quiz tab should be visible in the practice section block
+  test("practice route renders quiz tab", async ({ page }) => {
+    await createCourseWithContent(page, "KB Quiz", "practice");
     await expect(page.getByRole("tab", { name: "Quiz", exact: true }).first()).toBeVisible({ timeout: 15_000 });
   });
 

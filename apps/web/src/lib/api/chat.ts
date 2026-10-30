@@ -1,4 +1,4 @@
-import { API_BASE, buildSecureRequestInit, request, type JsonObject } from "./client";
+import { request, requestStream, type JsonObject } from "./client";
 
 // ── Chat types ──
 
@@ -229,39 +229,26 @@ export async function* streamChat(
 ): AsyncGenerator<StreamEvent, void, unknown> {
   // Avoid the trailing slash here: FastAPI may emit a 307 redirect for `/chat/`,
   // which causes the browser to follow the backend origin directly and trip CORS.
-  const res = await fetch(`${API_BASE}/chat`, {
-    ...buildSecureRequestInit({
-      method: "POST",
-      includeJsonContentType: true,
-      body: JSON.stringify({
-        course_id: opts.courseId,
-        message: opts.message,
-        active_tab: opts.activeTab,
-        tab_context: opts.tabContext,
-        session_id: opts.sessionId,
-        history: opts.history ?? [],
-        images: opts.images ?? [],
-        ...(opts.interrupt ? { interrupt: true } : {}),
-        ...(opts.learningMode ? { learning_mode: opts.learningMode } : {}),
-        ...(opts.blockTypes?.length ? { block_types: opts.blockTypes } : {}),
-        ...(opts.dismissedBlockTypes?.length ? { dismissed_block_types: opts.dismissedBlockTypes } : {}),
-      }),
-      signal: opts.signal,
+  const res = await requestStream("/chat", {
+    method: "POST",
+    includeJsonContentType: true,
+    body: JSON.stringify({
+      course_id: opts.courseId,
+      message: opts.message,
+      active_tab: opts.activeTab,
+      tab_context: opts.tabContext,
+      session_id: opts.sessionId,
+      history: opts.history ?? [],
+      images: opts.images ?? [],
+      ...(opts.interrupt ? { interrupt: true } : {}),
+      ...(opts.learningMode ? { learning_mode: opts.learningMode } : {}),
+      ...(opts.blockTypes?.length ? { block_types: opts.blockTypes } : {}),
+      ...(opts.dismissedBlockTypes?.length ? { dismissed_block_types: opts.dismissedBlockTypes } : {}),
     }),
+    signal: opts.signal,
   });
 
-  if (!res.ok || !res.body) {
-    if (res.status === 429) {
-      const retryAfter = res.headers.get("Retry-After");
-      const error = await res.json().catch(() => ({}));
-      const seconds = retryAfter || error.retry_after || "a few";
-      throw new Error(`Rate limit exceeded. Please wait ${seconds} seconds before trying again.`);
-    }
-    const error = await res.json().catch(() => ({ detail: "Chat stream failed" }));
-    throw new Error(error.detail || "Chat stream failed");
-  }
-
-  const reader = res.body.getReader();
+  const reader = res.body!.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
   let lastEventName = "message";

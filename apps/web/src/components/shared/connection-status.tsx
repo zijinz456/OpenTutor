@@ -2,8 +2,11 @@
 
 import { useState, useEffect } from "react";
 import { WifiOff } from "lucide-react";
+import { requestRaw } from "@/lib/api/client";
+import { useT } from "@/lib/i18n-context";
 
 export function ConnectionStatus() {
+  const t = useT();
   // Always start false to prevent SSR mismatch and false positives
   const [offline, setOffline] = useState(false);
 
@@ -18,7 +21,7 @@ export function ConnectionStatus() {
       }
       // Browser says offline — double-check with a real fetch
       try {
-        const r = await fetch("/api/health", { method: "HEAD", cache: "no-store" });
+        const r = await requestRaw("/health", { method: "HEAD", cache: "no-store", includeJsonContentType: false });
         if (!cancelled) setOffline(!r.ok);
       } catch {
         if (!cancelled) setOffline(true);
@@ -46,7 +49,7 @@ export function ConnectionStatus() {
       className="fixed top-0 left-0 right-0 z-[60] bg-destructive/90 text-destructive-foreground text-center py-2 text-xs font-medium flex items-center justify-center gap-2 animate-slide-up"
     >
       <WifiOff className="size-3.5" />
-      You are offline. Changes will sync when reconnected.
+      {t("connection.offline")}
     </div>
   );
 }

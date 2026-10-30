@@ -10,11 +10,10 @@ interface ParsingProgressStepProps {
   parseSteps: ParseStep[];
   parseProgress: number;
   parseLogs: ParseLog[];
-  canContinueToFeatures: boolean;
+  parsingSettled: boolean;
   allJobsFailed: boolean;
   createdCourseId: string | null;
   onEnterWorkspace: () => void;
-  onContinueToFeatures: () => void;
   t: (key: string) => string;
 }
 
@@ -25,11 +24,10 @@ export function ParsingProgressStep({
   parseSteps,
   parseProgress,
   parseLogs,
-  canContinueToFeatures,
+  parsingSettled,
   allJobsFailed,
   createdCourseId,
   onEnterWorkspace,
-  onContinueToFeatures,
   t,
 }: ParsingProgressStepProps) {
   return (
@@ -49,7 +47,7 @@ export function ParsingProgressStep({
         <MainContent
           url={url}
           files={files}
-          canContinueToFeatures={canContinueToFeatures}
+          parsingSettled={parsingSettled}
           allJobsFailed={allJobsFailed}
           t={t}
         />
@@ -62,10 +60,9 @@ export function ParsingProgressStep({
           parseSteps={parseSteps}
           parseProgress={parseProgress}
           parseLogs={parseLogs}
-          canContinueToFeatures={canContinueToFeatures}
+          parsingSettled={parsingSettled}
           createdCourseId={createdCourseId}
           onEnterWorkspace={onEnterWorkspace}
-          onContinueToFeatures={onContinueToFeatures}
           t={t}
         />
       </div>
@@ -89,18 +86,18 @@ function StatusBadge({ allJobsFailed, t }: { allJobsFailed: boolean; t: (key: st
 interface MainContentProps {
   url: string;
   files: FileItem[];
-  canContinueToFeatures: boolean;
+  parsingSettled: boolean;
   allJobsFailed: boolean;
   t: (key: string) => string;
 }
 
-function MainContent({ url, files, canContinueToFeatures, allJobsFailed, t }: MainContentProps) {
+function MainContent({ url, files, parsingSettled, allJobsFailed, t }: MainContentProps) {
   return (
     <div className="flex-1 flex flex-col bg-background">
       {url && (
         <div className="h-9 px-4 bg-muted border-b border-border flex items-center gap-2">
           <span className="text-xs text-muted-foreground flex-1 truncate">{url}</span>
-          {!canContinueToFeatures && <span className="text-xs text-muted-foreground animate-pulse">{t("new.loading")}</span>}
+          {!parsingSettled && <span className="text-xs text-muted-foreground animate-pulse">{t("new.loading")}</span>}
         </div>
       )}
       <div className="flex-1 p-6 bg-muted/50 flex flex-col gap-4 overflow-y-auto">
@@ -130,10 +127,9 @@ interface ParsingSidebarProps {
   parseSteps: ParseStep[];
   parseProgress: number;
   parseLogs: ParseLog[];
-  canContinueToFeatures: boolean;
+  parsingSettled: boolean;
   createdCourseId: string | null;
   onEnterWorkspace: () => void;
-  onContinueToFeatures: () => void;
   t: (key: string) => string;
 }
 
@@ -144,16 +140,15 @@ function ParsingSidebar({
   parseSteps,
   parseProgress,
   parseLogs,
-  canContinueToFeatures,
+  parsingSettled,
   createdCourseId,
   onEnterWorkspace,
-  onContinueToFeatures,
   t,
 }: ParsingSidebarProps) {
   return (
     <div className="w-[340px] border-l border-border bg-background flex flex-col shrink-0">
       <div className="h-11 px-4 bg-muted border-b border-border flex items-center gap-2 shrink-0">
-        {!canContinueToFeatures && <span className="text-xs text-brand animate-pulse">...</span>}
+        {!parsingSettled && <span className="text-xs text-brand animate-pulse">...</span>}
         <span className="font-semibold text-[13px] text-foreground">{t("new.parsingProgress")}</span>
       </div>
       <div className="flex-1 p-4 flex flex-col gap-4 overflow-y-auto">
@@ -217,19 +212,13 @@ function ParsingSidebar({
               type="button"
               onClick={onEnterWorkspace}
               data-testid="enter-now"
-              className="w-full h-11 border border-border text-foreground rounded-lg flex items-center justify-center gap-2 font-semibold text-sm hover:border-foreground/20"
+              className={`w-full h-11 rounded-lg flex items-center justify-center gap-2 font-semibold text-sm ${
+                parsingSettled
+                  ? "bg-brand text-brand-foreground hover:opacity-90"
+                  : "border border-border text-foreground hover:border-foreground/20"
+              }`}
             >
-              {t("new.enterNow")}
-            </button>
-          )}
-          {canContinueToFeatures && (
-            <button
-              type="button"
-              onClick={onContinueToFeatures}
-              data-testid="continue-to-features"
-              className="w-full h-11 bg-brand text-brand-foreground rounded-lg flex items-center justify-center gap-2 font-semibold text-sm hover:opacity-90"
-            >
-              {t("new.continueToFeatures")} &rarr;
+              {parsingSettled ? t("new.enterWorkspace") : t("new.enterNow")}
             </button>
           )}
         </div>

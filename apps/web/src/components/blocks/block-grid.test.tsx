@@ -16,11 +16,15 @@ vi.mock("./block-palette", () => ({
   BlockPalette: () => <div data-testid="block-palette" />,
 }));
 
+vi.mock("@/lib/i18n-context", () => ({
+  useT: () => (key: string) => key,
+}));
+
 vi.mock("@/lib/block-system/registry", () => ({
   BLOCK_REGISTRY: {
-    notes: { label: "Notes" },
-    quiz: { label: "Quiz" },
-    progress: { label: "Progress" },
+    notes: { labelKey: "blocks.notes.label" },
+    quiz: { labelKey: "blocks.quiz.label" },
+    progress: { labelKey: "blocks.progress.label" },
   },
 }));
 

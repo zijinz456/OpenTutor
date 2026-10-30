@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import {
   createCourseWithContent,
-  dispatchShortcut,
+  ensureRightPanelVisible,
   expectAssistantMessage,
   expectGeneratedNotes,
   getRealLlmProvider,
@@ -67,7 +67,7 @@ test.describe.serial("Real LLM browser flows @llm", () => {
     }
     test.skip(!supportsLongFormValidation(llm), "Long-form notes generation validation requires a higher-capacity provider");
 
-    await createCourseWithContent(page, "LLM Browser Notes");
+    await createCourseWithContent(page, "LLM Browser Notes", "notes");
     await page.getByTestId("notes-generate").click();
     const preview = await expectGeneratedNotes(page);
     await expect(preview).not.toContainText(FALLBACK_RE);
@@ -110,7 +110,7 @@ test.describe.serial("Real LLM browser flows @llm", () => {
     await expect(page.getByText(/Saved \d+ questions to the course quiz bank/i)).toBeVisible({ timeout: 15_000 });
 
     await page.keyboard.press("Escape");
-    await dispatchShortcut(page, "2");
+    await ensureRightPanelVisible(page);
     await expect(page.getByTestId("practice-section")).toBeVisible({ timeout: 15_000 });
     await expect(page.getByTestId("quiz-question")).toBeVisible({ timeout: 15_000 });
   });

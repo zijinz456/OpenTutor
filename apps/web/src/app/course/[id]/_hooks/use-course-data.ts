@@ -2,12 +2,28 @@
 
 import { useEffect, useState } from "react";
 import { useCourseStore } from "@/store/course";
-import { getHealthStatus, type HealthStatus } from "@/lib/api";
+import { getHealthStatus, type Course, type ContentNode, type HealthStatus } from "@/lib/api";
 import { ttlCache } from "@/lib/cache";
-import { incrementSessionCount } from "@/lib/block-system/feature-unlock";
+import { refreshUnlockSignals } from "@/lib/block-system/feature-unlock";
 import { recordSessionVisit } from "@/lib/learner-persona";
 
-export function useCourseData(courseId: string) {
+export interface CourseData {
+  health: HealthStatus | null;
+  course: Course | null;
+  courses: Course[];
+  contentTree: ContentNode[];
+  aiActionsEnabled: boolean;
+}
+
+/**
+ * Shared course bootstrap: loads the course list, marks the active course,
+ * fetches the content tree + ingestion jobs, checks runtime health and
+ * refreshes the server-derived feature-unlock signals.
+ *
+ * Mounted once by `app/course/[id]/layout.tsx`; sub-pages read the result
+ * through `useCourseContext()`.
+ */
+export function useCourseData(courseId: string): CourseData {
   const [health, setHealth] = useState<HealthStatus | null>(
     () => ttlCache.get<HealthStatus>("course:health") ?? null,
   );
@@ -45,7 +61,7 @@ export function useCourseData(courseId: string) {
   }, []);
 
   useEffect(() => {
-    incrementSessionCount(courseId);
+    void refreshUnlockSignals(courseId);
     recordSessionVisit();
   }, [courseId]);
 

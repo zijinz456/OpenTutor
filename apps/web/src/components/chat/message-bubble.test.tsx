@@ -15,6 +15,11 @@ vi.mock("next/image", () => ({
   },
 }));
 
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn() }),
+  useParams: () => ({ id: "course-1" }),
+}));
+
 vi.mock("@/components/ui/badge", () => ({
   Badge: ({ children, ...props }: { children: React.ReactNode; [key: string]: unknown }) => (
     <span data-testid="badge" {...props}>{children}</span>

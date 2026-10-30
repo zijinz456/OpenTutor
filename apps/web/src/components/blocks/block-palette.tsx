@@ -5,7 +5,7 @@ import { Plus, Lock } from "lucide-react";
 import { USER_ADDABLE_BLOCKS, BLOCK_REGISTRY } from "@/lib/block-system/registry";
 import { useWorkspaceStore } from "@/store/workspace";
 import { useCourseStore } from "@/store/course";
-import { isBlockUnlocked, getUnlockContext } from "@/lib/block-system/feature-unlock";
+import { isBlockUnlocked, buildUnlockContext, useUnlockSignals } from "@/lib/block-system/feature-unlock";
 import { useParams } from "next/navigation";
 import { useT } from "@/lib/i18n-context";
 import { recordBlockEvent } from "@/hooks/use-block-engagement";
@@ -16,16 +16,18 @@ export function BlockPalette() {
   const addBlock = useWorkspaceStore((s) => s.addBlock);
   const mode = useWorkspaceStore((s) => s.spaceLayout.mode);
   const courses = useCourseStore((s) => s.courses);
+  const contentTree = useCourseStore((s) => s.contentTree);
   const params = useParams();
   const courseId = (params?.id as string) ?? "";
+  const signals = useUnlockSignals(courseId);
 
-  const unlockCtx = useMemo(
-    () => getUnlockContext(courseId, courses.length),
-    [courseId, courses.length],
-  );
   const ctxWithMode = useMemo(
-    () => ({ ...unlockCtx, mode }),
-    [unlockCtx, mode],
+    () => buildUnlockContext(signals, {
+      sourceDocCount: contentTree.length,
+      totalCourses: courses.length,
+      mode,
+    }),
+    [signals, contentTree.length, courses.length, mode],
   );
 
   return (
@@ -72,9 +74,9 @@ export function BlockPalette() {
                   }`}
                 >
                   <div className="flex flex-col min-w-0 flex-1">
-                    <span className="text-sm font-medium text-foreground">{entry.label}</span>
+                    <span className="text-sm font-medium text-foreground">{t(entry.labelKey)}</span>
                     <span className="text-xs text-muted-foreground truncate">
-                      {unlocked ? entry.description : unlockHint}
+                      {unlocked ? t(entry.descriptionKey) : unlockHint}
                     </span>
                   </div>
                   {!unlocked && <Lock className="size-3.5 text-muted-foreground shrink-0" />}

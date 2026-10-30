@@ -22,7 +22,7 @@ import { AiFeatureBlocked } from "@/components/shared/ai-feature-blocked";
 import { SkeletonText } from "@/components/ui/skeleton";
 import { useBatchManager } from "@/hooks/use-batch-manager";
 import { toast } from "sonner";
-import { updateUnlockContext } from "@/lib/block-system/feature-unlock";
+import { refreshUnlockSignals } from "@/lib/block-system/feature-unlock";
 import type { LearningMode } from "@/lib/block-system/types";
 import { useT, useTF } from "@/lib/i18n-context";
 
@@ -137,7 +137,7 @@ export function PlanView({
         });
         setGoals((prev) => [created, ...prev]);
         if (goalForm.targetDate) {
-          updateUnlockContext(courseId, { hasDeadline: true });
+          void refreshUnlockSignals(courseId).catch(() => undefined);
         }
         toast.success(t("plan.goals.created"));
       }
@@ -173,9 +173,6 @@ export function PlanView({
         setGoals(nextGoals);
         setReviewItems(nextReviewItems);
         setSavedPlans(nextPlans);
-        if (nextGoals.some((g) => g.target_date)) {
-          updateUnlockContext(courseId, { hasDeadline: true });
-        }
       })
       .finally(() => {
         if (!cancelled) setLoadingContext(false);

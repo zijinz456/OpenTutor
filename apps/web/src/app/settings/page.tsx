@@ -1,16 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { toast } from "sonner";
 import { useT } from "@/lib/i18n-context";
-import {
-  getHealthStatus,
-  getLlmRuntimeConfig,
-  type HealthStatus,
-  type LlmRuntimeConfig,
-} from "@/lib/api";
-import type { ProviderName } from "./sections/types";
 import {
   RuntimeStatusSection,
   ProviderConnectionsSection,
@@ -21,69 +12,19 @@ import {
   DataExportSection,
   TemplatesSection,
 } from "./sections";
+import { useLlmRuntime } from "./sections/use-llm-runtime";
 import { RuntimeAlert } from "@/components/shared/runtime-alert";
 
 export default function SettingsPage() {
   const router = useRouter();
   const t = useT();
-
-  const [health, setHealth] = useState<HealthStatus | null>(null);
-  const [healthLoading, setHealthLoading] = useState(false);
-  const [runtimeConfig, setRuntimeConfig] = useState<LlmRuntimeConfig | null>(null);
-  const [runtimeLoading, setRuntimeLoading] = useState(false);
-  const [savingRuntime, setSavingRuntime] = useState(false);
-  const [provider, setProvider] = useState<ProviderName>("ollama");
-  const [model, setModel] = useState("llama3.2:3b");
-  const [llmRequired, setLlmRequired] = useState(false);
-  const healthErrorShown = useRef(false);
-  const runtimeErrorShown = useRef(false);
-
-  const loadHealth = useCallback(async () => {
-    setHealthLoading(true);
-    try {
-      setHealth(await getHealthStatus());
-      healthErrorShown.current = false;
-    } catch (error) {
-      setHealth(null);
-      if (!healthErrorShown.current) {
-        toast.error(error instanceof Error ? error.message : t("settings.runtimeUnavailable"));
-        healthErrorShown.current = true;
-      }
-    } finally {
-      setHealthLoading(false);
-    }
-  }, [t]);
-
-  const loadRuntimeConfig = useCallback(async () => {
-    setRuntimeLoading(true);
-    try {
-      const config = await getLlmRuntimeConfig();
-      setRuntimeConfig(config);
-      setProvider((config.provider as ProviderName) || "ollama");
-      setModel(config.model || "llama3.2:3b");
-      setLlmRequired(config.llm_required);
-      runtimeErrorShown.current = false;
-    } catch (error) {
-      setRuntimeConfig(null);
-      if (!runtimeErrorShown.current) {
-        toast.error(error instanceof Error ? error.message : t("settings.runtimeUnavailable"));
-        runtimeErrorShown.current = true;
-      }
-    } finally {
-      setRuntimeLoading(false);
-    }
-  }, [t]);
-
-  useEffect(() => {
-    void loadHealth();
-    void loadRuntimeConfig();
-    const id = setInterval(() => void loadHealth(), 30_000);
-    return () => clearInterval(id);
-  }, [loadHealth, loadRuntimeConfig]);
-
-  function handleRuntimeSaved(config: LlmRuntimeConfig): void {
-    setRuntimeConfig(config);
-  }
+  const {
+    health, healthLoading, loadHealth,
+    runtimeConfig, runtimeLoading, loadRuntimeConfig,
+    savingRuntime, setSavingRuntime,
+    provider, setProvider, model, setModel,
+    llmRequired, toggleLlmRequired, handleRuntimeSaved,
+  } = useLlmRuntime();
 
   return (
     <div className="min-h-screen bg-background">
@@ -119,7 +60,7 @@ export default function SettingsPage() {
           savingRuntime={savingRuntime}
           onProviderChange={setProvider}
           onModelChange={setModel}
-          onLlmRequiredToggle={() => setLlmRequired((value) => !value)}
+          onLlmRequiredToggle={toggleLlmRequired}
           onRuntimeSaved={handleRuntimeSaved}
           onRefreshConfig={() => void loadRuntimeConfig()}
           onRefreshHealth={() => void loadHealth()}

@@ -128,13 +128,11 @@ export async function submitSources(args: SubmitSourcesArgs): Promise<boolean> {
  * Builds the CourseMetadata object used during creation and workspace entry.
  */
 export function buildMetadata(
-  features: Record<string, boolean>,
   autoScrape: boolean,
   url: string,
   mode: Mode,
 ): CourseMetadata {
   return {
-    workspace_features: features,
     auto_scrape: {
       enabled: Boolean(autoScrape && url.trim() && (mode === "url" || mode === "both")),
       interval_hours: 24,

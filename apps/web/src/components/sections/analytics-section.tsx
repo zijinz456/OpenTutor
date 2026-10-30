@@ -31,7 +31,7 @@ interface AnalyticsSectionProps {
   defaultTab?: AnalyticsTab;
 }
 
-type AnalyticsTab = "progress" | "review" | "blindspots" | "forecast" | "graph" | "agent" | "profile";
+export type AnalyticsTab = "progress" | "review" | "blindspots" | "forecast" | "graph" | "agent" | "profile";
 
 export function AnalyticsSection({ courseId, defaultTab = "progress" }: AnalyticsSectionProps) {
   const t = useT();

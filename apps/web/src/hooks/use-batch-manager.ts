@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { GeneratedBatchSummaryBase } from "@/lib/api/client";
-import { useWorkspaceStore } from "@/store/workspace";
+import { useWorkspaceStore, type SectionId } from "@/store/workspace";
 import { toast } from "sonner";
 
 interface SaveResult {
@@ -11,7 +11,7 @@ interface SaveResult {
 interface UseBatchManagerOptions<TBatch extends GeneratedBatchSummaryBase> {
   courseId: string;
   /** Key into workspace sectionRefreshKey, e.g. "notes", "practice", "plan" */
-  refreshSection: string;
+  refreshSection: SectionId;
   listFn: (courseId: string) => Promise<TBatch[]>;
 }
 

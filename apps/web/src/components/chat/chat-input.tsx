@@ -9,7 +9,8 @@ import {
   type ChangeEvent,
 } from "react";
 import { useChatStore } from "@/store/chat";
-import { useWorkspaceStore } from "@/store/workspace";
+import { usePathname } from "next/navigation";
+import { activeTabFromPathname } from "@/components/chat/chat-input-utils";
 import { useCourseStore } from "@/store/course";
 import { cn } from "@/lib/utils";
 import { useT } from "@/lib/i18n-context";
@@ -54,7 +55,8 @@ export function ChatInput({ courseId, disabled }: ChatInputProps) {
   const isStreaming = useChatStore((s) => s.isStreaming);
   const sendMessage = useChatStore((s) => s.sendMessage);
   const abortStream = useChatStore((s) => s.abortStream);
-  const activeSection = useWorkspaceStore((s) => s.activeSection);
+  const pathname = usePathname();
+  const activeTab = activeTabFromPathname(pathname);
   const fetchContentTree = useCourseStore((s) => s.fetchContentTree);
   const fetchIngestionJobs = useCourseStore((s) => s.fetchIngestionJobs);
 
@@ -98,10 +100,10 @@ export function ChatInput({ courseId, disabled }: ChatInputProps) {
       textareaRef.current.style.height = "auto";
     }
     await sendMessage(courseId, text || "(image)", {
-      activeTab: activeSection,
+      activeTab,
       images: attachedImages,
     });
-  }, [activeSection, clearImages, courseId, input, pendingImages, sendMessage]);
+  }, [activeTab, clearImages, courseId, input, pendingImages, sendMessage]);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {

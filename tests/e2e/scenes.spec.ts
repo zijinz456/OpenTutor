@@ -20,14 +20,13 @@ test.describe.serial("Internal Scene Routing", () => {
     await expect(page.getByTestId("scene-selector-trigger")).toHaveCount(0);
   });
 
-  test("quiz block provides practice workspace", async ({ page }) => {
-    await createCourseWithContent(page, "Scene Assignment");
-    // PracticeSection from quiz block should be visible with Quiz tab
+  test("practice route provides practice workspace", async ({ page }) => {
+    await createCourseWithContent(page, "Scene Assignment", "practice");
     await expect(page.getByRole("tab", { name: "Quiz", exact: true }).first()).toBeVisible({ timeout: 15_000 });
   });
 
-  test("notes block shows uploaded content", async ({ page }) => {
-    await createCourseWithContent(page, "Scene Notes");
+  test("notes route shows uploaded content", async ({ page }) => {
+    await createCourseWithContent(page, "Scene Notes", "notes");
     await expect(page.getByTestId("notes-panel")).toBeVisible({ timeout: 30_000 });
   });
 });

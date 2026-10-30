@@ -2,11 +2,10 @@ import { expect, test } from "@playwright/test";
 import { skipOnboarding, createCourseWithContent } from "./helpers/test-utils";
 
 /**
- * Progress Panel tests.
+ * Progress / Knowledge Graph tests.
  *
- * In the block-based workspace, the STEM Student template includes a
- * "progress" block (renders ProgressView) and a "knowledge_graph" block
- * (renders GraphView). These are shown as separate blocks in the grid.
+ * Workspace blocks are summary cards; the full ProgressView and GraphView
+ * live under /course/[id]/profile (tabs "progress" and "graph").
  */
 
 test.describe.serial("Progress Panel", () => {
@@ -14,15 +13,17 @@ test.describe.serial("Progress Panel", () => {
     await skipOnboarding(page);
   });
 
-  test("progress block is visible in workspace", async ({ page }) => {
-    await createCourseWithContent(page);
+  test("progress view is visible on the profile route", async ({ page }) => {
+    const courseId = await createCourseWithContent(page);
+    await page.goto(`/course/${courseId}/profile?tab=progress`);
     // ProgressView renders course completion or empty state
     const content = page.getByText("Course Completion").or(page.getByText("Upload course materials"));
     await expect(content.first()).toBeVisible({ timeout: 30_000 });
   });
 
   test("shows completion percentage or empty state", async ({ page }) => {
-    await createCourseWithContent(page);
+    const courseId = await createCourseWithContent(page);
+    await page.goto(`/course/${courseId}/profile?tab=progress`);
     const progressContent = page.getByText("Course Completion").or(page.getByText("Upload course materials"));
     await expect(progressContent.first()).toBeVisible({ timeout: 30_000 });
   });
@@ -33,8 +34,9 @@ test.describe.serial("Knowledge Graph", () => {
     await skipOnboarding(page);
   });
 
-  test("knowledge graph block is visible", async ({ page }) => {
-    await createCourseWithContent(page);
+  test("knowledge graph is visible on the profile route", async ({ page }) => {
+    const courseId = await createCourseWithContent(page);
+    await page.goto(`/course/${courseId}/profile?tab=graph`);
     // GraphView renders SVG, loading text, or empty state
     const graphContent = page
       .getByText("Loading graph...")

@@ -123,6 +123,28 @@ function deriveActive(
   };
 }
 
+type StreamTimerState = Pick<ChatState, "_toolStatusTimer" | "_slowAnalyzingTimer" | "_slowDelayedTimer">;
+
+/**
+ * Clear the pending stream timers and return the state patch that nulls them.
+ * Pass `{ toolStatus: false }` to leave the tool-status auto-clear timer running.
+ */
+function clearStreamTimers(
+  state: StreamTimerState,
+  options: { toolStatus?: boolean } = {},
+): Partial<StreamTimerState> {
+  const patch: Partial<StreamTimerState> = {};
+  if (options.toolStatus !== false) {
+    if (state._toolStatusTimer) clearTimeout(state._toolStatusTimer);
+    patch._toolStatusTimer = null;
+  }
+  if (state._slowAnalyzingTimer) clearTimeout(state._slowAnalyzingTimer);
+  if (state._slowDelayedTimer) clearTimeout(state._slowDelayedTimer);
+  patch._slowAnalyzingTimer = null;
+  patch._slowDelayedTimer = null;
+  return patch;
+}
+
 export const useChatStore = create<ChatState>((set, get) => ({
   activeCourseId: null,
   messagesByCourse: {},
@@ -160,19 +182,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const ctrl = get()._abortController;
     if (ctrl) {
       ctrl.abort();
-      const t = get()._toolStatusTimer;
-      if (t) clearTimeout(t);
-      const slowAnalyzingTimer = get()._slowAnalyzingTimer;
-      const slowDelayedTimer = get()._slowDelayedTimer;
-      if (slowAnalyzingTimer) clearTimeout(slowAnalyzingTimer);
-      if (slowDelayedTimer) clearTimeout(slowDelayedTimer);
       set({
+        ...clearStreamTimers(get()),
         _abortController: null,
         isStreaming: false,
         toolStatus: null,
-        _toolStatusTimer: null,
-        _slowAnalyzingTimer: null,
-        _slowDelayedTimer: null,
         streamPhase: null,
         slowState: null,
       });
@@ -406,16 +420,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const wasInterrupted = get().isStreaming && prevCtrl != null;
     if (wasInterrupted) {
       prevCtrl.abort();
-      const slowAnalyzingTimer = get()._slowAnalyzingTimer;
-      const slowDelayedTimer = get()._slowDelayedTimer;
-      if (slowAnalyzingTimer) clearTimeout(slowAnalyzingTimer);
-      if (slowDelayedTimer) clearTimeout(slowDelayedTimer);
       set({
+        ...clearStreamTimers(get(), { toolStatus: false }),
         _abortController: null,
         isStreaming: false,
         toolStatus: null,
-        _slowAnalyzingTimer: null,
-        _slowDelayedTimer: null,
         streamPhase: null,
         slowState: null,
       });
@@ -509,11 +518,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           assistantContent += event.content;
           if (!receivedFirstToken) {
             receivedFirstToken = true;
-            const analyzingTimer = get()._slowAnalyzingTimer;
-            const delayedTimer = get()._slowDelayedTimer;
-            if (analyzingTimer) clearTimeout(analyzingTimer);
-            if (delayedTimer) clearTimeout(delayedTimer);
-            set({ _slowAnalyzingTimer: null, _slowDelayedTimer: null, slowState: null });
+            set({ ...clearStreamTimers(get(), { toolStatus: false }), slowState: null });
           }
           set((s) => {
             const nextMBC = {
@@ -559,11 +564,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           assistantContent = event.content;
           if (!receivedFirstToken && event.content.trim().length > 0) {
             receivedFirstToken = true;
-            const analyzingTimer = get()._slowAnalyzingTimer;
-            const delayedTimer = get()._slowDelayedTimer;
-            if (analyzingTimer) clearTimeout(analyzingTimer);
-            if (delayedTimer) clearTimeout(delayedTimer);
-            set({ _slowAnalyzingTimer: null, _slowDelayedTimer: null, slowState: null });
+            set({ ...clearStreamTimers(get(), { toolStatus: false }), slowState: null });
           }
           set((s) => {
             const nextMBC = {
@@ -664,19 +665,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
       clearTimeout(slowAnalyzingTimer);
       clearTimeout(slowDelayedTimer);
       if (get()._abortController === controller) {
-        const t = get()._toolStatusTimer;
-        if (t) clearTimeout(t);
-        const analyzingTimer = get()._slowAnalyzingTimer;
-        const delayedTimer = get()._slowDelayedTimer;
-        if (analyzingTimer) clearTimeout(analyzingTimer);
-        if (delayedTimer) clearTimeout(delayedTimer);
         set({
+          ...clearStreamTimers(get()),
           isStreaming: false,
           toolStatus: null,
           _abortController: null,
-          _toolStatusTimer: null,
-          _slowAnalyzingTimer: null,
-          _slowDelayedTimer: null,
           streamPhase: null,
           slowState: null,
         });

@@ -49,7 +49,7 @@ export function PracticePanel({
       </div>
       <div className="min-h-[320px]">
         <Suspense fallback={<div className="p-4 text-sm text-muted-foreground animate-pulse">{t("unit.loading.practice")}</div>}>
-          <PracticeSection courseId={courseId} showReview={false} aiActionsEnabled={aiActionsEnabled} defaultTab="quiz" />
+          <PracticeSection courseId={courseId} showMistakes={false} aiActionsEnabled={aiActionsEnabled} defaultTab="quiz" />
         </Suspense>
       </div>
     </section>

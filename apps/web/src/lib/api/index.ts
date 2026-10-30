@@ -1,9 +1,5 @@
 /**
- * Barrel re-export for the modular API layer.
- *
- * Every public type and function that was previously exported from
- * the monolithic api.ts is re-exported here so that all existing
- * `import { ... } from "@/lib/api"` statements continue to work.
+ * Barrel re-export for the modular API layer (`import { ... } from "@/lib/api"`).
  */
 
 export type { JsonObject, NullableDateTime } from "./client";
@@ -232,12 +228,3 @@ export type {
 
 export { getFeatureFlags } from "./features";
 export type { FeatureFlags } from "./features";
-
-export { interviewTurn, getDemoCourse } from "./onboarding";
-export type {
-  OnboardingRequest,
-  OnboardingResponse,
-  OnboardingAction,
-  SpaceLayoutResponse,
-  DemoCourseResponse,
-} from "./onboarding";

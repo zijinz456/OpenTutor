@@ -1,7 +1,7 @@
 /**
  * Workspace state management using Zustand.
  *
- * Controls active sections, pane sizing, and block-system state.
+ * Controls selection, section refresh signals and block-system state.
  * Block system operations are extracted to workspace-blocks.ts.
  */
 
@@ -9,20 +9,13 @@ import { create } from "zustand";
 import type { CognitiveState } from "@/lib/api";
 import { type BlockSystemState, createBlockSlice } from "./workspace-blocks";
 
+/** Workspace sections that can be refreshed by chat actions. */
 export type SectionId = "notes" | "practice" | "analytics" | "plan";
 
 interface CoreWorkspaceState {
-  activeSection: SectionId;
-  setActiveSection: (id: SectionId) => void;
   selectedNodeId: string | null;
   setSelectedNodeId: (id: string | null) => void;
-  treeCollapsed: boolean;
-  toggleTree: () => void;
-  treeWidth: number;
-  setTreeWidth: (w: number) => void;
-  chatHeight: number;
-  setChatHeight: (h: number) => void;
-  sectionRefreshKey: Record<string, number>;
+  sectionRefreshKey: Record<SectionId, number>;
   triggerRefresh: (section: SectionId) => void;
   practiceActiveTab: string | null;
   setPracticeTab: (tab: string | null) => void;
@@ -38,20 +31,8 @@ interface CoreWorkspaceState {
 type WorkspaceState = CoreWorkspaceState & BlockSystemState;
 
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
-  activeSection: "notes",
-  setActiveSection: (id) => set({ activeSection: id }),
-
   selectedNodeId: null,
   setSelectedNodeId: (id) => set({ selectedNodeId: id }),
-
-  treeCollapsed: false,
-  toggleTree: () => set((s) => ({ treeCollapsed: !s.treeCollapsed })),
-
-  treeWidth: 240,
-  setTreeWidth: (w) => set({ treeWidth: Math.max(140, Math.min(480, w)) }),
-
-  chatHeight: 0.35,
-  setChatHeight: (h) => set({ chatHeight: Math.max(0.15, Math.min(0.7, h)) }),
 
   sectionRefreshKey: { notes: 0, practice: 0, analytics: 0, plan: 0 },
   triggerRefresh: (section) =>

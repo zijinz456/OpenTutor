@@ -59,8 +59,7 @@ vi.mock("@/store/workspace", () => ({
 }));
 
 vi.mock("@/lib/block-system/feature-unlock", () => ({
-  updateUnlockContext: vi.fn(),
-  getUnlockContext: () => ({ practiceAttempts: 0, hasWrongAnswer: false }),
+  refreshUnlockSignals: vi.fn().mockResolvedValue({}),
 }));
 
 vi.mock("@/components/shared/ai-feature-blocked", () => ({

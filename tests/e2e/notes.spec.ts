@@ -12,12 +12,12 @@ test.describe.serial("Notes Panel", () => {
   });
 
   test("notes panel is visible with data-testid", async ({ page }) => {
-    await createCourseWithContent(page);
+    await createCourseWithContent(page, "Test Course", "notes");
     await expect(page.getByTestId("notes-panel")).toBeVisible({ timeout: 30_000 });
   });
 
   test("shows uploaded content sections in notes panel", async ({ page }) => {
-    await createCourseWithContent(page);
+    await createCourseWithContent(page, "Test Course", "notes");
     const panel = page.getByTestId("notes-panel");
     await expect(panel).toBeVisible({ timeout: 30_000 });
     // Switch to Source view to see uploaded content (AI Notes is empty without LLM)
@@ -26,7 +26,7 @@ test.describe.serial("Notes Panel", () => {
   });
 
   test("content tree shows sections: Core Idea, Why It Matters, Common Pitfalls", async ({ page }) => {
-    await createCourseWithContent(page);
+    await createCourseWithContent(page, "Test Course", "notes");
     const panel = page.getByTestId("notes-panel");
     await expect(panel).toBeVisible({ timeout: 30_000 });
     // Switch to Source view to see uploaded content sections
@@ -37,7 +37,7 @@ test.describe.serial("Notes Panel", () => {
   });
 
   test("section dropdown shows content sections", async ({ page }) => {
-    await createCourseWithContent(page);
+    await createCourseWithContent(page, "Test Course", "notes");
     const panel = page.getByTestId("notes-panel");
     await expect(panel).toBeVisible({ timeout: 30_000 });
     // Notes block uses a section dropdown (combobox) instead of a TOC sidebar
@@ -46,7 +46,7 @@ test.describe.serial("Notes Panel", () => {
   });
 
   test("section dropdown contains uploaded content sections", async ({ page }) => {
-    await createCourseWithContent(page);
+    await createCourseWithContent(page, "Test Course", "notes");
     const panel = page.getByTestId("notes-panel");
     await expect(panel).toBeVisible({ timeout: 30_000 });
     // Section dropdown should contain sections from the uploaded content
@@ -57,7 +57,7 @@ test.describe.serial("Notes Panel", () => {
   });
 
   test("view mode toggle switches between AI Notes and Source", async ({ page }) => {
-    await createCourseWithContent(page);
+    await createCourseWithContent(page, "Test Course", "notes");
     const panel = page.getByTestId("notes-panel");
     await expect(panel).toBeVisible({ timeout: 30_000 });
     // AI Notes should be active by default
@@ -69,7 +69,7 @@ test.describe.serial("Notes Panel", () => {
 
   test("Generate button triggers AI note generation", async ({ page }) => {
     test.skip(!hasRealLlmEnv(), "Requires a real LLM provider");
-    await createCourseWithContent(page);
+    await createCourseWithContent(page, "Test Course", "notes");
     await expect(page.getByTestId("notes-panel")).toBeVisible({ timeout: 30_000 });
     await page.getByTestId("notes-generate").click();
     // Wait for the generation to complete (preview should appear)
@@ -78,7 +78,7 @@ test.describe.serial("Notes Panel", () => {
 
   test("generated notes preview appears", async ({ page }) => {
     test.skip(!hasRealLlmEnv(), "Requires a real LLM provider");
-    await createCourseWithContent(page);
+    await createCourseWithContent(page, "Test Course", "notes");
     await expect(page.getByTestId("notes-panel")).toBeVisible({ timeout: 30_000 });
     await page.getByTestId("notes-generate").click();
     const preview = page.getByTestId("notes-preview");
@@ -89,7 +89,7 @@ test.describe.serial("Notes Panel", () => {
 
   test("preview shows generated notes content", async ({ page }) => {
     test.skip(!hasRealLlmEnv(), "Requires a real LLM provider");
-    await createCourseWithContent(page);
+    await createCourseWithContent(page, "Test Course", "notes");
     await expect(page.getByTestId("notes-panel")).toBeVisible({ timeout: 30_000 });
     await page.getByTestId("notes-generate").click();
     await expectGeneratedNotes(page);
@@ -97,7 +97,7 @@ test.describe.serial("Notes Panel", () => {
 
   test("Save New button saves notes and shows toast", async ({ page }) => {
     test.skip(!hasRealLlmEnv(), "Requires a real LLM provider");
-    await createCourseWithContent(page);
+    await createCourseWithContent(page, "Test Course", "notes");
     await expect(page.getByTestId("notes-panel")).toBeVisible({ timeout: 30_000 });
     await page.getByTestId("notes-generate").click();
     await expect(page.getByTestId("notes-preview")).toBeVisible({ timeout: 30_000 });
@@ -107,7 +107,7 @@ test.describe.serial("Notes Panel", () => {
 
   test("generate button disabled during generation", async ({ page }) => {
     test.skip(!hasRealLlmEnv(), "Requires a real LLM provider");
-    await createCourseWithContent(page);
+    await createCourseWithContent(page, "Test Course", "notes");
     await expect(page.getByTestId("notes-panel")).toBeVisible({ timeout: 30_000 });
     await page.getByTestId("notes-generate").click();
     // The button should be disabled immediately after clicking
@@ -117,7 +117,7 @@ test.describe.serial("Notes Panel", () => {
   });
 
   test("markdown content renders headings correctly", async ({ page }) => {
-    await createCourseWithContent(page);
+    await createCourseWithContent(page, "Test Course", "notes");
     const panel = page.getByTestId("notes-panel");
     await expect(panel).toBeVisible({ timeout: 30_000 });
     // Switch to Source view to see markdown-rendered headings
@@ -127,7 +127,7 @@ test.describe.serial("Notes Panel", () => {
   });
 
   test("notes panel scrolls when content is long", async ({ page }) => {
-    await createCourseWithContent(page);
+    await createCourseWithContent(page, "Test Course", "notes");
     const panel = page.getByTestId("notes-panel");
     await expect(panel).toBeVisible({ timeout: 30_000 });
     // The scroll area should exist and be functional
@@ -136,7 +136,7 @@ test.describe.serial("Notes Panel", () => {
   });
 
   test("next/previous section buttons navigate sections", async ({ page }) => {
-    await createCourseWithContent(page);
+    await createCourseWithContent(page, "Test Course", "notes");
     const panel = page.getByTestId("notes-panel");
     await expect(panel).toBeVisible({ timeout: 30_000 });
     // Next section button should be visible

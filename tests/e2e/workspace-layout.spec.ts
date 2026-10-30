@@ -32,14 +32,14 @@ test.describe.serial("Workspace Layout", () => {
     }
   });
 
-  test("quiz block renders practice section with Quiz tab", async ({ page }) => {
-    await createCourseWithContent(page, "Layout QuizTab");
+  test("practice route renders practice section with Quiz tab", async ({ page }) => {
+    await createCourseWithContent(page, "Layout QuizTab", "practice");
     const quizTab = page.getByRole("tab", { name: "Quiz", exact: true }).first();
     await expect(quizTab).toBeVisible({ timeout: 15_000 });
   });
 
-  test("notes block renders notes panel", async ({ page }) => {
-    await createCourseWithContent(page, "Layout Notes");
+  test("notes route renders notes panel", async ({ page }) => {
+    await createCourseWithContent(page, "Layout Notes", "notes");
     // Reload to ensure content tree is fetched by frontend
     await page.reload();
     await page.waitForLoadState("networkidle");
@@ -78,7 +78,7 @@ test.describe.serial("Workspace Layout", () => {
   });
 
   test("notes panel shows uploaded content", async ({ page }) => {
-    await createCourseWithContent(page, "Layout Content");
+    await createCourseWithContent(page, "Layout Content", "notes");
     const notesPanel = page.getByTestId("notes-panel");
     const visible = await notesPanel.isVisible({ timeout: 5_000 }).catch(() => false);
     if (visible) {

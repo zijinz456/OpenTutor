@@ -287,7 +287,30 @@ export async function createCourse(page: Page, name: string): Promise<string> {
  * Create a course and upload the sample fixture file.
  * Waits for workspace blocks to render with content before returning.
  */
-export async function createCourseWithContent(page: Page, name = "Test Course"): Promise<string> {
+export type CourseSection = "notes" | "practice" | "plan" | "profile";
+
+/** Section panel test ids, used to wait for a dedicated route to render. */
+const SECTION_PANEL_TEST_ID: Record<CourseSection, string> = {
+  notes: "notes-panel",
+  practice: "practice-section",
+  plan: "plan-section",
+  profile: "analytics-section",
+};
+
+/**
+ * Open a course section's dedicated route. Workspace blocks are summary
+ * cards; the full notes/practice/plan/profile UI lives on these routes.
+ */
+export async function openCourseSection(page: Page, courseId: string, section: CourseSection): Promise<void> {
+  await page.goto(`/course/${courseId}/${section}`);
+  await expect(page.getByTestId(SECTION_PANEL_TEST_ID[section])).toBeVisible({ timeout: 30_000 });
+}
+
+export async function createCourseWithContent(
+  page: Page,
+  name = "Test Course",
+  section?: CourseSection,
+): Promise<string> {
   const courseId = await createCourseViaApi(name);
   await seedCourseFixture(courseId, SAMPLE_COURSE_MD);
   // Pre-set STEM Student template layout before navigating.
@@ -314,6 +337,7 @@ export async function createCourseWithContent(page: Page, name = "Test Course"):
   await expect(
     page.getByRole("list", { name: "Workspace blocks" }),
   ).toBeVisible({ timeout: 15_000 });
+  if (section) await openCourseSection(page, courseId, section);
   return courseId;
 }
 
@@ -346,11 +370,15 @@ export async function sendChatMessage(page: Page, message: string): Promise<void
  * Keyboard shortcut map: section label → Cmd/Ctrl + digit.
  * Matches useKeyboardShortcuts in the app: 1=notes, 2=practice, 3=analytics, 4=plan.
  */
-const SECTION_SHORTCUT_KEY: Record<string, string> = {
-  Notes: "1",
-  Practice: "2",
-  Analytics: "3",
-  Plan: "4",
+/**
+ * Dedicated route for each workspace section. Blocks in the workspace grid
+ * are summary cards; the full UI lives on these routes.
+ */
+const SECTION_ROUTE: Record<string, string> = {
+  Notes: "/notes",
+  Practice: "/practice",
+  Analytics: "/profile?tab=progress",
+  Plan: "/plan",
 };
 
 /**
@@ -378,20 +406,14 @@ export async function dispatchShortcut(page: Page, key: string): Promise<void> {
 }
 
 async function activateSection(page: Page, label: "Practice" | "Plan" | "Analytics" | "Notes", targetTestId: string): Promise<void> {
-  // In the block-based workspace, sections render as blocks in a grid.
-  // The target testId should already be visible if the right template was applied.
+  // The full section UI lives on its dedicated route under /course/[id].
   const target = page.getByTestId(targetTestId);
   const alreadyVisible = await target.isVisible({ timeout: 5_000 }).catch(() => false);
   if (alreadyVisible) return;
 
-  // Try keyboard shortcut as fallback
-  const shortcutKey = SECTION_SHORTCUT_KEY[label];
-  await page.keyboard.press("Escape");
-  for (let attempt = 0; attempt < 5; attempt++) {
-    await dispatchShortcut(page, shortcutKey);
-    const visible = await target.isVisible().catch(() => false);
-    if (visible) return;
-    await page.waitForTimeout(500);
+  const match = page.url().match(/\/course\/([^/?#]+)/);
+  if (match?.[1]) {
+    await page.goto(`/course/${match[1]}${SECTION_ROUTE[label]}`);
   }
 
   await expect(target).toBeVisible({ timeout: 15_000 });
@@ -407,12 +429,6 @@ export async function switchScene(page: Page, sceneId: string): Promise<void> {
     const sectionVisible = await planSection.isVisible({ timeout: 2_000 }).catch(() => false);
 
     if (!sectionVisible) {
-      await page.keyboard.press("Escape");
-      await dispatchShortcut(page, "4");
-    }
-
-    const visibleAfterShortcut = await planSection.isVisible({ timeout: 2_000 }).catch(() => false);
-    if (!visibleAfterShortcut) {
       const match = page.url().match(/\/course\/([^/?#]+)/);
       if (match?.[1]) {
         await page.goto(`/course/${match[1]}/plan?tab=plan`);
@@ -465,8 +481,8 @@ export async function expectGeneratedStudyPlan(page: Page) {
 }
 
 /**
- * Ensure the practice section (Quiz/Cards/Review tabs) is visible.
- * Uses Cmd+2 keyboard shortcut to switch to the practice section.
+ * Ensure the practice section (Quiz/Cards/Mistakes tabs) is visible by
+ * navigating to /course/[id]/practice when needed.
  */
 export async function ensureRightPanelVisible(page: Page): Promise<void> {
   const practiceSection = page.getByTestId("practice-section");
@@ -499,6 +515,7 @@ export async function openRightTab(page: Page, tab: string): Promise<void> {
 
   const tabId =
     tab === "flashcards" ? "right-tab-cards" :
+    tab === "review" || tab === "mistakes" ? "right-tab-mistakes" :
     tab === "progress" ? "right-tab-progress" :
     tab === "graph" ? "right-tab-graph" :
     `right-tab-${tab}`;
@@ -513,7 +530,7 @@ export async function openRightTab(page: Page, tab: string): Promise<void> {
   const label =
     tab === "flashcards" ? /Cards|Flashcards|闪卡/i :
     tab === "quiz" ? /Quiz|测验/i :
-    tab === "review" ? /Review|复盘/i :
+    tab === "review" || tab === "mistakes" ? /Mistakes|错题/i :
     tab === "progress" ? /Stats|Progress/i :
     tab === "graph" ? /Graph/i :
     new RegExp(tab, "i");

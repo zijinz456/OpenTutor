@@ -68,9 +68,14 @@ export interface GeneratedBatchSummaryBase {
 export async function parseApiError(res: Response): Promise<ApiError> {
   const fallbackDetail = res.statusText || `API error: ${res.status}`;
   const payload = await res.json().catch(() => null) as
-    | { detail?: string; message?: string; code?: string }
+    | { detail?: string; message?: string; code?: string; retry_after?: string | number }
     | null;
-  const detail = payload?.detail || payload?.message || fallbackDetail;
+  let detail = payload?.detail || payload?.message || fallbackDetail;
+
+  if (res.status === 429) {
+    const seconds = res.headers.get("Retry-After") || payload?.retry_after || "a few";
+    detail = `Rate limit exceeded. Please wait ${seconds} seconds before trying again.`;
+  }
 
   return new ApiError(detail, {
     status: res.status,
@@ -226,6 +231,51 @@ export async function request<T>(path: string, options?: RequestInit): Promise<T
   }
 
   throw lastError!;
+}
+
+export interface RawRequestOptions extends SecureRequestOptions {
+  /** Abort the request after this many milliseconds (default: none). */
+  timeoutMs?: number;
+}
+
+/**
+ * Single-shot request through the shared base URL + auth/CSRF headers.
+ * No retries, no JSON parsing: the caller receives the raw `Response`.
+ * Use it for streaming bodies, keepalive beacons and long-running calls
+ * where the retry/timeout policy of `request()` does not apply.
+ * Non-2xx responses are returned as-is so the caller can inspect them.
+ */
+export async function requestRaw(path: string, options?: RawRequestOptions): Promise<Response> {
+  const { timeoutMs, signal, ...rest } = options ?? {};
+  const init = buildSecureRequestInit(rest);
+
+  if (!timeoutMs) {
+    return fetch(`${API_BASE}${path}`, { ...init, signal });
+  }
+
+  const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  signal?.addEventListener("abort", onAbort);
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(`${API_BASE}${path}`, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+    signal?.removeEventListener("abort", onAbort);
+  }
+}
+
+/**
+ * Open a streaming (SSE) request. Throws `ApiError` on a non-2xx status or
+ * a missing body; otherwise resolves to the `Response` whose body the
+ * caller reads incrementally.
+ */
+export async function requestStream(path: string, options?: RawRequestOptions): Promise<Response> {
+  const res = await requestRaw(path, options);
+  if (!res.ok || !res.body) {
+    throw await parseApiError(res);
+  }
+  return res;
 }
 
 export interface BinaryResponse {

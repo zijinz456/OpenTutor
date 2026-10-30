@@ -18,7 +18,7 @@ import { buildLayoutFromMode } from "@/lib/block-system/templates";
 import type { LearningMode } from "@/lib/block-system/types";
 
 import type { Mode, Step, FileItem, ParseLog } from "./types";
-import { isCanvasUrl, FEATURE_CARDS, deriveParseSteps, deriveParseProgress } from "./types";
+import { isCanvasUrl, deriveParseSteps, deriveParseProgress } from "./types";
 import { submitSources, buildMetadata } from "./parse-actions";
 
 export function useNewProject() {
@@ -38,9 +38,6 @@ export function useNewProject() {
   const [files, setFiles] = useState<FileItem[]>([]);
   const [url, setUrl] = useState("");
   const [autoScrape, setAutoScrape] = useState(true);
-  const [features, setFeatures] = useState<Record<string, boolean>>({
-    notes: true, practice: true, study_plan: true, free_qa: true, wrong_answer: true,
-  });
   const [nlInput, setNlInput] = useState("");
   const [createdCourseId, setCreatedCourseId] = useState<string | null>(null);
   const [nameError, setNameError] = useState<string | null>(null);
@@ -67,7 +64,7 @@ export function useNewProject() {
   );
   const hasCompletedJob = ingestionJobs.some((job) => job.status === "completed");
   const allJobsFailed = ingestionJobs.length > 0 && ingestionJobs.every((job) => job.status === "failed");
-  const canContinueToFeatures = noSourcesSubmitted || hasCompletedJob;
+  const parsingSettled = noSourcesSubmitted || hasCompletedJob;
 
   /* ---------- Validation ---------- */
   function validateName(value: string): void {
@@ -86,13 +83,6 @@ export function useNewProject() {
       setUrlError(null);
     }
     setIsCanvasDetected(trimmed ? isCanvasUrl(trimmed) : false);
-  }
-
-  /* ---------- Feature toggle ---------- */
-  function toggleFeature(id: string): void {
-    const card = FEATURE_CARDS.find((c) => c.id === id);
-    if (card?.phase) return;
-    setFeatures((prev) => ({ ...prev, [id]: !prev[id] }));
   }
 
   /* ---------- Ingestion job polling ---------- */
@@ -204,7 +194,7 @@ export function useNewProject() {
 
     try {
       const metadata = {
-        ...buildMetadata(features, autoScrape, url, mode),
+        ...buildMetadata(autoScrape, url, mode),
         learning_mode: learningMode,
       };
       addLog(`${new Date().toLocaleTimeString()}  ${t("new.logCreatingProject")} "${projectName || t("new.untitled")}"...`, "text-muted-foreground");
@@ -230,7 +220,6 @@ export function useNewProject() {
     addCourse,
     autoScrape,
     canvasSessionValid,
-    features,
     fetchContentTree,
     files,
     learningMode,
@@ -246,7 +235,7 @@ export function useNewProject() {
     if (!createdCourseId) return;
     const layout = buildLayoutFromMode(learningMode);
     const metadata = {
-      ...buildMetadata(features, autoScrape, url, mode),
+      ...buildMetadata(autoScrape, url, mode),
       learning_mode: learningMode,
       spaceLayout: layout,
     };
@@ -258,7 +247,7 @@ export function useNewProject() {
     try { await updateCourse(createdCourseId, { metadata }); } catch { /* still works */ }
     if (nlInput.trim()) try { localStorage.setItem(`course_init_prompt_${createdCourseId}`, nlInput.trim()); } catch { /* quota */ }
     router.push(`/course/${createdCourseId}`);
-  }, [autoScrape, createdCourseId, features, learningMode, mode, nlInput, router, url]);
+  }, [autoScrape, createdCourseId, learningMode, mode, nlInput, router, url]);
 
   return {
     router, t, step, setStep,
@@ -268,9 +257,9 @@ export function useNewProject() {
     files, setFiles,
     url, setUrl, urlError, validateUrl, isCanvasDetected, canvasSessionValid, handleAddUrl,
     autoScrape, setAutoScrape,
-    features, toggleFeature, nlInput, setNlInput,
+    nlInput, setNlInput,
     showCanvasLogin, setShowCanvasLogin, canvasLogging, canvasLoginError,
-    parseSteps, parseProgress, parseLogs, canContinueToFeatures, allJobsFailed, createdCourseId,
+    parseSteps, parseProgress, parseLogs, parsingSettled, allJobsFailed, createdCourseId,
     startParsing, enterWorkspace,
   };
 }

@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { listStudyGoals, type StudyGoal } from "@/lib/api";
-import { updateUnlockContext } from "@/lib/block-system/feature-unlock";
 import type { TranslateFn, TranslateFormatFn } from "./plan-helpers";
 
 interface UpcomingDeadline extends StudyGoal {
@@ -27,10 +26,6 @@ export function ExamCountdown({
         const goals = await listStudyGoals(courseId, "active");
         if (cancelled) return;
         const now = Date.now();
-
-        if (goals.some((g) => g.target_date)) {
-          updateUnlockContext(courseId, { hasDeadline: true });
-        }
 
         const computed = goals
           .filter((g) => g.target_date)

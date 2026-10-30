@@ -54,16 +54,6 @@ test.describe("Navigation", () => {
     await expect(page).toHaveURL("/", { timeout: 15_000 });
   });
 
-  // ---- analytics back button --------------------------------------------
-
-  test("analytics back button navigates to dashboard", async ({ page }) => {
-    await page.goto("/analytics");
-    await expect(page).toHaveURL(/\/analytics/, { timeout: 15_000 });
-    // Back button is the ArrowLeft icon button in the header
-    await page.locator("header").getByRole("button").first().click();
-    await expect(page).toHaveURL("/", { timeout: 15_000 });
-  });
-
   // ---- new project back button ------------------------------------------
 
   test("new project back button navigates to dashboard", async ({ page }) => {
@@ -97,9 +87,9 @@ test.describe("Navigation", () => {
     await page.goto("/settings");
     await expect(page).toHaveURL(/\/settings/, { timeout: 15_000 });
 
-    // Navigate to analytics
-    await page.goto("/analytics");
-    await expect(page).toHaveURL(/\/analytics/, { timeout: 15_000 });
+    // Navigate to new
+    await page.goto("/new");
+    await expect(page).toHaveURL(/\/new/, { timeout: 15_000 });
 
     // Browser back -> settings
     await page.goBack();
@@ -142,10 +132,6 @@ test.describe("Navigation", () => {
     // Settings
     await page.goto("/settings");
     expect(page.url()).toContain("/settings");
-
-    // Analytics
-    await page.goto("/analytics");
-    expect(page.url()).toContain("/analytics");
 
     // New
     await page.goto("/new");

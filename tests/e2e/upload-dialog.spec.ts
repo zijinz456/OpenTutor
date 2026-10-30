@@ -8,11 +8,8 @@ import {
 /**
  * File upload tests.
  *
- * File uploads happen in two places:
- * 1. The /new page (ContentUploadStep) — for new courses
- * 2. The /setup?step=content page — during onboarding
- *
- * These tests use the /new page upload form.
+ * File uploads happen on the /new page (ContentUploadStep), the single
+ * course-creation flow.
  */
 
 test.describe.serial("File upload", () => {

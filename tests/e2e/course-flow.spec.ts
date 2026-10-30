@@ -6,6 +6,7 @@ import {
   expectAssistantMessage,
   expectGeneratedNotes,
   hasRealLlmEnv,
+  openRightTab,
   seedCourseFixture,
 } from "./helpers/test-utils";
 
@@ -119,6 +120,7 @@ test.describe("OpenTutor e2e flows", () => {
     test.skip(!hasRealLlmEnv(), "Requires a real LLM provider");
     const courseId = await createCourse(page, "E2E Notes Flow");
     await uploadFixture(page, courseId);
+    await page.goto(`/course/${courseId}/notes`);
     await page.getByTestId("notes-generate").click();
     await expectGeneratedNotes(page);
 
@@ -155,7 +157,7 @@ test.describe("OpenTutor e2e flows", () => {
     await expect(page.getByTestId("chat-message-user").last()).toContainText(firstPrompt, { timeout: 15_000 });
   });
 
-  test("wrong-answer diagnosis flows through review, progress, and analytics", async ({ page, request }) => {
+  test("wrong-answer diagnosis flows through mistakes and progress", async ({ page, request }) => {
     test.skip(!hasRealLlmEnv(), "Requires a real LLM provider");
     const courseId = await createCourseViaApi(request, "E2E Diagnosis Flow", {
       workspace_features: {
@@ -165,34 +167,25 @@ test.describe("OpenTutor e2e flows", () => {
     await page.goto(`/course/${courseId}`);
     await uploadFixture(page, courseId);
     await seedQuizSet(request, courseId);
-    await page.reload();
+    await page.goto(`/course/${courseId}/practice?tab=quiz`);
 
     await expect(page.getByTestId("quiz-panel")).toBeVisible({ timeout: 15_000 });
     await expect(page.getByTestId("quiz-question")).toContainText("binary search can be used correctly", { timeout: 15_000 });
     await page.getByTestId("quiz-option-A").click();
     await expect(page.getByText("Binary search relies on ordering")).toBeVisible({ timeout: 15_000 });
 
-    await page.getByTestId("right-tab-review").last().click();
-    await expect(page.getByTestId("review-panel")).toBeVisible({ timeout: 30_000 });
+    await openRightTab(page, "mistakes");
+    await expect(page.getByTestId("mistakes-panel")).toBeVisible({ timeout: 30_000 });
     await expect(page.getByTestId("review-stats")).toContainText("Unmastered: 1", { timeout: 30_000 });
 
     await diagnoseLatestWrongAnswer(page);
     await expect(page.getByTestId("review-stats")).toContainText("trap vulnerability: 1", { timeout: 30_000 });
 
-    await page.keyboard.press("Escape");
-    await dispatchShortcut(page, "3");
-    await page.getByTestId("right-tab-progress").click();
+    await page.goto(`/course/${courseId}/profile?tab=progress`);
     await expect(page.getByTestId("progress-panel")).toBeVisible({ timeout: 30_000 });
     await expect(page.getByTestId("progress-gap-breakdown")).toContainText("fundamental gap: 1", {
       timeout: 30_000,
     });
-
-    await page.goto("/analytics");
-    await expect(page.getByTestId("analytics-page")).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByTestId("analytics-breakdown-diagnoses")).toContainText(/trap vulnerability: [1-9]\d*/, {
-      timeout: 15_000,
-    });
-    await expect(page.getByTestId(`analytics-course-${courseId}`)).toContainText("E2E Diagnosis Flow", { timeout: 15_000 });
   });
 
   test("multiple diagnoses accumulate into course analytics", async ({ page, request }) => {
@@ -208,13 +201,13 @@ test.describe("OpenTutor e2e flows", () => {
       buildSeedQuestion("What must be true before binary search can be used correctly?", "Binary Search Basics"),
       buildSeedQuestion("Why does binary search require sorted data before halving the range?", "Binary Search Basics"),
     ]);
-    await page.reload();
+    await page.goto(`/course/${courseId}/practice?tab=quiz`);
 
     await expect(page.getByTestId("quiz-panel")).toBeVisible({ timeout: 15_000 });
     await page.getByTestId("quiz-option-A").click();
     await expect(page.getByText("Binary search relies on ordering")).toBeVisible({ timeout: 15_000 });
-    await page.getByTestId("right-tab-review").last().click();
-    await expect(page.getByTestId("review-panel")).toBeVisible({ timeout: 30_000 });
+    await openRightTab(page, "mistakes");
+    await expect(page.getByTestId("mistakes-panel")).toBeVisible({ timeout: 30_000 });
     await diagnoseLatestWrongAnswer(page);
     await expect(page.getByTestId("review-stats")).toContainText("trap vulnerability: 1", { timeout: 30_000 });
 
@@ -229,13 +222,9 @@ test.describe("OpenTutor e2e flows", () => {
     await page.getByTestId("quiz-option-A").click();
     await expect(page.getByText("Binary search relies on ordering")).toBeVisible({ timeout: 15_000 });
 
-    await page.getByTestId("right-tab-review").last().click();
-    await expect(page.getByTestId("review-panel")).toBeVisible({ timeout: 30_000 });
+    await openRightTab(page, "mistakes");
+    await expect(page.getByTestId("mistakes-panel")).toBeVisible({ timeout: 30_000 });
     await diagnoseLatestWrongAnswer(page);
     await expect(page.getByTestId("review-stats")).toContainText("trap vulnerability: 2", { timeout: 30_000 });
-
-    await page.goto("/analytics");
-    await expect(page.getByTestId("analytics-page")).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByTestId(`analytics-course-${courseId}`)).toContainText("Diagnosed: 2", { timeout: 15_000 });
   });
 });

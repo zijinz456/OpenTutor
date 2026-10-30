@@ -57,9 +57,9 @@ export default function RootLayout({
         >
           Skip to content
         </a>
-        <ConnectionStatus />
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
           <LocaleProvider>
+            <ConnectionStatus />
             <TooltipProvider>
               <main id="main-content">
                 {children}

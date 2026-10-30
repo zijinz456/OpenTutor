@@ -6,65 +6,7 @@ import { useWorkspaceStore } from "@/store/workspace";
 import { useChatStore } from "@/store/chat";
 import type { ChatAction } from "@/lib/api";
 import type { BlockType, BlockSize, LearningMode } from "@/lib/block-system/types";
-import { updateUnlockContext } from "@/lib/block-system/feature-unlock";
 import { useT, useTF } from "@/lib/i18n-context";
-
-const MODE_SUGGESTION_COOLDOWN_MS = 12 * 60 * 60 * 1000;
-
-export function useQueueModeSuggestion(courseId: string) {
-  return useCallback((payload: {
-    suggestedMode: LearningMode;
-    reason: string;
-    approvalCta: string;
-    cooldownKey: string;
-    signals?: string[];
-  }): boolean => {
-    const store = useWorkspaceStore.getState();
-    const hasPendingModeSuggestion = store.spaceLayout.blocks.some(
-      (b) =>
-        b.type === "agent_insight" &&
-        b.config.insightType === "mode_suggestion" &&
-        b.agentMeta?.needsApproval,
-    );
-    if (hasPendingModeSuggestion) return false;
-
-    const key = `opentutor_mode_suggestion_${courseId}_${payload.suggestedMode}_${payload.cooldownKey}`;
-    try {
-      const raw = localStorage.getItem(key);
-      if (raw) {
-        const lastTs = Number(raw);
-        if (!Number.isNaN(lastTs) && Date.now() - lastTs < MODE_SUGGESTION_COOLDOWN_MS) {
-          return false;
-        }
-      }
-    } catch {
-      // ignore localStorage parse issues
-    }
-
-    store.agentAddBlock(
-      "agent_insight",
-      {
-        insightType: "mode_suggestion",
-        suggestedMode: payload.suggestedMode,
-        reason: payload.reason,
-        suggestionSignals: payload.signals ?? [],
-      },
-      {
-        reason: payload.reason,
-        dismissible: true,
-        needsApproval: true,
-        approvalCta: payload.approvalCta,
-      },
-    );
-
-    try {
-      localStorage.setItem(key, String(Date.now()));
-    } catch {
-      // ignore localStorage write issues
-    }
-    return true;
-  }, [courseId]);
-}
 
 export function useChatActions(courseId: string) {
   const router = useRouter();
@@ -121,10 +63,7 @@ export function useChatActions(courseId: string) {
       );
     } else if (action.action === "set_learning_mode") {
       const mode = action.value as LearningMode;
-      if (mode) {
-        store.setLearningMode(mode);
-        updateUnlockContext(courseId, { mode });
-      }
+      if (mode) store.setLearningMode(mode);
     } else if (action.action === "suggest_mode") {
       const mode = action.value as LearningMode;
       if (mode) {

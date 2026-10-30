@@ -3,14 +3,11 @@ import { expect, test } from "@playwright/test";
 /**
  * Onboarding / Setup flow tests.
  *
- * The setup page at /setup has 5 steps:
- *   1. Connect  (LLM check — auto-advances if ready)
- *   2. Feed     (Upload files / URL / Canvas)
- *   3. Interview (Habit interview — optional)
- *   4. Template  (Workspace layout template selection)
- *   5. Discover  (Ingestion progress + AI probe)
+ * /setup is a first-run gate: it checks the LLM connection (auto-advancing
+ * to /new when ready) and otherwise shows the provider configuration with a
+ * "Skip for now" button that hands off to /new, the single course-creation flow.
  *
- * Legacy /onboarding redirects to /setup.
+ * Legacy /onboarding redirects to /setup (next.config redirect).
  */
 
 test.describe("Onboarding flow", () => {
@@ -108,15 +105,9 @@ test.describe("Onboarding flow", () => {
     await expect(page.getByRole("heading", { name: "OpenTutor" })).toBeVisible({ timeout: 15_000 });
   });
 
-  test("setup page shows step indicators", async ({ page }) => {
-    await page.goto("/setup");
-    // Step indicators show numbered circles
-    await expect(page.getByText("1").first()).toBeVisible({ timeout: 15_000 });
-  });
+  // ---- LLM connect gate (auto-advances to /new if LLM is ready) ---------
 
-  // ---- step 1: LLM connect (auto-advances if LLM is ready) -------------
-
-  test("step 1 shows Connect label", async ({ page }) => {
+  test("shows provider configuration when the LLM is not ready", async ({ page }) => {
     await page.route("**/api/health", async (route) => {
       await route.fulfill({
         status: 200,
@@ -137,66 +128,49 @@ test.describe("Onboarding flow", () => {
       });
     });
     await page.goto("/setup");
-    await expect(page.getByText("Connect").first()).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("settings-api-keys")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("setup-continue")).toBeVisible({ timeout: 15_000 });
   });
 
-  // ---- step navigation via query param ----------------------------------
-
-  test("?step=content skips to content step", async ({ page }) => {
-    await page.goto("/setup?step=content");
-    await expect(
-      page.getByTestId("project-name-input")
-        .or(page.getByText(/Upload|Drag|drop/i).first())
-    ).toBeVisible({ timeout: 15_000 });
-  });
-
-  // ---- demo course option -----------------------------------------------
-
-  test("demo course button is available on content step", async ({ page }) => {
-    await page.goto("/setup?step=content");
-    await expect(
-      page.getByRole("button", { name: /demo|try|sample/i })
-        .or(page.getByText(/demo|try a sample/i).first())
-    ).toBeVisible({ timeout: 15_000 });
+  test("auto-advances to /new when the LLM is ready", async ({ page }) => {
+    await page.route("**/api/health", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          status: "ok",
+          llm_status: "ready",
+          llm_primary: "ollama / llama3.2:3b",
+          db_status: "ready",
+          version: "test",
+        }),
+      });
+    });
+    await page.goto("/setup");
+    await expect(page).toHaveURL(/\/new/, { timeout: 15_000 });
+    const flag = await page.evaluate(() => localStorage.getItem("opentutor_onboarded"));
+    expect(flag).toBe("true");
   });
 
   // ---- localStorage flag ------------------------------------------------
 
-  test("localStorage flag is set after setup completion", async ({ page }) => {
-    const fakeCourseId = "test-setup-completion";
-    // Mock course creation so skip works without a real backend
-    await page.route("**/api/courses/", async (route) => {
-      if (route.request().method() === "POST") {
-        await route.fulfill({
-          status: 200,
-          contentType: "application/json",
-          body: JSON.stringify({ id: fakeCourseId, name: "Test", description: "", sources: [], metadata: {} }),
-        });
-      } else {
-        await route.continue();
-      }
+  test("skipping the LLM gate marks onboarding complete and opens /new", async ({ page }) => {
+    await page.route("**/api/health", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          status: "degraded",
+          llm_status: "configuration_required",
+          db_status: "ready",
+          version: "test",
+        }),
+      });
     });
-    // Mock preferences endpoints (POST/PUT for applyDefaultPreferences)
-    await page.route("**/api/preferences/**", async (route) => {
-      if (route.request().method() !== "GET") {
-        await route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
-      } else {
-        await route.continue();
-      }
-    });
-    await page.goto("/setup?step=content");
-    // Look for a skip/demo/empty button to bypass setup
-    const skipBtn = page.getByRole("button", { name: /skip|demo|try|empty|start empty/i }).first();
-    const skipVisible = await skipBtn.isVisible({ timeout: 5_000 }).catch(() => false);
-    if (skipVisible) {
-      await skipBtn.click();
-      // Skip creates a course then navigates to /course/{id}
-      await expect.poll(() => page.url(), { timeout: 30_000 }).not.toContain("step=content");
-      // Verify localStorage flag was set
-      const flag = await page.evaluate(() => localStorage.getItem("opentutor_onboarded"));
-      expect(flag).toBe("true");
-    } else {
-      test.skip();
-    }
+    await page.goto("/setup");
+    await page.getByTestId("setup-continue").click();
+    await expect(page).toHaveURL(/\/new/, { timeout: 30_000 });
+    const flag = await page.evaluate(() => localStorage.getItem("opentutor_onboarded"));
+    expect(flag).toBe("true");
   });
 });

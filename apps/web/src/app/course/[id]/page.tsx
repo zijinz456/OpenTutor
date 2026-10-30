@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useParams } from "next/navigation";
 import { useWorkspaceStore } from "@/store/workspace";
 import { WorkspaceHeader } from "@/components/shell/workspace-header";
 import { RuntimeAlert } from "@/components/shared/runtime-alert";
@@ -14,25 +13,22 @@ import { SearchDialog } from "@/components/shared/search-dialog";
 import { NotesDrawer } from "@/components/blocks/notes-drawer";
 import { ErrorBoundary } from "@/components/shared/error-boundary";
 import { useT } from "@/lib/i18n-context";
-import { useCourseData } from "./_components/use-course-data";
-import { useBlockPersistence } from "./_components/use-block-persistence";
-import { useChatActions, useQueueModeSuggestion } from "./_components/use-chat-actions";
-import { useUnlockSuggestions, useReviewCheck } from "./_components/use-agent-autonomy";
-import { useModeEvaluator, useInitPrompt, useGreeting } from "./_components/use-agent-lifecycle";
+import { useCourseContext } from "./_hooks/course-context";
+import { useBlockPersistence } from "./_hooks/use-block-persistence";
+import { useChatActions } from "./_hooks/use-chat-actions";
+import { useInitPrompt, useGreeting } from "./_hooks/use-agent-lifecycle";
 import { TemplatePicker } from "./_components/template-picker";
 import { SyncSettingsPanel } from "@/components/course/sync-settings-panel";
 
 export default function CoursePage() {
-  const params = useParams();
   const t = useT();
-  const courseId = params.id as string;
   const [chatOpen, setChatOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const notesDrawerOpen = useWorkspaceStore((s) => s.notesDrawerOpen);
   const setNotesDrawerOpen = useWorkspaceStore((s) => s.setNotesDrawerOpen);
 
-  const { health, course, courses, contentTree, aiActionsEnabled } = useCourseData(courseId);
-  const { blocks, blocksInitialized } = useBlockPersistence(courseId, course);
+  const { courseId, health, course, contentTree, aiActionsEnabled } = useCourseContext();
+  const { blocks } = useBlockPersistence(courseId, course);
   const applyBlockTemplate = useWorkspaceStore((s) => s.applyBlockTemplate);
 
   const handleIngestionComplete = useCallback(() => {
@@ -42,11 +38,7 @@ export default function CoursePage() {
     }
   }, []);
   const handleAction = useChatActions(courseId);
-  const queueModeSuggestion = useQueueModeSuggestion(courseId);
 
-  useUnlockSuggestions(courseId, courses, contentTree, health, blocksInitialized);
-  useReviewCheck(courseId, course, aiActionsEnabled);
-  useModeEvaluator(courseId, course, aiActionsEnabled, queueModeSuggestion);
   useInitPrompt(courseId, setChatOpen);
   useGreeting(courseId, course, handleAction);
 

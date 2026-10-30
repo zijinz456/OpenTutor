@@ -26,3 +26,24 @@ export async function fileToImageAttachment(
     reader.readAsDataURL(file);
   });
 }
+
+/**
+ * Derive the `active_tab` hint sent with chat messages from the current
+ * route, e.g. `/course/abc/practice` → "practice". Falls back to "workspace".
+ */
+export function activeTabFromPathname(pathname: string | null): string {
+  const match = pathname?.match(/^\/course\/[^/]+\/([^/?#]+)/);
+  const segment = match?.[1];
+  switch (segment) {
+    case "notes":
+    case "practice":
+    case "plan":
+    case "review":
+    case "unit":
+      return segment;
+    case "profile":
+      return "analytics";
+    default:
+      return "workspace";
+  }
+}

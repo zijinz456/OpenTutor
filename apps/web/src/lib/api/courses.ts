@@ -1,4 +1,4 @@
-import { API_BASE, buildSecureHeaders, buildSecureRequestInit, parseApiError, request } from "./client";
+import { API_BASE, buildSecureHeaders, parseApiError, request, requestRaw } from "./client";
 
 import type { ContentMutationResult, SavedGeneratedAsset } from "./client";
 import type { GeneratedAssetBatchSummary } from "./practice";
@@ -248,12 +248,10 @@ export async function uploadFile(
     });
   }
 
-  const res = await fetch(`${API_BASE}/content/upload`, {
-    ...buildSecureRequestInit({
-      method: "POST",
-      includeJsonContentType: false,
-      body: form,
-    }),
+  const res = await requestRaw("/content/upload", {
+    method: "POST",
+    includeJsonContentType: false,
+    body: form,
   });
   if (!res.ok) {
     throw await parseApiError(res);
@@ -266,12 +264,10 @@ export async function scrapeUrl(courseId: string, url: string): Promise<ContentM
   form.append("url", url);
   form.append("course_id", courseId);
 
-  const res = await fetch(`${API_BASE}/content/url`, {
-    ...buildSecureRequestInit({
-      method: "POST",
-      includeJsonContentType: false,
-      body: form,
-    }),
+  const res = await requestRaw("/content/url", {
+    method: "POST",
+    includeJsonContentType: false,
+    body: form,
   });
   if (!res.ok) {
     throw await parseApiError(res);
@@ -300,24 +296,16 @@ export async function canvasBrowserLogin(
   // Use a dedicated long timeout (330s > backend 300s) instead of the
   // generic 30s apiClient timeout, and no retries (each retry opens a new
   // Chromium window on the backend).
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 330_000);
-  try {
-    const res = await fetch(`${API_BASE}/canvas/browser-login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ canvas_url: canvasUrl, timeout_seconds: 300 }),
-      signal: controller.signal,
-      credentials: "include",
-    });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({})) as { message?: string; detail?: string };
-      throw new Error(body.message ?? body.detail ?? "Login failed");
-    }
-    return res.json();
-  } finally {
-    clearTimeout(timeoutId);
+  const res = await requestRaw("/canvas/browser-login", {
+    method: "POST",
+    body: JSON.stringify({ canvas_url: canvasUrl, timeout_seconds: 300 }),
+    timeoutMs: 330_000,
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({})) as { message?: string; detail?: string };
+    throw new Error(body.message ?? body.detail ?? "Login failed");
   }
+  return res.json();
 }
 
 export async function fetchCanvasCourseInfo(

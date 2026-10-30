@@ -22,15 +22,15 @@ import { WrongAnswerCard } from "./wrong-answer-card";
 import { ConfusionPairs } from "./confusion-pairs";
 import { toast } from "sonner";
 
-interface ReviewViewProps {
+interface MistakesViewProps {
   courseId: string;
   aiActionsEnabled?: boolean;
 }
 
-export function ReviewView({
+export function MistakesView({
   courseId,
   aiActionsEnabled = true,
-}: ReviewViewProps) {
+}: MistakesViewProps) {
   const t = useT();
   const [wrongAnswers, setWrongAnswers] = useState<WrongAnswer[]>([]);
   const [reviewMarkdown, setReviewMarkdown] = useState("");
@@ -166,7 +166,7 @@ export function ReviewView({
 
   if (loading) {
     return (
-      <div className="flex-1 flex items-center justify-center p-8" data-testid="review-panel" role="status" aria-live="polite">
+      <div className="flex-1 flex items-center justify-center p-8" data-testid="mistakes-panel" role="status" aria-live="polite">
         <SkeletonText lines={3} className="w-full max-w-md" />
       </div>
     );
@@ -174,9 +174,9 @@ export function ReviewView({
 
   if (wrongAnswers.length === 0) {
     return (
-      <div className="flex-1 flex items-center justify-center p-8 text-center" data-testid="review-panel">
+      <div className="flex-1 flex items-center justify-center p-8 text-center" data-testid="mistakes-panel">
         <div>
-          <h3 className="text-sm font-medium mb-1">{t("course.review")}</h3>
+          <h3 className="text-sm font-medium mb-1">{t("course.mistakes")}</h3>
           <p className="text-xs text-muted-foreground max-w-xs">
             {t("review.noUnmastered")}
           </p>
@@ -186,7 +186,7 @@ export function ReviewView({
   }
 
   return (
-    <div role="region" aria-label={t("review.ariaLabel")} className="flex-1 flex flex-col overflow-hidden" data-testid="review-panel">
+    <div role="region" aria-label={t("review.ariaLabel")} className="flex-1 flex flex-col overflow-hidden" data-testid="mistakes-panel">
       <div className="px-3 py-2 border-b border-border/60 flex items-center justify-between text-xs text-muted-foreground" aria-live="polite">
         <span>{t("review.mistakesReady").replace("{count}", String(wrongAnswers.length))}</span>
         <Button size="sm" onClick={() => void handleGenerateReview()} disabled={!aiActionsEnabled || generating}>

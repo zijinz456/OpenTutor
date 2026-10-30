@@ -20,10 +20,10 @@ function b(
 
 export interface TemplateDefinition {
   id: string;
-  name: string;
-  nameZh: string;
-  description: string;
-  descriptionZh: string;
+  /** Locale key for the display name (`templates.<id>.name`). */
+  nameKey: string;
+  /** Locale key for the description (`templates.<id>.description`). */
+  descriptionKey: string;
   /** Default learning mode attached to this template. */
   defaultMode: LearningMode;
   blocks: Array<Omit<BlockInstance, "id"> & { id: string }>;
@@ -33,10 +33,8 @@ export interface TemplateDefinition {
 export const TEMPLATES: Record<string, TemplateDefinition> = {
   stem_student: {
     id: "stem_student",
-    name: "STEM Student",
-    nameZh: "理工科学生",
-    description: "Step-by-step notes, adaptive quizzes, knowledge graph",
-    descriptionZh: "分步笔记、自适应测验、知识图谱",
+    nameKey: "templates.stem_student.name",
+    descriptionKey: "templates.stem_student.description",
     defaultMode: "course_following",
     columns: 2,
     blocks: [
@@ -49,10 +47,8 @@ export const TEMPLATES: Record<string, TemplateDefinition> = {
   },
   humanities_scholar: {
     id: "humanities_scholar",
-    name: "Humanities Scholar",
-    nameZh: "人文学者",
-    description: "Rich narrative notes, review sessions, reading progress",
-    descriptionZh: "叙事性笔记、复习环节、阅读进度",
+    nameKey: "templates.humanities_scholar.name",
+    descriptionKey: "templates.humanities_scholar.description",
     defaultMode: "course_following",
     columns: 2,
     blocks: [
@@ -64,10 +60,8 @@ export const TEMPLATES: Record<string, TemplateDefinition> = {
   },
   visual_learner: {
     id: "visual_learner",
-    name: "Visual Learner",
-    nameZh: "视觉学习者",
-    description: "Knowledge graph prominent, mind map notes, visual aids",
-    descriptionZh: "知识图谱突出、思维导图笔记、视觉辅助",
+    nameKey: "templates.visual_learner.name",
+    descriptionKey: "templates.visual_learner.description",
     defaultMode: "self_paced",
     columns: 2,
     blocks: [
@@ -80,10 +74,8 @@ export const TEMPLATES: Record<string, TemplateDefinition> = {
   },
   quick_reviewer: {
     id: "quick_reviewer",
-    name: "Quick Reviewer",
-    nameZh: "快速复习",
-    description: "Quiz-heavy, flashcards, error analysis",
-    descriptionZh: "大量刷题、闪卡、错题分析",
+    nameKey: "templates.quick_reviewer.name",
+    descriptionKey: "templates.quick_reviewer.description",
     defaultMode: "exam_prep",
     columns: 2,
     blocks: [
@@ -96,10 +88,8 @@ export const TEMPLATES: Record<string, TemplateDefinition> = {
   },
   blank_canvas: {
     id: "blank_canvas",
-    name: "Blank Canvas",
-    nameZh: "空白画布",
-    description: "Start from scratch and build your own space.",
-    descriptionZh: "从零开始，自定义你的学习空间。",
+    nameKey: "templates.blank_canvas.name",
+    descriptionKey: "templates.blank_canvas.description",
     defaultMode: "self_paced",
     columns: 2,
     blocks: [],
@@ -114,17 +104,17 @@ const TEMPLATE_DISPLAY_ORDER = [
   "blank_canvas",
 ] as const;
 
-/** Templates shown in onboarding/template picker. */
+/** Templates shown in the workspace template picker (single source of truth). */
 export const TEMPLATE_LIST = TEMPLATE_DISPLAY_ORDER.map((id) => TEMPLATES[id]);
 
 // ── Learning Mode Definitions ──
 
 export interface LearningModeDefinition {
   id: LearningMode;
-  name: string;
-  nameZh: string;
-  description: string;
-  descriptionZh: string;
+  /** Locale key for the display name (`mode.<id>`). */
+  nameKey: string;
+  /** Locale key for the description (`mode.<id>.desc`). */
+  descriptionKey: string;
   icon: string;
   /** Default block layout for this mode. */
   blocks: Array<Omit<BlockInstance, "id"> & { id: string }>;
@@ -134,10 +124,8 @@ export interface LearningModeDefinition {
 export const LEARNING_MODES: Record<LearningMode, LearningModeDefinition> = {
   course_following: {
     id: "course_following",
-    name: "Course Following",
-    nameZh: "跟课模式",
-    description: "Timeline-driven. Deadlines, lecture notes, and syllabus tracking.",
-    descriptionZh: "按时间线驱动，追踪截止日期、课堂笔记和教学大纲。",
+    nameKey: "mode.course_following",
+    descriptionKey: "mode.course_following.desc",
     icon: "GraduationCap",
     columns: 2,
     blocks: [
@@ -149,10 +137,8 @@ export const LEARNING_MODES: Record<LearningMode, LearningModeDefinition> = {
   },
   self_paced: {
     id: "self_paced",
-    name: "Self-Paced",
-    nameZh: "自学模式",
-    description: "Exploration-driven. Notes, flashcards, and progress tracking.",
-    descriptionZh: "以探索为驱动，笔记、闪卡与进度追踪。",
+    nameKey: "mode.self_paced",
+    descriptionKey: "mode.self_paced.desc",
     icon: "Compass",
     columns: 2,
     blocks: [
@@ -163,10 +149,8 @@ export const LEARNING_MODES: Record<LearningMode, LearningModeDefinition> = {
   },
   exam_prep: {
     id: "exam_prep",
-    name: "Exam Prep",
-    nameZh: "备考模式",
-    description: "Practice-heavy. Quiz, progress tracking, and study planning.",
-    descriptionZh: "大量练习，聚焦测验、进度追踪与学习计划。",
+    nameKey: "mode.exam_prep",
+    descriptionKey: "mode.exam_prep.desc",
     icon: "Clock",
     columns: 2,
     blocks: [
@@ -177,10 +161,8 @@ export const LEARNING_MODES: Record<LearningMode, LearningModeDefinition> = {
   },
   maintenance: {
     id: "maintenance",
-    name: "Maintenance",
-    nameZh: "维护模式",
-    description: "Minimal. LECTOR review and knowledge retention only.",
-    descriptionZh: "极简模式，仅保留 LECTOR 复习与知识保持。",
+    nameKey: "mode.maintenance",
+    descriptionKey: "mode.maintenance.desc",
     icon: "Shield",
     columns: 2,
     blocks: [

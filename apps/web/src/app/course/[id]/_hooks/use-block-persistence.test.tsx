@@ -84,6 +84,29 @@ describe("useBlockPersistence", () => {
     expect(useWorkspaceStore.getState().spaceLayout).toEqual(savedLayout);
   });
 
+  it("prefers the server layout over the local cache and refreshes the cache", () => {
+    const localLayout = makeLayout([
+      { id: "local-quiz", type: "quiz", position: 0, size: "medium", config: {}, visible: true, source: "user" },
+    ]);
+    const serverLayout = makeLayout([
+      { id: "server-notes", type: "notes", position: 0, size: "large", config: {}, visible: true, source: "template" },
+    ]);
+    localStorage.setItem("opentutor_blocks_course-5", JSON.stringify(localLayout));
+    useWorkspaceStore.setState({ spaceLayout: makeLayout([]) });
+
+    // Cold start: course not loaded yet → local cache is used.
+    const { rerender } = renderHook(
+      ({ course }) => useBlockPersistence("course-5", course),
+      { initialProps: { course: null as { metadata?: unknown } | null } },
+    );
+    expect(useWorkspaceStore.getState().spaceLayout.blocks[0]?.id).toBe("local-quiz");
+
+    // Course arrives with a server layout → server wins and overwrites the cache.
+    rerender({ course: { metadata: { spaceLayout: serverLayout } } });
+    expect(useWorkspaceStore.getState().spaceLayout.blocks[0]?.id).toBe("server-notes");
+    expect(JSON.parse(localStorage.getItem("opentutor_blocks_course-5")!).blocks[0].id).toBe("server-notes");
+  });
+
   it("persists empty layouts after all blocks are removed", async () => {
     useWorkspaceStore.setState({
       spaceLayout: makeLayout([

@@ -13,17 +13,8 @@ vi.mock("@/store/chat", () => ({
     }),
 }));
 
-vi.mock("@/store/workspace", () => ({
-  useWorkspaceStore: Object.assign(
-    (selector: (s: Record<string, unknown>) => unknown) =>
-      selector({ activeSection: "notes", spaceLayout: { mode: "self_paced", blocks: [] } }),
-    {
-      getState: () => ({
-        activeSection: "notes",
-        spaceLayout: { mode: "self_paced", blocks: [] },
-      }),
-    },
-  ),
+vi.mock("next/navigation", () => ({
+  usePathname: () => "/course/c1/notes",
 }));
 
 vi.mock("@/store/course", () => ({

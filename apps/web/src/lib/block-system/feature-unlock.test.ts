@@ -1,18 +1,29 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+
+const mockGetCourseProgress = vi.fn();
+const mockGetWrongAnswerStats = vi.fn();
+const mockListStudyGoals = vi.fn();
+
+vi.mock("@/lib/api", () => ({
+  getCourseProgress: (...args: unknown[]) => mockGetCourseProgress(...args),
+  getWrongAnswerStats: (...args: unknown[]) => mockGetWrongAnswerStats(...args),
+  listStudyGoals: (...args: unknown[]) => mockListStudyGoals(...args),
+}));
+
 import {
   isBlockUnlocked,
-  getUnlockContext,
-  updateUnlockContext,
-  incrementSessionCount,
+  buildUnlockContext,
+  refreshUnlockSignals,
+  useUnlockSignalsStore,
+  EMPTY_UNLOCK_SIGNALS,
   type UnlockContext,
 } from "./feature-unlock";
 
 function makeCtx(overrides: Partial<UnlockContext> = {}): UnlockContext {
   return {
     sourceDocCount: 0,
-    practiceAttempts: 0,
+    practicedConcepts: 0,
     hasWrongAnswer: false,
-    sessionCount: 0,
     totalCourses: 1,
     hasDeadline: false,
     ...overrides,
@@ -22,7 +33,7 @@ function makeCtx(overrides: Partial<UnlockContext> = {}): UnlockContext {
 describe("isBlockUnlocked", () => {
   it("always unlocks core block types", () => {
     const ctx = makeCtx();
-    for (const type of ["notes", "quiz", "flashcards", "chapter_list", "review"] as const) {
+    for (const type of ["notes", "quiz", "flashcards", "chapter_list", "review", "progress", "summary", "agent_insight"] as const) {
       expect(isBlockUnlocked(type, ctx).unlocked).toBe(true);
     }
   });
@@ -38,9 +49,9 @@ describe("isBlockUnlocked", () => {
     expect(isBlockUnlocked("plan", makeCtx({ mode: "course_following" })).unlocked).toBe(true);
   });
 
-  it("unlocks forecast after 50+ practice attempts", () => {
-    expect(isBlockUnlocked("forecast", makeCtx({ practiceAttempts: 49 })).unlocked).toBe(false);
-    expect(isBlockUnlocked("forecast", makeCtx({ practiceAttempts: 50 })).unlocked).toBe(true);
+  it("unlocks forecast after 5+ practiced concepts", () => {
+    expect(isBlockUnlocked("forecast", makeCtx({ practicedConcepts: 4 })).unlocked).toBe(false);
+    expect(isBlockUnlocked("forecast", makeCtx({ practicedConcepts: 5 })).unlocked).toBe(true);
   });
 
   it("unlocks wrong_answers after first wrong answer", () => {
@@ -48,55 +59,71 @@ describe("isBlockUnlocked", () => {
     expect(isBlockUnlocked("wrong_answers", makeCtx({ hasWrongAnswer: true })).unlocked).toBe(true);
   });
 
-  it("unlocks agent_insight after 3+ sessions", () => {
-    expect(isBlockUnlocked("agent_insight", makeCtx({ sessionCount: 2 })).unlocked).toBe(false);
-    expect(isBlockUnlocked("agent_insight", makeCtx({ sessionCount: 3 })).unlocked).toBe(true);
-  });
-
   it("provides unlock hints for locked blocks", () => {
     const result = isBlockUnlocked("knowledge_graph", makeCtx({ sourceDocCount: 1 }));
     expect(result.unlocked).toBe(false);
     expect(result.unlockHint).toContain("1/3");
   });
+});
 
-  it("always unlocks progress", () => {
-    const ctx = makeCtx();
-    expect(isBlockUnlocked("progress", ctx).unlocked).toBe(true);
+describe("buildUnlockContext", () => {
+  it("merges server signals with store-derived context", () => {
+    const ctx = buildUnlockContext(
+      { practicedConcepts: 7, hasWrongAnswer: true, hasDeadline: false },
+      { sourceDocCount: 4, totalCourses: 2, mode: "exam_prep" },
+    );
+    expect(ctx).toEqual({
+      practicedConcepts: 7,
+      hasWrongAnswer: true,
+      hasDeadline: false,
+      sourceDocCount: 4,
+      totalCourses: 2,
+      mode: "exam_prep",
+    });
   });
 });
 
-describe("getUnlockContext / updateUnlockContext", () => {
-  beforeEach(() => localStorage.clear());
-
-  it("returns defaults when nothing stored", () => {
-    const ctx = getUnlockContext("course-1", 5);
-    expect(ctx.sourceDocCount).toBe(0);
-    expect(ctx.totalCourses).toBe(5);
+describe("refreshUnlockSignals", () => {
+  beforeEach(() => {
+    useUnlockSignalsStore.setState({ byCourse: {} });
+    mockGetCourseProgress.mockReset();
+    mockGetWrongAnswerStats.mockReset();
+    mockListStudyGoals.mockReset();
   });
 
-  it("persists and reads back updates", () => {
-    updateUnlockContext("course-1", { practiceAttempts: 10, hasWrongAnswer: true });
-    const ctx = getUnlockContext("course-1", 1);
-    expect(ctx.practiceAttempts).toBe(10);
-    expect(ctx.hasWrongAnswer).toBe(true);
+  it("derives signals from server data", async () => {
+    mockGetCourseProgress.mockResolvedValue({ mastered: 2, reviewed: 1, in_progress: 3 });
+    mockGetWrongAnswerStats.mockResolvedValue({ total: 4 });
+    mockListStudyGoals.mockResolvedValue([{ id: "g1", target_date: "2030-01-01" }]);
+
+    const signals = await refreshUnlockSignals("course-1");
+
+    expect(signals).toEqual({ practicedConcepts: 6, hasWrongAnswer: true, hasDeadline: true });
+    expect(useUnlockSignalsStore.getState().byCourse["course-1"]).toEqual(signals);
   });
 
-  it("merges partial updates", () => {
-    updateUnlockContext("course-1", { sourceDocCount: 5 });
-    updateUnlockContext("course-1", { practiceAttempts: 20 });
-    const ctx = getUnlockContext("course-1", 1);
-    expect(ctx.sourceDocCount).toBe(5);
-    expect(ctx.practiceAttempts).toBe(20);
+  it("keeps previous values for requests that fail", async () => {
+    useUnlockSignalsStore.getState().setSignals("course-1", {
+      practicedConcepts: 9,
+      hasWrongAnswer: true,
+      hasDeadline: true,
+    });
+    mockGetCourseProgress.mockRejectedValue(new Error("boom"));
+    mockGetWrongAnswerStats.mockResolvedValue({ total: 0 });
+    mockListStudyGoals.mockRejectedValue(new Error("boom"));
+
+    const signals = await refreshUnlockSignals("course-1");
+
+    expect(signals).toEqual({ practicedConcepts: 9, hasWrongAnswer: false, hasDeadline: true });
   });
-});
 
-describe("incrementSessionCount", () => {
-  beforeEach(() => localStorage.clear());
+  it("falls back to empty signals when nothing is cached", async () => {
+    mockGetCourseProgress.mockRejectedValue(new Error("boom"));
+    mockGetWrongAnswerStats.mockRejectedValue(new Error("boom"));
+    mockListStudyGoals.mockRejectedValue(new Error("boom"));
 
-  it("increments session count by 1", () => {
-    incrementSessionCount("course-1");
-    incrementSessionCount("course-1");
-    const ctx = getUnlockContext("course-1", 1);
-    expect(ctx.sessionCount).toBe(2);
+    const signals = await refreshUnlockSignals("course-2");
+
+    expect(signals).toEqual(EMPTY_UNLOCK_SIGNALS);
   });
 });

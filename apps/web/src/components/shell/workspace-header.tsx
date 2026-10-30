@@ -124,8 +124,8 @@ export function WorkspaceHeader({
           variant="ghost"
           size="icon-xs"
           className="text-muted-foreground hover:text-foreground rounded-lg"
-          title="Search (⌘K)"
-          aria-label="Search"
+          title={`${t("nav.search")} (⌘K)`}
+          aria-label={t("nav.search")}
           onClick={() => window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true }))}
         >
           <Search className="size-3.5" />
@@ -138,16 +138,16 @@ export function WorkspaceHeader({
             <Link
               href={`/course/${courseId}/notes`}
               className="p-2 rounded-xl text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-              title="Notes"
-              aria-label="Notes"
+              title={t("course.notes")}
+              aria-label={t("course.notes")}
             >
               <BookOpen className="size-4" />
             </Link>
             <Link
-              href={`/course/${courseId}/graph`}
+              href={`/course/${courseId}/profile?tab=graph`}
               className="p-2 rounded-xl text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-              title="Knowledge Graph"
-              aria-label="Knowledge Graph"
+              title={t("blocks.knowledge_graph.label")}
+              aria-label={t("blocks.knowledge_graph.label")}
             >
               <GitBranch className="size-4" />
             </Link>
@@ -167,7 +167,7 @@ export function WorkspaceHeader({
           size="icon-xs"
           asChild
           className="text-muted-foreground hover:text-foreground rounded-lg"
-          title="Settings"
+          title={t("nav.settings")}
         >
           <Link href="/settings" aria-label={t("nav.settings") || "Settings"}>
             <Settings className="size-3.5" />

@@ -1,13 +1,12 @@
 import type { IngestionJobSummary } from "@/lib/api";
 
 export type Mode = "upload" | "url" | "both";
-export type Step = "mode" | "upload" | "parsing" | "features";
+export type Step = "mode" | "upload" | "parsing";
 
 export const STEP_LABELS: { key: Step; labelKey: string }[] = [
   { key: "mode", labelKey: "new.step.source" },
   { key: "upload", labelKey: "new.step.content" },
   { key: "parsing", labelKey: "new.step.parse" },
-  { key: "features", labelKey: "new.step.features" },
 ];
 
 export interface FileItem {
@@ -115,13 +114,3 @@ export function deriveParseProgress(
     ),
   );
 }
-
-/* ---------- Feature cards ---------- */
-
-export const FEATURE_CARDS: { id: string; labelKey: string; descriptionKey: string; enabled: boolean; phase?: string }[] = [
-  { id: "notes", labelKey: "new.notesFeature", descriptionKey: "new.notesFeatureDesc", enabled: true },
-  { id: "practice", labelKey: "new.practiceFeature", descriptionKey: "new.practiceFeatureDesc", enabled: true },
-  { id: "wrong_answer", labelKey: "new.reviewFeature", descriptionKey: "new.reviewFeatureDesc", enabled: true },
-  { id: "study_plan", labelKey: "new.planFeature", descriptionKey: "new.planFeatureDesc", enabled: true },
-  { id: "free_qa", labelKey: "new.qaFeature", descriptionKey: "new.qaFeatureDesc", enabled: true },
-];

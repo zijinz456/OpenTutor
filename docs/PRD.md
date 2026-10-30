@@ -146,11 +146,10 @@ Each block type can expand into a full-page experience:
 | Route | Content |
 |-------|---------|
 | `/course/[id]/notes` | Full notes viewer/editor with chapter navigation |
-| `/course/[id]/practice` | Quiz, flashcards, timed practice modes |
-| `/course/[id]/graph` | Full-screen interactive knowledge graph (LOOM) |
+| `/course/[id]/practice` | Quiz, flashcards, mistakes (`?tab=quiz|flashcards|mistakes`) |
 | `/course/[id]/plan` | Study plan with calendar view, deadline tracking |
 | `/course/[id]/review` | Immersive LECTOR review session (card-by-card) |
-| `/course/[id]/profile` | Course settings, mode selection, Agent preferences |
+| `/course/[id]/profile` | Analytics tabs incl. knowledge graph (`?tab=graph`), mode selection, Agent preferences |
 
 ### Level 2.5: Unit Aggregate View (`/course/[id]/unit/[nodeId]`)
 
@@ -435,8 +434,8 @@ Same hues, adjusted lightness. Maintain oklch format throughout.
 
 ### Phase 3: Full-Page Routes
 - [ ] `/course/[id]/notes` — full notes viewer
-- [ ] `/course/[id]/practice` — full practice environment
-- [ ] `/course/[id]/graph` — full-screen knowledge graph
+- [ ] `/course/[id]/practice` — full practice environment (quiz / flashcards / mistakes)
+- [ ] `/course/[id]/profile?tab=graph` — full-screen knowledge graph
 - [ ] `/course/[id]/plan` — study plan with calendar
 - [ ] `/course/[id]/profile` — course settings + mode selection
 

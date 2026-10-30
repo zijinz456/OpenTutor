@@ -33,6 +33,16 @@ const nextConfig: NextConfig = {
   // Without this, POST /api/courses/ gets a 308 before the rewrite runs, and the
   // redirected request may expose the backend origin, which CSP connect-src blocks.
   skipTrailingSlashRedirect: true,
+  async redirects() {
+    // Consolidated routes — keep old bookmarks working.
+    return [
+      { source: "/course/:id/wrong-answers", destination: "/course/:id/practice?tab=mistakes", permanent: true },
+      { source: "/course/:id/graph", destination: "/course/:id/profile?tab=graph", permanent: true },
+      { source: "/course/:id/practice", has: [{ type: "query", key: "tab", value: "review" }], destination: "/course/:id/practice?tab=mistakes", permanent: true },
+      { source: "/onboarding", destination: "/setup", permanent: true },
+      { source: "/analytics", destination: "/", permanent: true },
+    ];
+  },
   async headers() {
     return [
       {

@@ -6,7 +6,6 @@ import { useRouter } from "next/navigation";
 import { useWorkspaceStore } from "@/store/workspace";
 import type { BlockComponentProps } from "@/lib/block-system/registry";
 import type { BlockType, LearningMode } from "@/lib/block-system/types";
-import { updateUnlockContext } from "@/lib/block-system/feature-unlock";
 import { logAgentDecision } from "@/lib/api";
 import { useT } from "@/lib/i18n-context";
 
@@ -121,7 +120,6 @@ export default function AgentInsightBlock({ courseId, blockId, config }: BlockCo
         },
       }).catch(() => undefined);
       setLearningMode(suggestedMode);
-      updateUnlockContext(courseId, { mode: suggestedMode });
       dismissAgentBlock(blockId);
     } else if (insightType === "weak_topic") {
       addBlock("quiz", topicName ? { topic: topicName } : {}, "agent");

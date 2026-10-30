@@ -5,8 +5,20 @@ import { syncCourseSpaceLayout } from "@/lib/block-system/layout-sync";
 import { useWorkspaceStore } from "@/store/workspace";
 import type { LearningMode } from "@/lib/block-system/types";
 import { buildLayoutFromMode } from "@/lib/block-system/templates";
-import { loadStoredSpaceLayout, parseSpaceLayout } from "@/lib/block-system/layout-storage";
+import {
+  loadStoredSpaceLayout,
+  parseSpaceLayout,
+  saveStoredSpaceLayout,
+} from "@/lib/block-system/layout-storage";
 
+/**
+ * Loads the workspace layout for a course and persists changes.
+ *
+ * The server (`course.metadata.spaceLayout`) is the source of truth.
+ * localStorage is only a cold-start cache used while the course has not
+ * loaded yet; once the course arrives the server layout wins and overwrites
+ * the local cache.
+ */
 export function useBlockPersistence(
   courseId: string,
   course: { metadata?: unknown } | null,
@@ -14,6 +26,7 @@ export function useBlockPersistence(
   const blocks = useWorkspaceStore((s) => s.spaceLayout.blocks);
   const loadBlocks = useWorkspaceStore((s) => s.loadBlocks);
   const blocksInitialized = useRef(false);
+  const serverApplied = useRef(false);
   const lastCourseIdRef = useRef<string | null>(null);
   const persistTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
@@ -27,33 +40,43 @@ export function useBlockPersistence(
     if (lastCourseIdRef.current !== courseId) {
       lastCourseIdRef.current = courseId;
       blocksInitialized.current = false;
+      serverApplied.current = false;
     }
-    if (blocksInitialized.current) return;
+    if (serverApplied.current) return;
 
-    // Try localStorage first (always available)
-    const saved = loadStoredSpaceLayout(courseId);
-    if (saved) {
-      loadBlocks(saved);
+    const metadata = (course?.metadata as Record<string, unknown> | undefined) ?? undefined;
+
+    // Server layout wins as soon as the course is loaded.
+    if (course) {
+      serverApplied.current = true;
+      const serverLayout = parseSpaceLayout(metadata?.spaceLayout);
+      if (serverLayout) {
+        loadBlocks(serverLayout);
+        saveStoredSpaceLayout(courseId, serverLayout);
+        blocksInitialized.current = true;
+        return;
+      }
+
+      // No server layout yet: keep whatever the cold-start cache gave us
+      // (or load it now), otherwise fall back to the saved learning mode.
+      if (blocksInitialized.current) return;
+      const cached = loadStoredSpaceLayout(courseId);
+      if (cached) {
+        loadBlocks(cached);
+      } else {
+        const savedMode = metadata?.learning_mode as LearningMode | undefined;
+        if (savedMode) loadBlocks(buildLayoutFromMode(savedMode));
+      }
       blocksInitialized.current = true;
       return;
     }
 
-    // Wait for course metadata to load before checking server-side layout
-    if (!course) return;
-    blocksInitialized.current = true;
-
-    const savedLayout = parseSpaceLayout(
-      (course.metadata as Record<string, unknown> | undefined)?.spaceLayout,
-    );
-    if (savedLayout) {
-      loadBlocks(savedLayout);
-      return;
-    }
-
-    const savedMode = (course.metadata as Record<string, unknown> | undefined)
-      ?.learning_mode as LearningMode | undefined;
-    if (savedMode) {
-      loadBlocks(buildLayoutFromMode(savedMode));
+    // Course not loaded yet: use the local cache so the first paint is not empty.
+    if (blocksInitialized.current) return;
+    const cached = loadStoredSpaceLayout(courseId);
+    if (cached) {
+      loadBlocks(cached);
+      blocksInitialized.current = true;
     }
   }, [courseId, course, loadBlocks]);
 

@@ -16,7 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { AiFeatureBlocked } from "@/components/shared/ai-feature-blocked";
 import { SkeletonCard } from "@/components/ui/skeleton";
-import { updateUnlockContext, getUnlockContext } from "@/lib/block-system/feature-unlock";
+import { refreshUnlockSignals } from "@/lib/block-system/feature-unlock";
 import { QuizOptions } from "./quiz-options";
 import { QuizResult } from "./quiz-result";
 import { useQuizPersistence } from "./use-quiz-persistence";
@@ -158,12 +158,8 @@ export function QuizView({
       // Persist immediately after answer
       save({ currentIdx, score: newScore, answeredMap: newAnswered, consecutiveWrong: consecutiveWrongRef.current });
 
-      // Track feature-unlock context
-      const ctx = getUnlockContext(courseId, 0);
-      updateUnlockContext(courseId, {
-        practiceAttempts: ctx.practiceAttempts + 1,
-        hasWrongAnswer: ctx.hasWrongAnswer || !res.is_correct,
-      });
+      // Feature-unlock signals are server-derived; refresh them after each answer.
+      void refreshUnlockSignals(courseId).catch(() => undefined);
       // Track consecutive wrong answers to surface wrong_answers block
       if (!res.is_correct) {
         consecutiveWrongRef.current += 1;

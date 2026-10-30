@@ -11,23 +11,24 @@ const QuizView = lazy(() =>
 const FlashcardView = lazy(() =>
   import("./practice/flashcard-view").then((m) => ({ default: m.FlashcardView })),
 );
-const ReviewView = lazy(() =>
-  import("./practice/review-view").then((m) => ({ default: m.ReviewView })),
+const MistakesView = lazy(() =>
+  import("./practice/mistakes-view").then((m) => ({ default: m.MistakesView })),
 );
 interface PracticeSectionProps {
   courseId: string;
-  showReview?: boolean;
+  /** Show the wrong-answer ("mistakes") tab. */
+  showMistakes?: boolean;
   aiActionsEnabled?: boolean;
   defaultTab?: PracticeTab;
   quizDifficultyHint?: "easy" | "medium" | "hard";
   quizModeHint?: "course_following" | "self_paced" | "exam_prep" | "maintenance";
 }
 
-type PracticeTab = "quiz" | "flashcards" | "review";
+export type PracticeTab = "quiz" | "flashcards" | "mistakes";
 
 export function PracticeSection({
   courseId,
-  showReview = true,
+  showMistakes = true,
   aiActionsEnabled = true,
   defaultTab = "quiz",
   quizDifficultyHint,
@@ -38,13 +39,13 @@ export function PracticeSection({
     () => [
       { id: "quiz", label: t("course.quiz"), testId: "right-tab-quiz" },
       { id: "flashcards", label: t("course.cards"), testId: "right-tab-cards" },
-      { id: "review", label: t("course.review"), testId: "right-tab-review" },
+      { id: "mistakes", label: t("course.mistakes"), testId: "right-tab-mistakes" },
     ],
     [t],
   );
   const tabs = useMemo(
-    () => (showReview ? allTabs : allTabs.filter((tab) => tab.id !== "review")),
-    [showReview, allTabs],
+    () => (showMistakes ? allTabs : allTabs.filter((tab) => tab.id !== "mistakes")),
+    [showMistakes, allTabs],
   );
 
   const practiceActiveTab = useWorkspaceStore((s) => s.practiceActiveTab) as PracticeTab | null;
@@ -72,7 +73,7 @@ export function PracticeSection({
             />
           ) : null}
           {activeTab === "flashcards" ? <FlashcardView courseId={courseId} aiActionsEnabled={aiActionsEnabled} /> : null}
-          {activeTab === "review" && showReview ? <ReviewView courseId={courseId} aiActionsEnabled={aiActionsEnabled} /> : null}
+          {activeTab === "mistakes" && showMistakes ? <MistakesView courseId={courseId} aiActionsEnabled={aiActionsEnabled} /> : null}
         </>
       )}
     </TabbedSection>

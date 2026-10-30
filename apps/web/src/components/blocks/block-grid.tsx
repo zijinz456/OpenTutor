@@ -8,6 +8,7 @@ import { BLOCK_REGISTRY } from "@/lib/block-system/registry";
 import { BlockWrapper } from "./block-wrapper";
 import { BlockPalette } from "./block-palette";
 import { cn } from "@/lib/utils";
+import { useT } from "@/lib/i18n-context";
 
 interface BlockGridProps {
   courseId: string;
@@ -15,6 +16,7 @@ interface BlockGridProps {
 }
 
 export function BlockGrid({ courseId, aiActionsEnabled }: BlockGridProps) {
+  const t = useT();
   const blocks = useWorkspaceStore((s) => s.spaceLayout.blocks);
   const columns = useWorkspaceStore((s) => s.spaceLayout.columns);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
@@ -55,7 +57,7 @@ export function BlockGrid({ courseId, aiActionsEnabled }: BlockGridProps) {
           .map((block, index) => {
             const isCollapsed = collapsed[block.id] ?? false;
             const regEntry = BLOCK_REGISTRY[block.type];
-            const blockLabel = regEntry?.label ?? block.type;
+            const blockLabel = regEntry ? t(regEntry.labelKey) : block.type;
 
             return (
               <div

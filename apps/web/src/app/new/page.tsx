@@ -6,8 +6,7 @@ import { ParsingProgressStep } from "./parsing-progress-step";
 import { CanvasLoginModal } from "./canvas-login-modal";
 
 /**
- * Simplified "add another course" page for returning users.
- * Skips mode selection and feature config — goes straight to upload → parse → workspace.
+ * The single course-creation flow: upload/URL + learning mode → parse → workspace.
  */
 export default function NewProjectPage() {
   const p = useNewProject();
@@ -40,7 +39,7 @@ export default function NewProjectPage() {
         />
       )}
 
-      {(p.step === "parsing" || p.step === "features") && (
+      {p.step === "parsing" && (
         <ParsingProgressStep
           projectName={p.projectName}
           url={p.url}
@@ -48,11 +47,10 @@ export default function NewProjectPage() {
           parseSteps={p.parseSteps}
           parseProgress={p.parseProgress}
           parseLogs={p.parseLogs}
-          canContinueToFeatures={p.canContinueToFeatures}
+          parsingSettled={p.parsingSettled}
           allJobsFailed={p.allJobsFailed}
           createdCourseId={p.createdCourseId}
           onEnterWorkspace={p.enterWorkspace}
-          onContinueToFeatures={p.enterWorkspace}
           t={p.t}
         />
       )}

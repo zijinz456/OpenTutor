@@ -10,10 +10,11 @@ export interface BlockComponentProps {
 
 export interface BlockRegistryEntry {
   type: BlockType;
-  label: string;
-  labelZh: string;
+  /** Locale key for the block label (`blocks.<type>.label`). */
+  labelKey: string;
   icon: string;
-  description: string;
+  /** Locale key for the block description (`blocks.<type>.description`). */
+  descriptionKey: string;
   defaultSize: BlockSize;
   defaultConfig: Record<string, unknown>;
   component: LazyExoticComponent<ComponentType<BlockComponentProps>>;
@@ -21,19 +22,15 @@ export interface BlockRegistryEntry {
 
 const entry = (
   type: BlockType,
-  label: string,
-  labelZh: string,
   icon: string,
-  description: string,
   defaultSize: BlockSize,
   defaultConfig: Record<string, unknown>,
   loader: () => Promise<{ default: ComponentType<BlockComponentProps> }>,
 ): BlockRegistryEntry => ({
   type,
-  label,
-  labelZh,
+  labelKey: `blocks.${type}.label`,
   icon,
-  description,
+  descriptionKey: `blocks.${type}.description`,
   defaultSize,
   defaultConfig,
   component: lazy(loader),
@@ -41,74 +38,62 @@ const entry = (
 
 export const BLOCK_REGISTRY: Record<BlockType, BlockRegistryEntry> = {
   chapter_list: entry(
-    "chapter_list", "Chapters", "章节目录", "BookOpen",
-    "Course content outline",
+    "chapter_list", "BookOpen",
     "full", {},
     () => import("@/components/blocks/blocks/chapter-list-block"),
   ),
   notes: entry(
-    "notes", "Notes", "笔记", "FileText",
-    "AI-generated study notes",
+    "notes", "FileText",
     "large", {},
     () => import("@/components/blocks/blocks/notes-block"),
   ),
   quiz: entry(
-    "quiz", "Quiz", "测验", "CircleHelp",
-    "Practice questions and quizzes",
+    "quiz", "CircleHelp",
     "medium", { difficulty: "adaptive" },
     () => import("@/components/blocks/blocks/quiz-block"),
   ),
   flashcards: entry(
-    "flashcards", "Flashcards", "闪卡", "Layers",
-    "Spaced repetition flashcards",
+    "flashcards", "Layers",
     "medium", {},
     () => import("@/components/blocks/blocks/flashcards-block"),
   ),
   progress: entry(
-    "progress", "Progress", "学习进度", "BarChart3",
-    "Mastery and completion stats",
+    "progress", "BarChart3",
     "small", {},
     () => import("@/components/blocks/blocks/progress-block"),
   ),
   knowledge_graph: entry(
-    "knowledge_graph", "Knowledge Graph", "知识图谱", "GitBranch",
-    "LOOM concept relationship map",
+    "knowledge_graph", "GitBranch",
     "medium", {},
     () => import("@/components/blocks/blocks/knowledge-graph-block"),
   ),
   review: entry(
-    "review", "Review", "复习", "RotateCcw",
-    "LECTOR-driven spaced review",
+    "review", "RotateCcw",
     "medium", {},
     () => import("@/components/blocks/blocks/review-block"),
   ),
   plan: entry(
-    "plan", "Study Plan", "学习计划", "CalendarDays",
-    "Goals, tasks, and deadlines",
+    "plan", "CalendarDays",
     "medium", {},
     () => import("@/components/blocks/blocks/plan-block"),
   ),
   wrong_answers: entry(
-    "wrong_answers", "Weak Spots", "薄弱点", "AlertTriangle",
-    "Error patterns and misconceptions",
+    "wrong_answers", "AlertTriangle",
     "medium", {},
     () => import("@/components/blocks/blocks/wrong-answers-block"),
   ),
   forecast: entry(
-    "forecast", "Forecast", "预测", "TrendingUp",
-    "Learning trajectory forecast",
+    "forecast", "TrendingUp",
     "small", {},
     () => import("@/components/blocks/blocks/forecast-block"),
   ),
   agent_insight: entry(
-    "agent_insight", "Agent Insight", "助手洞察", "Sparkles",
-    "Proactive suggestions from your AI tutor",
+    "agent_insight", "Sparkles",
     "full", {},
     () => import("@/components/blocks/blocks/agent-insight-block"),
   ),
   summary: entry(
-    "summary", "Daily Digest", "学习摘要", "Newspaper",
-    "Today's learning snapshot: mastery, quiz accuracy, review due",
+    "summary", "Newspaper",
     "small", {},
     () => import("@/components/blocks/blocks/summary-block"),
   ),

@@ -5,54 +5,11 @@ describe("useWorkspaceStore", () => {
   beforeEach(() => {
     // Reset store to initial state
     useWorkspaceStore.setState({
-      activeSection: "notes",
       selectedNodeId: null,
-      treeCollapsed: false,
-      treeWidth: 240,
-      chatHeight: 0.35,
       practiceActiveTab: null,
       spaceLayout: { templateId: null, blocks: [], columns: 2 },
       layoutHistory: [],
       lastRemovedBlock: null,
-    });
-  });
-
-  describe("activeSection", () => {
-    it("defaults to notes", () => {
-      expect(useWorkspaceStore.getState().activeSection).toBe("notes");
-    });
-
-    it("can be changed", () => {
-      useWorkspaceStore.getState().setActiveSection("practice");
-      expect(useWorkspaceStore.getState().activeSection).toBe("practice");
-    });
-  });
-
-  describe("tree controls", () => {
-    it("toggles tree collapsed state", () => {
-      expect(useWorkspaceStore.getState().treeCollapsed).toBe(false);
-      useWorkspaceStore.getState().toggleTree();
-      expect(useWorkspaceStore.getState().treeCollapsed).toBe(true);
-      useWorkspaceStore.getState().toggleTree();
-      expect(useWorkspaceStore.getState().treeCollapsed).toBe(false);
-    });
-
-    it("clamps tree width to valid range", () => {
-      useWorkspaceStore.getState().setTreeWidth(50);
-      expect(useWorkspaceStore.getState().treeWidth).toBe(140); // min
-
-      useWorkspaceStore.getState().setTreeWidth(1000);
-      expect(useWorkspaceStore.getState().treeWidth).toBe(480); // max
-    });
-  });
-
-  describe("chat height", () => {
-    it("clamps to valid range", () => {
-      useWorkspaceStore.getState().setChatHeight(0.01);
-      expect(useWorkspaceStore.getState().chatHeight).toBe(0.15);
-
-      useWorkspaceStore.getState().setChatHeight(0.99);
-      expect(useWorkspaceStore.getState().chatHeight).toBe(0.7);
     });
   });
 

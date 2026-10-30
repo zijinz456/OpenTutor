@@ -6,28 +6,18 @@ import { X, Check, Sparkles, Maximize2, AlertTriangle, Lock } from "lucide-react
 import { ErrorBoundary } from "@/components/shared/error-boundary";
 import { BLOCK_REGISTRY } from "@/lib/block-system/registry";
 import type { BlockInstance, BlockType, LearningMode } from "@/lib/block-system/types";
-import { updateUnlockContext, isBlockUnlocked, getUnlockContext } from "@/lib/block-system/feature-unlock";
+import { isBlockUnlocked, buildUnlockContext, useUnlockSignals } from "@/lib/block-system/feature-unlock";
+import { blockRouteHref } from "@/lib/block-system/routes";
 import { logAgentDecision } from "@/lib/api";
 import { useWorkspaceStore } from "@/store/workspace";
 import { useCourseStore } from "@/store/course";
 import { cn } from "@/lib/utils";
-import { useT } from "@/lib/i18n-context";
+import { useT, useTF } from "@/lib/i18n-context";
 import { toast } from "sonner";
 import { recordBlockEvent, useBlockEngagement } from "@/hooks/use-block-engagement";
 
 /** Block types that open a right-side drawer instead of navigating. */
 const BLOCK_DRAWER_TYPES = new Set<BlockType>(["notes"]);
-
-const BLOCK_FULL_PAGE_LINKS: Partial<Record<BlockType, (courseId: string) => string>> = {
-  quiz: (courseId) => `/course/${courseId}/practice?tab=quiz`,
-  flashcards: (courseId) => `/course/${courseId}/practice?tab=flashcards`,
-  knowledge_graph: (courseId) => `/course/${courseId}/graph`,
-  plan: (courseId) => `/course/${courseId}/plan`,
-  review: (courseId) => `/course/${courseId}/review`,
-  progress: (courseId) => `/course/${courseId}/profile?tab=progress`,
-  wrong_answers: (courseId) => `/course/${courseId}/wrong-answers`,
-  forecast: (courseId) => `/course/${courseId}/profile?tab=forecast`,
-};
 
 interface BlockWrapperProps {
   block: BlockInstance;
@@ -37,6 +27,7 @@ interface BlockWrapperProps {
 
 export function BlockWrapper({ block, courseId, aiActionsEnabled }: BlockWrapperProps) {
   const t = useT();
+  const tf = useTF();
   const removeBlock = useWorkspaceStore((s) => s.removeBlock);
   const addBlock = useWorkspaceStore((s) => s.addBlock);
   const approveAgentBlock = useWorkspaceStore((s) => s.approveAgentBlock);
@@ -45,20 +36,28 @@ export function BlockWrapper({ block, courseId, aiActionsEnabled }: BlockWrapper
   const applyBlockTemplate = useWorkspaceStore((s) => s.applyBlockTemplate);
   const currentMode = useWorkspaceStore((s) => s.spaceLayout.mode);
   const courses = useCourseStore((s) => s.courses);
+  const contentTree = useCourseStore((s) => s.contentTree);
+  const signals = useUnlockSignals(courseId);
 
   const setNotesDrawerOpen = useWorkspaceStore((s) => s.setNotesDrawerOpen);
 
   const engagementRef = useBlockEngagement(block.id, block.type, courseId);
 
-  // Feature unlock check
+  // Feature unlock check (signals are server-derived, see feature-unlock.ts)
   const { unlocked, unlockHint, reason: unlockReason } = useMemo(() => {
-    const ctx = { ...getUnlockContext(courseId, courses.length), mode: currentMode ?? undefined };
+    const ctx = buildUnlockContext(signals, {
+      sourceDocCount: contentTree.length,
+      totalCourses: courses.length,
+      mode: currentMode ?? undefined,
+    });
     return isBlockUnlocked(block.type, ctx);
-  }, [block.type, courseId, courses.length, currentMode]);
+  }, [block.type, signals, contentTree.length, courses.length, currentMode]);
 
   const entry = BLOCK_REGISTRY[block.type];
   if (!entry) return null;
 
+  const label = t(entry.labelKey);
+  const fullPageHref = blockRouteHref(block.type, courseId);
   const Component = entry.component;
   const isAgent = block.source === "agent";
   const needsApproval = isAgent && block.agentMeta?.needsApproval;
@@ -71,7 +70,7 @@ export function BlockWrapper({ block, courseId, aiActionsEnabled }: BlockWrapper
     void logAgentDecision({
       course_id: courseId,
       action,
-      title: entry.label,
+      title: label,
       reason: typeof block.config.reason === "string" ? block.config.reason : block.agentMeta?.reason,
       decision_type: "mode_suggestion",
       source: "course_workspace",
@@ -91,7 +90,6 @@ export function BlockWrapper({ block, courseId, aiActionsEnabled }: BlockWrapper
       if (suggestedMode) {
         logModeSuggestionDecision("approve_mode_suggestion", suggestedMode);
         setLearningMode(suggestedMode);
-        updateUnlockContext(courseId, { mode: suggestedMode });
         dismissAgentBlock(block.id);
         return;
       }
@@ -134,7 +132,7 @@ export function BlockWrapper({ block, courseId, aiActionsEnabled }: BlockWrapper
     <div
       ref={engagementRef}
       role="region"
-      aria-label={entry.label}
+      aria-label={label}
       tabIndex={0}
       className={cn(
         "rounded-2xl bg-card overflow-hidden flex flex-col card-shadow",
@@ -146,7 +144,7 @@ export function BlockWrapper({ block, courseId, aiActionsEnabled }: BlockWrapper
       {/* Header bar */}
       <div className="flex items-center gap-2 px-4 py-3 border-b border-border/40">
         <span className="text-sm font-medium text-foreground flex-1 truncate">
-          {entry.label}
+          {label}
         </span>
 
         {BLOCK_DRAWER_TYPES.has(block.type) && (
@@ -163,9 +161,9 @@ export function BlockWrapper({ block, courseId, aiActionsEnabled }: BlockWrapper
           </button>
         )}
 
-        {BLOCK_FULL_PAGE_LINKS[block.type] && (
+        {fullPageHref && !BLOCK_DRAWER_TYPES.has(block.type) && (
           <Link
-            href={BLOCK_FULL_PAGE_LINKS[block.type]!(courseId)}
+            href={fullPageHref}
             className="text-muted-foreground hover:text-foreground transition-colors p-1"
             aria-label={t("block.openFullPage")}
             title={t("block.openFullPage")}
@@ -246,7 +244,7 @@ export function BlockWrapper({ block, courseId, aiActionsEnabled }: BlockWrapper
             <div className="flex flex-col items-center justify-center h-32 gap-2 text-center p-4">
               <AlertTriangle className="size-5 text-destructive/60" />
               <p className="text-xs text-muted-foreground">
-                This block encountered an error.
+                {t("block.error")}
               </p>
             </div>
           }
@@ -274,7 +272,7 @@ export function BlockWrapper({ block, courseId, aiActionsEnabled }: BlockWrapper
               <div className="flex size-10 items-center justify-center rounded-full bg-muted ring-2 ring-border group-hover:ring-brand/30 transition-all">
                 <Lock className="size-5 text-muted-foreground group-hover:text-brand transition-colors" />
               </div>
-              <p className="text-sm font-medium text-foreground">{entry.label} 已锁定</p>
+              <p className="text-sm font-medium text-foreground">{tf("block.locked", { label })}</p>
               {unlockHint && (
                 <p className="text-xs text-muted-foreground max-w-[200px]">{unlockHint}</p>
               )}

@@ -1,18 +1,15 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
-import { useCourseStore } from "@/store/course";
 import { useChatStore } from "@/store/chat";
 import { useWorkspaceStore } from "@/store/workspace";
 import {
-  getHealthStatus,
   listWrongAnswers,
   getReviewSession,
   type ChatAction,
-  type HealthStatus,
   type WrongAnswer,
   type ReviewItem,
 } from "@/lib/api";
-import { ttlCache } from "@/lib/cache";
 import { buildFocusTerms, findNodeById, findPathToNode } from "@/lib/content-tree";
+import { useCourseContext } from "../../../_hooks/course-context";
 import {
   matchesFocus,
   scoreWrongAnswerFocus,
@@ -24,47 +21,19 @@ import {
 } from "./unit-utils";
 
 export function useUnitData(courseId: string, nodeId: string) {
-  const { courses, fetchCourses, activeCourse, setActiveCourse, contentTree, fetchContentTree } = useCourseStore();
+  // Course bootstrap (courses, active course, content tree, health) is owned
+  // by app/course/[id]/layout.tsx.
+  const { course, contentTree, aiActionsEnabled } = useCourseContext();
   const setSelectedNodeId = useWorkspaceStore((s) => s.setSelectedNodeId);
-  const [health, setHealth] = useState<HealthStatus | null>(
-    () => ttlCache.get<HealthStatus>("course:health") ?? null,
-  );
   const [wrongAnswers, setWrongAnswers] = useState<WrongAnswer[]>([]);
   const [trendBaseAnswers, setTrendBaseAnswers] = useState<WrongAnswer[]>([]);
   const [reviewItems, setReviewItems] = useState<ReviewItem[]>([]);
   const [loadedSignalsKey, setLoadedSignalsKey] = useState<string | null>(null);
 
-  const aiActionsEnabled =
-    health?.llm_status !== "mock_fallback" &&
-    health?.llm_status !== "configuration_required";
-
-  useEffect(() => {
-    if (courses.length === 0) void fetchCourses();
-  }, [courses.length, fetchCourses]);
-
-  useEffect(() => {
-    const course = courses.find((c) => c.id === courseId);
-    if (course) setActiveCourse(course);
-  }, [courseId, courses, setActiveCourse]);
-
-  useEffect(() => {
-    if (contentTree.length === 0) void fetchContentTree(courseId);
-  }, [courseId, contentTree.length, fetchContentTree]);
-
   useEffect(() => {
     setSelectedNodeId(nodeId);
   }, [nodeId, setSelectedNodeId]);
 
-  useEffect(() => {
-    getHealthStatus()
-      .then((data) => {
-        ttlCache.set("course:health", data, 30_000);
-        setHealth(data);
-      })
-      .catch((e) => console.error("[Unit] health check failed:", e));
-  }, []);
-
-  const course = activeCourse ?? courses.find((c) => c.id === courseId) ?? null;
   const node = useMemo(() => findNodeById(contentTree, nodeId), [contentTree, nodeId]);
   const nodePath = useMemo(() => findPathToNode(contentTree, nodeId), [contentTree, nodeId]);
   const parentNode = nodePath.length > 1 ? nodePath[nodePath.length - 2] : null;

@@ -72,15 +72,14 @@ test.describe("Parsing Progress", () => {
   });
 
   test("shows progress indicators", async ({ page }) => {
-    const progressOrContinue = page.getByTestId("continue-to-features")
-      .or(page.getByTestId("enter-now"))
+    const progressOrContinue = page.getByTestId("enter-now")
       .or(page.getByText(/\d+%/));
     await expect(progressOrContinue.first()).toBeVisible({ timeout: 60_000 });
   });
 
   test("Continue button appears after parsing and navigates to workspace", async ({ page }) => {
-    // Either continue-to-features or enter-now button should appear
-    const continueBtn = page.getByTestId("continue-to-features").or(page.getByTestId("enter-now"));
+    // The enter-now button should appear once the course exists
+    const continueBtn = page.getByTestId("enter-now");
     await expect(continueBtn.first()).toBeVisible({ timeout: 60_000 });
     await continueBtn.first().click();
     await expect(page).toHaveURL(/\/course\//, { timeout: 15_000 });
@@ -101,8 +100,8 @@ test.describe("Full flow", () => {
     await page.getByTestId("project-name-input").fill("Upload E2E Test");
     await page.getByTestId("start-parsing").click();
 
-    // Wait for parsing to finish — either continue-to-features or enter-now button
-    const continueBtn = page.getByTestId("continue-to-features").or(page.getByTestId("enter-now"));
+    // Wait for the course to be created — the enter-now button appears
+    const continueBtn = page.getByTestId("enter-now");
     await expect(continueBtn.first()).toBeVisible({ timeout: 60_000 });
     await continueBtn.first().click();
 
