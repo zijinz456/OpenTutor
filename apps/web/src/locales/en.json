@@ -546,6 +546,7 @@
   "setup.step.feed": "Upload",
   "setup.step.template": "Template",
   "setup.step.discover": "Discover",
+  "setup.toggleTheme": "Switch between light and dark mode",
   "setup.checkingLlm": "Checking AI connection...",
   "setup.llmConnected": "AI Connected",
   "setup.autoAdvance": "Continuing to next step...",

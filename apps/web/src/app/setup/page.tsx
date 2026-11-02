@@ -8,13 +8,17 @@ import { ContentStep } from "./content-step";
 import { DiscoveryStep } from "./discovery-step";
 import { TemplateStep } from "./template-step";
 import { HabitInterviewStep } from "./habit-interview-step";
+import { ThemeToggle } from "./theme-toggle";
 import { CanvasLoginModal } from "../new/canvas-login-modal";
 
 function SetupInner() {
   const s = useSetup();
 
   return (
-    <div className="min-h-screen bg-background flex flex-col items-center justify-center p-6">
+    <div className="relative min-h-screen bg-background flex flex-col items-center justify-center p-6">
+      <div className="absolute top-4 right-4">
+        <ThemeToggle t={s.t} />
+      </div>
       <div className="w-full max-w-xl flex flex-col gap-8 animate-fade-in">
         {/* Header */}
         <div className="flex flex-col items-center gap-4">
