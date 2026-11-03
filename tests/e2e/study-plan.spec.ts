@@ -21,7 +21,8 @@ test.describe.serial("Study Plan Panel", () => {
     const courseId = await createCourseWithContent(page);
     // Navigate to the dedicated plan page
     await page.goto(`/course/${courseId}/plan`);
-    await expect(page.getByTestId("plan-section").or(page.getByTestId("study-plan-panel"))).toBeVisible({ timeout: 15_000 });
+    const planSection = page.getByTestId("plan-section");
+    await expect(planSection.getByTestId("study-plan-panel")).toBeVisible({ timeout: 15_000 });
   });
 
   test("dedicated plan page shows the current planning workspace", async ({ page }) => {
