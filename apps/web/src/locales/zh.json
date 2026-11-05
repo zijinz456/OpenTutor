@@ -546,6 +546,7 @@
   "setup.step.feed": "上传",
   "setup.step.template": "模版",
   "setup.step.discover": "发现",
+  "setup.toggleTheme": "切换浅色/深色模式",
   "setup.checkingLlm": "正在检查 AI 连接...",
   "setup.llmConnected": "AI 已连接",
   "setup.autoAdvance": "正在进入下一步...",
