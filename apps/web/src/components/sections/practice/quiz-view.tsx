@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ChangeEvent } from "react";
 import { useT } from "@/lib/i18n-context";
 import {
   extractQuiz,
@@ -49,7 +49,7 @@ export function QuizView({
   const [extracting, setExtracting] = useState(false);
   const [extractStatus, setExtractStatus] = useState<string | null>(null);
   const [selectedOption, setSelectedOption] = useState<string | null>(null);
-  const [codeInput, setCodeInput] = useState<string>("");
+  const [answerInput, setAnswerInput] = useState<string>("");
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [result, setResult] = useState<AnswerResult | null>(null);
@@ -94,7 +94,8 @@ export function QuizView({
 
   useEffect(() => {
     setResult(null);
-    setCodeInput("");
+    setAnswerInput("");
+    setSubmitError(null);
     questionStartTimeRef.current = Date.now();
     // Show previously-selected option for already-answered questions
     const pid = problems[currentIdx]?.id;
@@ -240,6 +241,19 @@ export function QuizView({
   const metadata = (problem.problem_metadata ?? {}) as Record<string, unknown>;
   const coreConcept = typeof metadata.core_concept === "string" ? metadata.core_concept : null;
   const bloomLevel = typeof metadata.bloom_level === "string" ? metadata.bloom_level : null;
+  const isCoding = problem.question_type === "coding";
+  const isFillBlank = problem.question_type === "fill_blank";
+  const usesTextInput = isCoding || isFillBlank || problem.question_type === "short_answer";
+  const answerInputProps = {
+    placeholder: t(isCoding ? "quiz.coding.placeholder" : isFillBlank ? "quiz.fillBlank.placeholder" : "quiz.text.placeholder"),
+    value: answeredMap[problem.id] ?? answerInput,
+    onChange: (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => setAnswerInput(event.target.value),
+    disabled: !!result || submitting || !!answeredMap[problem.id],
+    "aria-label": t(isCoding ? "quiz.coding.ariaLabel" : "quiz.text.ariaLabel"),
+    "aria-describedby": "quiz-question-text",
+    className: `w-full rounded-lg border border-border bg-muted/30 text-sm p-3 focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50 ${isCoding ? "font-mono min-h-[140px] resize-y" : isFillBlank ? "" : "min-h-[100px] resize-y"}`,
+  };
+
 
   return (
     <div role="form" aria-label={t("quiz.ariaLabel")} className="flex-1 flex flex-col overflow-hidden" data-testid="quiz-panel">
@@ -259,7 +273,7 @@ export function QuizView({
             variant="ghost"
             size="sm"
             className="text-xs h-6 px-2"
-            disabled={extracting}
+            disabled={extracting || submitting}
             onClick={() => void handleExtract()}
           >
             {extracting ? "..." : "+"}
@@ -295,25 +309,21 @@ export function QuizView({
           {problem.question}
         </p>
 
-        {problem.question_type === "coding" ? (
+        {usesTextInput ? (
           <div className="space-y-2">
-            <textarea
-              className="w-full rounded-lg border border-border bg-muted/30 font-mono text-sm p-3 min-h-[140px] resize-y focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
-              placeholder={t("quiz.coding.placeholder")}
-              value={codeInput}
-              onChange={(e) => setCodeInput(e.target.value)}
-              disabled={!!result || submitting || !!answeredMap[problem.id]}
-              aria-label={t("quiz.coding.ariaLabel")}
-              spellCheck={false}
-            />
+            {isFillBlank ? (
+              <input type="text" {...answerInputProps} />
+            ) : (
+              <textarea {...answerInputProps} spellCheck={!isCoding} />
+            )}
             {!result && !answeredMap[problem.id] && (
               <Button
                 type="button"
                 size="sm"
-                disabled={submitting || codeInput.trim().length === 0}
-                onClick={() => void handleOptionClick(codeInput.trim())}
+                disabled={submitting || answerInput.trim().length === 0}
+                onClick={() => void handleOptionClick(answerInput.trim())}
               >
-                {submitting ? `${t("quiz.coding.submitting")}...` : t("quiz.coding.submit")}
+                {submitting ? `${t(isCoding ? "quiz.coding.submitting" : "quiz.text.submitting")}...` : t(isCoding ? "quiz.coding.submit" : "quiz.text.submit")}
               </Button>
             )}
           </div>
@@ -340,7 +350,7 @@ export function QuizView({
           type="button"
           variant="outline"
           size="sm"
-          disabled={currentIdx === 0}
+          disabled={submitting || currentIdx === 0}
           onClick={() => setCurrentIdx((i) => i - 1)}
         >
           {t("quiz.prev")}
@@ -349,7 +359,7 @@ export function QuizView({
           type="button"
           variant="outline"
           size="sm"
-          disabled={currentIdx >= problems.length - 1}
+          disabled={submitting || currentIdx >= problems.length - 1}
           onClick={() => setCurrentIdx((i) => i + 1)}
         >
           {t("quiz.next")}
