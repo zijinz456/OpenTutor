@@ -9,6 +9,8 @@ overdue / interval-floor / difficulty-clamp edges.
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from services.spaced_repetition.fsrs import (
     FSRSCard,
     review_card,
@@ -150,3 +152,27 @@ def test_naive_datetime_last_review_handled():
     updated, log = review_card(card, rating=3, now=_NOW)
     assert updated.due > _NOW
     assert log.elapsed_days == 9
+
+
+# -- Invalid grades --
+
+
+@pytest.mark.parametrize(
+    "make_card", [FSRSCard, _review_state_card], ids=["new", "review"]
+)
+@pytest.mark.parametrize("grade", [0, 5, -1, 22, 99])
+def test_review_card_rejects_grade_outside_1_to_4(make_card, grade):
+    # Before the guard, grade 0 read w[-1] as the initial stability, grades
+    # 5-21 were scored like Good/Easy and 22+ raised IndexError.
+    card = make_card()
+    before = (
+        card.difficulty, card.stability, card.reps, card.lapses,
+        card.state, card.last_review, card.due,
+    )
+    with pytest.raises(ValueError, match="rating"):
+        review_card(card, rating=grade, now=_NOW)
+    # A rejected review must leave the card untouched.
+    assert before == (
+        card.difficulty, card.stability, card.reps, card.lapses,
+        card.state, card.last_review, card.due,
+    )
