@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends
 from libs.exceptions import AppError, NotFoundError, reraise_as_app_error
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,7 +31,7 @@ class GenerateRequest(BaseModel):
 
 class ReviewRequest(BaseModel):
     card: dict
-    rating: int  # 1=Again, 2=Hard, 3=Good, 4=Easy
+    rating: int = Field(ge=1, le=4)  # 1=Again, 2=Hard, 3=Good, 4=Easy
     batch_id: uuid.UUID | None = None
     card_index: int | None = None
 
