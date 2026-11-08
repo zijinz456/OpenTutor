@@ -244,7 +244,13 @@ def review_card(
     """Process a review and return updated card + log.
 
     Rating: 1=Again, 2=Hard, 3=Good, 4=Easy
+
+    Raises:
+        ValueError: if rating is not 1-4. Checked before the card is touched.
     """
+    if rating not in (1, 2, 3, 4):
+        raise ValueError(f"FSRS rating must be 1-4, got {rating!r}")
+
     now = _as_utc(now or datetime.now(timezone.utc))
 
     # Calculate elapsed days since last review
