@@ -181,6 +181,82 @@ describe("QuizView", () => {
     expect(submitAnswer).toHaveBeenCalledExactlyOnceWith("text-1", "true", expect.any(Number));
   });
 
+  const multiProblem: QuizProblem = {
+    id: "multi-1", question_type: "select_all", question: "Select primary colors",
+    options: { a: "Red", b: "Blue", c: "Green", d: "Orange" }, order_index: 0,
+  };
+
+  it("toggles multiple answers without submitting, then submits once in option order", async () => {
+    vi.mocked(listProblems).mockResolvedValueOnce([multiProblem, textProblem("fill_blank")]);
+    let resolveAnswer!: (result: AnswerResult) => void;
+    vi.mocked(submitAnswer).mockReturnValueOnce(new Promise((resolve) => { resolveAnswer = resolve; }));
+    const user = userEvent.setup();
+    render(<QuizView courseId="test" />);
+    const blue = await screen.findByRole("checkbox", { name: /Blue/ });
+    const red = screen.getByRole("checkbox", { name: /Red/ });
+    const submit = screen.getByRole("button", { name: "quiz.text.submit" });
+    expect(submit).toBeDisabled();
+    await user.click(blue);
+    await user.click(red);
+    await user.click(red);
+    expect(red).not.toBeChecked();
+    expect(blue).toBeChecked();
+    await user.click(red);
+    expect(submitAnswer).not.toHaveBeenCalled();
+    await user.click(submit);
+    expect(submitAnswer).toHaveBeenCalledExactlyOnceWith("multi-1", "a,b", expect.any(Number));
+    expect(red).toBeDisabled();
+    expect(screen.getByRole("button", { name: "quiz.next" })).toBeDisabled();
+    await user.dblClick(screen.getByRole("button", { name: "quiz.text.submitting..." }));
+    expect(submitAnswer).toHaveBeenCalledTimes(1);
+    await act(async () => resolveAnswer({ is_correct: true, correct_answer: "B,A", explanation: "Saved" }));
+    expect(red).toHaveClass("border-green-500");
+    expect(blue).toHaveClass("border-green-500");
+    await user.click(screen.getByRole("button", { name: "quiz.next" }));
+    await user.click(screen.getByRole("button", { name: "quiz.prev" }));
+    expect(screen.getByRole("checkbox", { name: /Red/ })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /Red/ })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "quiz.text.submit" })).not.toBeInTheDocument();
+  });
+
+  it("keeps multi-select choices on failure and allows an explicit retry", async () => {
+    vi.mocked(listProblems).mockResolvedValueOnce([multiProblem]);
+    vi.mocked(submitAnswer).mockRejectedValueOnce(new Error("offline"));
+    const user = userEvent.setup();
+    render(<QuizView courseId="test" />);
+    await user.click(await screen.findByRole("checkbox", { name: /Red/ }));
+    await user.click(screen.getByRole("checkbox", { name: /Blue/ }));
+    await user.click(screen.getByRole("button", { name: "quiz.text.submit" }));
+    await screen.findByRole("alert");
+    expect(screen.getByRole("checkbox", { name: /Red/ })).toBeChecked();
+    await user.click(screen.getByRole("button", { name: "quiz.text.submit" }));
+    await screen.findByText(/Blue is correct/);
+    expect(submitAnswer).toHaveBeenNthCalledWith(2, "multi-1", "a,b", expect.any(Number));
+  });
+
+  it("restores a saved multi-select answer on the first question", async () => {
+    vi.mocked(listProblems).mockResolvedValueOnce([multiProblem]);
+    vi.mocked(useQuizPersistence("test").load).mockReturnValueOnce({
+      currentIdx: 0, score: { correct: 1, total: 1 }, answeredMap: { "multi-1": "B,A" }, consecutiveWrong: 0, savedAt: Date.now(),
+    });
+    render(<QuizView courseId="test" />);
+    expect(await screen.findByRole("checkbox", { name: /Blue/ })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /Red/ })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /Red/ })).toBeDisabled();
+    expect(submitAnswer).not.toHaveBeenCalled();
+  });
+
+  it("clears unsubmitted multi-select choices when changing questions", async () => {
+    vi.mocked(listProblems).mockResolvedValueOnce([multiProblem, { ...multiProblem, id: "multi-2" }]);
+    const user = userEvent.setup();
+    render(<QuizView courseId="test" />);
+    await user.click(await screen.findByRole("checkbox", { name: /Red/ }));
+    await user.click(screen.getByRole("button", { name: "quiz.next" }));
+    expect(screen.getByRole("checkbox", { name: /Red/ })).not.toBeChecked();
+    expect(screen.getByRole("button", { name: "quiz.text.submit" })).toBeDisabled();
+    expect(submitAnswer).not.toHaveBeenCalled();
+  });
+
   it("shows loading state initially", async () => {
     render(<QuizView courseId="test" />);
     expect(screen.getByRole("status")).toBeInTheDocument();

@@ -19,6 +19,8 @@ from schemas.quiz import (
     ProblemResponse,
     SubmitAnswerRequest,
 )
+from services.practice.answers import grade_select_all_answer
+from services.practice.annotation import normalize_question_options
 from services.auth.dependency import get_current_user
 from services.course_access import get_course_or_404
 from sqlalchemy.exc import SQLAlchemyError
@@ -152,6 +154,11 @@ async def submit_answer(
         except (ValueError, KeyError, TypeError, OSError):
             logger.exception("Coding grading failed (best-effort)")
             warnings.append("coding_grading_failed")
+    elif problem.question_type == "select_all":
+        is_correct = grade_select_all_answer(
+            body.user_answer, problem.correct_answer or "",
+            normalize_question_options(problem.options),
+        )
     elif problem.correct_answer:
         is_correct = body.user_answer.strip().lower() == problem.correct_answer.strip().lower()
 

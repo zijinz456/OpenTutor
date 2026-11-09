@@ -17,7 +17,7 @@ import { toast } from "sonner";
 import { AiFeatureBlocked } from "@/components/shared/ai-feature-blocked";
 import { SkeletonCard } from "@/components/ui/skeleton";
 import { updateUnlockContext, getUnlockContext } from "@/lib/block-system/feature-unlock";
-import { QuizOptions } from "./quiz-options";
+import { QuizOptions, parseChoiceAnswer } from "./quiz-options";
 import { QuizResult } from "./quiz-result";
 import { useQuizPersistence } from "./use-quiz-persistence";
 
@@ -49,6 +49,7 @@ export function QuizView({
   const [extracting, setExtracting] = useState(false);
   const [extractStatus, setExtractStatus] = useState<string | null>(null);
   const [selectedOption, setSelectedOption] = useState<string | null>(null);
+  const [selectedOptions, setSelectedOptions] = useState<string[]>([]);
   const [answerInput, setAnswerInput] = useState<string>("");
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -95,6 +96,7 @@ export function QuizView({
   useEffect(() => {
     setResult(null);
     setAnswerInput("");
+    setSelectedOptions([]);
     setSubmitError(null);
     questionStartTimeRef.current = Date.now();
     // Show previously-selected option for already-answered questions
@@ -241,6 +243,8 @@ export function QuizView({
   const metadata = (problem.problem_metadata ?? {}) as Record<string, unknown>;
   const coreConcept = typeof metadata.core_concept === "string" ? metadata.core_concept : null;
   const bloomLevel = typeof metadata.bloom_level === "string" ? metadata.bloom_level : null;
+  const isMultiSelect = problem.question_type === "select_all";
+  const multiSelection = answeredMap[problem.id] ? parseChoiceAnswer(answeredMap[problem.id]) : selectedOptions;
   const isCoding = problem.question_type === "coding";
   const isFillBlank = problem.question_type === "fill_blank";
   const usesTextInput = isCoding || isFillBlank || problem.question_type === "short_answer";
@@ -328,14 +332,33 @@ export function QuizView({
             )}
           </div>
         ) : (
-          <QuizOptions
-            optionKeys={optionKeys}
-            options={problem.options ?? {}}
-            selectedOption={selectedOption}
-            result={result}
-            submitting={submitting}
-            onOptionClick={handleOptionClick}
-          />
+          <div className="space-y-3">
+            {isMultiSelect && <p className="text-xs text-muted-foreground">{t("quiz.multiSelectHint")}</p>}
+            <QuizOptions
+              optionKeys={optionKeys}
+              options={problem.options ?? {}}
+              selectedOption={answeredMap[problem.id] ?? selectedOption}
+              multiple={isMultiSelect}
+              selectedOptions={multiSelection}
+              disabled={!!answeredMap[problem.id]}
+              result={result}
+              submitting={submitting}
+              onOptionClick={isMultiSelect ? (key) => {
+                if (result || submitting || answeredMap[problem.id]) return;
+                setSelectedOptions((keys) => keys.includes(key) ? keys.filter((item) => item !== key) : [...keys, key]);
+              } : handleOptionClick}
+            />
+            {isMultiSelect && !result && !answeredMap[problem.id] && (
+              <Button
+                type="button"
+                size="sm"
+                disabled={submitting || selectedOptions.length === 0}
+                onClick={() => void handleOptionClick(optionKeys.filter((key) => selectedOptions.includes(key)).join(","))}
+              >
+                {submitting ? `${t("quiz.text.submitting")}...` : t("quiz.text.submit")}
+              </Button>
+            )}
+          </div>
         )}
 
         {submitError && (
