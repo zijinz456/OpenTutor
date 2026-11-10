@@ -207,3 +207,34 @@ async def test_mastery_updated_for_knowledge_points(db, user, course):
     assert mastery.practice_count == 1
     assert mastery.correct_count == 1
     assert mastery.mastery_score > 0.0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("answer,expected", [
+    ("b,a", True), (" B ; a ", True), ("A/B", True), ("B|A", True),
+    ("A", False), ("A,C", False), ("A,B,C", False), ("A,B,Z", False),
+    ("A,A,B", False), ("", False), ("A,,B", False), ("AB", False),
+])
+async def test_select_all_grades_complete_sets_and_persists_result(db, user, course, answer, expected):
+    problem = await _make_problem(db, course, correct_answer="A,B", question_type="select_all")
+    problem.options = {"A": "Red", "B": "Blue", "C": "Green", "D": "Orange"}
+    await db.commit()
+    with patch("services.diagnosis.classifier.classify_error", AsyncMock(return_value={"category": "careless"})):
+        response = await _submit(db, user, problem.id, answer)
+    assert response.is_correct is expected
+    result = (await db.execute(select(PracticeResult))).scalar_one()
+    assert result.is_correct is expected
+    assert result.user_answer == answer
+    wrong = (await db.execute(select(WrongAnswer))).scalars().all()
+    assert len(wrong) == (0 if expected else 1)
+
+
+@pytest.mark.parametrize("reference,options", [
+    ("", {"A": "one", "B": "two"}),
+    ("A,A,B", {"A": "one", "B": "two"}),
+    ("A,Z", {"A": "one", "B": "two"}),
+    ("A,B", None),
+])
+def test_select_all_invalid_reference_cannot_grade_correct(reference, options):
+    from services.practice.answers import grade_select_all_answer
+    assert grade_select_all_answer(reference, reference, options) is False

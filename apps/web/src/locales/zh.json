@@ -917,6 +917,7 @@
   "notificationCategory.task_completed": "任务完成",
   "notificationCategory.task_failed": "任务失败",
   "notificationCategory.system": "系统",
+  "quiz.multiSelectHint": "选择所有正确选项，然后提交答案。",
   "quiz.text.ariaLabel": "你的答案",
   "quiz.text.placeholder": "在此输入答案...",
   "quiz.fillBlank.placeholder": "填写空白处的答案...",
