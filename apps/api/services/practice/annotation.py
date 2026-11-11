@@ -11,11 +11,12 @@ from dataclasses import dataclass
 import json
 import re
 import uuid
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, ValidationError as PydanticValidationError
 
 from models.practice import PracticeProblem
+from services.practice.answers import parse_numeric_answer
 
 VALID_QUESTION_TYPES = {
     "mc",
@@ -194,6 +195,7 @@ def build_question_dedupe_key(question: str) -> str:
 
 
 class ProblemMetadataContract(BaseModel):
+    answer_type: Literal["text", "number"] = "text"
     core_concept: str = Field(min_length=3)
     bloom_level: str
     potential_traps: list[str] = Field(default_factory=list)
@@ -313,6 +315,10 @@ def normalize_problem_annotation(
     else:
         normalized_answer = _normalize_text_answer(question.get("correct_answer"))
 
+    # Numeric zero must survive normalization; never infer semantics from digits.
+    if metadata.get("answer_type") == "number" and question.get("correct_answer") is not None:
+        normalized_answer = _normalize_text_answer(str(question["correct_answer"]))
+
     normalized_metadata = {
         "core_concept": _normalize_core_concept(
             metadata.get("core_concept") or metadata.get("core_concept_preserved"),
@@ -329,6 +335,8 @@ def normalize_problem_annotation(
         "source_section": _normalize_source_section(metadata.get("source_section"), title),
         "question_type": question_type,
     }
+    if "answer_type" in metadata:
+        normalized_metadata["answer_type"] = metadata["answer_type"]
     if source:
         normalized_metadata["source_kind"] = source
     if extra_metadata:
@@ -378,6 +386,12 @@ def validate_question_payload(
     correct_answer = normalized["correct_answer"]
     explanation = normalized["explanation"]
     metadata = normalized["problem_metadata"]
+
+    if metadata.get("answer_type") == "number":
+        if question_type not in {"short_answer", "fill_blank"}:
+            errors.append("problem_metadata.answer_type: number requires a short-answer or fill-blank question")
+        if correct_answer is None or parse_numeric_answer(correct_answer) is None:
+            errors.append("correct_answer: numeric grading requires a finite decimal or scientific scalar (up to 200 characters)")
 
     if normalized["difficulty_layer"] not in (1, 2, 3):
         errors.append("difficulty_layer: must be 1, 2, or 3")

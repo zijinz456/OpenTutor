@@ -238,3 +238,46 @@ async def test_select_all_grades_complete_sets_and_persists_result(db, user, cou
 def test_select_all_invalid_reference_cannot_grade_correct(reference, options):
     from services.practice.answers import grade_select_all_answer
     assert grade_select_all_answer(reference, reference, options) is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("question_type", ["short_answer", "fill_blank"])
+@pytest.mark.parametrize("answer", ["2.0", " 2e0 ", "+02.000"])
+async def test_explicit_numeric_question_survives_import_and_grades_equivalent_value(db, user, course, question_type, answer):
+    from services.practice.annotation import build_practice_problem
+    problem = build_practice_problem(
+        course_id=course.id, content_node_id=None, title="Arithmetic",
+        question={"question_type": question_type, "question": "Calculate one plus one.",
+                  "correct_answer": "2", "explanation": "One plus one equals two.",
+                  "problem_metadata": {"answer_type": "number"}},
+    )
+    db.add(problem)
+    await db.commit()
+    with patch("services.diagnosis.classifier.classify_error", AsyncMock(return_value={"category": "careless"})):
+        response = await _submit(db, user, problem.id, answer)
+    assert response.is_correct is True
+    assert problem.problem_metadata["answer_type"] == "number"
+    result = (await db.execute(select(PracticeResult))).scalar_one()
+    assert result.is_correct is True and result.user_answer == answer
+    assert (await db.execute(select(WrongAnswer))).scalars().all() == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("question_type,metadata,reference,answer", [
+    ("short_answer", None, "2", "2.0"),
+    ("fill_blank", {"answer_type": "text"}, "0012", "12"),
+    ("short_answer", {}, "2.0", "2"),
+    ("short_answer", {"answer_type": "numeric"}, "2", "2.0"),
+    ("mc", {"answer_type": "number"}, "2", "2.0"),
+    ("free_response", {"answer_type": "number"}, "2", "2.0"),
+    ("short_answer", {"answer_type": "number"}, "NaN", "NaN"),
+    ("fill_blank", {"answer_type": "number"}, "Infinity", "Infinity"),
+])
+async def test_numeric_grading_never_guesses_text_semantics_or_accepts_nonfinite_values(db, user, course, question_type, metadata, reference, answer):
+    problem = await _make_problem(db, course, correct_answer=reference, question_type=question_type)
+    problem.problem_metadata = metadata
+    await db.commit()
+    with patch("services.diagnosis.classifier.classify_error", AsyncMock(return_value={"category": "careless"})):
+        response = await _submit(db, user, problem.id, answer)
+    assert response.is_correct is False
+    assert (await db.execute(select(PracticeResult))).scalar_one().is_correct is False

@@ -19,7 +19,7 @@ from schemas.quiz import (
     ProblemResponse,
     SubmitAnswerRequest,
 )
-from services.practice.answers import grade_select_all_answer
+from services.practice.answers import grade_select_all_answer, grade_text_answer
 from services.practice.annotation import normalize_question_options
 from services.auth.dependency import get_current_user
 from services.course_access import get_course_or_404
@@ -160,7 +160,14 @@ async def submit_answer(
             normalize_question_options(problem.options),
         )
     elif problem.correct_answer:
-        is_correct = body.user_answer.strip().lower() == problem.correct_answer.strip().lower()
+        is_correct = grade_text_answer(
+            body.user_answer, problem.correct_answer,
+            numeric=(
+                problem.question_type in {"short_answer", "fill_blank"}
+                and isinstance(problem.problem_metadata, dict)
+                and problem.problem_metadata.get("answer_type") == "number"
+            ),
+        )
 
     pr = PracticeResult(
         problem_id=problem.id,
