@@ -16,11 +16,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
 from database import Base
-from libs.exceptions import NotFoundError
+from libs.exceptions import NotFoundError, ValidationError
 from models.course import Course
 from models.ingestion import WrongAnswer
 from models.knowledge_graph import ConceptMastery, KnowledgeNode
 from models.practice import PracticeProblem, PracticeResult
+from models.progress import LearningProgress
 from models.user import User
 from routers.quiz_submission import submit_answer
 from schemas.quiz import SubmitAnswerRequest
@@ -174,7 +175,8 @@ async def test_unknown_problem_id_raises_not_found(db, user, course):
 
 
 @pytest.mark.asyncio
-async def test_other_users_problem_is_not_found(db, user, course):
+@pytest.mark.parametrize("reference", ["Paris", None])
+async def test_other_users_problem_is_not_found(db, user, course, reference):
     # A problem in someone else's course must be invisible to this user
     other = User(id=uuid.uuid4(), name="Other")
     db.add(other)
@@ -182,10 +184,81 @@ async def test_other_users_problem_is_not_found(db, user, course):
     other_course = Course(id=uuid.uuid4(), user_id=other.id, name="Private")
     db.add(other_course)
     await db.flush()
-    problem = await _make_problem(db, other_course)
+    problem = await _make_problem(db, other_course, correct_answer=reference)
 
     with pytest.raises(NotFoundError):
         await _submit(db, user, problem.id, "Paris")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("question_type", ["short_answer", "fill_blank", "mc", "tf", "select_all"])
+@pytest.mark.parametrize("reference", [None, "", " \t\n "])
+async def test_missing_reference_is_not_a_wrong_answer(db, user, course, question_type, reference):
+    node = KnowledgeNode(id=uuid.uuid4(), course_id=course.id, name="French Geography")
+    db.add(node)
+    problem = await _make_problem(
+        db, course, correct_answer=reference, question_type=question_type,
+        knowledge_points=[node.name],
+    )
+    tasks = BackgroundTasks()
+    with (
+        patch("services.diagnosis.classifier.classify_error", AsyncMock(return_value={"category": "careless"})) as classify,
+        patch("services.analytics.events.emit_quiz_answered", AsyncMock()) as emit,
+    ):
+        with pytest.raises(ValidationError, match="reference answer") as exc:
+            await _submit(db, user, problem.id, "Paris", tasks=tasks)
+    assert exc.value.status == 422
+    classify.assert_not_awaited()
+    emit.assert_not_awaited()
+    assert tasks.tasks == []
+    for model in (PracticeResult, WrongAnswer, LearningProgress, ConceptMastery):
+        assert (await db.execute(select(model))).scalars().all() == []
+
+
+@pytest.mark.asyncio
+async def test_coding_without_reference_still_uses_its_grader(db, user, course):
+    problem = await _make_problem(db, course, correct_answer=None, question_type="coding")
+    with patch(
+        "services.diagnosis.coding_grader.grade_coding_answer",
+        AsyncMock(return_value={"is_correct": True}),
+    ) as grade:
+        response = await _submit(db, user, problem.id, "print('Paris')")
+    assert response.is_correct is True
+    grade.assert_awaited_once()
+    assert grade.await_args.kwargs["reference_answer"] == ""
+    assert (await db.execute(select(PracticeResult))).scalar_one().is_correct is True
+
+
+@pytest.mark.asyncio
+async def test_missing_reference_returns_http_error_without_grading(db, user, course):
+    from fastapi import FastAPI
+    from httpx import ASGITransport, AsyncClient
+
+    from database import get_db
+    from libs.exceptions import AppError
+    from main import app_error_handler
+    from routers.quiz_submission import router
+    from services.auth.dependency import get_current_user
+
+    problem = await _make_problem(db, course, correct_answer=None)
+    app = FastAPI()
+    app.include_router(router, prefix="/quiz")
+    app.add_exception_handler(AppError, app_error_handler)
+
+    async def override_db():
+        yield db
+
+    app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[get_current_user] = lambda: user
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post("/quiz/submit", json={
+            "problem_id": str(problem.id), "user_answer": "Paris",
+        })
+    assert response.status_code == 422
+    assert response.json()["code"] == "validation_error"
+    assert "reference answer" in response.json()["message"]
+    assert "is_correct" not in response.json()
+    assert (await db.execute(select(PracticeResult))).scalars().all() == []
 
 
 # ── Mastery updates ──

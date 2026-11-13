@@ -2,6 +2,8 @@
 
 The submit API continues to accept `user_answer` as a string. Existing text answers retain case-insensitive, outer-whitespace-insensitive exact matching. Numeric-looking text is not automatically treated as a number: identifiers, versions and significant leading-zero strings keep their existing semantics.
 
+Non-coding questions must have a non-blank reference answer before a submission can be graded. A missing, empty or whitespace-only reference returns HTTP 422 (`validation_error`), with no correctness result, practice/wrong-answer record, progress/mastery update, analytics event or background diagnosis. The ownership check runs first. Existing clients treat this as a submission failure rather than recording an incorrect attempt. Coding questions retain their separate grader, which may work without a reference answer. This check does not establish that a non-blank reference is a sufficient rubric for subjective answers.
+
 For a `short_answer` or `fill_blank` question whose author explicitly wants numerical equality, set `problem_metadata.answer_type` to `"number"` in the generated/imported question payload. The shared annotation pipeline preserves and validates this opt-in. Other question types cannot opt into this mode. Omitting the field, or specifying `"text"`, retains text matching.
 
 ```json
