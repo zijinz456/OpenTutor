@@ -75,3 +75,22 @@ async def test_upsert_assignment_updates_due_date_and_metadata():
     assert status == "updated"
     assert existing.due_date == new_due
     assert existing.metadata_json["points"] == "20"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("card", [
+    '<div class="ic-DashboardCard"><a class="ic-DashboardCard__header-title">{name}</a></div>',
+    '<div data-testid="k5-course-card"><a>{name}</a></div>',
+])
+async def test_dashboard_ignores_inert_template_courses(card):
+    """Soup Sieve 4 must keep importing rendered cards without importing templates."""
+    from unittest.mock import AsyncMock, patch
+    from bs4 import BeautifulSoup
+    from services.scraper.canvas_parser import _parse_dashboard
+
+    html = '<template>' + card.format(name="Hidden prototype") + '</template>' + card.format(name="Real course")
+    soup = BeautifulSoup(html, "html.parser")
+    with patch("services.scraper.canvas_parser._upsert_course", AsyncMock(return_value="created")) as upsert:
+        assert await _parse_dashboard(_FakeDB([]), uuid.uuid4(), soup) == (1, 0)
+    assert upsert.await_count == 1
+    assert upsert.await_args.args[2:] == ("Real course", "")

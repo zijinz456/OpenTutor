@@ -49,3 +49,9 @@ def test_obsolete_jose_dependency_chain_is_removed():
 def test_lock_input_includes_live_core_instead_of_copied_pins():
     data = (ROOT / "scripts/requirements-windows.in").read_text(encoding="utf-8-sig")
     assert "-r ../apps/api/requirements-core.txt" in data
+
+
+def test_lock_satisfies_windows_specific_security_constraints():
+    source = (ROOT / "scripts/requirements-windows.in").read_text(encoding="utf-8")
+    assert_satisfied(line.strip() for line in source.splitlines()
+                     if line.strip() and not line.lstrip().startswith(("#", "-r")))
