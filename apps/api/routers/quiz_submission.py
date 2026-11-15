@@ -25,7 +25,7 @@ from services.auth.dependency import get_current_user
 from services.course_access import get_course_or_404
 from sqlalchemy.exc import SQLAlchemyError
 
-from libs.exceptions import NotFoundError
+from libs.exceptions import NotFoundError, ValidationError
 
 router = APIRouter()
 
@@ -138,6 +138,11 @@ async def submit_answer(
     problem = result.scalar_one_or_none()
     if not problem:
         raise NotFoundError("Problem", body.problem_id)
+
+    # A missing answer key is a question defect, not evidence of learner error.
+    # Coding has its own grading contract and may not require a reference.
+    if problem.question_type != "coding" and not (problem.correct_answer or "").strip():
+        raise ValidationError("This question has no reference answer and cannot be graded.")
 
     warnings: list[str] = []
 

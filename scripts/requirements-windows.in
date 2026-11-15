@@ -1,2 +1,5 @@
 # Windows CPython 3.12 x64: derive runtime dependencies from patched main.
 -r ../apps/api/requirements-core.txt
+
+# CVE-2026-126190: descendant-selector denial of service; Windows uses Python 3.12.
+soupsieve>=4.0.1,<5
