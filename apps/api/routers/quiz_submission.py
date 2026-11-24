@@ -148,17 +148,15 @@ async def submit_answer(
 
     is_correct = False
     if problem.question_type == "coding":
-        try:
-            from services.diagnosis.coding_grader import grade_coding_answer
-            grading_result = await grade_coding_answer(
-                question=problem.question,
-                reference_answer=problem.correct_answer or "",
-                user_code=body.user_answer,
-            )
-            is_correct = grading_result.get("is_correct", False)
-        except (ValueError, KeyError, TypeError, OSError):
-            logger.exception("Coding grading failed (best-effort)")
-            warnings.append("coding_grading_failed")
+        from services.diagnosis.coding_grader import grade_coding_answer
+
+        # An unavailable verdict must abort before any learning records change.
+        grading_result = await grade_coding_answer(
+            question=problem.question,
+            reference_answer=problem.correct_answer or "",
+            user_code=body.user_answer,
+        )
+        is_correct = grading_result["is_correct"]
     elif problem.question_type == "select_all":
         is_correct = grade_select_all_answer(
             body.user_answer, problem.correct_answer or "",

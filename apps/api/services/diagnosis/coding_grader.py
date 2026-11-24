@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 
+from libs.exceptions import LLMUnavailableError
 from services.llm.router import get_llm_client
 
 logger = logging.getLogger(__name__)
@@ -35,11 +36,12 @@ async def grade_coding_answer(
     Returns a dict with:
         is_correct: bool
         feedback: str
+
+    Raises LLMUnavailableError when the provider or its verdict is unavailable.
     """
     if not user_code.strip():
         return {"is_correct": False, "feedback": "No code submitted."}
 
-    client = get_llm_client()
     user_msg = (
         f"Question: {question}\n\n"
         f"Reference answer:\n{reference_answer}\n\n"
@@ -47,17 +49,22 @@ async def grade_coding_answer(
     )
 
     try:
+        client = get_llm_client()
         raw, _ = await client.chat(_GRADING_PROMPT, user_msg)
-    except (ConnectionError, TimeoutError, ValueError, RuntimeError) as exc:
-        logger.warning("Coding grader LLM call failed: %s", exc)
-        return {"is_correct": False, "feedback": "Grading unavailable."}
+    except Exception as exc:  # Provider SDKs expose different exception types.
+        logger.warning("Coding grader LLM call failed (%s)", type(exc).__name__)
+        raise LLMUnavailableError(
+            "Coding grading is unavailable. Please try again."
+        ) from exc
 
     from libs.text_utils import parse_llm_json
-    parsed = parse_llm_json(raw)
-    if not isinstance(parsed, dict):
-        return {"is_correct": False, "feedback": "Grading parse error."}
+    parsed = parse_llm_json(raw) if isinstance(raw, str) else None
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("is_correct"), bool):
+        raise LLMUnavailableError(
+            "Coding grading returned an invalid result. Please try again."
+        )
 
     return {
-        "is_correct": bool(parsed.get("is_correct", False)),
+        "is_correct": parsed["is_correct"],
         "feedback": str(parsed.get("feedback", "")),
     }
