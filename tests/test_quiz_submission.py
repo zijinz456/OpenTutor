@@ -10,21 +10,22 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 import pytest_asyncio
-from fastapi import BackgroundTasks
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import sessionmaker
-
 from database import Base
-from libs.exceptions import NotFoundError, ValidationError
+from fastapi import BackgroundTasks
+from httpx import ConnectError, Request
+from libs.exceptions import LLMUnavailableError, NotFoundError, ValidationError
 from models.course import Course
 from models.ingestion import WrongAnswer
 from models.knowledge_graph import ConceptMastery, KnowledgeNode
 from models.practice import PracticeProblem, PracticeResult
 from models.progress import LearningProgress
 from models.user import User
+from openai import APIConnectionError
 from routers.quiz_submission import submit_answer
 from schemas.quiz import SubmitAnswerRequest
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.orm import sessionmaker
 
 # ── Fixtures ──
 
@@ -231,10 +232,9 @@ async def test_coding_without_reference_still_uses_its_grader(db, user, course):
 
 @pytest.mark.asyncio
 async def test_missing_reference_returns_http_error_without_grading(db, user, course):
+    from database import get_db
     from fastapi import FastAPI
     from httpx import ASGITransport, AsyncClient
-
-    from database import get_db
     from libs.exceptions import AppError
     from main import app_error_handler
     from routers.quiz_submission import router
@@ -354,3 +354,113 @@ async def test_numeric_grading_never_guesses_text_semantics_or_accepts_nonfinite
         response = await _submit(db, user, problem.id, answer)
     assert response.is_correct is False
     assert (await db.execute(select(PracticeResult))).scalar_one().is_correct is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [
+    ConnectionError("provider unavailable"), TimeoutError("provider timeout"),
+    ConnectError("network failure"), APIConnectionError(request=Request("POST", "http://test")),
+    RuntimeError("no healthy providers"), ValueError("invalid response"),
+    "not json", "[]", "null", "{}", '{"feedback": "unknown"}',
+    '{"is_correct": "false"}', '{"is_correct": "true"}',
+    '{"is_correct": 0}', '{"is_correct": 1}', '{"is_correct": null}', None,
+])
+async def test_coding_grader_failure_never_records_an_attempt(db, user, course, failure):
+    node = KnowledgeNode(id=uuid.uuid4(), course_id=course.id, name="Python")
+    db.add(node)
+    problem = await _make_problem(db, course, question_type="coding", knowledge_points=[node.name])
+    tasks = BackgroundTasks()
+    chat = AsyncMock(side_effect=failure) if isinstance(failure, Exception) else AsyncMock(return_value=(failure, {}))
+    with (
+        patch("services.diagnosis.coding_grader.get_llm_client") as client,
+        patch("services.diagnosis.classifier.classify_error", AsyncMock(return_value={"category": "careless"})) as classify,
+        patch("services.analytics.events.emit_quiz_answered", AsyncMock()) as emit,
+    ):
+        client.return_value.chat = chat
+        with pytest.raises(LLMUnavailableError) as exc:
+            await _submit(db, user, problem.id, "print('Paris')", tasks=tasks)
+    assert exc.value.status == 503
+    classify.assert_not_awaited()
+    emit.assert_not_awaited()
+    assert tasks.tasks == []
+    for model in (PracticeResult, WrongAnswer, LearningProgress, ConceptMastery):
+        assert (await db.execute(select(model))).scalars().all() == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("verdict", [True, False])
+async def test_coding_boolean_verdict_still_records_answer(db, user, course, verdict):
+    import json
+
+    problem = await _make_problem(db, course, question_type="coding")
+    with (
+        patch("services.diagnosis.coding_grader.get_llm_client") as client,
+        patch("services.diagnosis.classifier.classify_error", AsyncMock(return_value={"category": "careless"})),
+    ):
+        client.return_value.chat = AsyncMock(return_value=(
+            "```json\n" + json.dumps({"is_correct": verdict, "feedback": "Checked"}) + "\n```", {},
+        ))
+        response = await _submit(db, user, problem.id, "print('Paris')")
+    assert response.is_correct is verdict
+    assert (await db.execute(select(PracticeResult))).scalar_one().is_correct is verdict
+    assert len((await db.execute(select(WrongAnswer))).scalars().all()) == (0 if verdict else 1)
+
+
+@pytest.mark.asyncio
+async def test_coding_unavailable_http_response_allows_clean_retry(db, user, course):
+    from database import get_db
+    from fastapi import FastAPI
+    from httpx import ASGITransport, AsyncClient
+    from libs.exceptions import AppError
+    from main import app_error_handler
+    from routers.quiz_submission import router
+    from services.auth.dependency import get_current_user
+
+    problem = await _make_problem(db, course, question_type="coding")
+    app = FastAPI()
+    app.include_router(router, prefix="/quiz")
+    app.add_exception_handler(AppError, app_error_handler)
+
+    async def override_db():
+        yield db
+
+    app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[get_current_user] = lambda: user
+    with patch("services.diagnosis.coding_grader.get_llm_client", side_effect=RuntimeError("private provider detail")):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/quiz/submit", json={
+                "problem_id": str(problem.id), "user_answer": "print('Paris')",
+            })
+    assert response.status_code == 503
+    assert response.json()["code"] == "llm_unavailable"
+    assert "is_correct" not in response.json()
+    assert "private provider detail" not in response.text
+    assert (await db.execute(select(PracticeResult))).scalars().all() == []
+    with patch("services.diagnosis.coding_grader.get_llm_client") as client:
+        client.return_value.chat = AsyncMock(return_value=('{"is_correct": true}', {}))
+        result = await _submit(db, user, problem.id, "print('Paris')")
+    assert result.is_correct is True
+    assert (await db.execute(select(PracticeResult))).scalar_one().is_correct is True
+    assert (await db.execute(select(WrongAnswer))).scalars().all() == []
+
+
+@pytest.mark.asyncio
+async def test_empty_coding_answer_is_incorrect_without_calling_llm(db, user, course):
+    problem = await _make_problem(db, course, question_type="coding", correct_answer=None)
+    with patch("services.diagnosis.coding_grader.get_llm_client") as client:
+        result = await _submit(db, user, problem.id, " ")
+    client.assert_not_called()
+    assert result.is_correct is False
+    assert (await db.execute(select(PracticeResult))).scalar_one().is_correct is False
+
+
+@pytest.mark.asyncio
+async def test_coding_cancellation_is_not_converted_to_a_grade(db, user, course):
+    import asyncio
+
+    problem = await _make_problem(db, course, question_type="coding")
+    with patch("services.diagnosis.coding_grader.get_llm_client") as client:
+        client.return_value.chat = AsyncMock(side_effect=asyncio.CancelledError())
+        with pytest.raises(asyncio.CancelledError):
+            await _submit(db, user, problem.id, "print('Paris')")
+    assert (await db.execute(select(PracticeResult))).scalars().all() == []
