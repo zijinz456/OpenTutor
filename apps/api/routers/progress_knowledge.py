@@ -263,7 +263,7 @@ async def get_review_session(
 ):
     """Get LECTOR smart review session — semantically clustered concepts to review."""
     if not settings.enable_experimental_lector:
-        raise HTTPException(404, "LECTOR semantic review is experimental. Set ENABLE_EXPERIMENTAL_LECTOR=true to enable.")
+        return {"course_id": str(course_id), "items": [], "count": 0}
     from services.lector import get_smart_review_session, ReviewItem
 
     items = await get_smart_review_session(db, user.id, course_id, max_items=max_items)
