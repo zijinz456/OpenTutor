@@ -144,6 +144,13 @@ async def submit_answer(
     if problem.question_type != "coding" and not (problem.correct_answer or "").strip():
         raise ValidationError("This question has no reference answer and cannot be graded.")
 
+    # An extended response needs a rubric; text equality is not a verdict.
+    if problem.question_type == "free_response":
+        raise ValidationError(
+            "Free-response questions require rubric-based grading, "
+            "which is not supported yet."
+        )
+
     warnings: list[str] = []
 
     is_correct = False
