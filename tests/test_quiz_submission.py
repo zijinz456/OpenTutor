@@ -177,7 +177,8 @@ async def test_unknown_problem_id_raises_not_found(db, user, course):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("reference", ["Paris", None])
-async def test_other_users_problem_is_not_found(db, user, course, reference):
+@pytest.mark.parametrize("question_type", ["short_answer", "free_response"])
+async def test_other_users_problem_is_not_found(db, user, course, reference, question_type):
     # A problem in someone else's course must be invisible to this user
     other = User(id=uuid.uuid4(), name="Other")
     db.add(other)
@@ -185,14 +186,14 @@ async def test_other_users_problem_is_not_found(db, user, course, reference):
     other_course = Course(id=uuid.uuid4(), user_id=other.id, name="Private")
     db.add(other_course)
     await db.flush()
-    problem = await _make_problem(db, other_course, correct_answer=reference)
+    problem = await _make_problem(db, other_course, correct_answer=reference, question_type=question_type)
 
     with pytest.raises(NotFoundError):
         await _submit(db, user, problem.id, "Paris")
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("question_type", ["short_answer", "fill_blank", "mc", "tf", "select_all"])
+@pytest.mark.parametrize("question_type", ["short_answer", "fill_blank", "mc", "tf", "select_all", "free_response"])
 @pytest.mark.parametrize("reference", [None, "", " \t\n "])
 async def test_missing_reference_is_not_a_wrong_answer(db, user, course, question_type, reference):
     node = KnowledgeNode(id=uuid.uuid4(), course_id=course.id, name="French Geography")
@@ -231,7 +232,11 @@ async def test_coding_without_reference_still_uses_its_grader(db, user, course):
 
 
 @pytest.mark.asyncio
-async def test_missing_reference_returns_http_error_without_grading(db, user, course):
+@pytest.mark.parametrize("question_type,reference,message", [
+    ("short_answer", None, "reference answer"),
+    ("free_response", "Paris", "rubric"),
+])
+async def test_ungradable_question_returns_http_error_without_grading(db, user, course, question_type, reference, message):
     from database import get_db
     from fastapi import FastAPI
     from httpx import ASGITransport, AsyncClient
@@ -240,7 +245,7 @@ async def test_missing_reference_returns_http_error_without_grading(db, user, co
     from routers.quiz_submission import router
     from services.auth.dependency import get_current_user
 
-    problem = await _make_problem(db, course, correct_answer=None)
+    problem = await _make_problem(db, course, correct_answer=reference, question_type=question_type)
     app = FastAPI()
     app.include_router(router, prefix="/quiz")
     app.add_exception_handler(AppError, app_error_handler)
@@ -256,7 +261,7 @@ async def test_missing_reference_returns_http_error_without_grading(db, user, co
         })
     assert response.status_code == 422
     assert response.json()["code"] == "validation_error"
-    assert "reference answer" in response.json()["message"]
+    assert message in response.json()["message"]
     assert "is_correct" not in response.json()
     assert (await db.execute(select(PracticeResult))).scalars().all() == []
 
@@ -342,7 +347,6 @@ async def test_explicit_numeric_question_survives_import_and_grades_equivalent_v
     ("short_answer", {}, "2.0", "2"),
     ("short_answer", {"answer_type": "numeric"}, "2", "2.0"),
     ("mc", {"answer_type": "number"}, "2", "2.0"),
-    ("free_response", {"answer_type": "number"}, "2", "2.0"),
     ("short_answer", {"answer_type": "number"}, "NaN", "NaN"),
     ("fill_blank", {"answer_type": "number"}, "Infinity", "Infinity"),
 ])
@@ -464,3 +468,36 @@ async def test_coding_cancellation_is_not_converted_to_a_grade(db, user, course)
         with pytest.raises(asyncio.CancelledError):
             await _submit(db, user, problem.id, "print('Paris')")
     assert (await db.execute(select(PracticeResult))).scalars().all() == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("answer", [
+    "Plants use light energy to turn carbon dioxide and water into glucose.",
+    "Using sunlight, plants make glucose from water and carbon dioxide.",
+    "Plants make glucose from rocks.", "",
+])
+@pytest.mark.parametrize("metadata", [None, {"answer_type": "text"}, {"answer_type": "number"}])
+async def test_free_response_requires_rubric_without_recording_a_grade(db, user, course, answer, metadata):
+    node = KnowledgeNode(id=uuid.uuid4(), course_id=course.id, name="Photosynthesis")
+    db.add(node)
+    problem = await _make_problem(
+        db, course, question_type="free_response", knowledge_points=[node.name],
+        correct_answer="Plants use light energy to turn carbon dioxide and water into glucose.",
+    )
+    problem.problem_metadata = metadata
+    await db.commit()
+    tasks = BackgroundTasks()
+    with (
+        patch("services.diagnosis.classifier.classify_error", AsyncMock(return_value={"category": "conceptual"})) as classify,
+        patch("services.analytics.events.emit_quiz_answered", AsyncMock()) as emit,
+        patch("services.llm.router.get_llm_client") as client,
+        pytest.raises(ValidationError, match="rubric") as exc,
+    ):
+        await _submit(db, user, problem.id, answer, tasks=tasks)
+    assert exc.value.status == 422
+    classify.assert_not_awaited()
+    emit.assert_not_awaited()
+    client.assert_not_called()
+    assert tasks.tasks == []
+    for model in (PracticeResult, WrongAnswer, LearningProgress, ConceptMastery):
+        assert (await db.execute(select(model))).scalars().all() == []
