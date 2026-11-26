@@ -13,6 +13,7 @@ import {
 import type { Course, AppNotification, StudyGoal, WeeklyReport, LearningOverview } from "@/lib/api";
 import { ModeBadge } from "@/components/course/mode-selector";
 import { Button } from "@/components/ui/button";
+import { useT, useTF } from "@/lib/i18n-context";
 import { DashSection } from "./dash-section";
 import { DigestFallback } from "./digest-fallback";
 import {
@@ -287,6 +288,8 @@ export function PendingApprovalsSection({
 }
 
 export function WeeklyStatsSection({ weeklyReport }: { weeklyReport: WeeklyReport | null }) {
+  const t = useT();
+  const tf = useTF();
   if (!weeklyReport) return null;
   const { this_week, last_week, deltas } = weeklyReport;
 
@@ -301,24 +304,24 @@ export function WeeklyStatsSection({ weeklyReport }: { weeklyReport: WeeklyRepor
   };
 
   return (
-    <DashSection title="本周学习统计" icon={TrendingUp}>
+    <DashSection title={t("home.weeklyStats.title")} icon={TrendingUp}>
       <div className="grid grid-cols-3 gap-3">
         <div className="rounded-xl bg-muted/30 p-3.5 flex flex-col gap-1">
-          <p className="text-[11px] text-muted-foreground">学习时长</p>
-          <p className="text-lg font-bold text-foreground tabular-nums">{this_week.study_minutes}<span className="text-xs font-normal text-muted-foreground ml-0.5">分钟</span></p>
-          {delta(deltas.study_minutes, "min")}
-          <p className="text-[10px] text-muted-foreground">上周 {last_week.study_minutes} 分钟</p>
+          <p className="text-[11px] text-muted-foreground">{t("home.weeklyStats.studyTime")}</p>
+          <p className="text-lg font-bold text-foreground tabular-nums">{this_week.study_minutes}<span className="text-xs font-normal text-muted-foreground ml-0.5">{t("home.stats.minutes")}</span></p>
+          {delta(deltas.study_minutes, t("home.stats.minutes"))}
+          <p className="text-[10px] text-muted-foreground">{tf("home.weeklyStats.lastWeek", { value: last_week.study_minutes + t("home.stats.minutes") })}</p>
         </div>
         <div className="rounded-xl bg-muted/30 p-3.5 flex flex-col gap-1">
-          <p className="text-[11px] text-muted-foreground">测验准确率</p>
+          <p className="text-[11px] text-muted-foreground">{t("home.weeklyStats.quizAccuracy")}</p>
           <p className="text-lg font-bold text-foreground tabular-nums">{this_week.accuracy}<span className="text-xs font-normal text-muted-foreground ml-0.5">%</span></p>
           {delta(deltas.accuracy, "%")}
-          <p className="text-[10px] text-muted-foreground">上周 {last_week.accuracy}%</p>
+          <p className="text-[10px] text-muted-foreground">{tf("home.weeklyStats.lastWeek", { value: `${last_week.accuracy}%` })}</p>
         </div>
         <div className="rounded-xl bg-muted/30 p-3.5 flex flex-col gap-1">
-          <p className="text-[11px] text-muted-foreground">活跃天数</p>
-          <p className="text-lg font-bold text-foreground tabular-nums">{this_week.active_days}<span className="text-xs font-normal text-muted-foreground ml-0.5">天</span></p>
-          <p className="text-[10px] text-muted-foreground">上周 {last_week.active_days} 天</p>
+          <p className="text-[11px] text-muted-foreground">{t("home.weeklyStats.activeDays")}</p>
+          <p className="text-lg font-bold text-foreground tabular-nums">{this_week.active_days}<span className="text-xs font-normal text-muted-foreground ml-0.5">{t("home.stats.days")}</span></p>
+          <p className="text-[10px] text-muted-foreground">{tf("home.weeklyStats.lastWeek", { value: last_week.active_days + t("home.stats.days") })}</p>
         </div>
       </div>
       {weeklyReport.highlights.length > 0 && (
@@ -342,22 +345,23 @@ export function MasteryOverviewSection({
   masteryOverview: LearningOverview | null;
   onNavigate: (path: string) => void;
 }) {
+  const t = useT();
   if (!masteryOverview || masteryOverview.course_summaries.length === 0) return null;
 
   return (
-    <DashSection title="跨课程掌握度" icon={BookOpen}>
+    <DashSection title={t("home.masteryOverview.title")} icon={BookOpen}>
       <div className="space-y-3">
         <div className="grid grid-cols-2 gap-3">
           <div className="rounded-xl bg-muted/30 p-3.5">
-            <p className="text-[11px] text-muted-foreground">总体平均掌握度</p>
+            <p className="text-[11px] text-muted-foreground">{t("home.masteryOverview.average")}</p>
             <p className="text-xl font-bold text-brand tabular-nums">
               {Math.round(masteryOverview.average_mastery * 100)}%
             </p>
           </div>
           <div className="rounded-xl bg-muted/30 p-3.5">
-            <p className="text-[11px] text-muted-foreground">累计学习时长</p>
+            <p className="text-[11px] text-muted-foreground">{t("home.masteryOverview.totalStudyTime")}</p>
             <p className="text-xl font-bold text-foreground tabular-nums">
-              {masteryOverview.total_study_minutes}<span className="text-xs font-normal text-muted-foreground ml-0.5">分钟</span>
+              {masteryOverview.total_study_minutes}<span className="text-xs font-normal text-muted-foreground ml-0.5">{t("home.stats.minutes")}</span>
             </p>
           </div>
         </div>
